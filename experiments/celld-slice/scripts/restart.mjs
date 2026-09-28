@@ -9,7 +9,7 @@ const request = async (path, options = {}) => {
     signal: AbortSignal.timeout(20_000),
   });
   const body = await response.json();
-  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(response.status, 200, "Restart probe request failed");
   return { body, response };
 };
 const statePath = "/results/restart-state.json";
@@ -30,10 +30,30 @@ if (process.argv[2] === "prepare") {
     .join("; ");
   assert.ok(cookie);
   const database = await request("/database");
+  const conversation = crypto.randomUUID();
+  const operationId = crypto.randomUUID();
+  const prompt = await request(`/sessions/${conversation}/prompt`, {
+    body: JSON.stringify({ operationId }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  assert.equal(prompt.body.ok, true);
+  assert.equal(prompt.body.toolCalls, 1);
+  assert.equal(prompt.body.reply, "Cerebro fixture completed.");
+  const session = await request(`/sessions/${conversation}/inspect`);
+  assert.equal(session.body.sessionId, prompt.body.sessionId);
   await mkdir("/results", { recursive: true });
   await writeFile(
     statePath,
-    JSON.stringify({ cookie, database: database.body, userId: body.user.id }),
+    JSON.stringify({
+      agentResult: prompt.body,
+      conversation,
+      cookie,
+      database: database.body,
+      messages: session.body.messages,
+      operationId,
+      userId: body.user.id,
+    }),
     { mode: 0o600 }
   );
   process.stdout.write(
@@ -53,11 +73,27 @@ if (process.argv[2] === "prepare") {
     `/database/read?key=${state.database.rolledBackKey}`
   );
   assert.equal(rollback.body.row, null);
+  const agent = await request(`/sessions/${state.conversation}/inspect`);
+  assert.equal(agent.body.sessionId, state.agentResult.sessionId);
+  assert.deepEqual(agent.body.messages, state.messages);
+  const repeated = await request(`/sessions/${state.conversation}/prompt`, {
+    body: JSON.stringify({ operationId: state.operationId }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  assert.deepEqual(repeated.body, state.agentResult);
+  const afterReplay = await request(`/sessions/${state.conversation}/inspect`);
+  assert.deepEqual(afterReplay.body.messages, state.messages);
   const evidence = {
+    agentMessagesPreserved: true,
+    agentSessionPreserved: true,
     authSessionPreserved: true,
     committedKey: state.database.committedKey,
     committedRowPreserved: true,
+    completedOperationReused: true,
+    replayAddedNoMessages: true,
     rollbackAbsent: true,
+    sessionId: state.agentResult.sessionId,
     timestamp: new Date().toISOString(),
     userId: state.userId,
   };

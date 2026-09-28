@@ -70,6 +70,7 @@ services:
       CELLD_WATCH: /var/lib/celld/state
       CELLD_DURABILITY: bucket
       CELLD_TELEMETRY: "0"
+      CELLD_V8_HEAP_LIMIT_MB: "256"
     ports:
       - "127.0.0.1:18765:8080"
     volumes:

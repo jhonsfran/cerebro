@@ -20,6 +20,10 @@
       {
         "name": "OPENCODE_CONTROL",
         "class_name": "OpenCodeControl"
+      },
+      {
+        "name": "MIGRATION_CONTROL",
+        "class_name": "MigrationControl"
       }
     ]
   },
@@ -34,6 +38,12 @@
       "tag": "v2",
       "new_sqlite_classes": [
         "OpenCodeControl"
+      ]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": [
+        "MigrationControl"
       ]
     }
   ],

@@ -208,6 +208,61 @@ await check("agent.opencode-empty-storage-control", async () => {
   assert.equal(body.ok, true);
   return body;
 });
+await Promise.all(
+  ["unknown", "partial", "similar-agent-prefix", "similar-cerebro-prefix"].map(
+    (schema) =>
+      check(`migration.rejects-${schema}`, async () => {
+        const { response, body } = await request(
+          `/control/opencode/${crypto.randomUUID()}?schema=${schema}`
+        );
+        assert.equal(response.status, 500);
+        assert.equal(body.error, schemaConflict);
+        assert.ok(
+          !body.tablesAfter.some(
+            (table) => table.name === "session_v2" || table.name === "migration"
+          )
+        );
+        return {
+          error: body.error,
+          status: response.status,
+          tablesAfter: body.tablesAfter,
+        };
+      })
+  )
+);
+await check("agent.durable-sqlite", async () => {
+  const name = crypto.randomUUID();
+  const prepared = await request(`/sessions/${name}/seed-ledger`, {
+    method: "POST",
+  });
+  assert.equal(prepared.response.status, 200);
+  const before = await request(`/sessions/${name}/storage`);
+  assert.equal(before.response.status, 200);
+  assert.deepEqual(before.body.ledgerProbe, {
+    id: "schema-fixture",
+    result: "preserved",
+  });
+  const initialized = await request(`/sessions/${name}/inspect`);
+  if (initialized.body.error === schemaConflict) {
+    throw new Error(schemaConflict);
+  }
+  assert.equal(initialized.response.status, 200);
+  const after = await request(`/sessions/${name}/storage`);
+  assert.equal(after.response.status, 200);
+  assert.deepEqual(after.body.ledgerProbe, before.body.ledgerProbe);
+  assert.ok(
+    before.body.tables.every((table) =>
+      after.body.tables.some((entry) => entry.name === table.name)
+    )
+  );
+  assert.ok(after.body.tables.some((table) => table.name === "session_v2"));
+  return {
+    existingTablesPreserved: true,
+    ledgerProbe: after.body.ledgerProbe,
+    name,
+    sessionId: initialized.body.sessionId,
+  };
+});
 const agent = await check("agent.composition", async () => {
   const { response, body } = await request(`/sessions/${conversation}/inspect`);
   if (body.error === schemaConflict) {
@@ -271,7 +326,6 @@ for (const id of [
   "database.restart",
   "auth.restart",
   "auth.browser",
-  "agent.durable-sqlite",
   "agent.reconnect",
   "agent.real-provider",
   "tools.broker",

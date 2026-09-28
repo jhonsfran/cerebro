@@ -9,6 +9,7 @@ import type { Session } from "./session";
 import { probeToolIsolation } from "./tool";
 import type { ToolBindings } from "./tool";
 
+export { MigrationControl } from "./migration-control";
 export { OpenCodeControl } from "./opencode-control";
 export { Session } from "./session";
 export { FixtureGateway } from "./tool";
@@ -18,6 +19,7 @@ type SliceBindings = AuthSettings &
     DATABASE_URL: string;
     SESSION: DurableObjectNamespace<Session>;
     OPENCODE_CONTROL: DurableObjectNamespace;
+    MIGRATION_CONTROL: DurableObjectNamespace;
   };
 const app = new Hono<{ Bindings: SliceBindings }>();
 const connectionPattern = /postgres(?:ql)?:\/\/[^\s"']+/giu;
@@ -90,6 +92,13 @@ app.get("/private", async (c) => {
   return c.json({ ok: true, user: session.user });
 });
 
+app.all(
+  "/control/migration/:name/*",
+  async (c) =>
+    await c.env.MIGRATION_CONTROL.get(
+      c.env.MIGRATION_CONTROL.idFromName(c.req.param("name"))
+    ).fetch(c.req.raw)
+);
 app.get(
   "/control/opencode/:name",
   async (c) =>

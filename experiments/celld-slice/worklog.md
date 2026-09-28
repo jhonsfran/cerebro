@@ -32,3 +32,22 @@
 - [x] Verify.
 
 The runtime verification produced a failed gate. See evidence/06-fresh-project.json and evidence/07-validation.md. The prototype decision is to stop dependent work at the shared database initialization conflict. No production feature or PR is part of this run.
+
+## OpenCode compatibility fix
+
+1. Reproduce it yourself on the matching surface via the control skill (Non-negotiables).
+   Done. Evidence 06 records the real celld failure on new volumes.
+2. Binary-search the cause.
+   Done. Agent tables fail; empty application storage initializes. OpenCode bootstrap owns the rejection.
+3. Plan the fix.
+   Keep the public API. Filter only exact foreign table names in the existing bootstrap census. Preserve all existing migration branches. One delegate owns dependency patching; the lead owns runtime probes and the receipt.
+4. Verify on the same surface.
+   Passed on celld at the tested 256 MiB heap limit. Fresh composition, pre-existing application tables, unknown and partial schemas, current/pending/legacy-name migrations, and existing sessions after restart. The final fresh-volume run also passes every executed probe. Gate 0 remains incomplete for the unrun criteria.
+5. Stage the commits so the failing repro lands before the fix in git history.
+   Done. The failing runtime check is in 24c4e20. The patch will be a later commit.
+6. Run Opening a PR.
+   Skip external publication for this local feasibility experiment. Commit the evidence for review.
+
+### Throughput checkpoint
+
+The package patch and test fixture changes have separate file owners. Deployment is serial and controlled by the lead. Use the existing cerebro-slice project and persistent volumes, then a distinct project for fresh storage. The required outcome is the schema compatibility fix; remaining Session 0 criteria keep their own result states.

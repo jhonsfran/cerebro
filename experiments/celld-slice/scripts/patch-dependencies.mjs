@@ -1,4 +1,5 @@
 import { deepStrictEqual, equal } from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
 
@@ -57,5 +58,76 @@ if (isDeepStrictEqual(currentExport, patchedExport)) {
   await writeFile(packagePath, `${JSON.stringify(manifest, null, 2)}\n`);
   process.stdout.write(
     "Applied @better-auth/utils@0.4.2 celld password export patch\n"
+  );
+}
+
+const corePackagePath = new URL(
+  "../node_modules/@opencode-ai/core/package.json",
+  import.meta.url
+);
+const coreManifest = JSON.parse(await readFile(corePackagePath, "utf-8"));
+equal(
+  coreManifest.name,
+  "@opencode-ai/core",
+  "Unexpected OpenCode core package"
+);
+equal(
+  coreManifest.version,
+  "0.0.0-dev-18697",
+  "Reassess the OpenCode shared-storage patch before upgrading"
+);
+
+const migrationPath = new URL(
+  "dist/chunks/file-mutation-vp77fm2w.js",
+  corePackagePath
+);
+const migrationSource = await readFile(migrationPath, "utf-8");
+const migrationHash = createHash("sha256")
+  .update(migrationSource)
+  .digest("hex");
+const originalMigrationHash =
+  "35dbf314aa1037ff64b37d0b41333b5eb5113fb0031bc3f093ef050b35983466";
+const patchedMigrationHash =
+  "1b507d14bae45959877de20936cd6698e4fb3cb409ea261a71c14dd6f0674f70";
+
+if (migrationHash === patchedMigrationHash) {
+  process.stdout.write(
+    "@opencode-ai/core shared-storage census patch already applied\n"
+  );
+} else {
+  equal(
+    migrationHash,
+    originalMigrationHash,
+    "Unexpected OpenCode migration source; refusing to patch"
+  );
+  const originalCensus =
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND substr(name, 1, 1) <> '_'";
+  const sharedTables = [
+    "cf_agent_tool_runs",
+    "cf_agents_facet_runs",
+    "cf_agents_fibers",
+    "cf_agents_jobs",
+    "cf_agents_mcp_servers",
+    "cf_agents_runs",
+    "cf_agents_state",
+    "cf_agents_task_runs",
+    "cf_agents_task_steps",
+    "cf_agents_workflows",
+    "cerebro_session",
+    "cerebro_operation",
+  ];
+  const patchedCensus = `${originalCensus} AND name NOT IN (${sharedTables.map((name) => `'${name}'`).join(", ")})`;
+  const patchedMigration = migrationSource.replace(
+    originalCensus,
+    patchedCensus
+  );
+  equal(
+    createHash("sha256").update(patchedMigration).digest("hex"),
+    patchedMigrationHash,
+    "OpenCode migration replacement did not match the reviewed patch"
+  );
+  await writeFile(migrationPath, patchedMigration);
+  process.stdout.write(
+    "Applied @opencode-ai/core shared-storage census patch\n"
   );
 }

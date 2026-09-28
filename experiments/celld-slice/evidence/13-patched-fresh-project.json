@@ -1,0 +1,577 @@
+{
+  "gate": "incomplete",
+  "results": [
+    {
+      "durationMs": 20,
+      "evidence": {
+        "status": 200
+      },
+      "id": "api.health",
+      "status": "pass"
+    },
+    {
+      "durationMs": 40,
+      "evidence": {
+        "ok": true,
+        "committedKey": "commit-56a4faa8-9689-4ee1-b6db-b5fcc4dd2b92",
+        "rolledBackKey": "rollback-56a4faa8-9689-4ee1-b6db-b5fcc4dd2b92",
+        "value": "56a4faa8-9689-4ee1-b6db-b5fcc4dd2b92"
+      },
+      "id": "database.transactions",
+      "status": "pass"
+    },
+    {
+      "durationMs": 4581,
+      "evidence": {
+        "idleMs": 1500,
+        "requests": 3
+      },
+      "id": "database.event-lifetime",
+      "status": "pass"
+    },
+    {
+      "durationMs": 3,
+      "evidence": {
+        "credentials": true,
+        "header": "content-type",
+        "method": "POST",
+        "origin": "http://localhost:18765",
+        "status": 204
+      },
+      "id": "auth.cors",
+      "status": "pass"
+    },
+    {
+      "durationMs": 15,
+      "evidence": {
+        "status": 403
+      },
+      "id": "auth.untrusted-origin",
+      "status": "pass"
+    },
+    {
+      "durationMs": 110,
+      "evidence": {
+        "userId": "TKt1Utt8mcl2WyJ9EXOFv7TMYUZGROPj"
+      },
+      "id": "auth.signup",
+      "status": "pass"
+    },
+    {
+      "durationMs": 118,
+      "evidence": {
+        "oldCookieStatus": 401,
+        "signedIn": true
+      },
+      "id": "auth.session-lifecycle",
+      "status": "pass"
+    },
+    {
+      "durationMs": 63,
+      "evidence": {
+        "status": 401
+      },
+      "id": "auth.invalid-credentials",
+      "status": "pass"
+    },
+    {
+      "durationMs": 413,
+      "evidence": {
+        "conversation": "12e11cab-3ffe-45f1-97d9-d6e6c268bd06",
+        "tables": [
+          {
+            "name": "_cf_ALARM"
+          },
+          {
+            "name": "_cf_FACETS"
+          },
+          {
+            "name": "_cf_KV"
+          },
+          {
+            "name": "_cf_METADATA"
+          },
+          {
+            "name": "_cf_WAKE"
+          },
+          {
+            "name": "_litestream_lock"
+          },
+          {
+            "name": "_litestream_seq"
+          },
+          {
+            "name": "cf_agent_tool_runs"
+          },
+          {
+            "name": "cf_agents_facet_runs"
+          },
+          {
+            "name": "cf_agents_fibers"
+          },
+          {
+            "name": "cf_agents_jobs"
+          },
+          {
+            "name": "cf_agents_mcp_servers"
+          },
+          {
+            "name": "cf_agents_runs"
+          },
+          {
+            "name": "cf_agents_state"
+          },
+          {
+            "name": "cf_agents_task_runs"
+          },
+          {
+            "name": "cf_agents_task_steps"
+          },
+          {
+            "name": "cf_agents_workflows"
+          }
+        ]
+      },
+      "id": "agent.base-storage",
+      "status": "pass"
+    },
+    {
+      "durationMs": 75,
+      "evidence": {
+        "health": {
+          "healthy": true,
+          "version": "unknown",
+          "pid": 1
+        },
+        "ok": true,
+        "tablesBefore": [
+          {
+            "name": "_cf_ALARM"
+          },
+          {
+            "name": "_cf_FACETS"
+          },
+          {
+            "name": "_cf_KV"
+          },
+          {
+            "name": "_cf_METADATA"
+          },
+          {
+            "name": "_cf_WAKE"
+          },
+          {
+            "name": "_litestream_lock"
+          },
+          {
+            "name": "_litestream_seq"
+          }
+        ]
+      },
+      "id": "agent.opencode-empty-storage-control",
+      "status": "pass"
+    },
+    {
+      "durationMs": 33,
+      "evidence": {
+        "error": "Database is not empty and has no session table",
+        "status": 500,
+        "tablesAfter": [
+          {
+            "name": "_cf_ALARM"
+          },
+          {
+            "name": "_cf_FACETS"
+          },
+          {
+            "name": "_cf_KV"
+          },
+          {
+            "name": "_cf_METADATA"
+          },
+          {
+            "name": "_cf_WAKE"
+          },
+          {
+            "name": "_litestream_lock"
+          },
+          {
+            "name": "_litestream_seq"
+          },
+          {
+            "name": "unknown_fixture"
+          }
+        ]
+      },
+      "id": "migration.rejects-unknown",
+      "status": "pass"
+    },
+    {
+      "durationMs": 32,
+      "evidence": {
+        "error": "Database is not empty and has no session table",
+        "status": 500,
+        "tablesAfter": [
+          {
+            "name": "_cf_ALARM"
+          },
+          {
+            "name": "_cf_FACETS"
+          },
+          {
+            "name": "_cf_KV"
+          },
+          {
+            "name": "_cf_METADATA"
+          },
+          {
+            "name": "_cf_WAKE"
+          },
+          {
+            "name": "_litestream_lock"
+          },
+          {
+            "name": "_litestream_seq"
+          },
+          {
+            "name": "cerebro_unknown"
+          }
+        ]
+      },
+      "id": "migration.rejects-similar-cerebro-prefix",
+      "status": "pass"
+    },
+    {
+      "durationMs": 36,
+      "evidence": {
+        "error": "Database is not empty and has no session table",
+        "status": 500,
+        "tablesAfter": [
+          {
+            "name": "_cf_ALARM"
+          },
+          {
+            "name": "_cf_FACETS"
+          },
+          {
+            "name": "_cf_KV"
+          },
+          {
+            "name": "_cf_METADATA"
+          },
+          {
+            "name": "_cf_WAKE"
+          },
+          {
+            "name": "_litestream_lock"
+          },
+          {
+            "name": "_litestream_seq"
+          },
+          {
+            "name": "project"
+          }
+        ]
+      },
+      "id": "migration.rejects-partial",
+      "status": "pass"
+    },
+    {
+      "durationMs": 36,
+      "evidence": {
+        "error": "Database is not empty and has no session table",
+        "status": 500,
+        "tablesAfter": [
+          {
+            "name": "_cf_ALARM"
+          },
+          {
+            "name": "_cf_FACETS"
+          },
+          {
+            "name": "_cf_KV"
+          },
+          {
+            "name": "_cf_METADATA"
+          },
+          {
+            "name": "_cf_WAKE"
+          },
+          {
+            "name": "_litestream_lock"
+          },
+          {
+            "name": "_litestream_seq"
+          },
+          {
+            "name": "cf_agents_unknown"
+          }
+        ]
+      },
+      "id": "migration.rejects-similar-agent-prefix",
+      "status": "pass"
+    },
+    {
+      "durationMs": 385,
+      "evidence": {
+        "existingTablesPreserved": true,
+        "ledgerProbe": {
+          "id": "schema-fixture",
+          "result": "preserved"
+        },
+        "name": "657b618a-e281-440a-bb04-c4e711bde539",
+        "sessionId": "ses_f15eb1b02ffdwEyROtfnfmt3Hg"
+      },
+      "id": "agent.durable-sqlite",
+      "status": "pass"
+    },
+    {
+      "durationMs": 302,
+      "evidence": {
+        "conversation": "12e11cab-3ffe-45f1-97d9-d6e6c268bd06",
+        "model": {
+          "location": {
+            "directory": "/",
+            "project": {
+              "id": "e22c0befcd3aab577c593974d56decf884468691",
+              "directory": "/",
+              "canonical": "/"
+            }
+          },
+          "data": {
+            "id": "deterministic",
+            "modelID": "deterministic",
+            "providerID": "fixture",
+            "name": "Deterministic fixture",
+            "package": "@opencode-ai/ai/providers/openai-compatible",
+            "settings": {
+              "apiKey": "fixture",
+              "baseURL": "http://fixture:8090/v1"
+            },
+            "capabilities": {
+              "tools": true,
+              "input": [
+                "text"
+              ],
+              "output": [
+                "text"
+              ]
+            },
+            "variants": [],
+            "time": {
+              "released": 0
+            },
+            "cost": [],
+            "status": "active",
+            "enabled": true,
+            "limit": {
+              "context": 32768,
+              "output": 1024
+            }
+          }
+        },
+        "sessionId": "ses_f15eb19a3ffdmcZEA4PdxcAfJ4"
+      },
+      "id": "agent.composition",
+      "status": "pass"
+    },
+    {
+      "durationMs": 200,
+      "evidence": {
+        "coverage": "loop-only",
+        "model": {
+          "location": {
+            "directory": "/",
+            "project": {
+              "id": "e22c0befcd3aab577c593974d56decf884468691",
+              "directory": "/",
+              "canonical": "/"
+            }
+          },
+          "data": {
+            "id": "deterministic",
+            "modelID": "deterministic",
+            "providerID": "fixture",
+            "name": "Deterministic fixture",
+            "package": "@opencode-ai/ai/providers/openai-compatible",
+            "settings": {
+              "apiKey": "fixture",
+              "baseURL": "http://fixture:8090/v1"
+            },
+            "capabilities": {
+              "tools": true,
+              "input": [
+                "text"
+              ],
+              "output": [
+                "text"
+              ]
+            },
+            "variants": [],
+            "time": {
+              "released": 0
+            },
+            "cost": [],
+            "status": "active",
+            "enabled": true,
+            "limit": {
+              "context": 32768,
+              "output": 1024
+            }
+          }
+        },
+        "ok": true,
+        "operationId": "f2afbd91-e4b6-4e04-8f62-abb372bd5189",
+        "reply": "Cerebro fixture completed.",
+        "sessionId": "ses_f15eb19a3ffdmcZEA4PdxcAfJ4",
+        "toolCalls": 1
+      },
+      "id": "agent.fixture-loop",
+      "status": "pass"
+    },
+    {
+      "durationMs": 335,
+      "evidence": {
+        "messages": 0,
+        "separateSessionId": "ses_f15eb1793ffdzN63CqOyrg4UyE"
+      },
+      "id": "agent.isolation",
+      "status": "pass"
+    },
+    {
+      "durationMs": 8,
+      "evidence": {
+        "fixtureReachable": true,
+        "fixtureStatus": 200,
+        "observations": {
+          "direct": {
+            "denied": true,
+            "error": "This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world."
+          },
+          "capability": {
+            "status": 200,
+            "body": {
+              "capability": true,
+              "ok": true
+            }
+          }
+        },
+        "workerStatus": 200
+      },
+      "id": "tools.egress",
+      "status": "pass"
+    },
+    {
+      "id": "database.tls-verified",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "database.private-ca",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "database.restart",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "auth.restart",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "auth.browser",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "agent.reconnect",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "agent.real-provider",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "tools.broker",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "tools.secrets",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "tools.approval",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "tools.replay",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "recovery.before-model",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "recovery.approval",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "recovery.idempotent-effect",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "recovery.unknown-effect",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "recovery.completed",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "recovery.wakeup",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "recovery.postgres-outage",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "recovery.minio-outage",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "baseline.one-session",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "baseline.ten-sessions",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    },
+    {
+      "id": "deployment.clean-rebuild",
+      "reason": "This stage has not produced runtime evidence",
+      "status": "not-run"
+    }
+  ],
+  "runtime": "celld 0.6.0",
+  "timestamp": "2026-09-28T22:13:54.211Z"
+}

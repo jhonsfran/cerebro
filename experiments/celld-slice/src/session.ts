@@ -37,7 +37,7 @@ export class Session extends Agent<SessionEnvironment> {
                   output: ["text"],
                   tools: true,
                 },
-                limit: { context: 8192, output: 1024 },
+                limit: { context: 32_768, output: 1024 },
                 name: "Deterministic fixture",
               },
             },
@@ -95,15 +95,37 @@ export class Session extends Agent<SessionEnvironment> {
     return { client, sessionId };
   }
 
+  private schemaProbe(request: Request): Response | undefined {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith("/seed-ledger") && request.method === "POST") {
+      const ledger = this.storage();
+      if (!ledger.operation("schema-fixture")) {
+        ledger.start("schema-fixture");
+        ledger.complete("schema-fixture", "preserved");
+      }
+      return Response.json({ ok: true });
+    }
+    if (path.endsWith("/storage")) {
+      const tables = this.ctx.storage.sql
+        .exec<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
+        )
+        .toArray();
+      const ledgerProbe = tables.some(
+        (table) => table.name === "cerebro_operation"
+      )
+        ? (this.storage().operation("schema-fixture") ?? null)
+        : null;
+      return Response.json({ ledgerProbe, ok: true, tables });
+    }
+    return undefined;
+  }
+
   async onRequest(request: Request): Promise<Response> {
     try {
-      if (new URL(request.url).pathname.endsWith("/storage")) {
-        const tables = this.ctx.storage.sql
-          .exec<{ name: string }>(
-            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
-          )
-          .toArray();
-        return Response.json({ ok: true, tables });
+      const probe = this.schemaProbe(request);
+      if (probe) {
+        return probe;
       }
       this.embedded ??= this.initialize();
       const { client, sessionId } = await this.embedded;
