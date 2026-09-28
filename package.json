@@ -1,0 +1,40 @@
+{
+  "name": "cerebro",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "check-types": "turbo run check-types",
+    "dev:web": "turbo run dev:bare -F web --",
+    "dev:server": "turbo run dev:bare -F hono --",
+    "db:generate": "turbo run db:generate -F @cerebro/db --",
+    "deploy": "turbo run deploy -F @cerebro/infra --",
+    "destroy": "turbo run destroy -F @cerebro/infra --",
+    "env:generate": "varlock codegen --path ./apps/web/ && varlock codegen --path ./apps/server/ && varlock codegen --path ./packages/db/",
+    "postinstall": "varlock codegen --path ./apps/web/ && varlock codegen --path ./apps/server/ && varlock codegen --path ./packages/db/",
+    "check": "ultracite check",
+    "fix": "ultracite fix",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cerebro/config": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
+    "@types/node": "catalog:",
+    "husky": "latest",
+    "oxfmt": "latest",
+    "oxlint": "latest",
+    "turbo": "^2.10.12",
+    "typescript": "catalog:",
+    "ultracite": "7.11.0",
+    "varlock": "catalog:"
+  },
+  "packageManager": "pnpm@11.9.0"
+}
