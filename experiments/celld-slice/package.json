@@ -1,0 +1,24 @@
+{
+  "name": "@cerebro/celld-slice",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "0.0.0-dev-18697",
+    "agents": "0.24.0",
+    "aws4fetch": "1.0.20",
+    "better-auth": "1.7.6",
+    "drizzle-orm": "0.45.3",
+    "hono": "4.13.10",
+    "postgres": "3.4.9"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260927.1",
+    "@types/node": "26.6.3",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3"
+  }
+}

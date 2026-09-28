@@ -1,0 +1,110 @@
+x-experiment: &experiment
+  image: cerebro-slice-experiment
+
+x-storage-env: &storage-env
+  AWS_ACCESS_KEY_ID: slice-local-only
+  AWS_SECRET_ACCESS_KEY: slice-local-only-storage-secret
+  AWS_REGION: us-east-1
+
+x-minio: &minio
+  image: cerebro-slice-minio
+  command: [server, /data, --console-address, ":9001"]
+  environment:
+    MINIO_ROOT_USER: slice-local-only
+    MINIO_ROOT_PASSWORD: slice-local-only-storage-secret
+  healthcheck:
+    test: [CMD, node, -e, "fetch('http://localhost:9000/minio/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+    interval: 2s
+    timeout: 5s
+    retries: 30
+
+services:
+  postgres:
+    image: postgres:17.9-bookworm@sha256:47f917f7409eacd22fc5dfb1dee634e1b55cf0c01d1a7eb701be2227a03e0641
+    environment:
+      POSTGRES_USER: slice
+      POSTGRES_PASSWORD: slice-local-only
+      POSTGRES_DB: slice
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U slice -d slice]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  minio-runtime:
+    <<: *minio
+    build:
+      context: .
+      target: minio
+    volumes:
+      - minio-runtime:/data
+  minio-artifacts:
+    <<: *minio
+    depends_on:
+      minio-runtime:
+        condition: service_healthy
+    volumes:
+      - minio-artifacts:/data
+  bootstrap:
+    <<: *experiment
+    build:
+      context: .
+      target: experiment
+    command: [node, scripts/bootstrap.mjs]
+    environment:
+      <<: *storage-env
+      DATABASE_URL: postgres://slice:slice-local-only@postgres:5432/slice
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-runtime:
+        condition: service_healthy
+      minio-artifacts:
+        condition: service_healthy
+  celld:
+    <<: *experiment
+    command: [celld, --bucket, "s3://cerebro-runtime", --endpoint, "http://minio-runtime:9000", --region, us-east-1, --listen, "0.0.0.0:8080", --internal-listen, "0.0.0.0:8081", --advertise, "celld:8081"]
+    environment:
+      <<: *storage-env
+      CELLD_WATCH: /var/lib/celld/state
+      CELLD_DURABILITY: bucket
+      CELLD_TELEMETRY: "0"
+    ports:
+      - "127.0.0.1:18765:8080"
+    volumes:
+      - celld:/var/lib/celld
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://localhost:8080/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  fixture:
+    <<: *experiment
+    command: [node, fixtures/provider.ts]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://localhost:8090/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  check:
+    <<: *experiment
+    profiles: [check]
+    environment:
+      BASE_URL: http://celld:8080
+      DATABASE_URL: postgres://slice:slice-local-only@postgres:5432/slice
+    volumes:
+      - ./results:/results
+    depends_on:
+      celld:
+        condition: service_healthy
+      fixture:
+        condition: service_healthy
+volumes:
+  postgres:
+  minio-runtime:
+  minio-artifacts:
+  celld:

@@ -1,0 +1,52 @@
+{
+  "name": "cerebro-celld-slice",
+  "main": "src/api.ts",
+  "compatibility_date": "2026-09-28",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "DATABASE_URL": "postgres://slice:slice-local-only@postgres:5432/slice",
+    "AUTH_SECRET": "slice-local-only-auth-secret-do-not-use-in-production-000000000000",
+    "AUTH_URL": "http://localhost:18765",
+    "FIXTURE_URL": "http://fixture:8090"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SESSION",
+        "class_name": "Session"
+      },
+      {
+        "name": "OPENCODE_CONTROL",
+        "class_name": "OpenCodeControl"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "Session"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "OpenCodeControl"
+      ]
+    }
+  ],
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+  "services": [
+    {
+      "binding": "GATEWAY",
+      "service": "cerebro-celld-slice",
+      "entrypoint": "FixtureGateway"
+    }
+  ]
+}

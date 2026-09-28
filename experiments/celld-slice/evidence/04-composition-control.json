@@ -1,0 +1,328 @@
+{
+  "timestamp": "2026-09-28T21:18:24.888Z",
+  "runtime": "celld 0.6.0",
+  "gate": "incomplete",
+  "results": [
+    {
+      "id": "api.health",
+      "status": "pass",
+      "durationMs": 24,
+      "evidence": {
+        "status": 200
+      }
+    },
+    {
+      "id": "database.transactions",
+      "status": "pass",
+      "durationMs": 39,
+      "evidence": {
+        "ok": true,
+        "committedKey": "commit-d6e7db1f-f1bc-4dae-841e-8fae6ba1f9af",
+        "rolledBackKey": "rollback-d6e7db1f-f1bc-4dae-841e-8fae6ba1f9af",
+        "value": "d6e7db1f-f1bc-4dae-841e-8fae6ba1f9af"
+      }
+    },
+    {
+      "id": "database.event-lifetime",
+      "status": "pass",
+      "durationMs": 4590,
+      "evidence": {
+        "requests": 3,
+        "idleMs": 1500
+      }
+    },
+    {
+      "id": "auth.cors",
+      "status": "pass",
+      "durationMs": 3,
+      "evidence": {
+        "origin": "http://localhost:18765",
+        "credentials": true
+      }
+    },
+    {
+      "id": "auth.untrusted-origin",
+      "status": "pass",
+      "durationMs": 16,
+      "evidence": {
+        "status": 403
+      }
+    },
+    {
+      "id": "auth.signup",
+      "status": "pass",
+      "durationMs": 92,
+      "evidence": {
+        "userId": "jv0B6m7MNmdZ5uxNpMnyRilZwoHuV8gC"
+      }
+    },
+    {
+      "id": "auth.session-lifecycle",
+      "status": "pass",
+      "durationMs": 113,
+      "evidence": {
+        "signedIn": true,
+        "oldCookieStatus": 401
+      }
+    },
+    {
+      "id": "auth.invalid-credentials",
+      "status": "pass",
+      "durationMs": 63,
+      "evidence": {
+        "status": 401
+      }
+    },
+    {
+      "id": "agent.base-storage",
+      "status": "pass",
+      "durationMs": 464,
+      "evidence": {
+        "conversation": "844c76e8-dd25-4678-a8dd-33c4aa9aa160",
+        "tables": [
+          {
+            "name": "_cf_ALARM"
+          },
+          {
+            "name": "_cf_FACETS"
+          },
+          {
+            "name": "_cf_KV"
+          },
+          {
+            "name": "_cf_METADATA"
+          },
+          {
+            "name": "_cf_WAKE"
+          },
+          {
+            "name": "_litestream_lock"
+          },
+          {
+            "name": "_litestream_seq"
+          },
+          {
+            "name": "cf_agent_tool_runs"
+          },
+          {
+            "name": "cf_agents_facet_runs"
+          },
+          {
+            "name": "cf_agents_fibers"
+          },
+          {
+            "name": "cf_agents_jobs"
+          },
+          {
+            "name": "cf_agents_mcp_servers"
+          },
+          {
+            "name": "cf_agents_runs"
+          },
+          {
+            "name": "cf_agents_state"
+          },
+          {
+            "name": "cf_agents_task_runs"
+          },
+          {
+            "name": "cf_agents_task_steps"
+          },
+          {
+            "name": "cf_agents_workflows"
+          }
+        ]
+      }
+    },
+    {
+      "id": "agent.opencode-empty-storage-control",
+      "status": "pass",
+      "durationMs": 92,
+      "evidence": {
+        "ok": true,
+        "health": {
+          "healthy": true,
+          "version": "unknown",
+          "pid": 1
+        },
+        "tablesBefore": [
+          {
+            "name": "_cf_ALARM"
+          },
+          {
+            "name": "_cf_FACETS"
+          },
+          {
+            "name": "_cf_KV"
+          },
+          {
+            "name": "_cf_METADATA"
+          },
+          {
+            "name": "_cf_WAKE"
+          },
+          {
+            "name": "_litestream_lock"
+          },
+          {
+            "name": "_litestream_seq"
+          }
+        ]
+      }
+    },
+    {
+      "id": "agent.composition",
+      "status": "fail",
+      "durationMs": 5,
+      "error": "{\"ok\":false,\"error\":\"Database is not empty and has no session table\"}\n\n500 !== 200\n"
+    },
+    {
+      "id": "agent.fixture-loop",
+      "status": "not-run",
+      "reason": "Agent composition failed"
+    },
+    {
+      "id": "agent.isolation",
+      "status": "not-run",
+      "reason": "Agent composition failed"
+    },
+    {
+      "id": "tools.egress",
+      "status": "pass",
+      "durationMs": 11,
+      "evidence": {
+        "fixtureReachable": true,
+        "fixtureStatus": 200,
+        "workerStatus": 200,
+        "observations": {
+          "direct": {
+            "denied": true,
+            "error": "This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world."
+          },
+          "capability": {
+            "status": 200,
+            "body": {
+              "ok": true,
+              "capability": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "database.tls-verified",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "database.private-ca",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "database.restart",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "auth.restart",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "auth.browser",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "agent.durable-sqlite",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "agent.reconnect",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "agent.real-provider",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "tools.broker",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "tools.secrets",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "tools.approval",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "tools.replay",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "recovery.before-model",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "recovery.approval",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "recovery.idempotent-effect",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "recovery.unknown-effect",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "recovery.completed",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "recovery.wakeup",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "recovery.postgres-outage",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "recovery.minio-outage",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "baseline.one-session",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "baseline.ten-sessions",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    },
+    {
+      "id": "deployment.clean-rebuild",
+      "status": "not-run",
+      "reason": "This stage has not produced runtime evidence"
+    }
+  ]
+}

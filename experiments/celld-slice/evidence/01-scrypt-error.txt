@@ -1,0 +1,7 @@
+celld 0.6.0
+Better Auth 1.7.6
+@better-auth/utils 0.4.2
+POST /api/auth/sign-up/email returned HTTP 500
+ERROR # SERVER_ERROR: Error [ERR_METHOD_NOT_IMPLEMENTED]: The scrypt method is not implemented
+    at generateKey (worker.js:36014:10)
+    at Object.hashPassword [as hash] (worker.js:36036:21)
