@@ -40,6 +40,8 @@ flowchart TD
 
 Sessions 2 through 6 can develop against contract fixtures after session 1. Their isolated checks do not prove the integrated system. Session 7 must test their real adapters together.
 
+**Session 3 gate note, 2026-09-29.** The user directed session 3 to continue without the publicly trusted Worker PostgreSQL TLS check. Its status is **skipped for session 3**, not passed. Gate 0 still lacks that result and a real model provider run. This exception does not qualify a production deployment.
+
 Start with three implementation chats at once. Run sessions 2, 3, and 4 first because they contain the main correctness risks. Start 5 and 6 when slots become free. Keep a coordinator chat for contracts, integration, and review.
 
 | Session | Branch | Start condition | Outcome |
@@ -155,15 +157,17 @@ Each subsystem owns separate PostgreSQL schema modules. The coordinator generate
 
 **Files.** Own `packages/auth/**`, `packages/authorization/**`, `packages/db/src/schema/{auth,identity}.ts`, `packages/db/src/repositories/identity.ts`, `packages/api/src/routers/identity.ts`, and `tests/identity/**`.
 
-- [ ] Map Better Auth users to stable internal principals. Keep provider identities separate from principal IDs.
-- [ ] Implement company membership, agent grants, connector grants, and explicit service delegation. Derive principal context on the server.
-- [ ] Implement an authorization policy over principal, action, resource, and context. Keep role names outside core execution logic.
-- [ ] Add Entra ID OIDC through Better Auth SSO. Validate issuer and subject. Restrict tenant and organization binding through administrator configuration.
-- [ ] Add SCIM provisioning and deactivation with explicit group-to-role mappings. Verify plugin behavior at the chosen Better Auth version.
+- [x] Map Better Auth users to stable internal principals. Keep provider identities separate from principal IDs.
+- [x] Implement company membership, agent grants, connector grants, and explicit service delegation. Derive principal context on the server.
+- [x] Implement an authorization policy over principal, action, resource, and context. Keep role names outside core execution logic.
+- [x] Add Entra ID OIDC through Better Auth SSO. Validate issuer and subject. Restrict tenant and organization binding through administrator configuration.
+- [x] Add SCIM provisioning and deactivation with explicit group-to-role mappings. Verify plugin behavior at the chosen Better Auth version.
 - [ ] Block disabled principals, revoke their sessions and delegations, and prevent resumed work from using removed permissions.
 - [ ] Recheck current authorization before sensitive reads, tool calls, approvals, and resumed execution. Do not rely on the membership snapshot from conversation creation.
-- [ ] Define a Slack account-link flow that proves both identities. Never grant access by matching an unverified email address.
-- [ ] Expose organization-scoped audit and usage export authorization. SSO claims do not grant budget increases.
+- [x] Define a Slack account-link flow that proves both identities. Never grant access by matching an unverified email address.
+- [x] Expose organization-scoped audit and usage export authorization. SSO claims do not grant budget increases.
+
+**Session 3 status, 2026-09-29.** Local OIDC, SCIM, PostgreSQL, and authorization checks pass. The real Entra round trip remains unrun. The disabled-principal and current-permission rules need integration at resumed execution and other sensitive runtime call sites in session 7; those two checklist items remain open. TLS is skipped for session 3 under the Gate 0 note above.
 
 **Verify.** Add `tests/identity/authorization.test.ts`, `tests/identity/oidc.test.ts`, and `tests/identity/scim.test.ts`. Run `rtk proxy pnpm test:identity`. Verify tenant mismatch, insufficient grants, deactivation during a paused run, expired delegation, group removal, and prevention of cross-company exports. Use a local OIDC and SCIM fixture first. Record a real Entra tenant round trip separately before claiming Entra compatibility.
 
