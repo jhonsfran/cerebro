@@ -28,10 +28,34 @@ export interface ToolCall {
 export interface ToolCapability {
   readonly organizationId: OrganizationId;
   readonly toolId: ToolId;
+  readonly toolVersion: string;
   readonly connectorId: string;
   readonly effect: "read" | "write";
+  readonly agentId: AgentId;
+  readonly principalId: PrincipalId;
+  readonly operationId: OperationId;
+  readonly argumentDigest: Digest;
   readonly expiresAt: number;
 }
+
+export const toolCapabilityMatches = (
+  capability: ToolCapability,
+  call: ToolCall,
+  options: EffectOptions,
+  now: number
+): boolean =>
+  isExecutionContextActiveAt(call.context, call.organizationId, now) &&
+  capability.organizationId === call.organizationId &&
+  capability.toolId === call.tool.id &&
+  capability.toolVersion === call.tool.version &&
+  capability.connectorId === call.tool.connectorId &&
+  capability.effect === call.tool.effect &&
+  capability.agentId === call.agentId &&
+  capability.principalId ===
+    (call.context.represented?.id ?? call.context.actor.id) &&
+  capability.operationId === options.operationId &&
+  capability.argumentDigest === options.requestDigest &&
+  capability.expiresAt > now;
 
 export type ToolInvocation = ToolCall & {
   readonly operationId: OperationId;

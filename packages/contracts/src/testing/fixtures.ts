@@ -3,7 +3,11 @@ import { id } from "../identity.ts";
 import type { ExecutionContext, Principal } from "../identity.ts";
 import type { BudgetReservation } from "../policy.ts";
 import type { PortResult } from "../port.ts";
-import type { ToolExecution, ToolInvocation } from "../tools.ts";
+import type {
+  ToolCapability,
+  ToolExecution,
+  ToolInvocation,
+} from "../tools.ts";
 
 export const fixtureOrganizationId = id.organization("organization-1");
 export const fixtureAgentId = id.agent("agent-1");
@@ -26,6 +30,13 @@ export const deniedUser: Principal = {
   state: "disabled",
 };
 
+export const activeDeniedUser: Principal = {
+  id: id.principal("user-active-denied"),
+  kind: "human",
+  organizationId: fixtureOrganizationId,
+  state: "active",
+};
+
 export const serviceActor: Principal = {
   id: id.principal("service-1"),
   kind: "service",
@@ -35,6 +46,9 @@ export const serviceActor: Principal = {
 
 export const allowedContext: ExecutionContext = { actor: allowedUser };
 export const deniedContext: ExecutionContext = { actor: deniedUser };
+export const activeDeniedContext: ExecutionContext = {
+  actor: activeDeniedUser,
+};
 
 export const expiredDelegationContext: ExecutionContext = {
   actor: serviceActor,
@@ -95,4 +109,17 @@ export const depletedBudget: PortResult<BudgetReservation> = {
   code: "budget-exhausted",
   reason: "No capacity remains for this organization.",
   status: "denied",
+};
+
+export const unknownOutcomeCapability: ToolCapability = {
+  agentId: fixtureAgentId,
+  argumentDigest: unknownOutcomeInvocation.argumentDigest,
+  connectorId: unknownOutcomeInvocation.tool.connectorId,
+  effect: unknownOutcomeInvocation.tool.effect,
+  expiresAt: 1_900_000_000_000,
+  operationId: unknownOutcomeInvocation.operationId,
+  organizationId: fixtureOrganizationId,
+  principalId: allowedUser.id,
+  toolId: fixtureToolId,
+  toolVersion: unknownOutcomeInvocation.tool.version,
 };

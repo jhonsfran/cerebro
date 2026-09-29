@@ -97,3 +97,33 @@ export const isExecutionContextActiveAt = (
     context.delegation.expiresAt > now
   );
 };
+
+export const sameExecutionContext = (
+  first: ExecutionContext,
+  second: ExecutionContext
+): boolean => {
+  const firstActor = first.actor;
+  const secondActor = second.actor;
+  if (
+    firstActor.id !== secondActor.id ||
+    firstActor.organizationId !== secondActor.organizationId ||
+    firstActor.kind !== secondActor.kind ||
+    firstActor.state !== secondActor.state
+  ) {
+    return false;
+  }
+  if (!first.delegation || !second.delegation) {
+    return !first.delegation && !second.delegation;
+  }
+  return (
+    first.delegation.id === second.delegation.id &&
+    first.delegation.organizationId === second.delegation.organizationId &&
+    first.delegation.actorId === second.delegation.actorId &&
+    first.delegation.representedId === second.delegation.representedId &&
+    first.delegation.expiresAt === second.delegation.expiresAt &&
+    first.represented.id === second.represented.id &&
+    first.represented.organizationId === second.represented.organizationId &&
+    first.represented.kind === second.represented.kind &&
+    first.represented.state === second.represented.state
+  );
+};

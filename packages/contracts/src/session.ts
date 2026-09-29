@@ -7,6 +7,7 @@ import type {
   RunId,
   SessionId,
 } from "./identity.ts";
+import type { Action, Resource } from "./policy.ts";
 import type { EffectOptions, PortResult, ReadOptions } from "./port.ts";
 
 export type RunState =
@@ -100,6 +101,11 @@ export interface SessionService {
   ) => AsyncIterable<PortResult<SessionStreamItem>>;
 }
 
+export interface AgentGrant {
+  readonly action: Action;
+  readonly resource: Resource;
+}
+
 export interface AgentDefinition {
   readonly organizationId: OrganizationId;
   readonly agentId: AgentId;
@@ -107,12 +113,14 @@ export interface AgentDefinition {
   readonly instructions: string;
   readonly model: string;
   readonly enabledToolIds: readonly string[];
+  readonly grants: readonly AgentGrant[];
 }
 
 export interface AgentRepository {
   readonly get: (
     organizationId: OrganizationId,
     agentId: AgentId,
+    version: number | "latest",
     options: ReadOptions
   ) => Promise<PortResult<AgentDefinition>>;
   readonly publish: (

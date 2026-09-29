@@ -1,3 +1,4 @@
+import { sameExecutionContext } from "./identity.ts";
 import type {
   AgentId,
   ConversationId,
@@ -54,10 +55,45 @@ export type EventEnvelope = EventAddress & {
   readonly event: SessionEvent;
 };
 
+const sameSessionEvent = (
+  first: SessionEvent,
+  second: SessionEvent
+): boolean => {
+  switch (first.type) {
+    case "user.message": {
+      return (
+        second.type === "user.message" &&
+        first.payload.text === second.payload.text
+      );
+    }
+    case "scheduled.run": {
+      return (
+        second.type === "scheduled.run" &&
+        first.payload.task === second.payload.task
+      );
+    }
+    case "approval.granted":
+    case "approval.rejected": {
+      return (
+        second.type === first.type &&
+        first.payload.approvalId === second.payload.approvalId &&
+        first.payload.operationId === second.payload.operationId
+      );
+    }
+    case "run.cancelled": {
+      return (
+        second.type === "run.cancelled" &&
+        first.payload.runId === second.payload.runId
+      );
+    }
+    default: {
+      return false;
+    }
+  }
+};
+
 export const classifyEventDelivery = (
-  prior:
-    | Pick<EventEnvelope, "eventId" | "payloadDigest" | keyof EventAddress>
-    | undefined,
+  prior: EventEnvelope | undefined,
   next: EventEnvelope
 ): "new" | "duplicate" | "conflict" => {
   if (!prior || prior.eventId !== next.eventId) {
@@ -67,7 +103,11 @@ export const classifyEventDelivery = (
     prior.organizationId === next.organizationId &&
     prior.agentId === next.agentId &&
     prior.conversationId === next.conversationId &&
-    prior.sessionId === next.sessionId
+    prior.sessionId === next.sessionId &&
+    prior.schemaVersion === next.schemaVersion &&
+    prior.occurredAt === next.occurredAt &&
+    sameExecutionContext(prior.context, next.context) &&
+    sameSessionEvent(prior.event, next.event)
     ? "duplicate"
     : "conflict";
 };

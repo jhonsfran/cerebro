@@ -23,6 +23,8 @@ export type PortResult<Value> =
       readonly reason: string;
       readonly retryAfter?: number;
     }
+  | { readonly status: "not-found"; readonly resource: string }
+  | { readonly status: "invalid-input"; readonly reason: string }
   | {
       readonly status: "unknown-outcome";
       readonly operationId: OperationId;
