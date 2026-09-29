@@ -2,7 +2,7 @@
 
 > **For agentic workers:** Use the `executing-plans` skill to execute one assigned session at a time. Use `subagent-driven-development` only when that session delegates work. These are the local equivalents of the `superpowers:` skill names. Check a box only when its evidence exists.
 
-**Goal:** Deliver a self-hosted company assistant with web chat, Slack direct messages, controlled MCP access, and durable execution.
+**Goal:** Deliver a self-hosted company assistant with web chat and durable execution. Enable Slack direct messages, controlled MCP access, and enterprise identity only when configured.
 
 **Architecture:** Run the Hono API and Better Auth in a normal celld Worker. Use one session Durable Object per company, agent, and conversation. Keep shared data in PostgreSQL and artifacts in MinIO.
 
@@ -40,7 +40,7 @@ flowchart TD
 
 Sessions 2 through 6 can develop against contract fixtures after session 1. Their isolated checks do not prove the integrated system. Session 7 must test their real adapters together.
 
-**Session 3 gate note, 2026-09-29.** The user directed session 3 to continue without the publicly trusted Worker PostgreSQL TLS check. Its status is **skipped for session 3**, not passed. Gate 0 still lacks that result and a real model provider run. This exception does not qualify a production deployment.
+**Session 3 gate note, 2026-09-29.** The user directed session 3 to continue without the publicly trusted Worker PostgreSQL TLS check. Its status is **skipped for session 3**, not passed. Gate 0 still lacks that result. A real model provider run applies when that provider is configured. This exception does not qualify a production deployment.
 
 Start with three implementation chats at once. Run sessions 2, 3, and 4 first because they contain the main correctness risks. Start 5 and 6 when slots become free. Keep a coordinator chat for contracts, integration, and review.
 
@@ -167,7 +167,7 @@ Each subsystem owns separate PostgreSQL schema modules. The coordinator generate
 - [x] Define a Slack account-link flow that proves both identities. Never grant access by matching an unverified email address.
 - [x] Expose organization-scoped audit and usage export authorization. SSO claims do not grant budget increases.
 
-**Session 3 status, 2026-09-29.** Local OIDC, SCIM, PostgreSQL, and authorization checks pass. The real Entra round trip remains unrun. The disabled-principal and current-permission rules need integration at resumed execution and other sensitive runtime call sites in session 7; those two checklist items remain open. TLS is skipped for session 3 under the Gate 0 note above.
+**Session 3 status, 2026-09-29.** Local OIDC, SCIM, PostgreSQL, and authorization checks pass. The real Entra round trip remains unrun and applies only when Entra is configured. The disabled-principal and current-permission rules need integration at enabled resumed execution and other sensitive runtime call sites in session 7; those two checklist items remain open. TLS is skipped for session 3 under the Gate 0 note above.
 
 **Verify.** Add `tests/identity/authorization.test.ts`, `tests/identity/oidc.test.ts`, and `tests/identity/scim.test.ts`. Run `rtk proxy pnpm test:identity`. Verify tenant mismatch, insufficient grants, deactivation during a paused run, expired delegation, group removal, and prevention of cross-company exports. Use a local OIDC and SCIM fixture first. Record a real Entra tenant round trip separately before claiming Entra compatibility.
 
@@ -264,11 +264,11 @@ Run these checks through the deployed API and UI:
 
 **Verify.** Run `rtk proxy pnpm test:integration`, `rtk proxy pnpm check-types`, `rtk proxy pnpm check`, and `rtk proxy pnpm build`. Record latency to first response, tool duration, restart recovery time, memory use, and database connections under a stated concurrent-session load. Compare measurements on the same machine and fixture configuration. Do not claim a capacity figure from a successful single-user test.
 
-**Exit condition.** A fresh installation passes the acceptance sequence. Real model, MCP, Entra, Unprice, Jev, and Slack results are recorded for the configured pilot. Missing credentials leave those provider checks open. The receipt identifies any deployment limit and recovery procedure.
+**Exit condition.** A fresh installation passes the acceptance sequence. Record live results for each model, MCP, Entra, Unprice, Jev, or Slack integration enabled in the pilot. Mark unconfigured integrations as not applicable. A configured integration cannot be marked ready without its live check. The receipt identifies any deployment limit and recovery procedure.
 
 ## Keep the pilot scope bounded
 
-Deliver one company per installation, with company IDs enforced in application data and policies. Include agent creation, web chat, Slack direct messages, one read-only MCP connector, cited retrieval, execution history, budget enforcement, and enterprise identity.
+Deliver one company per installation, with company IDs enforced in application data and policies. Include agent creation, web chat, cited retrieval, execution history, and budget enforcement. Enable Slack direct messages, one read-only MCP connector, and enterprise identity only when configured.
 
 Defer autonomous bug fixes, repository sandboxes, arbitrary uploaded code, facet-based sessions, shared Slack channels, SAML, a marketplace, a workflow editor, multi-region deployment, and Alchemy integration. The controlled write fixture proves approval and replay behavior without adding real external writes to the pilot.
 

@@ -1,6 +1,6 @@
 # Session 3 identity and authorization
 
-Status: local subsystem checks pass. Integrated execution and a real Entra tenant round trip remain unverified.
+Status: local subsystem checks pass. Enterprise identity is optional and activates only when configured. A real Entra tenant round trip is required only before enabling Entra for a deployment. Protected runtime call sites still need current policy checks when those paths are enabled.
 
 Branch: `codex/enterprise-identity`. Base commit: `38893f5`. The session owns `packages/auth/**`, `packages/authorization/**`, the identity schema and repository, the identity API router, and `tests/identity/**`. The coordinator changed shared package configuration, Worker routing and bindings, deployment bootstrap, and migration files in the same worktree.
 
@@ -21,7 +21,7 @@ The Worker PostgreSQL connection over publicly trusted TLS is **skipped for sess
 | SCIM Group `externalId` | Maps through explicit configured group IDs to role IDs. Display names do not grant roles. |
 | Email | Used as profile data only. Matching email addresses do not link identities or grant access. |
 
-The optional `enterprise-identity.json` file in the deployment secret directory supplies `organizationId`, `tenantId`, `issuer`, `providerId`, `domain`, `clientId`, `clientSecret`, `scimConnectionId`, `scimBearerToken`, and `groupRoles`. Bootstrap validates these values before deployment, creates the configured organization after migration if it is absent, and passes the file to the Worker as `ENTERPRISE_IDENTITY_JSON`. Readiness checks both database access and authentication setup. SAML has no configured provider in this pilot.
+The optional `enterprise-identity.json` file in the deployment secret directory supplies `organizationId`, `tenantId`, `issuer`, `providerId`, `domain`, `clientId`, `clientSecret`, `scimConnectionId`, `scimBearerToken`, and `groupRoles`. Without this file, Better Auth runs without enterprise SSO or SCIM plugins. When the file exists, bootstrap validates its values before deployment, creates the configured organization after migration if it is absent, and passes the file to the Worker as `ENTERPRISE_IDENTITY_JSON`. Readiness checks both database access and authentication setup. SAML has no configured provider in this pilot.
 
 ## Provisioning and revocation
 
@@ -43,4 +43,4 @@ The identity RPC resolves a principal from the authenticated Better Auth user. I
 | Scoped `oxlint` and `oxfmt` | Passed | Session 3 source and tests. |
 | `rtk proxy pnpm install --frozen-lockfile --offline` | Passed | Dependency lockfile consistency. |
 
-The PostgreSQL tests used an isolated temporary PostgreSQL 17 container and applied migrations `0000` and `0001` to a clean database. The local OIDC server served discovery and JWKS data, signed an RS256 ID token, checked PKCE, and completed the Better Auth callback. This is a local fixture, not an Entra result. A live Entra tenant round trip has not been run. Session 7 must connect current policy checks to sensitive reads, tool calls, approvals, and resumed execution; contract fixtures alone cannot verify those call sites. The repository-wide `pnpm check` remains red on existing UI and `.agents` files. Scoped lint and formatting pass for this session.
+The PostgreSQL tests used an isolated temporary PostgreSQL 17 container and applied migrations `0000` and `0001` to a clean database. The local OIDC server served discovery and JWKS data, signed an RS256 ID token, checked PKCE, and completed the Better Auth callback. This is a local fixture, not an Entra result. A live Entra tenant round trip has not been run. This does not block an installation without Entra configuration. Session 7 must connect current policy checks to each enabled sensitive read, tool call, approval, and resumed execution path; contract fixtures alone cannot verify those call sites. The repository-wide `pnpm check` remains red on existing UI and `.agents` files. Scoped lint and formatting pass for this session.
