@@ -1,0 +1,25 @@
+{
+  "name": "@cerebro/runtime",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/session-service.ts",
+    "./session-agent": "./src/session-agent.ts",
+    "./ledger": "./src/ledger.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@cerebro/contracts": "workspace:*",
+    "@opencode-ai/sdk": "0.0.0-dev-18697",
+    "agents": "0.24.0",
+    "drizzle-orm": "catalog:"
+  },
+  "devDependencies": {
+    "@cerebro/config": "workspace:*",
+    "@cloudflare/workers-types": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

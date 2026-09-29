@@ -1,0 +1,36 @@
+{
+  "name": "cerebro-runtime-test",
+  "main": "tests/runtime/worker.ts",
+  "compatibility_date": "2026-09-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "DATABASE_URL": "postgres://runtime:runtime-local-only@postgres:5432/runtime",
+    "DEPLOY_MODE": "fixture",
+    "FIXTURE_URL": "http://fixture:8090",
+    "TOOL_EFFECT_MODE": "idempotent",
+    "HOLD_AFTER_EFFECT": "1",
+    "FAIL_FIRST_EFFECT": "0",
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "SESSION", "class_name": "SessionAgent" },
+      { "name": "MIGRATION_PROBE", "class_name": "LedgerMigrationProbe" },
+    ],
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["SessionAgent"] },
+    { "tag": "v2", "new_sqlite_classes": ["LedgerMigrationProbe"] },
+  ],
+  "services": [
+    {
+      "binding": "TOOL_GATEWAY",
+      "service": "cerebro-runtime-test",
+      "entrypoint": "FixtureEffectGateway",
+    },
+    {
+      "binding": "AUDIT_SINK",
+      "service": "cerebro-runtime-test",
+      "entrypoint": "AuditSink",
+    },
+  ],
+}
