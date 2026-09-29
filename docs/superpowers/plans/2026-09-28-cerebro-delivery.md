@@ -179,21 +179,23 @@ Each subsystem owns separate PostgreSQL schema modules. The coordinator generate
 
 **Files.** Own `packages/tools/**`, `packages/policy/**`, `packages/db/src/schema/{connectors,usage}.ts`, `packages/db/src/repositories/{connectors,usage}.ts`, and `tests/policy/**`. Create `packages/tools/src/{broker,dynamic-worker,mcp-gateway,registry}.ts` and `packages/policy/src/{authorization-gate,local-budget,unprice-adapter,jev-adapter,decision-router}.ts`.
 
-- [ ] Send every enabled OpenCode tool call through the broker. Disable built-in capabilities that can bypass the broker.
-- [ ] Run tool wrappers in dynamic Workers with no ambient network access. Give each wrapper only the required service capability and deadline.
-- [ ] Keep connector credentials in the trusted gateway. Validate tool schemas, normalize arguments, cap output size, and propagate operation IDs to providers.
-- [ ] Implement a read-only MCP connector and a controlled write fixture. Keep real external writes outside this pilot.
-- [ ] Enforce authorization and entitlements before paid work. Reserve a bounded amount before Jev or model work, including work that ends in failure.
-- [ ] Implement a local budget authority with atomic reservations across sessions. Concurrent sessions must not each spend the same remaining balance.
-- [ ] Implement Unprice mapping behind the ports. Verify current SDK methods before mapping reserve, inspect, settle, release, and usage export. Do not treat a read-only access check as a reservation.
-- [ ] Make reservation retries stable. Reconcile timeouts with an unknown remote outcome. Settle incurred usage and release unused capacity without double accounting.
-- [ ] Implement Jev as a decision proposal for run, clarify, or defer. Record input digest, allowed choices, model version, output, and usage in the session ledger through the runtime contract.
-- [ ] Keep cancellation, approval, revocation, and ledger maintenance deterministic. Reuse accepted decisions on replay. Require hard policy checks after every proposed action.
-- [ ] Bind approval to tool version, normalized argument digest, principal, policy version, and expiry. A stale approval cannot authorize a changed request.
+- [x] Send every enabled OpenCode tool call through the broker. Disable built-in capabilities that can bypass the broker.
+- [x] Run tool wrappers in dynamic Workers with no ambient network access. Give each wrapper only the required service capability and deadline.
+- [x] Keep connector credentials in the trusted gateway. Validate tool schemas, normalize arguments, cap output size, and propagate operation IDs to providers.
+- [x] Implement a read-only MCP connector and a controlled write fixture. Keep real external writes outside this pilot.
+- [x] Enforce authorization and entitlements before paid work. Reserve a bounded amount before Jev or model work, including work that ends in failure.
+- [x] Implement a local budget authority with atomic reservations across sessions. Concurrent sessions must not each spend the same remaining balance.
+- [x] Implement Unprice mapping behind the ports. Verify current SDK methods before mapping reserve, inspect, settle, release, and usage export. Do not treat a read-only access check as a reservation.
+- [x] Make reservation retries stable. Reconcile timeouts with an unknown remote outcome. Settle incurred usage and release unused capacity without double accounting.
+- [x] Implement Jev as a decision proposal for run, clarify, or defer. Record input digest, allowed choices, model version, output, and usage in the session ledger through the runtime contract.
+- [x] Keep cancellation, approval, revocation, and ledger maintenance deterministic. Reuse accepted decisions on replay. Require hard policy checks after every proposed action.
+- [x] Bind approval to tool version, normalized argument digest, principal, policy version, and expiry. A stale approval cannot authorize a changed request.
 
 **Verify.** Add `tests/policy/tool-boundary.test.ts`, `tests/policy/budget-concurrency.test.ts`, and `tests/policy/decision.test.ts`. Run `rtk proxy pnpm test:policy`. Prove denied egress, denied connector access, no tool bypass, two sessions competing for one reservation, timeout reconciliation, rejected stale approval, and a Jev proposal that cannot override a denial. Exercise local fixtures without credentials. Verify external adapters separately with non-production configuration.
 
 **Handoff.** Record SDK method mappings, enforced cost bounds, and fixture versus provider results in `docs/implementation/session-4.md`.
+
+**Status, 2026-09-29.** Adapters and local fixtures are implemented and verified at `42406ec`; see the Session 4 receipt. Production runtime composition remains Session 7 work. Live provider checks and inherited Gate 0 Worker PostgreSQL TLS qualification remain unrun.
 
 ## Implement memory and retrieval, session 5
 
