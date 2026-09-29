@@ -37,7 +37,7 @@ import type {
   SessionService,
   SessionSnapshot,
 } from "../session.ts";
-import { toolCapabilityMatches } from "../tools.ts";
+import { canonicalToolArguments, toolCapabilityMatches } from "../tools.ts";
 import type { ToolExecution, ToolExecutor } from "../tools.ts";
 import {
   allowedUser,
@@ -69,6 +69,9 @@ export interface FixtureAdapters {
   readonly sessionService: SessionService;
   readonly memoryStore: MemoryStore;
 }
+
+const requestKey = (...fields: readonly unknown[]): string =>
+  canonicalToolArguments(fields);
 
 const conflict = (reason: string): PortFailure => ({
   code: "digest-mismatch",
@@ -221,30 +224,36 @@ export const createFixtureAdapters = (
   interface BudgetEffect {
     readonly kind: "reserve" | "settle" | "release";
     readonly digest: Digest;
+    readonly request: string;
     readonly result: PortResult<BudgetReservation>;
   }
   const budgetEffects = new Map<OperationId, BudgetEffect>();
   const reservations = new Map<ReservationId, BudgetReservation>();
   const budgetReplay = (
     kind: BudgetEffect["kind"],
-    effect: EffectOptions
+    effect: EffectOptions,
+    request: string
   ): PortResult<BudgetReservation> | undefined => {
     const prior = budgetEffects.get(effect.operationId);
     if (!prior) {
       return undefined;
     }
-    return prior.kind === kind && prior.digest === effect.requestDigest
+    return prior.kind === kind &&
+      prior.digest === effect.requestDigest &&
+      prior.request === request
       ? prior.result
       : conflict("The operation ID already has a different request.");
   };
   const recordBudget = (
     kind: BudgetEffect["kind"],
     effect: EffectOptions,
+    request: string,
     result: PortResult<BudgetReservation>
   ): PortResult<BudgetReservation> => {
     budgetEffects.set(effect.operationId, {
       digest: effect.requestDigest,
       kind,
+      request,
       result,
     });
     return result;
@@ -262,7 +271,8 @@ export const createFixtureAdapters = (
       return { status: "ok", value };
     },
     release: async (reservationId, effect) => {
-      const replay = budgetReplay("release", effect);
+      const request = requestKey(reservationId);
+      const replay = budgetReplay("release", effect, request);
       if (replay) {
         return replay;
       }
@@ -284,10 +294,18 @@ export const createFixtureAdapters = (
       availableUnits += prior.maximum.units;
       const value: BudgetReservation = { ...prior, state: "released" };
       reservations.set(reservationId, value);
-      return recordBudget("release", effect, { status: "ok", value });
+      return recordBudget("release", effect, request, { status: "ok", value });
     },
     reserve: async (organizationId, maximum, effect) => {
-      const replay = budgetReplay("reserve", effect);
+      if (!Number.isFinite(maximum.units)) {
+        return {
+          reason:
+            "A positive credit amount in the fixture organization is required.",
+          status: "invalid-input",
+        };
+      }
+      const request = requestKey(organizationId, maximum);
+      const replay = budgetReplay("reserve", effect, request);
       if (replay) {
         return replay;
       }
@@ -308,7 +326,7 @@ export const createFixtureAdapters = (
         };
       }
       if (maximum.units > availableUnits) {
-        return recordBudget("reserve", effect, {
+        return recordBudget("reserve", effect, request, {
           code: "budget-exhausted",
           reason: "No capacity remains for this organization.",
           status: "denied",
@@ -323,13 +341,20 @@ export const createFixtureAdapters = (
         state: "reserved",
       };
       reservations.set(reservation.id, reservation);
-      return recordBudget("reserve", effect, {
+      return recordBudget("reserve", effect, request, {
         status: "ok",
         value: reservation,
       });
     },
     settle: async (reservationId, incurred, effect) => {
-      const replay = budgetReplay("settle", effect);
+      if (!Number.isFinite(incurred.units)) {
+        return {
+          reason: "The incurred amount must be within the reservation.",
+          status: "invalid-input",
+        };
+      }
+      const request = requestKey(reservationId, incurred);
+      const replay = budgetReplay("settle", effect, request);
       if (replay) {
         return replay;
       }
@@ -362,7 +387,7 @@ export const createFixtureAdapters = (
       availableUnits += prior.maximum.units - incurred.units;
       const value: BudgetReservation = { ...prior, state: "settled" };
       reservations.set(reservationId, value);
-      return recordBudget("settle", effect, { status: "ok", value });
+      return recordBudget("settle", effect, request, { status: "ok", value });
     },
   };
 
@@ -391,7 +416,11 @@ export const createFixtureAdapters = (
   ]);
   const publishedAgents = new Map<
     OperationId,
-    { readonly digest: Digest; readonly result: PortResult<AgentDefinition> }
+    {
+      readonly digest: Digest;
+      readonly request: string;
+      readonly result: PortResult<AgentDefinition>;
+    }
   >();
   const agentRepository: AgentRepository = {
     get: async (organizationId, agentId, version, readOptions) => {
@@ -413,9 +442,20 @@ export const createFixtureAdapters = (
         : { resource: "agent version", status: "not-found" };
     },
     publish: async (definition, expectedVersion, effect) => {
+      if (
+        !Number.isFinite(definition.version) ||
+        (expectedVersion !== undefined && !Number.isFinite(expectedVersion))
+      ) {
+        return {
+          reason: "The agent version must be finite.",
+          status: "invalid-input",
+        };
+      }
+      const request = requestKey(definition, expectedVersion ?? null);
       const prior = publishedAgents.get(effect.operationId);
       if (prior) {
-        return prior.digest === effect.requestDigest
+        return prior.digest === effect.requestDigest &&
+          prior.request === request
           ? prior.result
           : conflict(
               "The operation ID already has a different agent definition."
@@ -449,6 +489,7 @@ export const createFixtureAdapters = (
       };
       publishedAgents.set(effect.operationId, {
         digest: effect.requestDigest,
+        request,
         result,
       });
       return result;
@@ -457,7 +498,11 @@ export const createFixtureAdapters = (
 
   const toolResults = new Map<
     OperationId,
-    { readonly digest: Digest; readonly result: PortResult<ToolExecution> }
+    {
+      readonly digest: Digest;
+      readonly request: string;
+      readonly result: PortResult<ToolExecution>;
+    }
   >();
   const toolExecutor: ToolExecutor = {
     execute: async (call, capability, effect) => {
@@ -467,9 +512,11 @@ export const createFixtureAdapters = (
       ) {
         return denied("The tool capability does not authorize this call.");
       }
+      const request = requestKey(call, capability);
       const prior = toolResults.get(effect.operationId);
       if (prior) {
-        return prior.digest === effect.requestDigest
+        return prior.digest === effect.requestDigest &&
+          prior.request === request
           ? prior.result
           : conflict("The operation ID already has different tool arguments.");
       }
@@ -488,6 +535,7 @@ export const createFixtureAdapters = (
             };
       toolResults.set(effect.operationId, {
         digest: effect.requestDigest,
+        request,
         result,
       });
       return result;
@@ -514,46 +562,77 @@ export const createFixtureAdapters = (
     { readonly event: EventEnvelope; readonly receipt: SessionReceipt }
   >();
   const runs = new Map<SessionReceipt["runId"], RunState>();
-  const submitOperations = new Map<
+  type SessionOperationKind = "submit" | "approve" | "cancel";
+  const sessionOperations = new Map<
     OperationId,
-    { readonly digest: Digest; readonly eventId: EventEnvelope["eventId"] }
+    {
+      readonly kind: SessionOperationKind;
+      readonly digest: Digest;
+      readonly request: string;
+    }
   >();
+  const sessionOperationConflict = (
+    kind: SessionOperationKind,
+    effect: EffectOptions,
+    request: string
+  ): PortFailure | undefined => {
+    const prior = sessionOperations.get(effect.operationId);
+    if (
+      prior &&
+      (prior.kind !== kind ||
+        prior.digest !== effect.requestDigest ||
+        prior.request !== request)
+    ) {
+      return conflict(
+        "The operation ID already has a different session command."
+      );
+    }
+    return undefined;
+  };
+  const recordSessionOperation = (
+    kind: SessionOperationKind,
+    effect: EffectOptions,
+    request: string
+  ): void => {
+    sessionOperations.set(effect.operationId, {
+      digest: effect.requestDigest,
+      kind,
+      request,
+    });
+  };
   interface SessionStateEffect {
     readonly kind: "approve" | "cancel";
-    readonly digest: Digest;
     readonly result: PortResult<RunState>;
   }
   const sessionStateEffects = new Map<OperationId, SessionStateEffect>();
   const stateReplay = (
     kind: SessionStateEffect["kind"],
-    effect: EffectOptions
+    effect: EffectOptions,
+    request: string
   ): PortResult<RunState> | undefined => {
-    const prior = sessionStateEffects.get(effect.operationId);
-    if (!prior) {
-      return undefined;
+    const collision = sessionOperationConflict(kind, effect, request);
+    if (collision) {
+      return collision;
     }
-    return prior.kind === kind && prior.digest === effect.requestDigest
-      ? prior.result
-      : conflict("The operation ID already has a different session command.");
+    return sessionStateEffects.get(effect.operationId)?.result;
   };
   const recordState = (
     kind: SessionStateEffect["kind"],
     effect: EffectOptions,
+    request: string,
     result: PortResult<RunState>
   ): PortResult<RunState> => {
-    sessionStateEffects.set(effect.operationId, {
-      digest: effect.requestDigest,
-      kind,
-      result,
-    });
+    recordSessionOperation(kind, effect, request);
+    sessionStateEffects.set(effect.operationId, { kind, result });
     return result;
   };
   const sessionService: SessionService = {
     approve: async (command, effect) => {
+      const request = requestKey(command);
       if (!hasGrant(command.context, command.address.organizationId)) {
         return denied("The principal has no current grant.");
       }
-      const replay = stateReplay("approve", effect);
+      const replay = stateReplay("approve", effect, request);
       if (replay) {
         return replay;
       }
@@ -576,13 +655,17 @@ export const createFixtureAdapters = (
       }
       const state: RunState = { completedAt: now, runId, state: "completed" };
       runs.set(runId, state);
-      return recordState("approve", effect, { status: "ok", value: state });
+      return recordState("approve", effect, request, {
+        status: "ok",
+        value: state,
+      });
     },
     cancel: async (command, effect) => {
+      const request = requestKey(command);
       if (!hasGrant(command.context, command.address.organizationId)) {
         return denied("The principal has no current grant.");
       }
-      const replay = stateReplay("cancel", effect);
+      const replay = stateReplay("cancel", effect, request);
       if (replay) {
         return replay;
       }
@@ -615,7 +698,10 @@ export const createFixtureAdapters = (
         state: "cancelled",
       };
       runs.set(command.runId, state);
-      return recordState("cancel", effect, { status: "ok", value: state });
+      return recordState("cancel", effect, request, {
+        status: "ok",
+        value: state,
+      });
     },
     inspect: async (address, context, readOptions) => {
       const failure = readFailure(readOptions, now);
@@ -673,23 +759,36 @@ export const createFixtureAdapters = (
     },
     submit: async (command, effect) => {
       const { event } = command;
+      let request: string;
+      try {
+        request = requestKey(command);
+      } catch (error) {
+        if (error instanceof TypeError) {
+          return {
+            reason: "The session event must contain JSON data.",
+            status: "invalid-input",
+          };
+        }
+        throw error;
+      }
       if (!hasGrant(event.context, event.organizationId)) {
         return denied("The principal has no current grant.");
       }
-      const priorOperation = submitOperations.get(effect.operationId);
-      if (
-        priorOperation &&
-        (priorOperation.digest !== effect.requestDigest ||
-          priorOperation.eventId !== event.eventId)
-      ) {
-        return conflict("The operation ID already has a different event.");
+      const collision = sessionOperationConflict("submit", effect, request);
+      if (collision) {
+        return collision;
       }
       const prior = submitted.get(event.eventId);
       const delivery = classifyEventDelivery(prior?.event, event);
-      if (delivery === "conflict") {
+      if (
+        delivery === "conflict" ||
+        (prior &&
+          requestKey({ event: prior.event, type: "submit" }) !== request)
+      ) {
         return conflict("The event ID already has a different envelope.");
       }
       if (delivery === "duplicate" && prior) {
+        recordSessionOperation("submit", effect, request);
         return { status: "ok", value: { ...prior.receipt, replayed: true } };
       }
       const failure = effectFailure(effect, now);
@@ -709,10 +808,7 @@ export const createFixtureAdapters = (
       };
       runs.set(runId, state);
       submitted.set(event.eventId, { event, receipt });
-      submitOperations.set(effect.operationId, {
-        digest: effect.requestDigest,
-        eventId: event.eventId,
-      });
+      recordSessionOperation("submit", effect, request);
       return { status: "ok", value: receipt };
     },
   };
@@ -722,22 +818,27 @@ export const createFixtureAdapters = (
     | {
         readonly kind: "remember";
         readonly digest: Digest;
+        readonly request: string;
         readonly result: PortResult<MemoryRecord>;
       }
     | {
         readonly kind: "forget";
         readonly digest: Digest;
+        readonly request: string;
         readonly result: PortResult<{ readonly removed: number }>;
       };
   const memoryEffects = new Map<OperationId, MemoryEffect>();
   const memoryStore: MemoryStore = {
     forget: async (scope, sourceId, effect) => {
+      const request = requestKey(scope, sourceId);
       if (!hasGrant(scope.context, scope.organizationId)) {
         return denied("The principal has no current grant.");
       }
       const prior = memoryEffects.get(effect.operationId);
       if (prior) {
-        return prior.kind === "forget" && prior.digest === effect.requestDigest
+        return prior.kind === "forget" &&
+          prior.digest === effect.requestDigest &&
+          prior.request === request
           ? prior.result
           : conflict("The operation ID already has a different memory effect.");
       }
@@ -763,18 +864,21 @@ export const createFixtureAdapters = (
       memoryEffects.set(effect.operationId, {
         digest: effect.requestDigest,
         kind: "forget",
+        request,
         result,
       });
       return result;
     },
     remember: async (scope, record, effect) => {
+      const request = requestKey(scope, record);
       if (!hasGrant(scope.context, scope.organizationId)) {
         return denied("The principal has no current grant.");
       }
       const prior = memoryEffects.get(effect.operationId);
       if (prior) {
         return prior.kind === "remember" &&
-          prior.digest === effect.requestDigest
+          prior.digest === effect.requestDigest &&
+          prior.request === request
           ? prior.result
           : conflict("The operation ID already has a different memory effect.");
       }
@@ -787,6 +891,7 @@ export const createFixtureAdapters = (
       memoryEffects.set(effect.operationId, {
         digest: effect.requestDigest,
         kind: "remember",
+        request,
         result,
       });
       return result;
@@ -825,17 +930,26 @@ export const createFixtureAdapters = (
   const artifacts = new Map<ArtifactRef["artifactId"], ArtifactEntry>();
   const artifactPuts = new Map<
     OperationId,
-    { readonly digest: Digest; readonly entry: ArtifactEntry }
+    {
+      readonly digest: Digest;
+      readonly request: string;
+      readonly entry: ArtifactEntry;
+    }
   >();
-  const artifactDeletes = new Map<OperationId, { readonly digest: Digest }>();
+  const artifactDeletes = new Map<
+    OperationId,
+    { readonly digest: Digest; readonly request: string }
+  >();
   const artifactStore: ArtifactStore = {
     delete: async (scope, ref, effect) => {
+      const request = requestKey(scope, ref);
       if (!hasGrant(scope.context, scope.organizationId)) {
         return denied("The principal has no current grant.");
       }
       const prior = artifactDeletes.get(effect.operationId);
       if (prior) {
-        return prior.digest === effect.requestDigest
+        return prior.digest === effect.requestDigest &&
+          prior.request === request
           ? { status: "ok", value: undefined }
           : conflict(
               "The operation ID already has a different artifact delete."
@@ -856,10 +970,14 @@ export const createFixtureAdapters = (
         return denied("The principal cannot delete this artifact.");
       }
       artifacts.delete(ref.artifactId);
-      artifactDeletes.set(effect.operationId, { digest: effect.requestDigest });
+      artifactDeletes.set(effect.operationId, {
+        digest: effect.requestDigest,
+        request,
+      });
       return { status: "ok", value: undefined };
     },
     put: async (scope, bytes, metadata, effect) => {
+      const request = requestKey(scope, [...bytes], metadata);
       if (
         !hasGrant(scope.context, scope.organizationId) ||
         !canReadVisibility(scope.context, metadata.visibility)
@@ -878,6 +996,7 @@ export const createFixtureAdapters = (
           prior.entry.bytes.length === bytes.length &&
           prior.entry.bytes.every((byte, index) => byte === bytes[index]);
         return prior.digest === effect.requestDigest &&
+          prior.request === request &&
           sameBytes &&
           prior.entry.ref.organizationId === metadata.organizationId &&
           prior.entry.ref.provenance.sourceId ===
@@ -908,6 +1027,7 @@ export const createFixtureAdapters = (
       artifactPuts.set(effect.operationId, {
         digest: effect.requestDigest,
         entry,
+        request,
       });
       return { status: "ok", value: ref };
     },
@@ -940,17 +1060,11 @@ export const createFixtureAdapters = (
   >();
   const decisionMaker: DecisionMaker = {
     propose: async (request, effect) => {
-      const requestKey = JSON.stringify([
-        request.organizationId,
-        request.inputDigest,
-        request.eventSummary,
-        request.allowedChoices,
-        request.modelVersion,
-      ]);
+      const decisionRequest = requestKey(request);
       const prior = decisions.get(effect.operationId);
       if (prior) {
         return prior.digest === effect.requestDigest &&
-          prior.request === requestKey
+          prior.request === decisionRequest
           ? prior.result
           : conflict(
               "The operation ID already has a different decision request."
@@ -988,7 +1102,7 @@ export const createFixtureAdapters = (
       };
       decisions.set(effect.operationId, {
         digest: effect.requestDigest,
-        request: requestKey,
+        request: decisionRequest,
         result,
       });
       return result;

@@ -185,10 +185,14 @@ test("a past deadline and a cancelled signal stop a new effect", () => {
   );
 });
 
-test("approval binds the exact tool, arguments, principal, policy, and expiry", () => {
+test("approval binds the exact tool, arguments, principal, policy, and expiry", async () => {
   const approval: Approval = {
+    actorPrincipalId: allowedUser.id,
+    agentId: unknownOutcomeInvocation.agentId,
     approverId: id.principal("approver-1"),
     argumentDigest: unknownOutcomeInvocation.argumentDigest,
+    connectorId: unknownOutcomeInvocation.tool.connectorId,
+    effect: unknownOutcomeInvocation.tool.effect,
     expiresAt: 300,
     id: "approval-1",
     operationId: unknownOutcomeInvocation.operationId,
@@ -199,11 +203,11 @@ test("approval binds the exact tool, arguments, principal, policy, and expiry", 
     toolVersion: unknownOutcomeInvocation.tool.version,
   };
   assert.equal(
-    approvalMatches(approval, unknownOutcomeInvocation, "policy-1", 299),
+    await approvalMatches(approval, unknownOutcomeInvocation, "policy-1", 299),
     true
   );
   assert.equal(
-    approvalMatches(
+    await approvalMatches(
       { ...approval, expiresAt: 1_900_000_000_000 },
       { ...unknownOutcomeInvocation, context: expiredDelegationContext },
       "policy-1",
@@ -212,15 +216,24 @@ test("approval binds the exact tool, arguments, principal, policy, and expiry", 
     false
   );
   assert.equal(
-    approvalMatches(approval, unknownOutcomeInvocation, "policy-2", 299),
+    await approvalMatches(approval, unknownOutcomeInvocation, "policy-2", 299),
     false
   );
   assert.equal(
-    approvalMatches(approval, unknownOutcomeInvocation, "policy-1", 300),
+    await approvalMatches(approval, unknownOutcomeInvocation, "policy-1", 300),
     false
   );
   assert.equal(
-    approvalMatches(
+    await approvalMatches(
+      { ...approval, expiresAt: Number.NaN },
+      unknownOutcomeInvocation,
+      "policy-1",
+      299
+    ),
+    false
+  );
+  assert.equal(
+    await approvalMatches(
       approval,
       {
         ...unknownOutcomeInvocation,
@@ -232,7 +245,7 @@ test("approval binds the exact tool, arguments, principal, policy, and expiry", 
     false
   );
   assert.equal(
-    approvalMatches(
+    await approvalMatches(
       approval,
       {
         ...unknownOutcomeInvocation,
@@ -243,9 +256,165 @@ test("approval binds the exact tool, arguments, principal, policy, and expiry", 
     ),
     false
   );
+  assert.equal(
+    await approvalMatches(
+      approval,
+      { ...unknownOutcomeInvocation, agentId: id.agent("agent-2") },
+      "policy-1",
+      299
+    ),
+    false
+  );
+  assert.equal(
+    await approvalMatches(
+      approval,
+      {
+        ...unknownOutcomeInvocation,
+        tool: { ...unknownOutcomeInvocation.tool, connectorId: "other" },
+      },
+      "policy-1",
+      299
+    ),
+    false
+  );
+  assert.equal(
+    await approvalMatches(
+      approval,
+      {
+        ...unknownOutcomeInvocation,
+        tool: { ...unknownOutcomeInvocation.tool, effect: "read" },
+      },
+      "policy-1",
+      299
+    ),
+    false
+  );
+});
+
+test("approval rejects changed arguments when the stored digest is reused", async () => {
+  const approval = {
+    actorPrincipalId: allowedUser.id,
+    agentId: unknownOutcomeInvocation.agentId,
+    approverId: id.principal("approver-1"),
+    argumentDigest: unknownOutcomeInvocation.argumentDigest,
+    connectorId: unknownOutcomeInvocation.tool.connectorId,
+    effect: unknownOutcomeInvocation.tool.effect,
+    expiresAt: 300,
+    id: "approval-arguments",
+    operationId: unknownOutcomeInvocation.operationId,
+    organizationId: unknownOutcomeInvocation.organizationId,
+    policyVersion: "policy-1",
+    principalId: allowedUser.id,
+    toolId: unknownOutcomeInvocation.tool.id,
+    toolVersion: unknownOutcomeInvocation.tool.version,
+  };
+  assert.equal(
+    await approvalMatches(
+      approval,
+      { ...unknownOutcomeInvocation, arguments: { ticket: "support-2" } },
+      "policy-1",
+      299
+    ),
+    false
+  );
+});
+
+test("approval binds the delegated actor and delegation ID", async () => {
+  const firstActor = serviceActor;
+  const firstDelegation = {
+    actorId: firstActor.id,
+    expiresAt: 1_900_000_000_000,
+    id: id.delegation("delegation-1"),
+    organizationId: fixtureOrganizationId,
+    representedId: allowedUser.id,
+  };
+  const approval = {
+    actorPrincipalId: firstActor.id,
+    agentId: unknownOutcomeInvocation.agentId,
+    approverId: id.principal("approver-1"),
+    argumentDigest: unknownOutcomeInvocation.argumentDigest,
+    connectorId: unknownOutcomeInvocation.tool.connectorId,
+    delegationId: firstDelegation.id,
+    effect: unknownOutcomeInvocation.tool.effect,
+    expiresAt: 1_900_000_000_000,
+    id: "approval-delegation",
+    operationId: unknownOutcomeInvocation.operationId,
+    organizationId: unknownOutcomeInvocation.organizationId,
+    policyVersion: "policy-1",
+    principalId: allowedUser.id,
+    toolId: unknownOutcomeInvocation.tool.id,
+    toolVersion: unknownOutcomeInvocation.tool.version,
+  };
+  const firstInvocation = {
+    ...unknownOutcomeInvocation,
+    context: {
+      actor: firstActor,
+      delegation: firstDelegation,
+      represented: allowedUser,
+    },
+  };
+  assert.equal(
+    await approvalMatches(
+      approval,
+      firstInvocation,
+      "policy-1",
+      1_800_000_000_000
+    ),
+    true
+  );
+  const secondActor = { ...serviceActor, id: id.principal("service-2") };
+  const changedActor = {
+    ...firstInvocation,
+    context: {
+      actor: secondActor,
+      delegation: {
+        ...firstDelegation,
+        actorId: secondActor.id,
+        id: id.delegation("delegation-2"),
+      },
+      represented: allowedUser,
+    },
+  };
+  assert.equal(
+    await approvalMatches(
+      approval,
+      changedActor,
+      "policy-1",
+      1_800_000_000_000
+    ),
+    false
+  );
+  assert.equal(
+    await approvalMatches(
+      approval,
+      {
+        ...firstInvocation,
+        context: {
+          ...firstInvocation.context,
+          delegation: { ...firstDelegation, id: id.delegation("delegation-2") },
+        },
+      },
+      "policy-1",
+      1_800_000_000_000
+    ),
+    false
+  );
 });
 
 test("a capability cannot authorize a different tool invocation", async () => {
+  assert.equal(
+    await toolCapabilityMatches(
+      { ...unknownOutcomeCapability, expiresAt: Number.NaN },
+      unknownOutcomeInvocation,
+      {
+        deadlineAt: 1_900_000_000_000,
+        operationId: unknownOutcomeInvocation.operationId,
+        requestDigest: unknownOutcomeInvocation.argumentDigest,
+      },
+      1_800_000_000_000
+    ),
+    false
+  );
   const effect = {
     deadlineAt: 1_900_000_000_000,
     operationId: unknownOutcomeInvocation.operationId,
@@ -545,6 +714,17 @@ test("fixture approval replays and a final run cannot be cancelled", async () =>
     },
   });
   assert.deepEqual(await sessionService.approve(approval, effect), first);
+  assert.deepEqual(
+    await sessionService.approve(
+      { ...approval, approvalId: "approval:another-run" },
+      effect
+    ),
+    {
+      code: "digest-mismatch",
+      reason: "The operation ID already has a different session command.",
+      status: "conflict",
+    }
+  );
   assert.deepEqual(
     await sessionService.cancel(
       {
@@ -889,3 +1069,393 @@ test("decision fixture chooses only a supplied action and replays it", async () 
     }
   );
 });
+
+// oxlint-disable unicorn/no-await-expression-member -- These assertions check the returned port status directly.
+const fixtureEffect = (name: string) => ({
+  deadlineAt: 1_900_000_000_000,
+  operationId: id.operation(name),
+  requestDigest: id.digest(`sha256:${name}`),
+});
+
+test("budget fixture binds reservation requests and finalization targets", async () => {
+  const { budgetAuthority } = createFixtureAdapters({ mode: "fixture" });
+  const firstEffect = fixtureEffect("reserve-bound-1");
+  const first = await budgetAuthority.reserve(
+    fixtureOrganizationId,
+    { unit: "credits", units: 3 },
+    firstEffect
+  );
+  assert.equal(first.status, "ok");
+  if (first.status !== "ok") {
+    return;
+  }
+  assert.equal(
+    (
+      await budgetAuthority.reserve(
+        fixtureOrganizationId,
+        { unit: "credits", units: 4 },
+        firstEffect
+      )
+    ).status,
+    "conflict"
+  );
+  assert.equal(
+    (
+      await budgetAuthority.reserve(
+        id.organization("other-organization"),
+        { unit: "credits", units: 3 },
+        firstEffect
+      )
+    ).status,
+    "conflict"
+  );
+  const second = await budgetAuthority.reserve(
+    fixtureOrganizationId,
+    { unit: "credits", units: 2 },
+    fixtureEffect("reserve-bound-2")
+  );
+  assert.equal(second.status, "ok");
+  if (second.status !== "ok") {
+    return;
+  }
+  const settleEffect = fixtureEffect("settle-bound");
+  assert.equal(
+    (
+      await budgetAuthority.settle(
+        first.value.id,
+        { unit: "credits", units: 1 },
+        settleEffect
+      )
+    ).status,
+    "ok"
+  );
+  assert.equal(
+    (
+      await budgetAuthority.settle(
+        first.value.id,
+        { unit: "credits", units: 2 },
+        settleEffect
+      )
+    ).status,
+    "conflict"
+  );
+  assert.equal(
+    (
+      await budgetAuthority.settle(
+        second.value.id,
+        { unit: "credits", units: 1 },
+        settleEffect
+      )
+    ).status,
+    "conflict"
+  );
+  const releaseEffect = fixtureEffect("release-bound");
+  assert.equal(
+    (await budgetAuthority.release(second.value.id, releaseEffect)).status,
+    "ok"
+  );
+  assert.equal(
+    (await budgetAuthority.release(first.value.id, releaseEffect)).status,
+    "conflict"
+  );
+});
+
+test("agent publish replay checks the definition and expected version", async () => {
+  const { agentRepository } = createFixtureAdapters({ mode: "fixture" });
+  const current = await agentRepository.get(
+    fixtureOrganizationId,
+    fixtureAgentId,
+    1,
+    { deadlineAt: 1_900_000_000_000 }
+  );
+  assert.equal(current.status, "ok");
+  if (current.status !== "ok") {
+    return;
+  }
+  const definition = { ...current.value, instructions: "Updated.", version: 2 };
+  const effect = {
+    deadlineAt: 1_900_000_000_000,
+    operationId: id.operation("publish-bound"),
+    requestDigest: id.digest("sha256:publish-bound"),
+  };
+  assert.equal(
+    (await agentRepository.publish(definition, 1, effect)).status,
+    "ok"
+  );
+  assert.equal(
+    (
+      await agentRepository.publish(
+        { ...definition, instructions: "Changed." },
+        1,
+        effect
+      )
+    ).status,
+    "conflict"
+  );
+  assert.equal(
+    (await agentRepository.publish(definition, 0, effect)).status,
+    "conflict"
+  );
+});
+
+test("memory fixture binds record, source, and scope on replay", async () => {
+  const { memoryStore } = createFixtureAdapters({ mode: "fixture" });
+  const scope = {
+    context: allowedContext,
+    organizationId: fixtureOrganizationId,
+  };
+  const record = {
+    id: "bound-memory",
+    kind: "source-chunk" as const,
+    provenance: {
+      observedAt: 1_800_000_000_000,
+      sourceId: id.source("bound-source"),
+      sourceUri: "fixture://bound-source",
+      sourceVersion: "1",
+    },
+    text: "Original text.",
+    visibility: { kind: "organization" as const },
+  };
+  const effect = {
+    deadlineAt: 1_900_000_000_000,
+    operationId: id.operation("remember-bound"),
+    requestDigest: id.digest("sha256:remember-bound"),
+  };
+  assert.equal(
+    (await memoryStore.remember(scope, record, effect)).status,
+    "ok"
+  );
+  assert.equal(
+    (await memoryStore.remember(scope, { ...record, text: "Changed." }, effect))
+      .status,
+    "conflict"
+  );
+  assert.equal(
+    (
+      await memoryStore.remember(
+        { ...scope, context: { actor: serviceActor } },
+        record,
+        effect
+      )
+    ).status,
+    "conflict"
+  );
+  const forgetEffect = {
+    ...effect,
+    operationId: id.operation("forget-bound"),
+  };
+  assert.equal(
+    (await memoryStore.forget(scope, record.provenance.sourceId, forgetEffect))
+      .status,
+    "ok"
+  );
+  assert.equal(
+    (await memoryStore.forget(scope, id.source("other-source"), forgetEffect))
+      .status,
+    "conflict"
+  );
+});
+
+test("artifact delete replay binds artifact and actor", async () => {
+  const { artifactStore } = createFixtureAdapters({ mode: "fixture" });
+  const scope = {
+    context: allowedContext,
+    organizationId: fixtureOrganizationId,
+  };
+  const metadata = {
+    organizationId: fixtureOrganizationId,
+    provenance: {
+      observedAt: 1_800_000_000_000,
+      sourceId: id.source("artifact-bound"),
+      sourceUri: "fixture://artifact-bound",
+      sourceVersion: "1",
+    },
+    visibility: { kind: "organization" as const },
+  };
+  const put = (name: string) =>
+    artifactStore.put(scope, new Uint8Array([1]), metadata, {
+      deadlineAt: 1_900_000_000_000,
+      operationId: id.operation(name),
+      requestDigest: id.digest(`sha256:${name}`),
+    });
+  const first = await put("artifact-bound-1");
+  const second = await put("artifact-bound-2");
+  assert.equal(first.status, "ok");
+  assert.equal(second.status, "ok");
+  if (first.status !== "ok" || second.status !== "ok") {
+    return;
+  }
+  const effect = {
+    deadlineAt: 1_900_000_000_000,
+    operationId: id.operation("artifact-delete-bound"),
+    requestDigest: id.digest("sha256:artifact-delete-bound"),
+  };
+  assert.equal(
+    (await artifactStore.delete(scope, first.value, effect)).status,
+    "ok"
+  );
+  assert.equal(
+    (await artifactStore.delete(scope, second.value, effect)).status,
+    "conflict"
+  );
+  assert.equal(
+    (
+      await artifactStore.delete(
+        { ...scope, context: { actor: serviceActor } },
+        first.value,
+        effect
+      )
+    ).status,
+    "conflict"
+  );
+});
+
+test("session fixture rejects one operation ID across command types", async () => {
+  const { sessionService } = createFixtureAdapters({
+    mode: "fixture",
+    pauseOnSubmit: true,
+  });
+  const effect = {
+    deadlineAt: 1_900_000_000_000,
+    operationId: id.operation("session-bound"),
+    requestDigest: userEvent.payloadDigest,
+  };
+  const submitted = await sessionService.submit(
+    { event: userEvent, type: "submit" },
+    effect
+  );
+  assert.equal(submitted.status, "ok");
+  if (submitted.status !== "ok") {
+    return;
+  }
+  assert.equal(
+    (
+      await sessionService.approve(
+        {
+          address: userEvent,
+          approvalId: `approval:${submitted.value.runId}`,
+          context: allowedContext,
+          type: "approve",
+        },
+        effect
+      )
+    ).status,
+    "conflict"
+  );
+  assert.equal(
+    (
+      await sessionService.submit(
+        {
+          event: {
+            ...userEvent,
+            event: {
+              payload: { text: "Changed payload." },
+              type: "user.message",
+            },
+          },
+          type: "submit",
+        },
+        effect
+      )
+    ).status,
+    "conflict"
+  );
+});
+
+test("tool fixture replay checks the authorized call identity", async () => {
+  const { toolExecutor } = createFixtureAdapters({ mode: "fixture" });
+  const operationId = id.operation("tool-bound");
+  const call = { ...unknownOutcomeInvocation, operationId };
+  const capability = { ...unknownOutcomeCapability, operationId };
+  const effect = {
+    deadlineAt: 1_900_000_000_000,
+    operationId,
+    requestDigest: unknownOutcomeInvocation.argumentDigest,
+  };
+  assert.equal(
+    (await toolExecutor.execute(call, capability, effect)).status,
+    "ok"
+  );
+  const otherToolId = id.tool("tool-2");
+  assert.equal(
+    (
+      await toolExecutor.execute(
+        { ...call, tool: { ...call.tool, id: otherToolId } },
+        { ...capability, toolId: otherToolId },
+        effect
+      )
+    ).status,
+    "conflict"
+  );
+});
+
+test("session cancel replay binds the run and caller", async () => {
+  const { sessionService } = createFixtureAdapters({ mode: "fixture" });
+  const submitted = await sessionService.submit(
+    { event: userEvent, type: "submit" },
+    {
+      deadlineAt: 1_900_000_000_000,
+      operationId: id.operation("submit-for-cancel"),
+      requestDigest: userEvent.payloadDigest,
+    }
+  );
+  assert.equal(submitted.status, "ok");
+  if (submitted.status !== "ok") {
+    return;
+  }
+  const command = {
+    address: userEvent,
+    context: allowedContext,
+    runId: submitted.value.runId,
+    type: "cancel" as const,
+  };
+  const effect = {
+    deadlineAt: 1_900_000_000_000,
+    operationId: id.operation("cancel-bound"),
+    requestDigest: id.digest("sha256:cancel-bound"),
+  };
+  assert.equal((await sessionService.cancel(command, effect)).status, "ok");
+  assert.equal(
+    (
+      await sessionService.cancel(
+        { ...command, runId: id.run("other-run") },
+        effect
+      )
+    ).status,
+    "conflict"
+  );
+  assert.equal(
+    (
+      await sessionService.cancel(
+        { ...command, context: { actor: serviceActor } },
+        effect
+      )
+    ).status,
+    "conflict"
+  );
+});
+
+test("session fixture returns typed invalid-input for non-JSON event data", async () => {
+  const { sessionService } = createFixtureAdapters({ mode: "fixture" });
+  const invalidPayload = { text: "Support.", unsupported: undefined };
+  const result = await sessionService.submit(
+    {
+      event: {
+        ...userEvent,
+        event: {
+          payload: invalidPayload,
+          type: "user.message",
+        },
+      },
+      type: "submit",
+    },
+    {
+      deadlineAt: 1_900_000_000_000,
+      operationId: id.operation("invalid-event-payload"),
+      requestDigest: userEvent.payloadDigest,
+    }
+  );
+  assert.equal(result.status, "invalid-input");
+});
+
+// oxlint-enable unicorn/no-await-expression-member

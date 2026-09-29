@@ -133,6 +133,9 @@ export const digestToolArguments = async (
   return id.digest(`sha256:${hex}`);
 };
 
+const isUnexpiredAt = (expiresAt: number, now: number): boolean =>
+  Number.isFinite(now) && Number.isFinite(expiresAt) && expiresAt > now;
+
 export const toolCapabilityMatches = async (
   capability: ToolCapability,
   call: ToolCall,
@@ -140,6 +143,7 @@ export const toolCapabilityMatches = async (
   now: number
 ): Promise<boolean> => {
   if (
+    !isUnexpiredAt(capability.expiresAt, now) ||
     !isExecutionContextActiveAt(call.context, call.organizationId, now) ||
     capability.organizationId !== call.organizationId ||
     capability.toolId !== call.tool.id ||
@@ -152,8 +156,7 @@ export const toolCapabilityMatches = async (
     capability.actorPrincipalId !== call.context.actor.id ||
     capability.delegationId !== call.context.delegation?.id ||
     capability.operationId !== options.operationId ||
-    capability.argumentDigest !== options.requestDigest ||
-    capability.expiresAt <= now
+    capability.argumentDigest !== options.requestDigest
   ) {
     return false;
   }
@@ -185,6 +188,11 @@ export type ToolInvocation = ToolCall & {
 
 export interface Approval {
   readonly id: string;
+  readonly actorPrincipalId: PrincipalId;
+  readonly agentId: AgentId;
+  readonly connectorId: string;
+  readonly effect: "read" | "write";
+  readonly delegationId?: DelegationId;
   readonly organizationId: OrganizationId;
   readonly operationId: OperationId;
   readonly toolId: ToolId;
@@ -197,26 +205,47 @@ export interface Approval {
 }
 
 // The caller must recheck current grants before it uses a matching approval.
-export const approvalMatches = (
+export const approvalMatches = async (
   approval: Approval,
   invocation: ToolInvocation,
   policyVersion: string,
   now: number
-): boolean =>
-  isExecutionContextActiveAt(
-    invocation.context,
-    invocation.organizationId,
-    now
-  ) &&
-  approval.organizationId === invocation.organizationId &&
-  approval.operationId === invocation.operationId &&
-  approval.toolId === invocation.tool.id &&
-  approval.toolVersion === invocation.tool.version &&
-  approval.argumentDigest === invocation.argumentDigest &&
-  approval.principalId ===
-    (invocation.context.represented?.id ?? invocation.context.actor.id) &&
-  approval.policyVersion === policyVersion &&
-  approval.expiresAt > now;
+): Promise<boolean> => {
+  if (
+    !isUnexpiredAt(approval.expiresAt, now) ||
+    !isExecutionContextActiveAt(
+      invocation.context,
+      invocation.organizationId,
+      now
+    ) ||
+    approval.organizationId !== invocation.organizationId ||
+    approval.operationId !== invocation.operationId ||
+    approval.agentId !== invocation.agentId ||
+    approval.connectorId !== invocation.tool.connectorId ||
+    approval.effect !== invocation.tool.effect ||
+    approval.toolId !== invocation.tool.id ||
+    approval.toolVersion !== invocation.tool.version ||
+    approval.argumentDigest !== invocation.argumentDigest ||
+    approval.principalId !==
+      (invocation.context.represented?.id ?? invocation.context.actor.id) ||
+    approval.actorPrincipalId !== invocation.context.actor.id ||
+    approval.delegationId !== invocation.context.delegation?.id ||
+    approval.policyVersion !== policyVersion
+  ) {
+    return false;
+  }
+  try {
+    return (
+      (await digestToolArguments(invocation.arguments)) ===
+      approval.argumentDigest
+    );
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return false;
+    }
+    throw error;
+  }
+};
 
 export interface ToolExecution {
   readonly output: unknown;
