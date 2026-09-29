@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import type { DatabaseConfig } from "./config.ts";
+import { agentSchema } from "./schema/agents.ts";
 import { authSchema } from "./schema/auth.ts";
 import { connectorSchema } from "./schema/connectors.ts";
 import { organization } from "./schema/core.ts";
@@ -10,6 +11,7 @@ import { memorySchema } from "./schema/memory.ts";
 import { usageSchema } from "./schema/usage.ts";
 
 const schema = {
+  ...agentSchema,
   ...authSchema,
   ...identitySchema,
   ...memorySchema,

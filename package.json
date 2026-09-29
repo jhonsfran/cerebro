@@ -21,11 +21,12 @@
     "test:identity:postgres": "bun test tests/identity/postgres/*.test.ts",
     "test:policy": "node tests/policy/run.mjs",
     "test:memory": "node tests/memory/run.mjs",
-    "test:channels": "node --test tests/channels/*.test.ts",
+    "test:channels": "node tests/channels/run.mjs",
     "test:integration": "node --test tests/integration/*.test.ts",
     "check": "ultracite check",
     "fix": "ultracite fix",
     "prepare": "husky",
+    "test:channels:native": "node tests/channels/native/run.mjs",
     "test:policy:runtime": "node --test tests/policy/runtime/*.test.ts"
   },
   "dependencies": {

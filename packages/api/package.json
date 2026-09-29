@@ -12,6 +12,7 @@
   "dependencies": {
     "@cerebro/auth": "workspace:*",
     "@cerebro/authorization": "workspace:*",
+    "@cerebro/channels": "workspace:*",
     "@cerebro/contracts": "workspace:*",
     "@cerebro/db": "workspace:*",
     "@cerebro/memory": "workspace:*",

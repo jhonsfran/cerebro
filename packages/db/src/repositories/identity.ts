@@ -310,7 +310,7 @@ const loadGrants = async (
 };
 
 export const createIdentityRepository = (
-  database: Database
+  database: Pick<Database, "select" | "transaction">
 ): IdentityRepository => {
   const readSnapshot = (
     organizationId: string,

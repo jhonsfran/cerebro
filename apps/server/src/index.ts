@@ -1,3 +1,4 @@
+import { createProductHandler } from "@cerebro/api/routers/conversations";
 import { appRouter } from "@cerebro/api/routers/index";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { OpenAPIReferencePlugin } from "@orpc/openapi/plugins";
@@ -7,11 +8,13 @@ import { sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
+import { createChannelOptions } from "./channel-services";
 import { createContext } from "./context";
 import { assertWorkerEnv } from "./env.server";
 import type { WorkerEnv } from "./env.server";
 import { createAuth, withDatabase } from "./services";
 
+export { ChannelDispatcher } from "./channel-dispatcher";
 export { SessionFixture } from "./session-fixture";
 
 const app = new Hono<{ Bindings: WorkerEnv }>();
@@ -25,8 +28,8 @@ app.use("*", async (context, next) => {
     }
     throw error;
   }
-  await cors({
-    allowHeaders: ["Content-Type", "Authorization"],
+  return await cors({
+    allowHeaders: ["Content-Type", "Authorization", "Last-Event-ID"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
     origin: context.env.CORS_ORIGIN,
@@ -84,6 +87,46 @@ app.on(["POST", "GET"], "/fixture/sessions/:name", (context) => {
     });
     return durable.fetch(request);
   });
+});
+
+app.use("*", async (context, next) => {
+  const { path } = context.req;
+  if (
+    !path.startsWith("/api/product/") &&
+    !path.startsWith("/api/channels/slack/") &&
+    !path.startsWith("/api/fixture/slack/")
+  ) {
+    return next();
+  }
+  const origin = context.req.header("Origin");
+  if (
+    (path.startsWith("/api/product/") || path.startsWith("/api/fixture/")) &&
+    origin &&
+    origin !== context.env.CORS_ORIGIN
+  ) {
+    return context.json(
+      { code: "FORBIDDEN", message: "The request origin is not permitted." },
+      403
+    );
+  }
+  context.header("Cache-Control", "no-store");
+  if (context.env.DEPLOY_MODE === "fixture") {
+    const dispatcher = context.env.CHANNEL_DISPATCHER.get(
+      context.env.CHANNEL_DISPATCHER.idFromName("installation")
+    );
+    const wake = await dispatcher.fetch(
+      new Request("https://channel.internal/wake")
+    );
+    if (!wake.ok) {
+      return context.json(
+        { code: "UNAVAILABLE", message: "Channel recovery is unavailable." },
+        503
+      );
+    }
+  }
+  return createProductHandler(createChannelOptions(context.env))(
+    context.req.raw
+  );
 });
 
 const apiHandler = new OpenAPIHandler(appRouter, {

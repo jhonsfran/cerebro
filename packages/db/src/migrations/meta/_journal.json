@@ -36,6 +36,13 @@
       "when": 1790719723103,
       "tag": "0004_wise_captain_midlands",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790720272000,
+      "tag": "0005_session_6_channels",
+      "breakpoints": true
     }
   ]
 }

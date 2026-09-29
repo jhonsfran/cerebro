@@ -2,29 +2,21 @@ import { Link } from "@tanstack/react-router";
 
 import UserMenu from "./user-menu";
 
-export default function Header() {
-  const links = [
-    { to: "/", label: "Home" },
-    { to: "/dashboard", label: "Dashboard" },
-  ] as const;
+const Header = () => (
+  <header className="flex min-h-16 items-center justify-between border-b border-white/10 bg-[#193327] px-6 text-[#e9f1e3]">
+    <nav
+      aria-label="Main navigation"
+      className="flex items-center gap-6 text-sm"
+    >
+      <Link to="/" className="font-semibold tracking-tight">
+        Cerebro
+      </Link>
+      <Link to="/dashboard" className="text-[#bfd0b5]">
+        Workspace
+      </Link>
+    </nav>
+    <UserMenu />
+  </header>
+);
 
-  return (
-    <div>
-      <div className="flex flex-row items-center justify-between px-2 py-1">
-        <nav className="flex gap-4 text-lg">
-          {links.map(({ to, label }) => {
-            return (
-              <Link key={to} to={to}>
-                {label}
-              </Link>
-            );
-          })}
-        </nav>
-        <div className="flex items-center gap-2">
-          <UserMenu />
-        </div>
-      </div>
-      <hr />
-    </div>
-  );
-}
+export default Header;
