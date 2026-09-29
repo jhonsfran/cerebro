@@ -6,15 +6,24 @@ import type {
   Digest,
   ExecutionContext,
   OperationId,
+  PrincipalId,
   ReservationId,
 } from "../identity.ts";
-import type { MemoryRecord, MemoryStore } from "../memory.ts";
+import type {
+  ArtifactRef,
+  ArtifactStore,
+  MemoryRecord,
+  MemoryStore,
+  Visibility,
+} from "../memory.ts";
 import type {
   AuthorizationDecision,
   AuthorizationPolicy,
   BudgetAmount,
   BudgetAuthority,
   BudgetReservation,
+  DecisionMaker,
+  DecisionProposal,
   EntitlementDecision,
   EntitlementPolicy,
 } from "../policy.ts";
@@ -45,14 +54,17 @@ export interface FixtureOptions {
   readonly mode: "fixture" | "production";
   readonly now?: number;
   readonly budgetUnits?: number;
+  readonly grantIdsByPrincipal?: ReadonlyMap<PrincipalId, ReadonlySet<string>>;
   readonly pauseOnSubmit?: boolean;
 }
 
 export interface FixtureAdapters {
   readonly agentRepository: AgentRepository;
+  readonly artifactStore: ArtifactStore;
   readonly authorizationPolicy: AuthorizationPolicy;
   readonly entitlementPolicy: EntitlementPolicy;
   readonly budgetAuthority: BudgetAuthority;
+  readonly decisionMaker: DecisionMaker;
   readonly toolExecutor: ToolExecutor;
   readonly sessionService: SessionService;
   readonly memoryStore: MemoryStore;
@@ -105,6 +117,16 @@ const sameAddress = (first: EventAddress, second: EventAddress): boolean =>
   first.conversationId === second.conversationId &&
   first.sessionId === second.sessionId;
 
+const sameVisibility = (first: Visibility, second: Visibility): boolean => {
+  if (first.kind === "organization") {
+    return second.kind === "organization";
+  }
+  if (first.kind === "private") {
+    return second.kind === "private" && first.ownerId === second.ownerId;
+  }
+  return second.kind === "grant" && first.grantId === second.grantId;
+};
+
 export const createFixtureAdapters = (
   options: FixtureOptions
 ): FixtureAdapters => {
@@ -125,6 +147,35 @@ export const createFixtureAdapters = (
     isExecutionContextActiveAt(context, organizationId, now) &&
     allowedPrincipalIds.has(context.actor.id) &&
     (!context.represented || allowedPrincipalIds.has(context.represented.id));
+
+  const hasVisibilityGrant = (
+    context: ExecutionContext,
+    grantId: string
+  ): boolean => {
+    const grants = options.grantIdsByPrincipal;
+    if (!grants?.get(context.actor.id)?.has(grantId)) {
+      return false;
+    }
+    return (
+      !context.represented ||
+      grants.get(context.represented.id)?.has(grantId) === true
+    );
+  };
+
+  const canReadVisibility = (
+    context: ExecutionContext,
+    visibility: Visibility
+  ): boolean => {
+    if (visibility.kind === "organization") {
+      return true;
+    }
+    if (visibility.kind === "private") {
+      return (
+        visibility.ownerId === (context.represented?.id ?? context.actor.id)
+      );
+    }
+    return hasVisibilityGrant(context, visibility.grantId);
+  };
 
   const authorizationPolicy: AuthorizationPolicy = {
     evaluate: async (context, _action, resource, readOptions) => {
@@ -412,7 +463,7 @@ export const createFixtureAdapters = (
     execute: async (call, capability, effect) => {
       if (
         !hasGrant(call.context, call.organizationId) ||
-        !toolCapabilityMatches(capability, call, effect, now)
+        !(await toolCapabilityMatches(capability, call, effect, now))
       ) {
         return denied("The tool capability does not authorize this call.");
       }
@@ -759,10 +810,7 @@ export const createFixtureAdapters = (
         .filter(
           (record) =>
             record.text.toLowerCase().includes(search) &&
-            (record.visibility.kind === "organization" ||
-              (record.visibility.kind === "private" &&
-                record.visibility.ownerId ===
-                  (query.context.represented?.id ?? query.context.actor.id)))
+            canReadVisibility(query.context, record.visibility)
         )
         .slice(0, query.limit)
         .map((record) => ({ citation: record.provenance, record }));
@@ -770,10 +818,189 @@ export const createFixtureAdapters = (
     },
   };
 
+  interface ArtifactEntry {
+    readonly ref: ArtifactRef;
+    readonly bytes: Uint8Array;
+  }
+  const artifacts = new Map<ArtifactRef["artifactId"], ArtifactEntry>();
+  const artifactPuts = new Map<
+    OperationId,
+    { readonly digest: Digest; readonly entry: ArtifactEntry }
+  >();
+  const artifactDeletes = new Map<OperationId, { readonly digest: Digest }>();
+  const artifactStore: ArtifactStore = {
+    delete: async (scope, ref, effect) => {
+      if (!hasGrant(scope.context, scope.organizationId)) {
+        return denied("The principal has no current grant.");
+      }
+      const prior = artifactDeletes.get(effect.operationId);
+      if (prior) {
+        return prior.digest === effect.requestDigest
+          ? { status: "ok", value: undefined }
+          : conflict(
+              "The operation ID already has a different artifact delete."
+            );
+      }
+      if (artifactPuts.has(effect.operationId)) {
+        return conflict("The operation ID already identifies a put.");
+      }
+      const failure = effectFailure(effect, now);
+      if (failure) {
+        return failure;
+      }
+      const entry = artifacts.get(ref.artifactId);
+      if (!entry || entry.ref.organizationId !== scope.organizationId) {
+        return { resource: "artifact", status: "not-found" };
+      }
+      if (!canReadVisibility(scope.context, entry.ref.visibility)) {
+        return denied("The principal cannot delete this artifact.");
+      }
+      artifacts.delete(ref.artifactId);
+      artifactDeletes.set(effect.operationId, { digest: effect.requestDigest });
+      return { status: "ok", value: undefined };
+    },
+    put: async (scope, bytes, metadata, effect) => {
+      if (
+        !hasGrant(scope.context, scope.organizationId) ||
+        !canReadVisibility(scope.context, metadata.visibility)
+      ) {
+        return denied("The principal cannot write this artifact.");
+      }
+      if (metadata.organizationId !== scope.organizationId) {
+        return {
+          reason: "Artifact organization does not match scope.",
+          status: "invalid-input",
+        };
+      }
+      const prior = artifactPuts.get(effect.operationId);
+      if (prior) {
+        const sameBytes =
+          prior.entry.bytes.length === bytes.length &&
+          prior.entry.bytes.every((byte, index) => byte === bytes[index]);
+        return prior.digest === effect.requestDigest &&
+          sameBytes &&
+          prior.entry.ref.organizationId === metadata.organizationId &&
+          prior.entry.ref.provenance.sourceId ===
+            metadata.provenance.sourceId &&
+          prior.entry.ref.provenance.sourceVersion ===
+            metadata.provenance.sourceVersion &&
+          prior.entry.ref.provenance.sourceUri ===
+            metadata.provenance.sourceUri &&
+          prior.entry.ref.provenance.observedAt ===
+            metadata.provenance.observedAt &&
+          sameVisibility(prior.entry.ref.visibility, metadata.visibility)
+          ? { status: "ok", value: prior.entry.ref }
+          : conflict("The operation ID already has a different artifact.");
+      }
+      if (artifactDeletes.has(effect.operationId)) {
+        return conflict("The operation ID already identifies a delete.");
+      }
+      const failure = effectFailure(effect, now);
+      if (failure) {
+        return failure;
+      }
+      const ref: ArtifactRef = {
+        ...metadata,
+        artifactId: id.artifact(`artifact:${effect.operationId}`),
+      };
+      const entry: ArtifactEntry = { bytes: new Uint8Array(bytes), ref };
+      artifacts.set(ref.artifactId, entry);
+      artifactPuts.set(effect.operationId, {
+        digest: effect.requestDigest,
+        entry,
+      });
+      return { status: "ok", value: ref };
+    },
+    read: async (scope, ref, readOptions) => {
+      const failure = readFailure(readOptions, now);
+      if (failure) {
+        return failure;
+      }
+      if (!hasGrant(scope.context, scope.organizationId)) {
+        return denied("The principal has no current grant.");
+      }
+      const entry = artifacts.get(ref.artifactId);
+      if (!entry || entry.ref.organizationId !== scope.organizationId) {
+        return { resource: "artifact", status: "not-found" };
+      }
+      if (!canReadVisibility(scope.context, entry.ref.visibility)) {
+        return denied("The principal cannot read this artifact.");
+      }
+      return { status: "ok", value: new Uint8Array(entry.bytes) };
+    },
+  };
+
+  const decisions = new Map<
+    OperationId,
+    {
+      readonly digest: Digest;
+      readonly request: string;
+      readonly result: PortResult<DecisionProposal>;
+    }
+  >();
+  const decisionMaker: DecisionMaker = {
+    propose: async (request, effect) => {
+      const requestKey = JSON.stringify([
+        request.organizationId,
+        request.inputDigest,
+        request.eventSummary,
+        request.allowedChoices,
+        request.modelVersion,
+      ]);
+      const prior = decisions.get(effect.operationId);
+      if (prior) {
+        return prior.digest === effect.requestDigest &&
+          prior.request === requestKey
+          ? prior.result
+          : conflict(
+              "The operation ID already has a different decision request."
+            );
+      }
+      const failure = effectFailure(effect, now);
+      if (failure) {
+        return failure;
+      }
+      if (
+        request.organizationId !== fixtureOrganizationId ||
+        request.allowedChoices.length === 0
+      ) {
+        return {
+          reason:
+            "A fixture organization and at least one choice are required.",
+          status: "invalid-input",
+        };
+      }
+      const [choice] = request.allowedChoices;
+      if (!choice) {
+        return {
+          reason: "A decision choice is required.",
+          status: "invalid-input",
+        };
+      }
+      const result: PortResult<DecisionProposal> = {
+        status: "ok",
+        value: {
+          choice,
+          inputDigest: request.inputDigest,
+          modelVersion: request.modelVersion,
+          usage: { unit: "credits", units: 0 },
+        },
+      };
+      decisions.set(effect.operationId, {
+        digest: effect.requestDigest,
+        request: requestKey,
+        result,
+      });
+      return result;
+    },
+  };
+
   return {
     agentRepository,
+    artifactStore,
     authorizationPolicy,
     budgetAuthority,
+    decisionMaker,
     entitlementPolicy,
     memoryStore,
     sessionService,

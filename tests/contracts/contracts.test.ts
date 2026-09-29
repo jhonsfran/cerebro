@@ -14,17 +14,21 @@ import { createFixtureAdapters } from "../../packages/contracts/src/testing/adap
 import {
   activeDeniedContext,
   allowedContext,
+  allowedUser,
   deniedContext,
   duplicateEvent,
   expiredDelegationContext,
   fixtureAgentId,
   fixtureOrganizationId,
+  serviceActor,
   unknownOutcomeCapability,
   unknownOutcomeInvocation,
   userEvent,
 } from "../../packages/contracts/src/testing/fixtures.ts";
 import {
   approvalMatches,
+  canonicalToolArguments,
+  digestToolArguments,
   toolCapabilityMatches,
 } from "../../packages/contracts/src/tools.ts";
 import type { Approval } from "../../packages/contracts/src/tools.ts";
@@ -241,14 +245,14 @@ test("approval binds the exact tool, arguments, principal, policy, and expiry", 
   );
 });
 
-test("a capability cannot authorize a different tool invocation", () => {
+test("a capability cannot authorize a different tool invocation", async () => {
   const effect = {
     deadlineAt: 1_900_000_000_000,
     operationId: unknownOutcomeInvocation.operationId,
     requestDigest: unknownOutcomeInvocation.argumentDigest,
   };
   assert.equal(
-    toolCapabilityMatches(
+    await toolCapabilityMatches(
       unknownOutcomeCapability,
       unknownOutcomeInvocation,
       effect,
@@ -257,7 +261,7 @@ test("a capability cannot authorize a different tool invocation", () => {
     true
   );
   assert.equal(
-    toolCapabilityMatches(
+    await toolCapabilityMatches(
       { ...unknownOutcomeCapability, toolVersion: "2" },
       unknownOutcomeInvocation,
       effect,
@@ -266,7 +270,7 @@ test("a capability cannot authorize a different tool invocation", () => {
     false
   );
   assert.equal(
-    toolCapabilityMatches(
+    await toolCapabilityMatches(
       {
         ...unknownOutcomeCapability,
         operationId: id.operation("another-effect"),
@@ -278,7 +282,7 @@ test("a capability cannot authorize a different tool invocation", () => {
     false
   );
   assert.equal(
-    toolCapabilityMatches(
+    await toolCapabilityMatches(
       {
         ...unknownOutcomeCapability,
         principalId: id.principal("another-user"),
@@ -629,4 +633,259 @@ test("fixture session inspection excludes another session's run", async () => {
     resumed.push(item);
   }
   assert.deepEqual(resumed, []);
+});
+
+test("fixture tool rejects changed arguments even when the caller reuses a digest", async () => {
+  const { toolExecutor } = createFixtureAdapters({ mode: "fixture" });
+  const effect = {
+    deadlineAt: 1_900_000_000_000,
+    operationId: unknownOutcomeInvocation.operationId,
+    requestDigest: unknownOutcomeInvocation.argumentDigest,
+  };
+  const changedCall = {
+    ...unknownOutcomeInvocation,
+    arguments: { ticket: "support-2" },
+  };
+  assert.deepEqual(
+    await toolExecutor.execute(changedCall, unknownOutcomeCapability, effect),
+    {
+      code: "unauthorized",
+      reason: "The tool capability does not authorize this call.",
+      status: "denied",
+    }
+  );
+});
+
+test("a delegated capability binds the actor as well as the represented user", async () => {
+  const delegationId = id.delegation("delegation-active");
+  const delegatedCall = {
+    ...unknownOutcomeInvocation,
+    context: {
+      actor: serviceActor,
+      delegation: {
+        actorId: serviceActor.id,
+        expiresAt: 1_900_000_000_000,
+        id: delegationId,
+        organizationId: fixtureOrganizationId,
+        representedId: allowedUser.id,
+      },
+      represented: allowedUser,
+    },
+  };
+  const capability = {
+    ...unknownOutcomeCapability,
+    actorPrincipalId: serviceActor.id,
+    delegationId,
+  };
+  const effect = {
+    deadlineAt: 1_900_000_000_000,
+    operationId: unknownOutcomeInvocation.operationId,
+    requestDigest: unknownOutcomeInvocation.argumentDigest,
+  };
+  assert.equal(
+    await toolCapabilityMatches(
+      capability,
+      delegatedCall,
+      effect,
+      1_800_000_000_000
+    ),
+    true
+  );
+  const otherActor = { ...serviceActor, id: id.principal("service-other") };
+  const changedActorCall = {
+    ...delegatedCall,
+    context: {
+      ...delegatedCall.context,
+      actor: otherActor,
+      delegation: {
+        ...delegatedCall.context.delegation,
+        actorId: otherActor.id,
+      },
+    },
+  };
+  assert.equal(
+    await toolCapabilityMatches(
+      capability,
+      changedActorCall,
+      effect,
+      1_800_000_000_000
+    ),
+    false
+  );
+});
+
+test("grant-scoped memory follows current fixture grants", async () => {
+  const grants = new Map([[allowedUser.id, new Set(["support-source-read"])]]);
+  const fixtureOptions = {
+    grantIdsByPrincipal: grants,
+    mode: "fixture" as const,
+  };
+  const { memoryStore } = createFixtureAdapters(fixtureOptions);
+  const record = {
+    id: "memory-granted",
+    kind: "source-chunk" as const,
+    provenance: {
+      observedAt: 1_800_000_000_000,
+      sourceId: id.source("source-1"),
+      sourceUri: "fixture://source-1",
+      sourceVersion: "1",
+    },
+    text: "The support ticket is open.",
+    visibility: { grantId: "support-source-read", kind: "grant" as const },
+  };
+  const scope = {
+    context: allowedContext,
+    organizationId: fixtureOrganizationId,
+  };
+  const saved = await memoryStore.remember(scope, record, {
+    deadlineAt: 1_900_000_000_000,
+    operationId: id.operation("remember-granted"),
+    requestDigest: id.digest("sha256:remember-granted"),
+  });
+  assert.equal(saved.status, "ok");
+  const query = { ...scope, limit: 5, text: "support ticket" };
+  const readOptions = { deadlineAt: 1_900_000_000_000 };
+  const visible = await memoryStore.retrieve(query, readOptions);
+  assert.equal(visible.status, "ok");
+  if (visible.status !== "ok") {
+    return;
+  }
+  assert.deepEqual(
+    visible.value.map((hit) => hit.record.id),
+    ["memory-granted"]
+  );
+  grants.get(allowedUser.id)?.delete("support-source-read");
+  const revoked = await memoryStore.retrieve(query, readOptions);
+  assert.deepEqual(revoked, { status: "ok", value: [] });
+});
+
+test("tool argument digests ignore object key order and reject non-JSON values", async () => {
+  assert.equal(
+    await digestToolArguments(
+      Object.fromEntries([
+        ["b", 2],
+        ["a", [true, null, "text"]],
+      ])
+    ),
+    await digestToolArguments({ a: [true, null, "text"], b: 2 })
+  );
+  assert.equal(
+    canonicalToolArguments(
+      Object.fromEntries([
+        ["z", 1],
+        [
+          "a",
+          Object.fromEntries([
+            ["b", 2],
+            ["a", 3],
+          ]),
+        ],
+      ])
+    ),
+    '{"a":{"a":3,"b":2},"z":1}'
+  );
+  await assert.rejects(
+    digestToolArguments({ ticket: undefined }),
+    /Tool arguments must be JSON values/u
+  );
+  const sparse: unknown[] = [];
+  sparse.length = 1;
+  await assert.rejects(
+    digestToolArguments(sparse),
+    /Tool argument arrays must be dense JSON arrays/u
+  );
+});
+
+test("artifact fixture checks current grants and copies stored bytes", async () => {
+  const grants = new Map([[allowedUser.id, new Set(["artifact-read"])]]);
+  const { artifactStore } = createFixtureAdapters({
+    grantIdsByPrincipal: grants,
+    mode: "fixture",
+  });
+  const scope = {
+    context: allowedContext,
+    organizationId: fixtureOrganizationId,
+  };
+  const metadata = {
+    organizationId: fixtureOrganizationId,
+    provenance: {
+      observedAt: 1_800_000_000_000,
+      sourceId: id.source("artifact-source"),
+      sourceUri: "fixture://artifact-source",
+      sourceVersion: "1",
+    },
+    visibility: { grantId: "artifact-read", kind: "grant" as const },
+  };
+  const stored = await artifactStore.put(
+    scope,
+    new Uint8Array([1, 2, 3]),
+    metadata,
+    {
+      deadlineAt: 1_900_000_000_000,
+      operationId: id.operation("put-artifact"),
+      requestDigest: id.digest("sha256:artifact-put"),
+    }
+  );
+  assert.equal(stored.status, "ok");
+  if (stored.status !== "ok") {
+    return;
+  }
+  const readOptions = { deadlineAt: 1_900_000_000_000 };
+  const first = await artifactStore.read(scope, stored.value, readOptions);
+  assert.equal(first.status, "ok");
+  if (first.status !== "ok") {
+    return;
+  }
+  assert.deepEqual([...first.value], [1, 2, 3]);
+  first.value[0] = 99;
+  const second = await artifactStore.read(scope, stored.value, readOptions);
+  assert.equal(second.status, "ok");
+  if (second.status !== "ok") {
+    return;
+  }
+  assert.deepEqual([...second.value], [1, 2, 3]);
+  grants.get(allowedUser.id)?.delete("artifact-read");
+  assert.deepEqual(await artifactStore.read(scope, stored.value, readOptions), {
+    code: "unauthorized",
+    reason: "The principal cannot read this artifact.",
+    status: "denied",
+  });
+});
+
+test("decision fixture chooses only a supplied action and replays it", async () => {
+  const { decisionMaker } = createFixtureAdapters({ mode: "fixture" });
+  const request = {
+    allowedChoices: ["defer", "run"] as const,
+    eventSummary: "Wait for an operator.",
+    inputDigest: id.digest("sha256:decision-input"),
+    modelVersion: "fixture-decision-1",
+    organizationId: fixtureOrganizationId,
+  };
+  const effect = {
+    deadlineAt: 1_900_000_000_000,
+    operationId: id.operation("decision-1"),
+    requestDigest: id.digest("sha256:decision-request"),
+  };
+  const first = await decisionMaker.propose(request, effect);
+  assert.deepEqual(first, {
+    status: "ok",
+    value: {
+      choice: "defer",
+      inputDigest: request.inputDigest,
+      modelVersion: "fixture-decision-1",
+      usage: { unit: "credits", units: 0 },
+    },
+  });
+  assert.deepEqual(await decisionMaker.propose(request, effect), first);
+  assert.deepEqual(
+    await decisionMaker.propose(
+      { ...request, allowedChoices: ["run"] },
+      effect
+    ),
+    {
+      code: "digest-mismatch",
+      reason: "The operation ID already has a different decision request.",
+      status: "conflict",
+    }
+  );
 });

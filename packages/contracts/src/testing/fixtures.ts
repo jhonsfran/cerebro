@@ -84,7 +84,9 @@ export const duplicateEvent: EventEnvelope = {
 
 export const unknownOutcomeInvocation: ToolInvocation = {
   agentId: fixtureAgentId,
-  argumentDigest: id.digest("sha256:tool-arguments"),
+  argumentDigest: id.digest(
+    "sha256:bb0b880e67c4945ee042df806a395b2d49580920b2c559d635af142a67e0a9e2"
+  ),
   arguments: { ticket: "support-1" },
   context: allowedContext,
   operationId: id.operation("tool-operation-1"),
@@ -112,6 +114,7 @@ export const depletedBudget: PortResult<BudgetReservation> = {
 };
 
 export const unknownOutcomeCapability: ToolCapability = {
+  actorPrincipalId: allowedUser.id,
   agentId: fixtureAgentId,
   argumentDigest: unknownOutcomeInvocation.argumentDigest,
   connectorId: unknownOutcomeInvocation.tool.connectorId,
