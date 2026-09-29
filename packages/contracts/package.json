@@ -1,0 +1,17 @@
+{
+  "name": "@cerebro/contracts",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit -p tsconfig.json",
+    "test": "node --experimental-strip-types --test ../../tests/contracts/contracts.test.ts"
+  },
+  "devDependencies": {
+    "@cerebro/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

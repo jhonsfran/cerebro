@@ -1,0 +1,123 @@
+import type { EventAddress, EventEnvelope } from "./events.ts";
+import type {
+  AgentId,
+  ExecutionContext,
+  OperationId,
+  OrganizationId,
+  RunId,
+  SessionId,
+} from "./identity.ts";
+import type { EffectOptions, PortResult, ReadOptions } from "./port.ts";
+
+export type RunState =
+  | {
+      readonly state: "queued" | "running" | "waiting-for-approval";
+      readonly runId: RunId;
+    }
+  | {
+      readonly state: "completed";
+      readonly runId: RunId;
+      readonly completedAt: number;
+    }
+  | {
+      readonly state: "failed" | "cancelled";
+      readonly runId: RunId;
+      readonly endedAt: number;
+    }
+  | {
+      readonly state: "unknown-outcome";
+      readonly runId: RunId;
+      readonly operationId: OperationId;
+    };
+
+export interface SessionSnapshot {
+  readonly address: EventAddress;
+  readonly agentVersion: number;
+  readonly runs: readonly RunState[];
+  readonly cursor: string;
+}
+
+export type SessionCommand =
+  | { readonly type: "submit"; readonly event: EventEnvelope }
+  | {
+      readonly type: "approve";
+      readonly address: EventAddress;
+      readonly approvalId: string;
+      readonly context: ExecutionContext;
+    }
+  | {
+      readonly type: "cancel";
+      readonly address: EventAddress;
+      readonly runId: RunId;
+      readonly context: ExecutionContext;
+    };
+
+export interface SessionReceipt {
+  readonly sessionId: SessionId;
+  readonly runId: RunId;
+  readonly acceptedEventId: EventEnvelope["eventId"];
+  readonly replayed: boolean;
+}
+
+export type SessionStreamItem =
+  | { readonly type: "run"; readonly run: RunState; readonly cursor: string }
+  | {
+      readonly type: "output";
+      readonly runId: RunId;
+      readonly text: string;
+      readonly cursor: string;
+    }
+  | {
+      readonly type: "approval";
+      readonly runId: RunId;
+      readonly approvalId: string;
+      readonly cursor: string;
+    };
+
+export interface SessionService {
+  readonly submit: (
+    command: Extract<SessionCommand, { type: "submit" }>,
+    options: EffectOptions
+  ) => Promise<PortResult<SessionReceipt>>;
+  readonly approve: (
+    command: Extract<SessionCommand, { type: "approve" }>,
+    options: EffectOptions
+  ) => Promise<PortResult<RunState>>;
+  readonly cancel: (
+    command: Extract<SessionCommand, { type: "cancel" }>,
+    options: EffectOptions
+  ) => Promise<PortResult<RunState>>;
+  readonly inspect: (
+    address: EventAddress,
+    context: ExecutionContext,
+    options: ReadOptions
+  ) => Promise<PortResult<SessionSnapshot>>;
+  readonly stream: (
+    address: EventAddress,
+    context: ExecutionContext,
+    cursor: string | undefined,
+    options: ReadOptions
+  ) => AsyncIterable<PortResult<SessionStreamItem>>;
+}
+
+export interface AgentDefinition {
+  readonly organizationId: OrganizationId;
+  readonly agentId: AgentId;
+  readonly version: number;
+  readonly instructions: string;
+  readonly model: string;
+  readonly enabledToolIds: readonly string[];
+}
+
+export interface AgentRepository {
+  readonly get: (
+    organizationId: OrganizationId,
+    agentId: AgentId,
+    options: ReadOptions
+  ) => Promise<PortResult<AgentDefinition>>;
+  readonly publish: (
+    definition: AgentDefinition,
+    expectedVersion: number | undefined,
+    options: EffectOptions
+  ) => Promise<PortResult<AgentDefinition>>;
+}
