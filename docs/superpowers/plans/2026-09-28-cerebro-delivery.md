@@ -201,14 +201,14 @@ Each subsystem owns separate PostgreSQL schema modules. The coordinator generate
 
 **Files.** Own `packages/memory/**`, `packages/db/src/schema/memory.ts`, `packages/db/src/repositories/memory.ts`, `packages/api/src/routers/memory.ts`, and `tests/memory/**`. Create `packages/memory/src/{ingest,retrieve,remember,forget,artifact-store}.ts`.
 
-- [ ] Store source identity, version, company, visibility, owner, timestamps, and retention state with every memory item.
-- [ ] Separate conversation summaries from shared knowledge and explicit remembered facts. Keep source documents and large artifacts in MinIO.
-- [ ] Add PostgreSQL full-text retrieval. Add pgvector for semantic retrieval without introducing another database service.
-- [ ] Apply access restrictions in the retrieval query before returning content. Resolve current grants and source revocations on every read.
-- [ ] Make ingestion repeatable by source ID and version. Remove obsolete chunks when a source version changes.
-- [ ] Return citations with source and version. Never promote an untrusted model statement to a verified company fact without provenance and an explicit write policy.
-- [ ] Implement deletion and source revocation across chunks, embeddings, summaries, and artifacts. Invalidate affected derived memory.
-- [ ] Keep embeddings behind a port. Provide deterministic local fixtures and a configurable real embedding provider.
+- [x] Store source identity, version, company, visibility, owner, timestamps, and retention state with every memory item.
+- [x] Separate conversation summaries from shared knowledge and explicit remembered facts. Keep source documents and large artifacts in MinIO.
+- [x] Add PostgreSQL full-text retrieval. Add pgvector for semantic retrieval without introducing another database service.
+- [x] Apply access restrictions in the retrieval query before returning content. Resolve current grants and source revocations on every read.
+- [x] Make ingestion repeatable by source ID and version. Remove obsolete chunks when a source version changes.
+- [x] Return citations with source and version. Never promote an untrusted model statement to a verified company fact without provenance and an explicit write policy.
+- [x] Implement deletion and source revocation across chunks, embeddings, summaries, and artifacts. Invalidate affected derived memory.
+- [x] Keep embeddings behind a port. Provide deterministic local fixtures and a configurable real embedding provider.
 
 **Verify.** Add `tests/memory/access.test.ts`, `tests/memory/lifecycle.test.ts`, and `tests/memory/retrieval.test.ts`. Run `rtk proxy pnpm test:memory`. Prove cross-company isolation, different user grants inside one company, revoked-source exclusion, idempotent ingestion, deletion of derived data, and correct citations. Use a small fixed question set to evaluate real retrieval separately from synthetic vector fixtures.
 
