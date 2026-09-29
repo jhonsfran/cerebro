@@ -4,7 +4,8 @@
 
 - Branch: `codex/cerebro-foundation`.
 - Base commit: `4168b38950992de3b602840b5d32c30b6bfd3d4a` on `main`.
-- Contract commits: `6ed1448df2b5eae20cd565b2cd522c676a83da05`, `abcf2efc0eae9c9f605fcfdf059a4ceebce08222`, `c2cc724a9af55f44095dd745a7d91ba95085e88d`, and `6f802d426568986a8ea1f755fe4fcd90ee143609`.
+- Contract commits: `6ed1448df2b5eae20cd565b2cd522c676a83da05`, `abcf2efc0eae9c9f605fcfdf059a4ceebce08222`, `c2cc724a9af55f44095dd745a7d91ba95085e88d`, `6f802d426568986a8ea1f755fe4fcd90ee143609`, and `86f31896ebcbf5f3dc8eb9d670d58562370fccff`.
+- Foundation implementation commit: `2af5f98dc4e81e85a745113088a4b64c3673a0db`.
 - Assigned scope: shared contracts, PostgreSQL schema and migration, API Worker composition, native celld deployment, Compose services, fixture boot checks, root scripts, and this handoff.
 
 Session 0 reports 41 passing checks and two unrun checks. The real model provider and Worker PostgreSQL over publicly trusted TLS remain unverified. Session 1 local fixture results do not close Gate 0.
@@ -47,7 +48,7 @@ rtk proxy docker compose -f compose.yaml -f compose.production.yaml config --qui
 
 | Check | Result | Limit |
 | --- | --- | --- |
-| `rtk proxy pnpm test:contracts` | 30 passed | Deterministic fixtures and port behavior only. |
+| `rtk proxy pnpm test:contracts` | 35 passed | Deterministic fixtures and port behavior only. |
 | `rtk proxy pnpm check-types` | 7 workspace tasks passed | Type check does not prove runtime behavior. |
 | `rtk proxy pnpm build` | 5 workspace tasks passed | Web build emits a chunk-size warning. |
 | `rtk proxy pnpm --filter @cerebro/db db:generate` | No schema changes | PostgreSQL migration matches current schema. |
