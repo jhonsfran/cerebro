@@ -1458,4 +1458,259 @@ test("session fixture returns typed invalid-input for non-JSON event data", asyn
   assert.equal(result.status, "invalid-input");
 });
 
+test("budget reservation ignores mutations to input and returned amounts", async () => {
+  const { budgetAuthority } = createFixtureAdapters({ mode: "fixture" });
+  const maximum = { unit: "credits", units: 1 };
+  const reserved = await budgetAuthority.reserve(
+    fixtureOrganizationId,
+    maximum,
+    fixtureEffect("reserve-alias")
+  );
+  assert.equal(reserved.status, "ok");
+  if (reserved.status !== "ok") {
+    return;
+  }
+  maximum.units = 9;
+  Reflect.set(reserved.value.maximum, "units", 9);
+  const settled = await budgetAuthority.settle(
+    reserved.value.id,
+    { unit: "credits", units: 9 },
+    fixtureEffect("settle-alias")
+  );
+  assert.equal(settled.status, "invalid-input");
+  const balance = await budgetAuthority.inspect(fixtureOrganizationId, {
+    deadlineAt: 1_900_000_000_000,
+  });
+  assert.deepEqual(balance, {
+    status: "ok",
+    value: { unit: "credits", units: 9 },
+  });
+});
+
+test("agent definitions cannot change through input or read aliases", async () => {
+  const { agentRepository } = createFixtureAdapters({ mode: "fixture" });
+  const current = await agentRepository.get(
+    fixtureOrganizationId,
+    fixtureAgentId,
+    1,
+    { deadlineAt: 1_900_000_000_000 }
+  );
+  assert.equal(current.status, "ok");
+  if (current.status !== "ok") {
+    return;
+  }
+  const definition = { ...structuredClone(current.value), version: 2 };
+  Reflect.set(current.value.enabledToolIds, 0, "tool-other");
+  const originalVersion = await agentRepository.get(
+    fixtureOrganizationId,
+    fixtureAgentId,
+    1,
+    { deadlineAt: 1_900_000_000_000 }
+  );
+  assert.equal(originalVersion.status, "ok");
+  if (originalVersion.status === "ok") {
+    assert.deepEqual(originalVersion.value.enabledToolIds, ["tool-1"]);
+  }
+  const published = await agentRepository.publish(
+    definition,
+    1,
+    fixtureEffect("publish-alias")
+  );
+  assert.equal(published.status, "ok");
+  Reflect.set(definition.enabledToolIds, 0, "tool-other");
+  if (published.status === "ok" && published.value.grants[0]) {
+    Reflect.set(published.value.grants[0].resource, "id", "tool-other");
+  }
+  const reread = await agentRepository.get(
+    fixtureOrganizationId,
+    fixtureAgentId,
+    2,
+    { deadlineAt: 1_900_000_000_000 }
+  );
+  assert.equal(reread.status, "ok");
+  if (reread.status === "ok") {
+    assert.deepEqual(reread.value.enabledToolIds, ["tool-1"]);
+    assert.equal(reread.value.grants[0]?.resource.id, "tool-1");
+  }
+});
+
+test("memory and artifact visibility ignore caller mutation", async () => {
+  const { artifactStore, memoryStore } = createFixtureAdapters({
+    mode: "fixture",
+  });
+  const scope = {
+    context: allowedContext,
+    organizationId: fixtureOrganizationId,
+  };
+  const serviceScope = {
+    context: { actor: serviceActor },
+    organizationId: fixtureOrganizationId,
+  };
+  const visibility = { kind: "private" as const, ownerId: allowedUser.id };
+  const provenance = {
+    observedAt: 1_800_000_000_000,
+    sourceId: id.source("alias-source"),
+    sourceUri: "fixture://alias-source",
+    sourceVersion: "1",
+  };
+  const record = {
+    id: "memory-alias",
+    kind: "source-chunk" as const,
+    provenance,
+    text: "Private entry.",
+    visibility,
+  };
+  const remembered = await memoryStore.remember(
+    scope,
+    record,
+    fixtureEffect("memory-alias")
+  );
+  assert.equal(remembered.status, "ok");
+  if (remembered.status === "ok") {
+    Reflect.set(remembered.value.visibility, "kind", "organization");
+  }
+  const ownerHits = await memoryStore.retrieve(
+    { ...scope, limit: 10, text: "Private entry" },
+    { deadlineAt: 1_900_000_000_000 }
+  );
+  assert.equal(ownerHits.status, "ok");
+  if (ownerHits.status === "ok" && ownerHits.value[0]) {
+    Reflect.set(ownerHits.value[0].record.visibility, "kind", "organization");
+  }
+  Reflect.set(visibility, "kind", "organization");
+  const hits = await memoryStore.retrieve(
+    { ...serviceScope, limit: 10, text: "Private entry" },
+    { deadlineAt: 1_900_000_000_000 }
+  );
+  assert.deepEqual(hits, { status: "ok", value: [] });
+  const metadata = {
+    organizationId: fixtureOrganizationId,
+    provenance,
+    visibility: { kind: "private" as const, ownerId: allowedUser.id },
+  };
+  const stored = await artifactStore.put(
+    scope,
+    new Uint8Array([1]),
+    metadata,
+    fixtureEffect("artifact-alias")
+  );
+  assert.equal(stored.status, "ok");
+  if (stored.status !== "ok") {
+    return;
+  }
+  Reflect.set(metadata.visibility, "kind", "organization");
+  Reflect.set(stored.value.visibility, "kind", "organization");
+  const read = await artifactStore.read(serviceScope, stored.value, {
+    deadlineAt: 1_900_000_000_000,
+  });
+  assert.equal(read.status, "denied");
+});
+
+test("session state ignores mutations to submitted and inspected objects", async () => {
+  const { sessionService } = createFixtureAdapters({
+    mode: "fixture",
+    pauseOnSubmit: true,
+  });
+  const event = structuredClone(userEvent);
+  const originalAddress = { ...event };
+  const submitted = await sessionService.submit(
+    { event, type: "submit" },
+    fixtureEffect("session-alias")
+  );
+  assert.equal(submitted.status, "ok");
+  if (submitted.status !== "ok") {
+    return;
+  }
+  Reflect.set(event, "sessionId", id.session("changed-session"));
+  Reflect.set(submitted.value, "runId", id.run("changed-run"));
+  const inspected = await sessionService.inspect(
+    originalAddress,
+    allowedContext,
+    { deadlineAt: 1_900_000_000_000 }
+  );
+  assert.equal(inspected.status, "ok");
+  if (inspected.status !== "ok") {
+    return;
+  }
+  assert.equal(
+    inspected.value.runs[0]?.runId,
+    id.run(`run:${userEvent.eventId}`)
+  );
+  Reflect.set(inspected.value.runs[0], "state", "completed");
+  const approved = await sessionService.approve(
+    {
+      address: originalAddress,
+      approvalId: `approval:run:${userEvent.eventId}`,
+      context: allowedContext,
+      type: "approve",
+    },
+    fixtureEffect("approve-alias")
+  );
+  assert.equal(approved.status, "ok");
+});
+
+test("tool output and decision replay ignore returned object mutation", async () => {
+  const { decisionMaker, toolExecutor } = createFixtureAdapters({
+    mode: "fixture",
+  });
+  const argumentsValue = { ticket: "support-1" };
+  const operationId = id.operation("tool-output-alias");
+  const call = {
+    ...unknownOutcomeInvocation,
+    arguments: argumentsValue,
+    operationId,
+  };
+  const capability = { ...unknownOutcomeCapability, operationId };
+  const effect = {
+    ...fixtureEffect("tool-output-alias"),
+    requestDigest: unknownOutcomeInvocation.argumentDigest,
+  };
+  const executed = await toolExecutor.execute(call, capability, effect);
+  assert.equal(executed.status, "ok");
+  argumentsValue.ticket = "changed-input";
+  if (
+    executed.status === "ok" &&
+    typeof executed.value.output === "object" &&
+    executed.value.output !== null
+  ) {
+    const outputArguments = Reflect.get(executed.value.output, "arguments");
+    if (typeof outputArguments === "object" && outputArguments !== null) {
+      Reflect.set(outputArguments, "ticket", "changed-output");
+    }
+  }
+  const reconciled = await toolExecutor.reconcile(operationId, allowedContext, {
+    deadlineAt: 1_900_000_000_000,
+  });
+  assert.deepEqual(reconciled, {
+    status: "ok",
+    value: {
+      output: { arguments: { ticket: "support-1" }, toolId: call.tool.id },
+    },
+  });
+  const request = {
+    allowedChoices: ["run"] as const,
+    eventSummary: "Process this event.",
+    inputDigest: id.digest("sha256:decision-alias-input"),
+    modelVersion: "fixture-model",
+    organizationId: fixtureOrganizationId,
+  };
+  const decisionEffect = fixtureEffect("decision-alias");
+  const proposed = await decisionMaker.propose(request, decisionEffect);
+  assert.equal(proposed.status, "ok");
+  if (proposed.status === "ok") {
+    Reflect.set(proposed.value, "choice", "defer");
+    Reflect.set(proposed.value.usage, "units", 999);
+  }
+  const replayed = await decisionMaker.propose(request, decisionEffect);
+  assert.deepEqual(replayed, {
+    status: "ok",
+    value: {
+      choice: "run",
+      inputDigest: request.inputDigest,
+      modelVersion: request.modelVersion,
+      usage: { unit: "credits", units: 0 },
+    },
+  });
+});
+
 // oxlint-enable unicorn/no-await-expression-member

@@ -73,6 +73,8 @@ export interface FixtureAdapters {
 const requestKey = (...fields: readonly unknown[]): string =>
   canonicalToolArguments(fields);
 
+const copyFixture = <T>(value: T): T => structuredClone(value);
+
 const conflict = (reason: string): PortFailure => ({
   code: "digest-mismatch",
   reason,
@@ -241,7 +243,7 @@ export const createFixtureAdapters = (
     return prior.kind === kind &&
       prior.digest === effect.requestDigest &&
       prior.request === request
-      ? prior.result
+      ? copyFixture(prior.result)
       : conflict("The operation ID already has a different request.");
   };
   const recordBudget = (
@@ -250,13 +252,14 @@ export const createFixtureAdapters = (
     request: string,
     result: PortResult<BudgetReservation>
   ): PortResult<BudgetReservation> => {
+    const snapshot = copyFixture(result);
     budgetEffects.set(effect.operationId, {
       digest: effect.requestDigest,
       kind,
       request,
-      result,
+      result: snapshot,
     });
-    return result;
+    return copyFixture(snapshot);
   };
   const budgetAuthority: BudgetAuthority = {
     inspect: async (organizationId, readOptions) => {
@@ -293,7 +296,7 @@ export const createFixtureAdapters = (
       }
       availableUnits += prior.maximum.units;
       const value: BudgetReservation = { ...prior, state: "released" };
-      reservations.set(reservationId, value);
+      reservations.set(reservationId, copyFixture(value));
       return recordBudget("release", effect, request, { status: "ok", value });
     },
     reserve: async (organizationId, maximum, effect) => {
@@ -335,12 +338,12 @@ export const createFixtureAdapters = (
       availableUnits -= maximum.units;
       const reservation: BudgetReservation = {
         id: id.reservation(`reservation:${effect.operationId}`),
-        maximum,
+        maximum: Object.freeze(copyFixture(maximum)),
         operationId: effect.operationId,
         organizationId,
         state: "reserved",
       };
-      reservations.set(reservation.id, reservation);
+      reservations.set(reservation.id, copyFixture(reservation));
       return recordBudget("reserve", effect, request, {
         status: "ok",
         value: reservation,
@@ -386,7 +389,7 @@ export const createFixtureAdapters = (
       }
       availableUnits += prior.maximum.units - incurred.units;
       const value: BudgetReservation = { ...prior, state: "settled" };
-      reservations.set(reservationId, value);
+      reservations.set(reservationId, copyFixture(value));
       return recordBudget("settle", effect, request, { status: "ok", value });
     },
   };
@@ -438,7 +441,7 @@ export const createFixtureAdapters = (
         version === "latest" ? Math.max(...agentVersions.keys()) : version;
       const value = agentVersions.get(selected);
       return value
-        ? { status: "ok", value }
+        ? { status: "ok", value: copyFixture(value) }
         : { resource: "agent version", status: "not-found" };
     },
     publish: async (definition, expectedVersion, effect) => {
@@ -456,7 +459,7 @@ export const createFixtureAdapters = (
       if (prior) {
         return prior.digest === effect.requestDigest &&
           prior.request === request
-          ? prior.result
+          ? copyFixture(prior.result)
           : conflict(
               "The operation ID already has a different agent definition."
             );
@@ -482,15 +485,16 @@ export const createFixtureAdapters = (
           status: "conflict",
         };
       }
-      agentVersions.set(definition.version, definition);
+      const snapshot = copyFixture(definition);
+      agentVersions.set(snapshot.version, snapshot);
       const result: PortResult<AgentDefinition> = {
         status: "ok",
-        value: definition,
+        value: copyFixture(snapshot),
       };
       publishedAgents.set(effect.operationId, {
         digest: effect.requestDigest,
         request,
-        result,
+        result: copyFixture(result),
       });
       return result;
     },
@@ -517,7 +521,7 @@ export const createFixtureAdapters = (
       if (prior) {
         return prior.digest === effect.requestDigest &&
           prior.request === request
-          ? prior.result
+          ? copyFixture(prior.result)
           : conflict("The operation ID already has different tool arguments.");
       }
       const failure = effectFailure(effect, now);
@@ -530,13 +534,16 @@ export const createFixtureAdapters = (
           : {
               status: "ok",
               value: {
-                output: { arguments: call.arguments, toolId: call.tool.id },
+                output: {
+                  arguments: copyFixture(call.arguments),
+                  toolId: call.tool.id,
+                },
               },
             };
       toolResults.set(effect.operationId, {
         digest: effect.requestDigest,
         request,
-        result,
+        result: copyFixture(result),
       });
       return result;
     },
@@ -549,7 +556,7 @@ export const createFixtureAdapters = (
         return denied("The principal has no current grant.");
       }
       return (
-        toolResults.get(operationId)?.result ?? {
+        copyFixture(toolResults.get(operationId)?.result) ?? {
           resource: "tool operation",
           status: "not-found",
         }
@@ -614,7 +621,7 @@ export const createFixtureAdapters = (
     if (collision) {
       return collision;
     }
-    return sessionStateEffects.get(effect.operationId)?.result;
+    return copyFixture(sessionStateEffects.get(effect.operationId)?.result);
   };
   const recordState = (
     kind: SessionStateEffect["kind"],
@@ -623,8 +630,11 @@ export const createFixtureAdapters = (
     result: PortResult<RunState>
   ): PortResult<RunState> => {
     recordSessionOperation(kind, effect, request);
-    sessionStateEffects.set(effect.operationId, { kind, result });
-    return result;
+    sessionStateEffects.set(effect.operationId, {
+      kind,
+      result: copyFixture(result),
+    });
+    return copyFixture(result);
   };
   const sessionService: SessionService = {
     approve: async (command, effect) => {
@@ -654,7 +664,7 @@ export const createFixtureAdapters = (
         return { resource: "approval", status: "not-found" };
       }
       const state: RunState = { completedAt: now, runId, state: "completed" };
-      runs.set(runId, state);
+      runs.set(runId, copyFixture(state));
       return recordState("approve", effect, request, {
         status: "ok",
         value: state,
@@ -697,7 +707,7 @@ export const createFixtureAdapters = (
         runId: command.runId,
         state: "cancelled",
       };
-      runs.set(command.runId, state);
+      runs.set(command.runId, copyFixture(state));
       return recordState("cancel", effect, request, {
         status: "ok",
         value: state,
@@ -720,7 +730,8 @@ export const createFixtureAdapters = (
       const sessionRuns = [...submitted.values()]
         .filter(({ event }) => sameAddress(event, address))
         .map(({ receipt }) => runs.get(receipt.runId))
-        .filter((run): run is RunState => run !== undefined);
+        .filter((run): run is RunState => run !== undefined)
+        .map((run) => copyFixture(run));
       const value: SessionSnapshot = {
         address,
         agentVersion: 1,
@@ -806,8 +817,11 @@ export const createFixtureAdapters = (
         runId,
         state: options.pauseOnSubmit ? "waiting-for-approval" : "queued",
       };
-      runs.set(runId, state);
-      submitted.set(event.eventId, { event, receipt });
+      runs.set(runId, copyFixture(state));
+      submitted.set(event.eventId, {
+        event: copyFixture(event),
+        receipt: copyFixture(receipt),
+      });
       recordSessionOperation("submit", effect, request);
       return { status: "ok", value: receipt };
     },
@@ -839,7 +853,7 @@ export const createFixtureAdapters = (
         return prior.kind === "forget" &&
           prior.digest === effect.requestDigest &&
           prior.request === request
-          ? prior.result
+          ? copyFixture(prior.result)
           : conflict("The operation ID already has a different memory effect.");
       }
       const failure = effectFailure(effect, now);
@@ -865,7 +879,7 @@ export const createFixtureAdapters = (
         digest: effect.requestDigest,
         kind: "forget",
         request,
-        result,
+        result: copyFixture(result),
       });
       return result;
     },
@@ -879,20 +893,24 @@ export const createFixtureAdapters = (
         return prior.kind === "remember" &&
           prior.digest === effect.requestDigest &&
           prior.request === request
-          ? prior.result
+          ? copyFixture(prior.result)
           : conflict("The operation ID already has a different memory effect.");
       }
       const failure = effectFailure(effect, now);
       if (failure) {
         return failure;
       }
-      records.set(record.id, record);
-      const result: PortResult<MemoryRecord> = { status: "ok", value: record };
+      const snapshot = copyFixture(record);
+      records.set(snapshot.id, snapshot);
+      const result: PortResult<MemoryRecord> = {
+        status: "ok",
+        value: copyFixture(snapshot),
+      };
       memoryEffects.set(effect.operationId, {
         digest: effect.requestDigest,
         kind: "remember",
         request,
-        result,
+        result: copyFixture(result),
       });
       return result;
     },
@@ -918,7 +936,10 @@ export const createFixtureAdapters = (
             canReadVisibility(query.context, record.visibility)
         )
         .slice(0, query.limit)
-        .map((record) => ({ citation: record.provenance, record }));
+        .map((record) => ({
+          citation: copyFixture(record.provenance),
+          record: copyFixture(record),
+        }));
       return { status: "ok", value: hits };
     },
   };
@@ -1008,7 +1029,7 @@ export const createFixtureAdapters = (
           prior.entry.ref.provenance.observedAt ===
             metadata.provenance.observedAt &&
           sameVisibility(prior.entry.ref.visibility, metadata.visibility)
-          ? { status: "ok", value: prior.entry.ref }
+          ? { status: "ok", value: copyFixture(prior.entry.ref) }
           : conflict("The operation ID already has a different artifact.");
       }
       if (artifactDeletes.has(effect.operationId)) {
@@ -1018,10 +1039,10 @@ export const createFixtureAdapters = (
       if (failure) {
         return failure;
       }
-      const ref: ArtifactRef = {
+      const ref: ArtifactRef = copyFixture({
         ...metadata,
         artifactId: id.artifact(`artifact:${effect.operationId}`),
-      };
+      });
       const entry: ArtifactEntry = { bytes: new Uint8Array(bytes), ref };
       artifacts.set(ref.artifactId, entry);
       artifactPuts.set(effect.operationId, {
@@ -1029,7 +1050,7 @@ export const createFixtureAdapters = (
         entry,
         request,
       });
-      return { status: "ok", value: ref };
+      return { status: "ok", value: copyFixture(ref) };
     },
     read: async (scope, ref, readOptions) => {
       const failure = readFailure(readOptions, now);
@@ -1065,7 +1086,7 @@ export const createFixtureAdapters = (
       if (prior) {
         return prior.digest === effect.requestDigest &&
           prior.request === decisionRequest
-          ? prior.result
+          ? copyFixture(prior.result)
           : conflict(
               "The operation ID already has a different decision request."
             );
@@ -1103,7 +1124,7 @@ export const createFixtureAdapters = (
       decisions.set(effect.operationId, {
         digest: effect.requestDigest,
         request: decisionRequest,
-        result,
+        result: copyFixture(result),
       });
       return result;
     },
