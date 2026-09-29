@@ -1,0 +1,150 @@
+import { spawnSync } from "node:child_process";
+import { readFile, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+import { AwsClient } from "aws4fetch";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import postgres from "postgres";
+
+const directory = process.env.CEREBRO_SECRETS_DIR ?? "/run/cerebro-secrets";
+const mode = process.env.DEPLOY_MODE ?? "fixture";
+const authSecretFile = await readFile(
+  path.join(directory, "auth-secret"),
+  "utf-8"
+);
+const postgresPasswordFile = await readFile(
+  path.join(directory, "postgres-password"),
+  "utf-8"
+);
+const minioPasswordFile = await readFile(
+  path.join(directory, "minio-password"),
+  "utf-8"
+);
+const authSecret = authSecretFile.trim();
+const postgresPassword = postgresPasswordFile.trim();
+const minioPassword = minioPasswordFile.trim();
+const localDatabaseUrl = `postgres://cerebro:${encodeURIComponent(postgresPassword)}@postgres:5432/cerebro`;
+const databaseUrl = process.env.CEREBRO_DATABASE_URL || localDatabaseUrl;
+const authUrl = process.env.CEREBRO_PUBLIC_API_URL ?? "http://localhost:18765";
+const webUrl = process.env.CEREBRO_PUBLIC_WEB_URL ?? "http://localhost:3001";
+
+if (mode !== "fixture" && mode !== "production") {
+  throw new Error("Invalid deployment mode");
+}
+if (mode === "production") {
+  if (
+    !process.env.CEREBRO_DATABASE_URL ||
+    new URL(databaseUrl).searchParams.get("sslmode") !== "verify-full"
+  ) {
+    throw new Error("Production requires sslmode=verify-full");
+  }
+  if (
+    new URL(authUrl).protocol !== "https:" ||
+    new URL(webUrl).protocol !== "https:"
+  ) {
+    throw new Error("Production public URLs must use HTTPS");
+  }
+}
+
+const aws = new AwsClient({
+  accessKeyId: "cerebro",
+  region: "us-east-1",
+  secretAccessKey: minioPassword,
+  service: "s3",
+});
+await Promise.all(
+  [
+    ["minio-runtime", "cerebro-runtime"],
+    ["minio-artifacts", "cerebro-artifacts"],
+  ].map(async ([host, bucket]) => {
+    const response = await aws.fetch(`http://${host}:9000/${bucket}`, {
+      method: "PUT",
+    });
+    const body = await response.text();
+    if (
+      !response.ok &&
+      !(response.status === 409 && body.includes("BucketAlreadyOwnedByYou"))
+    ) {
+      throw new Error(
+        `Bucket initialization failed at ${host} with status ${response.status}`
+      );
+    }
+  })
+);
+
+const client = postgres(databaseUrl, {
+  connect_timeout: 5,
+  max: 1,
+  prepare: false,
+});
+try {
+  await migrate(drizzle(client), {
+    migrationsFolder: new URL("../packages/db/src/migrations", import.meta.url)
+      .pathname,
+  });
+} finally {
+  await client.end({ timeout: 2 });
+}
+
+const config = {
+  compatibility_date: "2026-09-28",
+  compatibility_flags: ["nodejs_compat"],
+  durable_objects: {
+    bindings: [{ class_name: "SessionFixture", name: "SESSION_FIXTURE" }],
+  },
+  main: "apps/server/src/index.ts",
+  migrations: [{ new_sqlite_classes: ["SessionFixture"], tag: "v1" }],
+  name: "cerebro-api",
+  vars: {
+    BETTER_AUTH_SECRET: authSecret,
+    BETTER_AUTH_URL: authUrl,
+    CORS_ORIGIN: webUrl,
+    DATABASE_URL: databaseUrl,
+    DEPLOY_MODE: mode,
+    FIXTURE_ADAPTERS: mode === "fixture" ? "1" : "0",
+  },
+};
+const configPath = path.join(process.cwd(), "wrangler.jsonc");
+await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, {
+  mode: 0o600,
+});
+try {
+  const deployment = spawnSync(
+    "celld",
+    [
+      "deploy",
+      ".",
+      "--bucket",
+      "s3://cerebro-runtime",
+      "--endpoint",
+      "http://minio-runtime:9000",
+      "--region",
+      "us-east-1",
+    ],
+    {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        AWS_ACCESS_KEY_ID: "cerebro",
+        AWS_REGION: "us-east-1",
+        AWS_SECRET_ACCESS_KEY: minioPassword,
+      },
+      maxBuffer: 10 * 1024 * 1024,
+    }
+  );
+  const output = `${deployment.stdout ?? ""}${deployment.stderr ?? ""}`
+    .replaceAll(authSecret, "[secret removed]")
+    .replaceAll(minioPassword, "[secret removed]")
+    .replaceAll(postgresPassword, "[secret removed]")
+    .replaceAll(databaseUrl, "[database URL removed]");
+  process.stdout.write(output);
+  if (deployment.error) {
+    throw deployment.error;
+  }
+  if (deployment.status !== 0) {
+    throw new Error("Native celld deployment failed");
+  }
+} finally {
+  await unlink(configPath);
+}

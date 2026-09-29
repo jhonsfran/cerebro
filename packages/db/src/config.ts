@@ -1,4 +1,3 @@
-/// <reference types="@cloudflare/workers-types" />
-export type DatabaseConfig = {
-  DB: D1Database;
-};
+export interface DatabaseConfig {
+  DATABASE_URL: string;
+}

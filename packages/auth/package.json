@@ -10,11 +10,9 @@
     "check-types": "tsc -b"
   },
   "dependencies": {
-    "@better-auth/drizzle-adapter": "1.7.5",
     "@cerebro/db": "workspace:*",
     "better-auth": "catalog:",
-    "drizzle-orm": "catalog:",
-    "zod": "catalog:"
+    "drizzle-orm": "catalog:"
   },
   "devDependencies": {
     "@cerebro/config": "workspace:*",

@@ -1,0 +1,151 @@
+x-app: &app
+  build:
+    context: .
+    dockerfile: deploy/Dockerfile
+    target: app
+    args:
+      VITE_SERVER_URL: ${CEREBRO_PUBLIC_API_URL:-http://localhost:18765}
+  environment:
+    CEREBRO_SECRETS_DIR: /run/cerebro-secrets
+    DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-fixture}
+
+x-minio: &minio
+  build:
+    context: .
+    dockerfile: deploy/Dockerfile
+    target: minio
+  volumes:
+    - minio-credential:/run/cerebro-secrets:ro
+  depends_on:
+    secrets-init:
+      condition: service_completed_successfully
+  healthcheck:
+    test:
+      [
+        CMD,
+        node,
+        -e,
+        "fetch('http://localhost:9000/minio/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+      ]
+    interval: 2s
+    timeout: 5s
+    retries: 30
+
+services:
+  secrets-init:
+    <<: *app
+    command: [node, deploy/secrets.mjs]
+    volumes:
+      - secrets:/run/cerebro-secrets
+      - postgres-credential:/run/postgres-credential
+      - minio-credential:/run/minio-credential
+  postgres:
+    image: postgres:17.9-bookworm@sha256:47f917f7409eacd22fc5dfb1dee634e1b55cf0c01d1a7eb701be2227a03e0641
+    environment:
+      POSTGRES_USER: cerebro
+      POSTGRES_PASSWORD_FILE: /run/postgres-credential/postgres-password
+      POSTGRES_DB: cerebro
+    volumes:
+      - postgres:/var/lib/postgresql/data
+      - postgres-credential:/run/postgres-credential:ro
+    depends_on:
+      secrets-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U cerebro -d cerebro]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  minio-runtime:
+    <<: *minio
+    volumes:
+      - minio-credential:/run/cerebro-secrets:ro
+      - minio-runtime:/data
+  minio-artifacts:
+    <<: *minio
+    volumes:
+      - minio-credential:/run/cerebro-secrets:ro
+      - minio-artifacts:/data
+  bootstrap:
+    <<: *app
+    command: [node, deploy/bootstrap.mjs]
+    volumes:
+      - secrets:/run/cerebro-secrets:ro
+    environment:
+      CEREBRO_SECRETS_DIR: /run/cerebro-secrets
+      DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-fixture}
+      CEREBRO_PUBLIC_API_URL: ${CEREBRO_PUBLIC_API_URL:-http://localhost:18765}
+      CEREBRO_PUBLIC_WEB_URL: ${CEREBRO_PUBLIC_WEB_URL:-http://localhost:3001}
+      CEREBRO_DATABASE_URL: ${CEREBRO_DATABASE_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-runtime:
+        condition: service_healthy
+      minio-artifacts:
+        condition: service_healthy
+  celld:
+    <<: *app
+    command: [node, deploy/entrypoint.mjs, celld]
+    environment:
+      CEREBRO_SECRETS_DIR: /run/cerebro-secrets
+      DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-fixture}
+      CELLD_WATCH: /var/lib/celld/state
+      CELLD_DURABILITY: bucket
+      CELLD_TELEMETRY: "0"
+      CELLD_V8_HEAP_LIMIT_MB: "256"
+      CELLD_IDLE_EVICT_S: "10"
+      CELLD_MAX_RESIDENT_CELLS: "16"
+    ports:
+      - "127.0.0.1:${CEREBRO_API_PORT:-18765}:8080"
+    volumes:
+      - minio-credential:/run/cerebro-secrets:ro
+      - celld:/var/lib/celld
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:8080/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  web:
+    <<: *app
+    command: [pnpm, --filter, web, serve, --host, 0.0.0.0, --port, "3001"]
+    environment:
+      CEREBRO_SECRETS_DIR: /run/cerebro-secrets
+      DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-fixture}
+      PORT: "3001"
+      HOST: "0.0.0.0"
+      INTERNAL_API_URL: http://celld:8080
+    ports:
+      - "127.0.0.1:${CEREBRO_WEB_PORT:-3001}:3001"
+    depends_on:
+      celld:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:3001/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  secrets:
+  postgres-credential:
+  minio-credential:
+  postgres:
+  minio-runtime:
+  minio-artifacts:
+  celld:

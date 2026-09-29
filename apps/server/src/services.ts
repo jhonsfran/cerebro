@@ -1,11 +1,13 @@
 import { createAuth as createConfiguredAuth } from "@cerebro/auth";
-import { type Database, createDb } from "@cerebro/db";
+import { withDatabase as withConfiguredDatabase } from "@cerebro/db";
+import type { Database } from "@cerebro/db";
 
-import { ENV } from "./env.server";
+import type { WorkerEnv } from "./env.server";
 
-export function getDb(): Database {
-  return createDb(ENV);
-}
-export async function createAuth(database?: Database) {
-  return createConfiguredAuth(ENV, database ?? (await getDb()));
-}
+export const withDatabase = <T>(
+  env: WorkerEnv,
+  run: (database: Database) => Promise<T>
+): Promise<T> => withConfiguredDatabase(env, run);
+
+export const createAuth = (env: WorkerEnv, database: Database) =>
+  createConfiguredAuth(env, database);

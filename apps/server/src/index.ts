@@ -1,95 +1,100 @@
 import { appRouter } from "@cerebro/api/routers/index";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { OpenAPIReferencePlugin } from "@orpc/openapi/plugins";
-import { onError } from "@orpc/server";
 import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
-import { initLogger } from "evlog";
-import { createAuthMiddleware, type BetterAuthInstance } from "evlog/better-auth";
-import { evlog, type EvlogVariables } from "evlog/hono";
+import { sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
 import { createContext } from "./context";
-import { ENV } from "./env.server";
-import { createAuth } from "./services";
+import { assertWorkerEnv } from "./env.server";
+import type { WorkerEnv } from "./env.server";
+import { createAuth, withDatabase } from "./services";
 
-initLogger({
-  env: { service: "cerebro-server" },
-});
+export { SessionFixture } from "./session-fixture";
 
-const identifyUser = createAuthMiddleware((await createAuth()) as BetterAuthInstance, {
-  exclude: ["/api/auth/**"],
-  maskEmail: true,
-});
+const app = new Hono<{ Bindings: WorkerEnv }>();
 
-const app = new Hono<EvlogVariables>();
-
-app.use(evlog());
-app.use("*", async (c, next) => {
-  await identifyUser(c.get("log"), c.req.raw.headers, c.req.path);
-  await next();
-});
-
-app.use(
-  "/*",
-  cors({
-    origin: ENV.CORS_ORIGIN,
-    allowMethods: ["GET", "POST", "OPTIONS"],
+app.use("*", async (context, next) => {
+  assertWorkerEnv(context.env);
+  await cors({
     allowHeaders: ["Content-Type", "Authorization"],
+    allowMethods: ["GET", "POST", "OPTIONS"],
     credentials: true,
-  }),
+    origin: context.env.CORS_ORIGIN,
+  })(context, next);
+});
+
+app.get("/health", (context) => context.json({ ok: true }));
+app.get("/ready", async (context) => {
+  try {
+    await withDatabase(context.env, (database) =>
+      database.execute(sql`select 1`)
+    );
+    return context.json({ ok: true });
+  } catch {
+    return context.json({ error: "Database unavailable", ok: false }, 503);
+  }
+});
+
+app.on(["POST", "GET"], "/api/auth/*", (context) =>
+  withDatabase(context.env, (database) =>
+    createAuth(context.env, database).handler(context.req.raw)
+  )
 );
 
-app.on(["POST", "GET"], "/api/auth/*", async (c) => (await createAuth()).handler(c.req.raw));
+app.on(["POST", "GET"], "/fixture/sessions/:name", (context) => {
+  if (context.env.DEPLOY_MODE !== "fixture") {
+    return context.json({ error: "Not found" }, 404);
+  }
+  return withDatabase(context.env, async (database) => {
+    const auth = createAuth(context.env, database);
+    const session = await auth.api.getSession({
+      headers: context.req.raw.headers,
+    });
+    if (!session) {
+      return context.json({ error: "Unauthorized" }, 401);
+    }
+    const durable = context.env.SESSION_FIXTURE.get(
+      context.env.SESSION_FIXTURE.idFromName(context.req.param("name"))
+    );
+    const request = new Request(context.req.raw.url, {
+      headers: { "X-Cerebro-Fixture-User-Id": session.user.id },
+      method: context.req.method,
+    });
+    return durable.fetch(request);
+  });
+});
 
-export const apiHandler = new OpenAPIHandler(appRouter, {
+const apiHandler = new OpenAPIHandler(appRouter, {
   plugins: [
     new OpenAPIReferencePlugin({
       schemaConverters: [new ZodToJsonSchemaConverter()],
     }),
   ],
-  interceptors: [
-    onError((error) => {
-      console.error(error);
-    }),
-  ],
 });
+const rpcHandler = new RPCHandler(appRouter);
 
-export const rpcHandler = new RPCHandler(appRouter, {
-  interceptors: [
-    onError((error) => {
-      console.error(error);
-    }),
-  ],
-});
-
-app.use("/*", async (c, next) => {
-  const context = await createContext({ context: c });
-
-  const rpcResult = await rpcHandler.handle(c.req.raw, {
-    prefix: "/rpc",
-    context: context,
-  });
-
-  if (rpcResult.matched) {
-    return c.newResponse(rpcResult.response.body, rpcResult.response);
+app.use("/*", (context, next) => {
+  const { path } = context.req;
+  if (!path.startsWith("/rpc") && !path.startsWith("/api-reference")) {
+    return next();
   }
-
-  const apiResult = await apiHandler.handle(c.req.raw, {
-    prefix: "/api-reference",
-    context: context,
+  return withDatabase(context.env, async (database) => {
+    const apiContext = await createContext({ context, database });
+    const handler = path.startsWith("/rpc") ? rpcHandler : apiHandler;
+    const result = await handler.handle(context.req.raw, {
+      context: apiContext,
+      prefix: path.startsWith("/rpc") ? "/rpc" : "/api-reference",
+    });
+    if (result.matched) {
+      return result.response;
+    }
+    return next();
   });
-
-  if (apiResult.matched) {
-    return c.newResponse(apiResult.response.body, apiResult.response);
-  }
-
-  await next();
 });
 
-app.get("/", (c) => {
-  return c.text("OK");
-});
+app.get("/", (context) => context.text("OK"));
 
 export default app;

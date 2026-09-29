@@ -1,37 +1,28 @@
-import { drizzleAdapter } from "@better-auth/drizzle-adapter/relations-v2";
 import type { Database } from "@cerebro/db";
-import * as schema from "@cerebro/db/schema/auth";
+import { authSchema } from "@cerebro/db/schema/auth";
 import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
 
-export type AuthConfig = {
+export interface AuthConfig {
   BETTER_AUTH_URL: string;
   BETTER_AUTH_SECRET: string;
   CORS_ORIGIN: string;
-};
+}
 
-export function createAuth(
-  env: AuthConfig,
-  database: Database,
-  desktopOrigins: readonly string[] = [],
-) {
-  return betterAuth({
+export const createAuth = (env: AuthConfig, database: Database) =>
+  betterAuth({
+    advanced: {
+      useSecureCookies: new URL(env.BETTER_AUTH_URL).protocol === "https:",
+    },
+    baseURL: env.BETTER_AUTH_URL,
     database: drizzleAdapter(database, {
-      provider: "sqlite",
-      schema,
+      provider: "pg",
+      schema: authSchema,
     }),
-    trustedOrigins: [env.CORS_ORIGIN, ...desktopOrigins],
     emailAndPassword: { enabled: true },
     secret: env.BETTER_AUTH_SECRET,
-    baseURL: env.BETTER_AUTH_URL,
-    advanced: {
-      defaultCookieAttributes: {
-        sameSite: "none",
-        secure: true,
-        httpOnly: true,
-      },
-    },
-    plugins: [],
+    session: { cookieCache: { enabled: false } },
+    trustedOrigins: [env.BETTER_AUTH_URL, env.CORS_ORIGIN],
   });
-}
 
 export type Session = ReturnType<typeof createAuth>["$Infer"]["Session"];

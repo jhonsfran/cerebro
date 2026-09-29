@@ -12,15 +12,12 @@
     "db:migrate:deploy": "drizzle-kit migrate"
   },
   "dependencies": {
-    "@libsql/client": "0.18.0",
     "drizzle-orm": "catalog:",
-    "libsql": "0.5.29",
-    "zod": "catalog:"
+    "postgres": "3.4.9"
   },
   "devDependencies": {
     "@cerebro/config": "workspace:*",
-    "drizzle-kit": "1.0.0-rc.4",
-    "typescript": "catalog:",
-    "varlock": "catalog:"
+    "drizzle-kit": "0.31.10",
+    "typescript": "catalog:"
   }
 }

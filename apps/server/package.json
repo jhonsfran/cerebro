@@ -5,8 +5,7 @@
   "scripts": {
     "build": "tsc -b ../../packages/api && tsdown",
     "check-types": "tsc -b ../../packages/api && tsc --noEmit",
-    "compile": "bun build --compile --no-compile-autoload-dotenv --minify --sourcemap --bytecode ./src/index.ts --outfile server",
-    "env:generate": "varlock codegen"
+    "compile": "bun build --compile --no-compile-autoload-dotenv --minify --sourcemap --bytecode ./src/index.ts --outfile server"
   },
   "dependencies": {
     "@cerebro/api": "workspace:*",
@@ -16,14 +15,12 @@
     "@orpc/server": "catalog:",
     "@orpc/zod": "catalog:",
     "better-auth": "catalog:",
-    "evlog": "catalog:",
+    "drizzle-orm": "catalog:",
     "hono": "^4.13.7",
-    "varlock": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@cerebro/config": "workspace:*",
-    "@cerebro/infra": "workspace:*",
     "@cloudflare/workers-types": "catalog:",
     "@types/node": "catalog:",
     "tsdown": "^0.23.0",

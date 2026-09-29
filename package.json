@@ -13,28 +13,36 @@
     "dev:web": "turbo run dev:bare -F web --",
     "dev:server": "turbo run dev:bare -F hono --",
     "db:generate": "turbo run db:generate -F @cerebro/db --",
-    "deploy": "turbo run deploy -F @cerebro/infra --",
-    "destroy": "turbo run destroy -F @cerebro/infra --",
-    "env:generate": "varlock codegen --path ./apps/web/ && varlock codegen --path ./apps/server/ && varlock codegen --path ./packages/db/",
-    "postinstall": "varlock codegen --path ./apps/web/ && varlock codegen --path ./apps/server/ && varlock codegen --path ./packages/db/",
+    "deploy": "docker compose build bootstrap && docker compose run --rm bootstrap",
+    "test:contracts": "node --test tests/contracts/contracts.test.ts",
+    "test:boot": "node --test tests/integration/boot.test.ts",
+    "test:runtime": "node --test tests/runtime/*.test.ts",
+    "test:identity": "node --test tests/identity/*.test.ts",
+    "test:policy": "node --test tests/policy/*.test.ts",
+    "test:memory": "node --test tests/memory/*.test.ts",
+    "test:channels": "node --test tests/channels/*.test.ts",
+    "test:integration": "node --test tests/integration/*.test.ts",
     "check": "ultracite check",
     "fix": "ultracite fix",
     "prepare": "husky"
   },
   "dependencies": {
+    "aws4fetch": "1.0.20",
+    "drizzle-orm": "catalog:",
+    "postgres": "3.4.9",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@cerebro/config": "workspace:*",
     "@cloudflare/workers-types": "catalog:",
     "@types/node": "catalog:",
+    "esbuild": "0.28.2",
     "husky": "latest",
     "oxfmt": "latest",
     "oxlint": "latest",
     "turbo": "^2.10.12",
     "typescript": "catalog:",
-    "ultracite": "7.11.0",
-    "varlock": "catalog:"
+    "ultracite": "7.11.0"
   },
   "packageManager": "pnpm@11.9.0"
 }

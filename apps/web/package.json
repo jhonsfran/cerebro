@@ -6,8 +6,7 @@
     "build": "tsc -b ../../packages/api && vite build",
     "serve": "vite preview",
     "check-types": "tsc -b ../../packages/api && vite build && tsc --noEmit",
-    "dev:bare": "vite dev",
-    "env:generate": "varlock codegen"
+    "dev:bare": "vite dev"
   },
   "dependencies": {
     "@cerebro/api": "workspace:*",
@@ -30,7 +29,6 @@
     "react-dom": "catalog:",
     "sonner": "catalog:",
     "tailwindcss": "catalog:",
-    "varlock": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

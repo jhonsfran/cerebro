@@ -1,0 +1,35 @@
+services:
+  secrets-init:
+    environment:
+      DEPLOY_MODE: production
+    volumes: !override
+      - ${CEREBRO_PRODUCTION_SECRETS_DIR:?Set the production secret directory}:/run/cerebro-secrets:ro
+  postgres:
+    volumes: !override
+      - postgres:/var/lib/postgresql/data
+      - ${CEREBRO_PRODUCTION_SECRETS_DIR:?Set the production secret directory}/postgres-password:/run/postgres-credential/postgres-password:ro
+  minio-runtime:
+    volumes: !override
+      - minio-runtime:/data
+      - ${CEREBRO_PRODUCTION_SECRETS_DIR:?Set the production secret directory}/minio-password:/run/cerebro-secrets/minio-password:ro
+  minio-artifacts:
+    volumes: !override
+      - minio-artifacts:/data
+      - ${CEREBRO_PRODUCTION_SECRETS_DIR:?Set the production secret directory}/minio-password:/run/cerebro-secrets/minio-password:ro
+  bootstrap:
+    environment:
+      DEPLOY_MODE: production
+      CEREBRO_DATABASE_URL: ${CEREBRO_DATABASE_URL:?Set a PostgreSQL URL with sslmode=verify-full}
+      CEREBRO_PUBLIC_API_URL: ${CEREBRO_PUBLIC_API_URL:?Set the public API URL}
+      CEREBRO_PUBLIC_WEB_URL: ${CEREBRO_PUBLIC_WEB_URL:?Set the public web URL}
+    volumes: !override
+      - ${CEREBRO_PRODUCTION_SECRETS_DIR:?Set the production secret directory}:/run/cerebro-secrets:ro
+  celld:
+    environment:
+      DEPLOY_MODE: production
+    volumes: !override
+      - celld:/var/lib/celld
+      - ${CEREBRO_PRODUCTION_SECRETS_DIR:?Set the production secret directory}/minio-password:/run/cerebro-secrets/minio-password:ro
+  web:
+    environment:
+      DEPLOY_MODE: production

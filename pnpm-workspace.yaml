@@ -15,7 +15,7 @@ catalog:
   "@orpc/server": ^1.15.0
   "@orpc/openapi": ^1.15.0
   "@orpc/zod": ^1.15.0
-  better-auth: 1.7.5
+  better-auth: 1.7.6
   evlog: ^2.28.1
   lucide-react: ^1.41.0
   next-themes: ^0.4.6
@@ -26,4 +26,4 @@ catalog:
   "@orpc/client": ^1.15.0
   "@types/react": ^19.2.18
   "@types/react-dom": ^19.2.7
-  drizzle-orm: 1.0.0-rc.4
+  drizzle-orm: 0.45.3

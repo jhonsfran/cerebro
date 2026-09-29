@@ -1,136 +1,58 @@
-# cerebro
+# Cerebro
 
-This project was created with [Better-T-Stack](https://github.com/AmanVarshney01/create-better-t-stack), a modern TypeScript stack that combines React, TanStack Start, Hono, ORPC, and more.
+Cerebro is a self-hosted company assistant. This repository currently contains the session 1 foundation: domain contracts, a Hono and Better Auth API Worker, PostgreSQL, a Durable Object storage fixture, MinIO, and a TanStack Start web container. The agent runtime and product flows are later sessions.
 
-## Features
+## Start the local fixture
 
-- **TypeScript** - For type safety and improved developer experience
-- **TanStack Start** - SSR framework with TanStack Router
-- **TailwindCSS** - Utility-first CSS for rapid UI development
-- **Shared UI package** - shadcn/ui primitives live in `packages/ui`
-- **Hono** - Lightweight, performant server framework
-- **oRPC** - End-to-end type-safe APIs with OpenAPI integration
-- **workers** - Runtime environment
-- **Drizzle** - TypeScript-first ORM
-- **Cloudflare D1** - Database engine
-- **Authentication** - Better-Auth
-- **Husky** - Git hooks for code quality
-- **Turborepo** - Optimized monorepo build system
+Docker is the only host prerequisite for the application stack. From a fresh checkout, run:
 
-## Getting Started
-
-First, install the dependencies:
-
-```bash
-pnpm install
+```sh
+docker compose up --build -d --wait
 ```
 
-## Database Setup
+Open the web app at [http://localhost:3001](http://localhost:3001). The API readiness endpoint is [http://localhost:18765/ready](http://localhost:18765/ready). Compose generates local secrets once in a named volume. PostgreSQL, both MinIO services, and celld also use named volumes.
 
-This project uses Cloudflare D1 (SQLite) with Drizzle ORM.
+Stop the containers with `docker compose down`. A later `docker compose up -d --wait` preserves users, sessions, artifacts, and local secrets. `docker compose down --volumes` deletes that local state.
 
-Runtime database access uses the Cloudflare `DB` binding from `packages/infra/alchemy.run.ts`. If a local `DATABASE_URL` is present, it is only for database tooling.
+The one-shot `bootstrap` service creates the MinIO buckets, applies PostgreSQL migrations, and publishes the API Worker with native `celld deploy`. Run `pnpm deploy` after changing the Worker in an existing local stack.
 
-Alchemy provisions the D1 database and applies migrations during `deploy`.
+## Run checks
 
-1. Generate migration files:
+For repository development, install pnpm 11.9.0 and run:
 
-```bash
-pnpm run db:generate
+```sh
+pnpm install --frozen-lockfile
+pnpm check-types
+pnpm build
+pnpm test:contracts
+pnpm test:boot
 ```
 
-Then, run the development server:
+`test:boot` starts an isolated Compose project. It creates an auth user, a Durable Object session, and a MinIO artifact. It stops and starts the stack, then reads all three records. The test deletes only its own volumes after a pass.
 
-```bash
-pnpm run dev
-```
+The repository-wide `pnpm check` still reports formatting and lint issues in files outside session 1. The session 1 files have a separate scoped lint check recorded in [the session 1 handoff](docs/implementation/session-1.md).
 
-Open [http://localhost:3001](http://localhost:3001) in your browser to see the web application.
-The API is running at [http://localhost:3000](http://localhost:3000).
+## Data ownership
 
-## UI Customization
+PostgreSQL owns Better Auth data and the shared organization record. `packages/db/src/migrations` is the PostgreSQL migration sequence. A PostgreSQL repository operation uses one request-scoped connection and one transaction when it changes related rows.
 
-React web apps in this stack share shadcn/ui primitives through `packages/ui`.
+Session Durable Objects own conversation state. `packages/db/src/durable.ts` supplies the separate Drizzle SQLite adapter. Session 2 owns the Durable Object ledger schema and migrations. The session 1 fixture stores only a test session.
 
-- Change design tokens and global styles in `packages/ui/src/styles/globals.css`
-- Update shared primitives in `packages/ui/src/components/*`
-- Adjust shadcn aliases or style config in `packages/ui/components.json` and `apps/web/components.json`
+MinIO runtime storage holds celld state. A separate MinIO service holds application artifacts. No transaction spans PostgreSQL, a Durable Object, and MinIO.
 
-### Add more shared components
+## Production settings
 
-Run this from the project root to add more primitives to the shared UI package:
+`compose.production.yaml` selects production mode. It requires an external directory with `auth-secret`, `postgres-password`, and `minio-password` files. Each secret must contain at least 32 characters. Set `CEREBRO_DATABASE_URL` to a PostgreSQL URL with `sslmode=verify-full`. Set both public URLs to HTTPS origins. Production mode rejects fixture adapters.
 
-```bash
-npx shadcn@latest add accordion dialog popover sheet table -c packages/ui
-```
+Use a TLS reverse proxy in front of the loopback API and web ports. The session 0 receipt still has two open checks: a real model provider and Worker PostgreSQL over publicly trusted TLS. The production configuration is not a qualified pilot deployment until those checks and later session tests pass.
 
-Import shared components like this:
+## Packages
 
-```tsx
-import { Button } from "@cerebro/ui/components/button";
-```
+- `apps/server` contains the Hono API Worker.
+- `apps/web` contains the TanStack Start web app.
+- `packages/contracts` defines domain types, ports, and deterministic fixtures.
+- `packages/db` defines PostgreSQL schemas, migrations, and the separate Durable SQLite adapter.
+- `packages/auth` configures Better Auth.
+- `packages/api` contains oRPC routes.
 
-### Add app-specific blocks
-
-If you want to add app-specific blocks instead of shared primitives, run the shadcn CLI from `apps/web`.
-
-## Environment Configuration
-
-Each app owns its environment schema in `.env.schema`. Varlock generates `src/env.ts` during installation; run `pnpm run env:generate` after changing a schema. Commit schemas, and keep secrets in ignored env files or your deployment platform.
-
-Import the generated `ENV` accessor in application code. Shared database and auth packages receive configuration or initialized clients from the application. See [Varlock's monorepo guide](https://varlock.dev/guides/monorepos/).
-
-For Cloudflare, Alchemy loads and validates deployment inputs with `varlock/auto-load` in its Node/Bun deployment process. Worker code reads native bindings; web clients use the framework's public env API through `src/env.public.ts` where needed. Alchemy supplies resource URLs and managed database credentials. In-Worker Varlock protections are deferred until an official Alchemy integration is available; see [the non-Wrangler deployment guidance](https://varlock.dev/integrations/cloudflare/#non-wrangler-deploy-tools-alchemy-sst-pulumi).
-
-Bun's automatic env loading is disabled in `bunfig.toml`; the framework integration or server bootstrap loads Varlock. Node deployments must include Varlock and its dependencies alongside the app schema.
-
-Run standalone Node/Bun tools that use Varlock from the owning app directory so they load that app's schema and env files. `env:generate` only generates TypeScript files; it does not initialize environment values in a subsequent command.
-
-## Deployment
-
-### Alchemy
-
-- Target: web on Cloudflare + server on Cloudflare
-- Configure provider accounts: `cd packages/infra && pnpm exec alchemy profile edit`
-- Dev: pnpm run dev
-- Deploy: pnpm run deploy
-- Destroy: pnpm run destroy
-
-`alchemy profile edit` stores the selected Axiom, Cloudflare, Neon, PlanetScale, and/or Prisma provider profiles under `~/.alchemy`; no provider-specific setup command is required by this scaffold.
-
-Deploys are staged and default to a personal `dev_<username>` stage. For production, run the deploy with an explicit stage from `packages/infra`:
-
-```bash
-cd packages/infra && pnpm exec alchemy deploy --stage production
-```
-
-### Production origins
-
-- Required after the first deploy: set `CORS_ORIGIN` in `apps/server/.env` to the exact deployed web origin, such as `https://app.example.com`, then deploy the server again.
-
-## Git Hooks and Formatting
-
-- Initialize hooks: `pnpm run prepare`
-
-## Project Structure
-
-```
-cerebro/
-├── apps/
-│   ├── web/         # Frontend application (React + TanStack Start)
-│   └── server/      # Backend API (Hono, ORPC)
-├── packages/
-│   ├── ui/          # Shared shadcn/ui components and styles
-│   ├── api/         # API layer / business logic
-│   ├── auth/        # Authentication configuration & logic
-│   └── db/          # Database schema & queries
-```
-
-## Available Scripts
-
-- `pnpm run dev`: Start all applications in development mode
-- `pnpm run build`: Build all applications
-- `pnpm run dev:web`: Start only the web application
-- `pnpm run dev:server`: Start only the server
-- `pnpm run check-types`: Check TypeScript types across all apps
-- `pnpm run db:generate`: Generate database client/types
+See [the delivery plan](docs/superpowers/plans/2026-09-28-cerebro-delivery.md) for later sessions.
