@@ -20,7 +20,7 @@
     "test:identity": "bun test tests/identity/*.test.ts",
     "test:identity:postgres": "bun test tests/identity/postgres/*.test.ts",
     "test:policy": "node --test tests/policy/*.test.ts",
-    "test:memory": "node --test tests/memory/*.test.ts",
+    "test:memory": "node tests/memory/run.mjs",
     "test:channels": "node --test tests/channels/*.test.ts",
     "test:integration": "node --test tests/integration/*.test.ts",
     "check": "ultracite check",
