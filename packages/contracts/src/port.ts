@@ -46,7 +46,7 @@ export interface EffectOptions extends ReadOptions {
 // Cancellation and deadlines stop local work or waiting. They do not prove that
 // a remote effect did not occur. Such a result is "unknown-outcome" until reconciled.
 export const preflightEffect = (
-  options: EffectOptions,
+  options: ReadOptions,
   now: number
 ): PortResult<void> => {
   if (options.signal?.aborted) {

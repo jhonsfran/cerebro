@@ -1,0 +1,22 @@
+{
+  "name": "@cerebro/policy",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "check-types": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cerebro/contracts": "workspace:*",
+    "@cerebro/db": "workspace:*",
+    "@typesafe-ai/sdk": "0.6.0",
+    "@unprice/api": "0.3.1"
+  },
+  "devDependencies": {
+    "@cerebro/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

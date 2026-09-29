@@ -8,5 +8,7 @@ export default defineConfig({
     "./src/schema/core.ts",
     "./src/schema/identity.ts",
     "./src/schema/memory.ts",
+    "./src/schema/connectors.ts",
+    "./src/schema/usage.ts",
   ],
 });

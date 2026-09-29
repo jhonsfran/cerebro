@@ -12,6 +12,7 @@
     "db:migrate:deploy": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@cerebro/contracts": "workspace:*",
     "drizzle-orm": "catalog:",
     "postgres": "3.4.9"
   },

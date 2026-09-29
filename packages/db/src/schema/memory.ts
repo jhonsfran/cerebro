@@ -11,8 +11,8 @@ import {
   foreignKey,
 } from "drizzle-orm/pg-core";
 
-import { organization } from "./core";
-import { identityPrincipal } from "./identity";
+import { organization } from "./core.ts";
+import { identityPrincipal } from "./identity.ts";
 
 const embeddingVector = customType<{ data: number[]; driverData: string }>({
   dataType: () => "vector",
