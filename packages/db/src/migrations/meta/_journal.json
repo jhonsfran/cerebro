@@ -15,6 +15,13 @@
       "when": 1790709433852,
       "tag": "0001_simple_norrin_radd",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790715996858,
+      "tag": "0002_nasty_magik",
+      "breakpoints": true
     }
   ]
 }

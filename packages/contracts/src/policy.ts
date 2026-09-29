@@ -87,7 +87,8 @@ export interface BudgetAuthority {
   readonly settle: (
     reservationId: ReservationId,
     incurred: BudgetAmount,
-    options: EffectOptions
+    options: EffectOptions,
+    outcome?: "completed" | "failed"
   ) => Promise<PortResult<BudgetReservation>>;
   readonly release: (
     reservationId: ReservationId,

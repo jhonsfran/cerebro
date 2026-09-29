@@ -9,7 +9,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
-import { organization } from "./core";
+import { organization } from "./core.ts";
 
 export const identityPrincipal = pgTable(
   "identity_principal",
