@@ -1,51 +1,39 @@
-import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 
-import { orpc } from "@/utils/orpc";
-
-export const Route = createFileRoute("/")({
-  component: HomeComponent,
-});
-
-const TITLE_TEXT = `
- ██████╗ ███████╗████████╗████████╗███████╗██████╗
- ██╔══██╗██╔════╝╚══██╔══╝╚══██╔══╝██╔════╝██╔══██╗
- ██████╔╝█████╗     ██║      ██║   █████╗  ██████╔╝
- ██╔══██╗██╔══╝     ██║      ██║   ██╔══╝  ██╔══██╗
- ██████╔╝███████╗   ██║      ██║   ███████╗██║  ██║
- ╚═════╝ ╚══════╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═╝
-
- ████████╗    ███████╗████████╗ █████╗  ██████╗██╗  ██╗
- ╚══██╔══╝    ██╔════╝╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝
-    ██║       ███████╗   ██║   ███████║██║     █████╔╝
-    ██║       ╚════██║   ██║   ██╔══██║██║     ██╔═██╗
-    ██║       ███████║   ██║   ██║  ██║╚██████╗██║  ██╗
-    ╚═╝       ╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
- `;
-
-function HomeComponent() {
-  const healthCheck = useQuery(orpc.healthCheck.queryOptions());
-
-  return (
-    <div className="container mx-auto max-w-3xl px-4 py-2">
-      <pre className="overflow-x-auto font-mono text-sm">{TITLE_TEXT}</pre>
-      <div className="grid gap-6">
-        <section className="rounded-lg border p-4">
-          <h2 className="mb-2 font-medium">API Status</h2>
-          <div className="flex items-center gap-2">
-            <div
-              className={`h-2 w-2 rounded-full ${healthCheck.data ? "bg-green-500" : "bg-red-500"}`}
-            />
-            <span className="text-muted-foreground text-sm">
-              {healthCheck.isLoading
-                ? "Checking..."
-                : healthCheck.data
-                  ? "Connected"
-                  : "Disconnected"}
-            </span>
-          </div>
-        </section>
+const Home = () => (
+  <main className="flex min-h-[calc(100svh-65px)] items-center justify-center bg-[#f0f3e9] px-6 py-16 text-[#183026]">
+    <div className="max-w-3xl">
+      <p className="mb-7 text-xs font-semibold tracking-[.2em] text-[#64735f]">
+        CEREBRO · COMPANY ASSISTANT
+      </p>
+      <h1 className="font-serif text-5xl leading-tight tracking-tight sm:text-7xl">
+        Your company knowledge.
+        <br />A clear answer.
+      </h1>
+      <p className="mt-8 max-w-xl text-base leading-8 text-[#627267]">
+        Ask questions in a private conversation. Check the sources. Review tool
+        activity and approve controlled actions before they continue.
+      </p>
+      <div className="mt-10 flex gap-4">
+        <Link
+          to="/dashboard"
+          className="rounded-md bg-[#23543b] px-6 py-3 text-sm font-medium text-white"
+        >
+          Open your workspace
+        </Link>
+        <Link
+          to="/login"
+          className="rounded-md border border-[#cbd8c3] px-6 py-3 text-sm font-medium"
+        >
+          Sign in or create an account
+        </Link>
       </div>
+      <p className="mt-14 text-xs text-[#72806b]">
+        Self-hosted. Company-scoped access. Web and linked Slack direct
+        messages.
+      </p>
     </div>
-  );
-}
+  </main>
+);
+
+export const Route = createFileRoute("/")({ component: Home });

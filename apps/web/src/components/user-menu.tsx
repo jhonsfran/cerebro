@@ -11,9 +11,10 @@ import {
 import { Skeleton } from "@cerebro/ui/components/skeleton";
 import { Link, useNavigate } from "@tanstack/react-router";
 
+import { clearProductCache } from "@/features/product/api";
 import { authClient } from "@/lib/auth-client";
 
-export default function UserMenu() {
+const UserMenu = () => {
   const navigate = useNavigate();
   const { data: session, isPending } = authClient.useSession();
 
@@ -42,6 +43,7 @@ export default function UserMenu() {
           <DropdownMenuItem
             variant="destructive"
             onClick={() => {
+              clearProductCache();
               authClient.signOut({
                 fetchOptions: {
                   onSuccess: () => {
@@ -59,4 +61,6 @@ export default function UserMenu() {
       </DropdownMenuContent>
     </DropdownMenu>
   );
-}
+};
+
+export default UserMenu;
