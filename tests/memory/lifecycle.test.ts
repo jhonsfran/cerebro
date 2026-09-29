@@ -77,6 +77,55 @@ test("ingestion repeats by actual source fingerprint and operation actor and arg
   }
 });
 
+test("opaque source identifiers cannot redirect original or artifact storage", async () => {
+  const f = await fixture();
+  try {
+    const sourceId = "../../../outside-memory-bucket";
+    await f.grant(sourceId);
+    const source = f.source(sourceId, "Document with an opaque source ID");
+    const options = effectOptions();
+    const ingested = await f.memory.ingest(f.scope, source, options);
+    expect(ingested.status).toBe("ok");
+    const original = await f.repository.artifact(
+      f.organizationId,
+      `${options.operationId}:original`
+    );
+    if (!original) {
+      throw new Error("The original document was not stored.");
+    }
+    expect(
+      await f.artifacts.read(f.scope, artifactRef(original), readOptions())
+    ).toEqual({
+      status: "ok",
+      value: new TextEncoder().encode(source.document),
+    });
+    const metadata = artifactRef(original);
+    const bytes = new TextEncoder().encode("Explicit artifact bytes");
+    const stored = await f.artifacts.put(
+      f.scope,
+      bytes,
+      {
+        organizationId: metadata.organizationId,
+        provenance: metadata.provenance,
+        visibility: metadata.visibility,
+      },
+      effectOptions()
+    );
+    expect(stored.status).toBe("ok");
+    if (stored.status !== "ok") {
+      throw new Error("The explicit artifact was not stored.");
+    }
+    expect(
+      await f.artifacts.read(f.scope, stored.value, readOptions())
+    ).toEqual({
+      status: "ok",
+      value: bytes,
+    });
+  } finally {
+    await f.close();
+  }
+});
+
 test("source replacement removes obsolete vectors and transitive derived sources", async () => {
   const f = await fixture();
   try {

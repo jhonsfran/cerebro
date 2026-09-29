@@ -100,7 +100,7 @@ export const ingest = async (
         visibility: input.visibility,
       });
       const binding = await effectBinding(scope, "ingest", input, options);
-      const objectKey = `${scope.organizationId}/${input.sourceId}/${crypto.randomUUID()}`;
+      const objectKey = crypto.randomUUID();
       const originalArtifact = {
         fingerprint: await fingerprint(bytes),
         id: `${options.operationId}:original`,

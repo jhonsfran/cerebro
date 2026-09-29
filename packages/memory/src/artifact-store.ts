@@ -194,7 +194,7 @@ export const createArtifactStore = (
             { bytesFingerprint, metadata },
             options
           );
-          const objectKey = `${scope.organizationId}/${source.id}/${crypto.randomUUID()}`;
+          const objectKey = crypto.randomUUID();
           const check = interrupted(options, now);
           if (check.status !== "ok") {
             return check;
