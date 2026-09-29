@@ -19,13 +19,14 @@
     "test:runtime": "node --test tests/runtime/*.test.ts",
     "test:identity": "bun test tests/identity/*.test.ts",
     "test:identity:postgres": "bun test tests/identity/postgres/*.test.ts",
-    "test:policy": "node --test tests/policy/*.test.ts",
+    "test:policy": "node tests/policy/run.mjs",
     "test:memory": "node --test tests/memory/*.test.ts",
     "test:channels": "node --test tests/channels/*.test.ts",
     "test:integration": "node --test tests/integration/*.test.ts",
     "check": "ultracite check",
     "fix": "ultracite fix",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test:policy:runtime": "node --test tests/policy/runtime/*.test.ts"
   },
   "dependencies": {
     "aws4fetch": "1.0.20",

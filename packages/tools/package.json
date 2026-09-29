@@ -1,0 +1,21 @@
+{
+  "name": "@cerebro/tools",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "check-types": "tsc -b"
+  },
+  "dependencies": {
+    "@cerebro/contracts": "workspace:*",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@cerebro/config": "workspace:*",
+    "@opencode-ai/plugin": "0.0.0-dev-18697",
+    "typescript": "catalog:"
+  }
+}
