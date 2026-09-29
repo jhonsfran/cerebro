@@ -1,0 +1,20 @@
+{
+  "name": "@cerebro/authorization",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "check-types": "tsc -b"
+  },
+  "dependencies": {
+    "@cerebro/contracts": "workspace:*",
+    "@cerebro/db": "workspace:*"
+  },
+  "devDependencies": {
+    "@cerebro/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

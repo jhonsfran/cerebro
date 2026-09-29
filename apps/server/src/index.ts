@@ -17,10 +17,17 @@ export { SessionFixture } from "./session-fixture";
 const app = new Hono<{ Bindings: WorkerEnv }>();
 
 app.use("*", async (context, next) => {
-  assertWorkerEnv(context.env);
+  try {
+    assertWorkerEnv(context.env);
+  } catch (error) {
+    if (context.req.path === "/ready") {
+      return context.json({ error: "Configuration invalid", ok: false }, 503);
+    }
+    throw error;
+  }
   await cors({
     allowHeaders: ["Content-Type", "Authorization"],
-    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
     origin: context.env.CORS_ORIGIN,
   })(context, next);
@@ -29,16 +36,28 @@ app.use("*", async (context, next) => {
 app.get("/health", (context) => context.json({ ok: true }));
 app.get("/ready", async (context) => {
   try {
-    await withDatabase(context.env, (database) =>
-      database.execute(sql`select 1`)
-    );
+    const authConfigured = await withDatabase(context.env, async (database) => {
+      try {
+        createAuth(context.env, database);
+      } catch {
+        return false;
+      }
+      await database.execute(sql`select 1`);
+      return true;
+    });
+    if (!authConfigured) {
+      return context.json(
+        { error: "Authentication configuration invalid", ok: false },
+        503
+      );
+    }
     return context.json({ ok: true });
   } catch {
     return context.json({ error: "Database unavailable", ok: false }, 503);
   }
 });
 
-app.on(["POST", "GET"], "/api/auth/*", (context) =>
+app.on(["POST", "GET", "PUT", "PATCH", "DELETE"], "/api/auth/*", (context) =>
   withDatabase(context.env, (database) =>
     createAuth(context.env, database).handler(context.req.raw)
   )

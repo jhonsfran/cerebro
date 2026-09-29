@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@cerebro/auth": "workspace:*",
+    "@cerebro/authorization": "workspace:*",
+    "@cerebro/contracts": "workspace:*",
     "@cerebro/db": "workspace:*",
     "@orpc/client": "catalog:",
     "@orpc/openapi": "catalog:",

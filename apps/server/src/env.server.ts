@@ -2,6 +2,7 @@ export interface WorkerEnv {
   DATABASE_URL: string;
   BETTER_AUTH_URL: string;
   BETTER_AUTH_SECRET: string;
+  ENTERPRISE_IDENTITY_JSON?: string;
   CORS_ORIGIN: string;
   DEPLOY_MODE: "fixture" | "production";
   FIXTURE_ADAPTERS: "0" | "1";

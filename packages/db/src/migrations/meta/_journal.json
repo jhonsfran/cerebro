@@ -8,6 +8,13 @@
       "when": 1790675013485,
       "tag": "0000_fresh_triathlon",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790709433852,
+      "tag": "0001_simple_norrin_radd",
+      "breakpoints": true
     }
   ]
 }

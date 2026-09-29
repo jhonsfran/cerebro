@@ -7,6 +7,8 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 
+import { parseEnterpriseIdentityJSON } from "../packages/auth/src/enterprise.ts";
+
 const directory = process.env.CEREBRO_SECRETS_DIR ?? "/run/cerebro-secrets";
 const mode = process.env.DEPLOY_MODE ?? "fixture";
 const authSecretFile = await readFile(
@@ -28,6 +30,23 @@ const localDatabaseUrl = `postgres://cerebro:${encodeURIComponent(postgresPasswo
 const databaseUrl = process.env.CEREBRO_DATABASE_URL || localDatabaseUrl;
 const authUrl = process.env.CEREBRO_PUBLIC_API_URL ?? "http://localhost:18765";
 const webUrl = process.env.CEREBRO_PUBLIC_WEB_URL ?? "http://localhost:3001";
+let enterpriseIdentityJson;
+let enterpriseIdentity;
+try {
+  const identityConfigFile = await readFile(
+    path.join(directory, "enterprise-identity.json"),
+    "utf-8"
+  );
+  enterpriseIdentityJson = identityConfigFile.trim();
+  if (!enterpriseIdentityJson) {
+    throw new Error("Enterprise identity configuration is empty");
+  }
+  enterpriseIdentity = parseEnterpriseIdentityJSON(enterpriseIdentityJson);
+} catch (error) {
+  if (error.code !== "ENOENT") {
+    throw error;
+  }
+}
 
 if (mode !== "fixture" && mode !== "production") {
   throw new Error("Invalid deployment mode");
@@ -83,6 +102,19 @@ try {
     migrationsFolder: new URL("../packages/db/src/migrations", import.meta.url)
       .pathname,
   });
+  if (enterpriseIdentity) {
+    try {
+      await client`
+        INSERT INTO organization (id, name)
+        VALUES (${enterpriseIdentity.organizationId}, ${enterpriseIdentity.domain})
+        ON CONFLICT (id) DO NOTHING
+      `;
+    } catch (error) {
+      throw new Error("Could not initialize the enterprise organization", {
+        cause: error,
+      });
+    }
+  }
 } finally {
   await client.end({ timeout: 2 });
 }
@@ -103,6 +135,9 @@ const config = {
     DATABASE_URL: databaseUrl,
     DEPLOY_MODE: mode,
     FIXTURE_ADAPTERS: mode === "fixture" ? "1" : "0",
+    ...(enterpriseIdentityJson
+      ? { ENTERPRISE_IDENTITY_JSON: enterpriseIdentityJson }
+      : {}),
   },
 };
 const configPath = path.join(process.cwd(), "wrangler.jsonc");
@@ -133,11 +168,17 @@ try {
       maxBuffer: 10 * 1024 * 1024,
     }
   );
-  const output = `${deployment.stdout ?? ""}${deployment.stderr ?? ""}`
+  let output = `${deployment.stdout ?? ""}${deployment.stderr ?? ""}`
     .replaceAll(authSecret, "[secret removed]")
     .replaceAll(minioPassword, "[secret removed]")
     .replaceAll(postgresPassword, "[secret removed]")
     .replaceAll(databaseUrl, "[database URL removed]");
+  if (enterpriseIdentityJson) {
+    output = output.replaceAll(
+      enterpriseIdentityJson,
+      "[enterprise identity removed]"
+    );
+  }
   process.stdout.write(output);
   if (deployment.error) {
     throw deployment.error;

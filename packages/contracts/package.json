@@ -7,7 +7,8 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
-    "check-types": "tsc --noEmit -p tsconfig.json",
+    "check-types": "tsc -b",
+    "build": "tsc -b",
     "test": "node --experimental-strip-types --test ../../tests/contracts/contracts.test.ts"
   },
   "devDependencies": {

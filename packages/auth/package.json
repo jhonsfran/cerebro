@@ -10,6 +10,8 @@
     "check-types": "tsc -b"
   },
   "dependencies": {
+    "@better-auth/scim": "1.7.6",
+    "@better-auth/sso": "1.7.6",
     "@cerebro/db": "workspace:*",
     "better-auth": "catalog:",
     "drizzle-orm": "catalog:"
