@@ -218,16 +218,18 @@ Each subsystem owns separate PostgreSQL schema modules. The coordinator generate
 
 **Depends on.** Session 1 for development. Sessions 2 through 5 for final acceptance.
 
+**Status.** Implemented and verified with local fixtures on `codex/web-slack`. See `docs/implementation/session-6.md`. Live Slack is unconfigured and unrun. Production composition and final acceptance remain session 7 work.
+
 **Files.** Own `apps/web/src/**`, `packages/ui/src/**`, `packages/channels/**`, `packages/api/src/routers/{agents,conversations,approvals}.ts`, `packages/db/src/schema/agents.ts`, `packages/db/src/repositories/agents.ts`, and `tests/channels/**`.
 
-- [ ] Add agent creation with a versioned instruction, model choice, connector selection, and grants. Do not add a general workflow editor.
-- [ ] Add a conversation page with streamed output, citations, tool status, and a visible approval state.
-- [ ] Add agent access management, budget status, and an execution history that links to audit entries.
-- [ ] Bind each web conversation to one session ID. Reconnect with the same event IDs and stream cursor.
-- [ ] Implement Slack event signature and timestamp verification. Persist deduplication before acknowledging accepted work.
-- [ ] Bind Slack direct-message threads to stable session IDs and linked principals. Use a reply outbox and suppress duplicate replies.
-- [ ] Handle uncertain Slack delivery without uncontrolled retries. Preserve a receipt for reconciliation when the provider gives no reliable idempotency guarantee.
-- [ ] Provide a local Slack fixture route only in development mode. Keep shared-channel answers outside the pilot to avoid disclosure to unverified channel members.
+- [x] Add agent creation with a versioned instruction, model choice, connector selection, and grants. Do not add a general workflow editor.
+- [x] Add a conversation page with streamed output, citations, tool status, and a visible approval state.
+- [x] Add agent access management, budget status, and an execution history that links to audit entries.
+- [x] Bind each web conversation to one session ID. Reconnect with the same event IDs and stream cursor.
+- [x] Implement Slack event signature and timestamp verification. Persist deduplication before acknowledging accepted work.
+- [x] Bind Slack direct-message threads to stable session IDs and linked principals. Use a reply outbox and suppress duplicate replies.
+- [x] Handle uncertain Slack delivery without uncontrolled retries. Preserve a receipt for reconciliation when the provider gives no reliable idempotency guarantee.
+- [x] Provide a local Slack fixture route only in development mode. Keep shared-channel answers outside the pilot to avoid disclosure to unverified channel members.
 
 **Verify.** Add `tests/channels/web.test.ts` and `tests/channels/slack.test.ts`. Run `rtk proxy pnpm test:channels`. Drive the actual UI to create an agent, ask a question, follow a citation, disconnect, and resume. Replay a Slack event and assert one accepted user message. Remove a user's grant and confirm that both channels deny the next action.
 
