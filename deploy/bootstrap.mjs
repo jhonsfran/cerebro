@@ -48,6 +48,23 @@ try {
   }
 }
 
+let channelConfig;
+try {
+  channelConfig = JSON.parse(
+    await readFile(path.join(directory, "channels.json"), "utf-8")
+  );
+  if (
+    typeof channelConfig.organizationId !== "string" ||
+    !channelConfig.organizationId.trim()
+  ) {
+    throw new Error("Channel configuration needs an organization ID");
+  }
+} catch (error) {
+  if (error.code !== "ENOENT") {
+    throw error;
+  }
+}
+
 if (mode !== "fixture" && mode !== "production") {
   throw new Error("Invalid deployment mode");
 }
@@ -123,18 +140,31 @@ const config = {
   compatibility_date: "2026-09-28",
   compatibility_flags: ["nodejs_compat"],
   durable_objects: {
-    bindings: [{ class_name: "SessionFixture", name: "SESSION_FIXTURE" }],
+    bindings: [
+      { class_name: "SessionFixture", name: "SESSION_FIXTURE" },
+      { class_name: "ChannelDispatcher", name: "CHANNEL_DISPATCHER" },
+    ],
   },
   main: "apps/server/src/index.ts",
-  migrations: [{ new_sqlite_classes: ["SessionFixture"], tag: "v1" }],
+  migrations: [
+    { new_sqlite_classes: ["SessionFixture"], tag: "v1" },
+    { new_sqlite_classes: ["ChannelDispatcher"], tag: "v2" },
+  ],
   name: "cerebro-api",
   vars: {
     BETTER_AUTH_SECRET: authSecret,
     BETTER_AUTH_URL: authUrl,
+    CHANNEL_ORGANIZATION_ID:
+      channelConfig?.organizationId ??
+      enterpriseIdentity?.organizationId ??
+      "local-company",
     CORS_ORIGIN: webUrl,
     DATABASE_URL: databaseUrl,
     DEPLOY_MODE: mode,
     FIXTURE_ADAPTERS: mode === "fixture" ? "1" : "0",
+    ...(channelConfig?.slack
+      ? { SLACK_CHANNEL_JSON: JSON.stringify(channelConfig.slack) }
+      : {}),
     ...(enterpriseIdentityJson
       ? { ENTERPRISE_IDENTITY_JSON: enterpriseIdentityJson }
       : {}),

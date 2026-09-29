@@ -1,0 +1,22 @@
+{
+  "name": "@cerebro/channels",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "check-types": "tsc -b"
+  },
+  "dependencies": {
+    "@cerebro/authorization": "workspace:*",
+    "@cerebro/contracts": "workspace:*",
+    "@cerebro/db": "workspace:*",
+    "drizzle-orm": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cerebro/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,1 @@
+ALTER TABLE "channel_inbox" ADD COLUMN "last_attempt_at" timestamp DEFAULT now() NOT NULL;

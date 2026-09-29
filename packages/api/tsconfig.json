@@ -21,6 +21,9 @@
     },
     {
       "path": "../authorization"
+    },
+    {
+      "path": "../channels"
     }
   ]
 }

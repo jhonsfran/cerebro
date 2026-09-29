@@ -2,11 +2,17 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 
 import type { DatabaseConfig } from "./config";
+import { agentSchema } from "./schema/agents";
 import { authSchema } from "./schema/auth";
 import { organization } from "./schema/core";
 import { identitySchema } from "./schema/identity";
 
-const schema = { ...authSchema, ...identitySchema, organization };
+const schema = {
+  ...agentSchema,
+  ...authSchema,
+  ...identitySchema,
+  organization,
+};
 const createDb = (client: ReturnType<typeof postgres>) =>
   drizzle(client, { schema });
 

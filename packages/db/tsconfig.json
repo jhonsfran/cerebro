@@ -9,5 +9,9 @@
     "strictNullChecks": true
   },
   "include": ["src/**/*.ts"],
-  "references": []
+  "references": [
+    {
+      "path": "../contracts"
+    }
+  ]
 }

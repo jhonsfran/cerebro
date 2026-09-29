@@ -6,6 +6,9 @@ export interface WorkerEnv {
   CORS_ORIGIN: string;
   DEPLOY_MODE: "fixture" | "production";
   FIXTURE_ADAPTERS: "0" | "1";
+  CHANNEL_DISPATCHER: DurableObjectNamespace;
+  CHANNEL_ORGANIZATION_ID?: string;
+  SLACK_CHANNEL_JSON?: string;
   SESSION_FIXTURE: DurableObjectNamespace;
 }
 

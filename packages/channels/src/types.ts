@@ -1,0 +1,55 @@
+import type {
+  AuthorizationPolicy,
+  BudgetAuthority,
+  SessionService,
+} from "@cerebro/contracts";
+import type { Database } from "@cerebro/db";
+import type { ChannelItemBody } from "@cerebro/db/schema/agents";
+
+export interface SlackConfiguration {
+  readonly workspaceId: string;
+  readonly appId: string;
+  readonly agentId: string;
+  readonly signingSecret: string;
+  readonly botToken?: string;
+  readonly apiUrl?: string;
+}
+export interface ChannelOptions {
+  readonly mode: "fixture" | "production";
+  readonly organizationId: string;
+  readonly withDatabase: <T>(
+    run: (database: Database) => Promise<T>
+  ) => Promise<T>;
+  readonly slack?: SlackConfiguration;
+  readonly sessions?: (database: Database) => SessionService;
+  readonly budget?: BudgetAuthority;
+  readonly authorization?: (database: Database) => AuthorizationPolicy;
+  readonly now?: () => number;
+  readonly fetch?: typeof fetch;
+}
+export interface ProductHandlerOptions extends ChannelOptions {
+  readonly getUser: (
+    request: Request,
+    database: Database
+  ) => Promise<{ id: string } | null>;
+}
+export class ChannelError extends Error {
+  readonly status: number;
+  readonly code: string;
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.name = "ChannelError";
+    this.status = status;
+    this.code = code;
+  }
+}
+export type AccessAction = "read" | "execute" | "approve";
+export type ChannelPresentationItem = ChannelItemBody & {
+  readonly cursor: string;
+};
+export const INSTALLATION_AGENT_PREFIX = "installation:";
+export const FIXTURE_SOURCE_ID = "pilot-source";
+export const FIXTURE_TOOL_ID = "fixture-read";
+export const FIXTURE_MODEL_ID = "fixture-model";
+export const EFFECT_DEADLINE_MS = 2200;
+export const DELIVERY_TIMEOUT_MS = 30_000;

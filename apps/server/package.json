@@ -10,6 +10,7 @@
   "dependencies": {
     "@cerebro/api": "workspace:*",
     "@cerebro/auth": "workspace:*",
+    "@cerebro/channels": "workspace:*",
     "@cerebro/db": "workspace:*",
     "@orpc/openapi": "catalog:",
     "@orpc/server": "catalog:",
