@@ -1,5 +1,8 @@
 import { OpenCodeWorkerd } from "@opencode-ai/sdk/workerd";
 
+import type { StoredRun } from "./ledger.ts";
+import type { PinnedAgentConfig } from "./pinned-agent.ts";
+
 export interface FixtureModelEnvironment {
   readonly FIXTURE_URL: string;
   readonly DEPLOY_MODE: "fixture" | "production";
@@ -11,12 +14,19 @@ export interface ModelToolCall {
   readonly input: unknown;
 }
 
+export const fixturePrompt = (run: StoredRun): string =>
+  `${run.agent.instructions}\noperationId=${run.operationId} ${run.prompt} Call fixture_effect once with value approved-fixture, then reply Cerebro fixture completed.`;
+
+export const fixtureReplyMatches = (reply: string): boolean =>
+  reply === "Cerebro fixture completed.";
+
 export const createOpenCodeClient = async (
   storage: DurableObjectStorage,
   env: FixtureModelEnvironment,
+  agent: PinnedAgentConfig,
   executeTool: (call: ModelToolCall) => Promise<{ content: string }>
 ): Promise<OpenCodeWorkerd.Interface> => {
-  if (env.DEPLOY_MODE !== "fixture") {
+  if (env.DEPLOY_MODE !== "fixture" || agent.model !== "fixture/controlled") {
     throw new Error("The fixture model is forbidden in production");
   }
   return await OpenCodeWorkerd.create({

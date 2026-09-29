@@ -37,7 +37,7 @@ const createAuditTable = async (attempt = 0) => {
     if (
       !(error instanceof Error) ||
       !("code" in error) ||
-      error.code !== "ECONNREFUSED" ||
+      (error.code !== "ECONNREFUSED" && error.code !== "57P03") ||
       attempt >= 20
     ) {
       throw error;
@@ -59,6 +59,8 @@ configuration.vars.TOOL_EFFECT_MODE =
   process.env.RUNTIME_EFFECT_MODE ?? "idempotent";
 configuration.vars.HOLD_AFTER_EFFECT =
   process.env.RUNTIME_HOLD_AFTER_EFFECT ?? "1";
+configuration.vars.FAIL_FIRST_EFFECT =
+  process.env.RUNTIME_FAIL_FIRST_EFFECT ?? "0";
 await writeFile("wrangler.jsonc", `${JSON.stringify(configuration)}\n`);
 const result = spawnSync(
   "celld",

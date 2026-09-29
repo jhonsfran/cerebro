@@ -9,6 +9,7 @@ import type {
   SessionStreamItem,
 } from "../../packages/contracts/src/session.ts";
 import {
+  agentFor,
   addressFor,
   compose,
   effectOptions,
@@ -53,7 +54,7 @@ test("duplicate delivery and operation conflict remain local to one company", as
     stack,
     "/runtime/submit",
     {
-      agentVersion: 3,
+      agent: agentFor(companyA, 3),
       event: eventA,
       options: optionsA,
     }
@@ -67,7 +68,7 @@ test("duplicate delivery and operation conflict remain local to one company", as
     stack,
     "/runtime/submit",
     {
-      agentVersion: 3,
+      agent: agentFor(companyA, 3),
       event: eventA,
       options: optionsA,
     }
@@ -81,7 +82,7 @@ test("duplicate delivery and operation conflict remain local to one company", as
     stack,
     "/runtime/submit",
     {
-      agentVersion: 3,
+      agent: agentFor(companyA, 3),
       event: {
         ...eventA,
         event: { payload: { text: "Changed" }, type: "user.message" },
@@ -94,7 +95,7 @@ test("duplicate delivery and operation conflict remain local to one company", as
     stack,
     "/runtime/submit",
     {
-      agentVersion: 3,
+      agent: agentFor(companyA, 3),
       event: eventA,
       options: { ...optionsA, requestDigest: "sha256:changed" },
     }
@@ -106,7 +107,7 @@ test("duplicate delivery and operation conflict remain local to one company", as
     stack,
     "/runtime/submit",
     {
-      agentVersion: 7,
+      agent: agentFor(companyB, 7),
       event: eventB,
       options: effectOptions("operation-b", "sha256:operation-b"),
     }
@@ -210,7 +211,7 @@ test("the outbox retries after PostgreSQL returns", async () => {
     stack,
     "/runtime/submit",
     {
-      agentVersion: 1,
+      agent: agentFor(address, 1),
       event,
       options: effectOptions("operation-outbox", "sha256:operation-outbox"),
     }
@@ -268,7 +269,7 @@ test("ledger migration preserves existing Session 0 records", async () => {
   assert.deepEqual(await upgraded.json(), {
     result: "legacy-result",
     sessionId: "legacy-session",
-    version: "2",
+    version: "3",
   });
 });
 

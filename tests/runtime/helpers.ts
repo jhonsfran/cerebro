@@ -8,6 +8,7 @@ import type {
 } from "../../packages/contracts/src/events.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/identity.ts";
+import type { PinnedAgentConfig } from "../../packages/runtime/src/pinned-agent.ts";
 
 export interface Stack {
   readonly project: string;
@@ -15,6 +16,7 @@ export interface Stack {
   readonly fixturePort: number;
   readonly effectMode?: "idempotent" | "non-idempotent";
   readonly holdAfterEffect?: boolean;
+  readonly failFirstEffect?: boolean;
 }
 
 export const compose = (stack: Stack, args: readonly string[]): string => {
@@ -36,6 +38,7 @@ export const compose = (stack: Stack, args: readonly string[]): string => {
         COMPOSE_PROJECT_NAME: stack.project,
         RUNTIME_API_PORT: String(stack.apiPort),
         RUNTIME_EFFECT_MODE: stack.effectMode ?? "idempotent",
+        RUNTIME_FAIL_FIRST_EFFECT: stack.failFirstEffect ? "1" : "0",
         RUNTIME_FIXTURE_PORT: String(stack.fixturePort),
         RUNTIME_HOLD_AFTER_EFFECT: stack.holdAfterEffect === false ? "0" : "1",
       },
@@ -160,6 +163,18 @@ export const addressFor = (
   conversationId: id.conversation(conversationId),
   organizationId: id.organization(organizationId),
   sessionId: id.session(`session:${organizationId}:${conversationId}`),
+});
+
+export const agentFor = (
+  address: EventAddress,
+  version: number
+): PinnedAgentConfig => ({
+  agentId: address.agentId,
+  enabledToolIds: ["fixture_effect"],
+  instructions: "Use the fixture effect.",
+  model: "fixture/controlled",
+  organizationId: address.organizationId,
+  version,
 });
 
 export const messageEvent = (

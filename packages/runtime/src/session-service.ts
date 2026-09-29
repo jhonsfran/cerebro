@@ -26,6 +26,7 @@ import {
   sessionName,
   validateEvent,
 } from "./event-handler.ts";
+import { pinAgent } from "./pinned-agent.ts";
 import type { SessionAgent } from "./session-agent.ts";
 
 export interface SessionServiceDependencies {
@@ -202,7 +203,7 @@ export const createSessionService = (
       return definition;
     }
     return await requestAgent(dependencies.namespace, command.event, "submit", {
-      agentVersion: definition.value.version,
+      agent: pinAgent(definition.value),
       event: command.event,
       options: {
         deadlineAt: options.deadlineAt,

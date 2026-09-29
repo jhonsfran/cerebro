@@ -9,6 +9,7 @@
     "FIXTURE_URL": "http://fixture:8090",
     "TOOL_EFFECT_MODE": "idempotent",
     "HOLD_AFTER_EFFECT": "1",
+    "FAIL_FIRST_EFFECT": "0",
   },
   "durable_objects": {
     "bindings": [

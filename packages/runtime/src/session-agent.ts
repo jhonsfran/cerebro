@@ -11,22 +11,38 @@ import type {
   SessionSnapshot,
   SessionStreamItem,
 } from "@cerebro/contracts/session";
-import { digestToolArguments } from "@cerebro/contracts/tools";
+import { approvalMatches, digestToolArguments } from "@cerebro/contracts/tools";
 import type { ToolExecution, ToolInvocation } from "@cerebro/contracts/tools";
 import type { OpenCodeWorkerd } from "@opencode-ai/sdk/workerd";
 import { Agent } from "agents";
 
 import { sameAddress, validateEvent } from "./event-handler.ts";
+import {
+  createFixtureToolExecutor,
+  fixturePolicyVersion,
+  fixtureTool,
+  isFixtureInput,
+} from "./fixture-tool.ts";
 import { SessionLedger } from "./ledger.ts";
 import type {
   StoredApprovalRequest,
   StoredInvocation,
   StoredRun,
 } from "./ledger.ts";
-import { createOpenCodeClient, readFinalReply } from "./opencode-adapter.ts";
+import {
+  createOpenCodeClient,
+  fixturePrompt,
+  fixtureReplyMatches,
+  readFinalReply,
+} from "./opencode-adapter.ts";
 import type { ModelToolCall } from "./opencode-adapter.ts";
 import { drainOutbox } from "./outbox.ts";
-import { recoverInterruptedInvocations } from "./recovery.ts";
+import { isPinnedAgent } from "./pinned-agent.ts";
+import {
+  recoverInterruptedInvocation,
+  recoverInterruptedInvocations,
+} from "./recovery.ts";
+import { priorInvocationForCall, sdkCallKey } from "./tool-call-identity.ts";
 
 export interface SessionEnvironment {
   readonly DEPLOY_MODE: "fixture" | "production";
@@ -43,7 +59,6 @@ const terminal = (state: RunState["state"]): boolean =>
   state === "failed" ||
   state === "cancelled" ||
   state === "unknown-outcome";
-const expectedFixtureReply = "Cerebro fixture completed.";
 
 const parseBody = async (
   request: Request
@@ -86,7 +101,7 @@ export class SessionAgent extends Agent<SessionEnvironment> {
   private modelTask: Promise<void> | undefined;
   private driveTask: Promise<void> | undefined;
   private activeRunId: StoredRun["runId"] | undefined;
-  private recovered = false;
+  private modelAttemptId: string | undefined;
 
   private storage(): SessionLedger {
     this.ledger ??= new SessionLedger(this.ctx.storage);
@@ -132,13 +147,13 @@ export class SessionAgent extends Agent<SessionEnvironment> {
   }
 
   private async submit(body: Record<string, unknown>): Promise<Response> {
-    const { event, options, agentVersion } = body;
+    const { event, options, agent } = body;
     if (
       !isAddress(event) ||
       !isEffectOptions(options) ||
-      typeof agentVersion !== "number" ||
-      !Number.isSafeInteger(agentVersion) ||
-      agentVersion < 1 ||
+      !isPinnedAgent(agent) ||
+      agent.organizationId !== event.organizationId ||
+      agent.agentId !== event.agentId ||
       !("eventId" in event) ||
       typeof event.eventId !== "string" ||
       !("event" in event) ||
@@ -159,11 +174,7 @@ export class SessionAgent extends Agent<SessionEnvironment> {
       return Response.json(validated);
     }
     await this.ensureWake();
-    const result = this.storage().admit(
-      event as EventEnvelope,
-      options,
-      agentVersion
-    );
+    const result = this.storage().admit(event as EventEnvelope, options, agent);
     if (result.status === "ok") {
       this.ctx.waitUntil(this.reconcile());
     }
@@ -331,13 +342,12 @@ export class SessionAgent extends Agent<SessionEnvironment> {
 
   private async drive(): Promise<void> {
     const ledger = this.storage();
-    if (!this.recovered) {
+    if (!this.modelTask) {
       await recoverInterruptedInvocations(ledger, {
         authorize: async (invocation) =>
           await this.authorizeInvocation(invocation),
         execute: async (invocation) => await this.performEffect(invocation),
       });
-      this.recovered = true;
     }
     const auditSink = this.env.AUDIT_SINK;
     if (auditSink) {
@@ -366,7 +376,10 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         (candidate) =>
           candidate.state === "queued" || candidate.state === "running"
       );
-    if (run && !this.modelTask) {
+    const effectPending = ledger
+      .invocations()
+      .some((invocation) => invocation.state === "running");
+    if (run && !this.modelTask && !effectPending) {
       this.modelTask = this.runModel(run);
       this.ctx.waitUntil(this.modelTask);
     }
@@ -388,6 +401,18 @@ export class SessionAgent extends Agent<SessionEnvironment> {
   private async authorizeInvocation(
     invocation: StoredInvocation
   ): Promise<boolean> {
+    const grant = this.storage().grant(invocation.operationId);
+    if (
+      !grant ||
+      !(await approvalMatches(
+        grant,
+        invocation.invocation,
+        fixturePolicyVersion,
+        Date.now()
+      ))
+    ) {
+      return false;
+    }
     if (
       !isExecutionContextActiveAt(
         invocation.invocation.context,
@@ -430,55 +455,44 @@ export class SessionAgent extends Agent<SessionEnvironment> {
   private async performEffect(
     invocation: StoredInvocation
   ): Promise<ToolExecution> {
-    const response = await this.env.TOOL_GATEWAY.fetch(
-      new Request("https://tool.internal/effect", {
-        body: JSON.stringify({
-          digest: invocation.argumentDigest.replace(/^sha256:/u, ""),
-          hold: this.env.HOLD_AFTER_EFFECT === "1",
-          invocationId: invocation.operationId,
-          mode: invocation.idempotent ? "idempotent" : "non-idempotent",
-          value: "approved-fixture",
-        }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      })
-    );
-    if (!response.ok) {
-      throw new Error("Fixture effect failed");
+    const grant = this.storage().grant(invocation.operationId);
+    if (!grant) {
+      throw new Error("Fixture effect has no approval grant");
     }
-    const output: unknown = await response.json();
-    if (
-      !output ||
-      typeof output !== "object" ||
-      !("invocationId" in output) ||
-      output.invocationId !== invocation.operationId ||
-      !("receipt" in output) ||
-      typeof output.receipt !== "string"
-    ) {
-      throw new Error("Fixture effect receipt is invalid");
+    const executor = createFixtureToolExecutor({
+      ...this.env,
+      TOOL_EFFECT_MODE: invocation.idempotent ? "idempotent" : "non-idempotent",
+    });
+    const result = await executor.execute(invocation.invocation, grant, {
+      deadlineAt: grant.expiresAt,
+      operationId: invocation.operationId,
+      requestDigest: invocation.argumentDigest,
+    });
+    if (result.status !== "ok") {
+      throw new Error(`Fixture effect returned ${result.status}`);
     }
-    return { output, providerReceipt: output.receipt };
+    return result.value;
   }
 
-  private async modelHasToolResult(
-    invocation: StoredInvocation
-  ): Promise<boolean> {
+  private async completedToolCalls(): Promise<ReadonlySet<string>> {
     const sessionId = this.storage().openCodeSessionId();
     if (!sessionId || !this.client) {
-      return false;
+      return new Set();
     }
     const client = await this.client;
     const messages = await client.message.list({ sessionID: sessionId });
-    return messages.data.some(
-      (message) =>
-        message.type === "assistant" &&
-        message.content.some(
-          (part) =>
-            part.type === "tool" &&
-            part.state.status === "completed" &&
-            invocation.sdkCallIds.some((sdkId) => sdkId.endsWith(`:${part.id}`))
-        )
-    );
+    const completed = new Set<string>();
+    for (const message of messages.data) {
+      if (message.type !== "assistant") {
+        continue;
+      }
+      for (const part of message.content) {
+        if (part.type === "tool" && part.state.status === "completed") {
+          completed.add(sdkCallKey({ callId: part.id, messageId: message.id }));
+        }
+      }
+    }
+    return completed;
   }
 
   // This method owns the fixture invocation state machine and its durable transitions.
@@ -486,21 +500,27 @@ export class SessionAgent extends Agent<SessionEnvironment> {
   private async executeTool(call: ModelToolCall): Promise<{ content: string }> {
     if (
       !this.activeRunId ||
-      !call.input ||
-      typeof call.input !== "object" ||
-      !("value" in call.input) ||
-      call.input.value !== "approved-fixture" ||
-      Object.keys(call.input).length !== 1
+      !this.modelAttemptId ||
+      !isFixtureInput(call.input)
     ) {
       throw new Error("Invalid fixture tool call");
     }
     const ledger = this.storage();
     const run = ledger.run(this.activeRunId);
     const address = ledger.address();
-    if (!run || !address || terminal(run.state)) {
+    if (
+      !run ||
+      !address ||
+      terminal(run.state) ||
+      !run.agent.enabledToolIds.includes(fixtureTool.id)
+    ) {
       throw new Error("Run is not active");
     }
+    if (ledger.hasRetryableInvocation(run.runId)) {
+      throw new Error("Previous fixture effect is pending retry");
+    }
     const digest = await digestToolArguments(call.input);
+    const callKey = sdkCallKey(call);
     const encoded = new TextEncoder().encode(
       `${run.runId}:${call.messageId}:${call.callId}`
     );
@@ -515,29 +535,12 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         (record) =>
           record.runId === run.runId && record.argumentDigest === digest
       );
-    let prior =
-      candidates.find((record) =>
-        record.sdkCallIds.includes(`${call.messageId}:${call.callId}`)
-      ) ??
-      candidates.find(
-        (record) =>
-          record.state === "requested" ||
-          record.state === "waiting-for-approval" ||
-          record.state === "running"
-      );
-    if (!prior) {
-      for (const candidate of candidates) {
-        if (
-          candidate.state === "succeeded" &&
-          // The OpenCode transcript is read in candidate order.
-          // oxlint-disable-next-line no-await-in-loop
-          !(await this.modelHasToolResult(candidate))
-        ) {
-          prior = candidate;
-          break;
-        }
-      }
-    }
+    const prior = priorInvocationForCall(
+      candidates,
+      callKey,
+      this.modelAttemptId,
+      await this.completedToolCalls()
+    );
     const operationId =
       prior?.operationId ?? id.operation(`${run.operationId}:${suffix}`);
     const invocation: ToolInvocation = {
@@ -548,17 +551,31 @@ export class SessionAgent extends Agent<SessionEnvironment> {
       operationId,
       organizationId: address.organizationId,
       state: "requested",
-      tool: {
-        connectorId: "fixture",
-        effect: "write",
-        id: id.tool("fixture_effect"),
-        version: "1",
-      },
+      tool: fixtureTool,
+    };
+    const approval: StoredApprovalRequest = {
+      actorPrincipalId: run.context.actor.id,
+      agentId: address.agentId,
+      argumentDigest: digest,
+      connectorId: invocation.tool.connectorId,
+      delegationId: run.context.delegation?.id,
+      effect: invocation.tool.effect,
+      expiresAt: Date.now() + 300_000,
+      id: `approval:${operationId}`,
+      operationId,
+      organizationId: address.organizationId,
+      policyVersion: fixturePolicyVersion,
+      principalId: run.context.represented?.id ?? run.context.actor.id,
+      toolId: invocation.tool.id,
+      toolVersion: invocation.tool.version,
     };
     const claim = ledger.claimInvocation(
       invocation,
       run.runId,
-      this.env.TOOL_EFFECT_MODE === "idempotent"
+      this.env.TOOL_EFFECT_MODE === "idempotent",
+      callKey,
+      this.modelAttemptId,
+      approval
     );
     if (claim.kind === "conflict") {
       throw new Error("Tool operation ID has different arguments");
@@ -571,42 +588,6 @@ export class SessionAgent extends Agent<SessionEnvironment> {
     }
     if (claim.kind === "unknown") {
       throw new Error("Tool outcome needs reconciliation");
-    }
-    if (
-      claim.record &&
-      !claim.record.sdkCallIds.includes(`${call.messageId}:${call.callId}`)
-    ) {
-      ledger.updateInvocation(operationId, (record) => ({
-        ...record,
-        sdkCallIds: [...record.sdkCallIds, `${call.messageId}:${call.callId}`],
-      }));
-    }
-    if (claim.kind === "claimed") {
-      const approval: StoredApprovalRequest = {
-        actorPrincipalId: run.context.actor.id,
-        agentId: address.agentId,
-        argumentDigest: digest,
-        connectorId: "fixture",
-        delegationId: run.context.delegation?.id,
-        effect: "write",
-        expiresAt: Date.now() + 300_000,
-        id: `approval:${operationId}`,
-        operationId,
-        organizationId: address.organizationId,
-        policyVersion: "fixture-policy-v1",
-        principalId: run.context.represented?.id ?? run.context.actor.id,
-        toolId: invocation.tool.id,
-        toolVersion: invocation.tool.version,
-      };
-      ledger.putApproval(approval, run.runId);
-      ledger.updateInvocation(operationId, (current) => ({
-        ...current,
-        state: "waiting-for-approval",
-      }));
-      ledger.updateRun(run.runId, (current) => ({
-        ...current,
-        state: "waiting-for-approval",
-      }));
     }
     const deadline = Date.now() + 300_000;
     while (Date.now() < deadline) {
@@ -627,39 +608,39 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         if (!(await this.authorizeInvocation(current))) {
           throw new Error("Current grant denies fixture effect");
         }
-        const attemptId = crypto.randomUUID();
-        ledger.updateInvocation(operationId, (record) => ({
-          ...record,
-          attemptId,
-          state: "running",
-        }));
+        const started = ledger.startInvocation(operationId);
+        if (!started) {
+          throw new Error("Approved invocation is no longer ready");
+        }
         // Persist the in-flight marker before the provider call.
         // oxlint-disable-next-line no-await-in-loop
         await this.ctx.storage.sync();
         try {
           // One attempt is in flight for this invocation.
           // oxlint-disable-next-line no-await-in-loop
-          const result = await this.performEffect(current);
-          ledger.updateInvocation(operationId, (record) => ({
-            ...record,
-            providerReceipt: result.providerReceipt,
-            result: structuredClone(result),
-            state: "succeeded",
-          }));
+          const result = await this.performEffect(started);
+          ledger.finishInvocation(operationId, result);
           // Persist the receipt before returning it to the model.
           // oxlint-disable-next-line no-await-in-loop
           await this.ctx.storage.sync();
           return { content: JSON.stringify(result.output) };
         } catch (error) {
-          if (!current.idempotent) {
-            ledger.updateInvocation(operationId, (record) => ({
-              ...record,
-              state: "unknown-outcome",
-            }));
-            ledger.updateRun(run.runId, (record) => ({
-              ...record,
-              state: "unknown-outcome",
-            }));
+          if (!started.idempotent) {
+            ledger.markUnknownOutcome(operationId);
+            throw error;
+          }
+          // The retry must use the same invocation before the model continues.
+          // oxlint-disable-next-line no-await-in-loop
+          await recoverInterruptedInvocation(ledger, started, {
+            authorize: async (record) => await this.authorizeInvocation(record),
+            execute: async (record) => await this.performEffect(record),
+          });
+          const recovered = ledger.invocation(operationId);
+          if (recovered?.state === "succeeded" && recovered.result) {
+            // The receipt must be durable before it returns to the model.
+            // oxlint-disable-next-line no-await-in-loop
+            await this.ctx.storage.sync();
+            return { content: JSON.stringify(recovered.result.output) };
           }
           throw error;
         }
@@ -709,18 +690,20 @@ export class SessionAgent extends Agent<SessionEnvironment> {
   private async runModel(initial: StoredRun): Promise<void> {
     const ledger = this.storage();
     this.activeRunId = initial.runId;
+    this.modelAttemptId = crypto.randomUUID();
     let stage = "initialize";
     try {
-      this.client ??= createOpenCodeClient(
-        this.ctx.storage,
-        this.env,
-        async (call) => await this.executeTool(call)
-      );
-      const client = await this.client;
       let run = ledger.run(initial.runId);
       if (!run || terminal(run.state)) {
         return;
       }
+      this.client ??= createOpenCodeClient(
+        this.ctx.storage,
+        this.env,
+        run.agent,
+        async (call) => await this.executeTool(call)
+      );
+      const client = await this.client;
       if (run.state === "queued") {
         run = ledger.updateRun(run.runId, (current) => ({
           ...current,
@@ -753,7 +736,7 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         await client.session.prompt({
           id: messageId,
           sessionID: sessionId,
-          text: `operationId=${run.operationId} ${run.prompt} Call fixture_effect once with value approved-fixture, then reply Cerebro fixture completed.`,
+          text: fixturePrompt(run),
         });
       } else {
         const active = await client.session.active();
@@ -762,7 +745,7 @@ export class SessionAgent extends Agent<SessionEnvironment> {
           await client.session.prompt({
             id: messageId,
             sessionID: sessionId,
-            text: `operationId=${run.operationId} ${run.prompt} Call fixture_effect once with value approved-fixture, then reply Cerebro fixture completed.`,
+            text: fixturePrompt(run),
           });
         }
       }
@@ -784,10 +767,12 @@ export class SessionAgent extends Agent<SessionEnvironment> {
       stage = "final-messages";
       const reply = await readFinalReply(client, sessionId);
       const latest = ledger.run(run.runId);
+      const effectNeedsRetry = ledger.hasRetryableInvocation(run.runId);
       if (
         !latest ||
         terminal(latest.state) ||
         latest.state === "waiting-for-approval" ||
+        effectNeedsRetry ||
         reply === undefined
       ) {
         return;
@@ -798,7 +783,7 @@ export class SessionAgent extends Agent<SessionEnvironment> {
           (invocation) =>
             invocation.runId === run.runId && invocation.state === "succeeded"
         );
-      if (!confirmedEffect || reply !== expectedFixtureReply) {
+      if (!confirmedEffect || !fixtureReplyMatches(reply)) {
         ledger.updateRun(run.runId, (current) => ({
           ...current,
           endedAt: Date.now(),
@@ -815,10 +800,12 @@ export class SessionAgent extends Agent<SessionEnvironment> {
       ledger.recordUsage(run.runId, run.operationId, 0, "fixture-credits");
     } catch {
       const current = ledger.run(initial.runId);
+      const effectNeedsRetry = ledger.hasRetryableInvocation(initial.runId);
       if (
         current &&
         !terminal(current.state) &&
-        current.state !== "waiting-for-approval"
+        current.state !== "waiting-for-approval" &&
+        !effectNeedsRetry
       ) {
         ledger.updateRun(current.runId, (run) => ({
           ...run,
@@ -829,9 +816,11 @@ export class SessionAgent extends Agent<SessionEnvironment> {
       }
     } finally {
       this.activeRunId = undefined;
+      this.modelAttemptId = undefined;
       this.modelTask = undefined;
       const latest = ledger.run(initial.runId);
-      if (latest && terminal(latest.state)) {
+      const effectNeedsRetry = ledger.hasRetryableInvocation(initial.runId);
+      if ((latest && terminal(latest.state)) || effectNeedsRetry) {
         await this.closeClient();
       }
     }

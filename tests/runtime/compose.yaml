@@ -71,6 +71,7 @@ services:
       AWS_REGION: us-east-1
       RUNTIME_EFFECT_MODE: ${RUNTIME_EFFECT_MODE:-idempotent}
       RUNTIME_HOLD_AFTER_EFFECT: ${RUNTIME_HOLD_AFTER_EFFECT:-1}
+      RUNTIME_FAIL_FIRST_EFFECT: ${RUNTIME_FAIL_FIRST_EFFECT:-0}
     depends_on:
       postgres:
         condition: service_healthy

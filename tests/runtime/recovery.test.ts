@@ -9,6 +9,7 @@ import type {
   SessionStreamItem,
 } from "../../packages/contracts/src/session.ts";
 import {
+  agentFor,
   addressFor,
   compose,
   effectOptions,
@@ -49,7 +50,7 @@ const runCrashCase = async (
       stack,
       "/runtime/submit",
       {
-        agentVersion: 1,
+        agent: agentFor(address, 1),
         event,
         options,
       }

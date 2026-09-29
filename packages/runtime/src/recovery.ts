@@ -7,51 +7,37 @@ export interface InvocationEffect {
   readonly execute: (invocation: StoredInvocation) => Promise<ToolExecution>;
 }
 
+export const recoverInterruptedInvocation = async (
+  ledger: SessionLedger,
+  invocation: StoredInvocation,
+  effect: InvocationEffect
+): Promise<void> => {
+  if (invocation.state !== "running") {
+    return;
+  }
+  if (!invocation.idempotent) {
+    ledger.markUnknownOutcome(invocation.operationId);
+    return;
+  }
+  if (!(await effect.authorize(invocation))) {
+    ledger.markUnknownOutcome(invocation.operationId);
+    return;
+  }
+  try {
+    const result = await effect.execute(invocation);
+    ledger.finishInvocation(invocation.operationId, result);
+  } catch {
+    // The scheduled callback retries the same operation ID.
+  }
+};
+
 export const recoverInterruptedInvocations = async (
   ledger: SessionLedger,
   effect: InvocationEffect
 ): Promise<void> => {
   for (const invocation of ledger.invocations()) {
-    if (invocation.state !== "running") {
-      continue;
-    }
     // Recovery order follows the durable invocation order.
     // oxlint-disable-next-line no-await-in-loop
-    if (!(await effect.authorize(invocation))) {
-      ledger.updateInvocation(invocation.operationId, (current) => ({
-        ...current,
-        state: "cancelled",
-      }));
-      ledger.updateRun(invocation.runId, (run) => ({
-        ...run,
-        endedAt: Date.now(),
-        state: "failed",
-      }));
-      continue;
-    }
-    if (!invocation.idempotent) {
-      ledger.updateInvocation(invocation.operationId, (current) => ({
-        ...current,
-        state: "unknown-outcome",
-      }));
-      ledger.updateRun(invocation.runId, (run) => ({
-        ...run,
-        state: "unknown-outcome",
-      }));
-      continue;
-    }
-    try {
-      // Do not run effects concurrently during recovery.
-      // oxlint-disable-next-line no-await-in-loop
-      const result = await effect.execute(invocation);
-      ledger.updateInvocation(invocation.operationId, (current) => ({
-        ...current,
-        providerReceipt: result.providerReceipt,
-        result: structuredClone(result),
-        state: "succeeded",
-      }));
-    } catch {
-      // The scheduled callback retries the same operation ID.
-    }
+    await recoverInterruptedInvocation(ledger, invocation, effect);
   }
 };

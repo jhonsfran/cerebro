@@ -3,7 +3,6 @@ import type { EventAddress, EventEnvelope } from "@cerebro/contracts/events";
 import { id } from "@cerebro/contracts/identity";
 import type {
   Digest,
-  ExecutionContext,
   OperationId,
   PrincipalId,
   RunId,
@@ -20,61 +19,23 @@ import type {
   ToolExecution,
   ToolInvocation,
 } from "@cerebro/contracts/tools";
-import { eq, like } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/durable-sqlite";
 
+import type {
+  OutboxEvent,
+  StoredApprovalRequest,
+  StoredInvocation,
+  StoredRun,
+} from "./ledger-records.ts";
+import type { PinnedAgentConfig } from "./pinned-agent.ts";
+import { LedgerStore } from "./storage/ledger-store.ts";
 import { migrateLedger } from "./storage/migrate.ts";
-import { operationRows, sessionRows } from "./storage/schema.ts";
 
-export interface StoredRun {
-  readonly runId: RunId;
-  readonly eventId: EventEnvelope["eventId"];
-  readonly operationId: OperationId;
-  readonly requestDigest: Digest;
-  readonly agentVersion: number;
-  readonly context: ExecutionContext;
-  readonly prompt: string;
-  readonly state: RunState["state"];
-  readonly createdAt: number;
-  readonly endedAt?: number;
-  readonly output?: string;
-  readonly opencodeSessionId?: string;
-  readonly messageId?: string;
-}
-
-export interface StoredInvocation {
-  readonly operationId: OperationId;
-  readonly runId: RunId;
-  readonly argumentDigest: Digest;
-  readonly invocation: ToolInvocation;
-  readonly idempotent: boolean;
-  readonly state: ToolInvocation["state"];
-  readonly result?: ToolExecution;
-  readonly providerReceipt?: string;
-  readonly attemptId?: string;
-  readonly sdkCallIds: readonly string[];
-}
-
-export interface OutboxEvent {
-  readonly eventId: string;
-  readonly organizationId: EventAddress["organizationId"];
-  readonly agentId: EventAddress["agentId"];
-  readonly sessionId: EventAddress["sessionId"];
-  readonly runId: RunId;
-  readonly kind: "audit" | "usage";
-  readonly name: string;
-  readonly occurredAt: number;
-  readonly payload: unknown;
-}
-
-export type StoredApprovalRequest = Omit<Approval, "approverId">;
-
-interface InboxRecord {
-  readonly event: EventEnvelope;
-  readonly operationId: OperationId;
-  readonly requestDigest: Digest;
-  readonly receipt: SessionReceipt;
-}
+export type {
+  OutboxEvent,
+  StoredApprovalRequest,
+  StoredInvocation,
+  StoredRun,
+} from "./ledger-records.ts";
 
 type NewStreamItem = SessionStreamItem extends infer Item
   ? Item extends SessionStreamItem
@@ -114,32 +75,13 @@ const toRunState = (run: StoredRun): RunState => {
 };
 
 export class SessionLedger {
-  private readonly db;
+  private readonly store: LedgerStore;
   private readonly storage: DurableObjectStorage;
 
   constructor(storage: DurableObjectStorage) {
     this.storage = storage;
     migrateLedger(storage);
-    this.db = drizzle(storage);
-  }
-
-  private read<T>(key: string): T | undefined {
-    return this.db
-      .select()
-      .from(operationRows)
-      .where(eq(operationRows.id, key))
-      .get()?.result as T | undefined;
-  }
-
-  private put(key: string, value: unknown): void {
-    this.db
-      .insert(operationRows)
-      .values({ id: key, result: structuredClone(value) })
-      .onConflictDoUpdate({
-        set: { result: structuredClone(value) },
-        target: operationRows.id,
-      })
-      .run();
+    this.store = new LedgerStore(storage);
   }
 
   private claimOperation(
@@ -147,32 +89,20 @@ export class SessionLedger {
     kind: string,
     digest: Digest
   ): boolean {
-    const key = `identity:${operationId}`;
-    const current = this.read<{ kind: string; digest: Digest }>(key);
+    const current = this.store.read("identity", operationId);
     if (current) {
       return current.kind === kind && current.digest === digest;
     }
-    this.put(key, { digest, kind });
+    this.store.write("identity", operationId, { digest, kind });
     return true;
   }
 
   private row(key: string): string | undefined {
-    return this.db
-      .select()
-      .from(sessionRows)
-      .where(eq(sessionRows.key, key))
-      .get()?.sessionId;
+    return this.store.readSession(key);
   }
 
   private setRow(key: string, value: string): void {
-    this.db
-      .insert(sessionRows)
-      .values({ key, sessionId: value })
-      .onConflictDoUpdate({
-        set: { sessionId: value },
-        target: sessionRows.key,
-      })
-      .run();
+    this.store.writeSession(key, value);
   }
 
   address(): EventAddress | undefined {
@@ -209,7 +139,7 @@ export class SessionLedger {
   private append(runId: RunId, item: NewStreamItem): string {
     const cursor = this.nextSequence();
     const sequence = Number(cursor);
-    this.put(`stream:${sequence.toString().padStart(16, "0")}`, {
+    this.store.write("stream", sequence.toString().padStart(16, "0"), {
       ...item,
       cursor,
     });
@@ -228,7 +158,7 @@ export class SessionLedger {
       runId,
       sessionId: address.sessionId,
     };
-    this.put(`outbox:${sequence.toString().padStart(16, "0")}`, outbox);
+    this.store.write("outbox", sequence.toString().padStart(16, "0"), outbox);
     return cursor;
   }
 
@@ -259,13 +189,13 @@ export class SessionLedger {
       runId,
       sessionId: address.sessionId,
     };
-    this.put(`outbox:${sequence.padStart(16, "0")}`, event);
+    this.store.write("outbox", sequence.padStart(16, "0"), event);
   }
 
   admit(
     event: EventEnvelope,
     options: EffectOptions,
-    agentVersion: number
+    agent: PinnedAgentConfig
   ): PortResult<SessionReceipt> {
     if (!this.bind(event)) {
       return {
@@ -288,7 +218,7 @@ export class SessionLedger {
         ? event.event.payload.text
         : event.event.payload.task;
     return this.storage.transactionSync(() => {
-      const prior = this.read<InboxRecord>(`inbox:${event.eventId}`);
+      const prior = this.store.read("inbox", event.eventId);
       if (prior) {
         if (
           classifyEventDelivery(prior.event, event) !== "duplicate" ||
@@ -303,10 +233,7 @@ export class SessionLedger {
         }
         return { status: "ok", value: { ...prior.receipt, replayed: true } };
       }
-      const operation = this.read<{
-        requestDigest: Digest;
-        receipt: SessionReceipt;
-      }>(`submission:${options.operationId}`);
+      const operation = this.store.read("submission", options.operationId);
       if (operation) {
         return {
           code: "digest-mismatch",
@@ -335,7 +262,7 @@ export class SessionLedger {
         sessionId: event.sessionId,
       };
       const run: StoredRun = {
-        agentVersion,
+        agent: structuredClone(agent),
         context: structuredClone(event.context),
         createdAt: Date.now(),
         eventId: event.eventId,
@@ -345,39 +272,34 @@ export class SessionLedger {
         runId,
         state: "queued",
       };
-      this.put(`inbox:${event.eventId}`, {
+      this.store.write("inbox", event.eventId, {
         event,
         operationId: options.operationId,
         receipt,
         requestDigest: options.requestDigest,
       });
-      this.put(`submission:${options.operationId}`, {
+      this.store.write("submission", options.operationId, {
         receipt,
         requestDigest: options.requestDigest,
       });
-      this.put(`decision:${options.operationId}`, {
+      this.store.write("decision", options.operationId, {
         choice: "run",
         inputDigest: event.payloadDigest,
         modelVersion: "fixture-decision-v1",
         usage: { unit: "fixture-credits", units: 0 },
       });
-      this.put(`run:${runId}`, run);
+      this.store.write("run", runId, run);
       this.append(runId, { run: toRunState(run), type: "run" });
       return { status: "ok", value: receipt };
     });
   }
 
   run(runId: RunId): StoredRun | undefined {
-    return this.read<StoredRun>(`run:${runId}`);
+    return this.store.read("run", runId);
   }
 
   runs(): StoredRun[] {
-    return this.db
-      .select()
-      .from(operationRows)
-      .where(like(operationRows.id, "run:%"))
-      .all()
-      .map((row) => row.result as StoredRun);
+    return this.store.list("run");
   }
 
   updateRun(runId: RunId, update: (run: StoredRun) => StoredRun): StoredRun {
@@ -387,7 +309,7 @@ export class SessionLedger {
         throw new Error("Run does not exist");
       }
       const next = update(current);
-      this.put(`run:${runId}`, next);
+      this.store.write("run", runId, next);
       this.append(runId, { run: toRunState(next), type: "run" });
       if (next.output && next.output !== current.output) {
         this.append(runId, { runId, text: next.output, type: "output" });
@@ -399,14 +321,26 @@ export class SessionLedger {
   claimInvocation(
     invocation: ToolInvocation,
     runId: RunId,
-    idempotent: boolean
+    idempotent: boolean,
+    sdkCallId: string,
+    modelAttemptId: string,
+    approval: StoredApprovalRequest
   ): {
     kind: "claimed" | "running" | "result" | "unknown" | "conflict";
     record?: StoredInvocation;
   } {
     return this.storage.transactionSync(() => {
-      const key = `invocation:${invocation.operationId}`;
-      const current = this.read<StoredInvocation>(key);
+      const run = this.run(runId);
+      if (
+        !run ||
+        run.state === "completed" ||
+        run.state === "failed" ||
+        run.state === "cancelled" ||
+        run.state === "unknown-outcome"
+      ) {
+        return { kind: "conflict" };
+      }
+      const current = this.store.read("invocation", invocation.operationId);
       if (current) {
         if (
           current.argumentDigest !== invocation.argumentDigest ||
@@ -416,12 +350,28 @@ export class SessionLedger {
         ) {
           return { kind: "conflict" };
         }
-        if (current.state === "succeeded") {
-          return { kind: "result", record: current };
+        if (
+          !current.sdkCallIds.includes(sdkCallId) &&
+          current.boundModelAttemptId === modelAttemptId
+        ) {
+          return { kind: "conflict" };
+        }
+        const bound = current.sdkCallIds.includes(sdkCallId)
+          ? current
+          : {
+              ...current,
+              boundModelAttemptId: modelAttemptId,
+              sdkCallIds: [...current.sdkCallIds, sdkCallId],
+            };
+        if (bound !== current) {
+          this.store.write("invocation", invocation.operationId, bound);
+        }
+        if (bound.state === "succeeded") {
+          return { kind: "result", record: bound };
         }
         return {
-          kind: current.state === "unknown-outcome" ? "unknown" : "running",
-          record: current,
+          kind: bound.state === "unknown-outcome" ? "unknown" : "running",
+          record: bound,
         };
       }
       if (
@@ -435,14 +385,27 @@ export class SessionLedger {
       }
       const record: StoredInvocation = {
         argumentDigest: invocation.argumentDigest,
+        boundModelAttemptId: modelAttemptId,
         idempotent,
         invocation: structuredClone(invocation),
         operationId: invocation.operationId,
+        originModelAttemptId: modelAttemptId,
         runId,
-        sdkCallIds: [],
-        state: "requested",
+        sdkCallIds: [sdkCallId],
+        state: "waiting-for-approval",
       };
-      this.put(key, record);
+      this.store.write("invocation", invocation.operationId, record);
+      this.store.write("approval", approval.id, approval);
+      this.append(runId, {
+        approvalId: approval.id,
+        runId,
+        type: "approval",
+      });
+      this.store.write("run", runId, { ...run, state: "waiting-for-approval" });
+      this.append(runId, {
+        run: toRunState({ ...run, state: "waiting-for-approval" }),
+        type: "run",
+      });
       this.audit(runId, "tool.requested", {
         operationId: invocation.operationId,
         toolId: invocation.tool.id,
@@ -453,52 +416,99 @@ export class SessionLedger {
   }
 
   invocation(operationId: OperationId): StoredInvocation | undefined {
-    return this.read<StoredInvocation>(`invocation:${operationId}`);
+    return this.store.read("invocation", operationId);
   }
 
   invocations(): StoredInvocation[] {
-    return this.db
-      .select()
-      .from(operationRows)
-      .where(like(operationRows.id, "invocation:%"))
-      .all()
-      .map((row) => row.result as StoredInvocation);
+    return this.store.list("invocation");
   }
 
-  updateInvocation(
-    operationId: OperationId,
-    update: (record: StoredInvocation) => StoredInvocation
-  ): StoredInvocation {
+  hasRetryableInvocation(runId: RunId): boolean {
+    return this.invocations().some(
+      (invocation) =>
+        invocation.runId === runId &&
+        invocation.state === "running" &&
+        invocation.idempotent
+    );
+  }
+
+  approval(approvalId: string): StoredApprovalRequest | undefined {
+    return this.store.read("approval", approvalId);
+  }
+
+  grant(operationId: OperationId): Approval | undefined {
+    return this.store.read("approval-grant", `approval:${operationId}`);
+  }
+
+  startInvocation(operationId: OperationId): StoredInvocation | undefined {
     return this.storage.transactionSync(() => {
       const current = this.invocation(operationId);
-      if (!current) {
-        throw new Error("Invocation does not exist");
+      const grant = this.grant(operationId);
+      const run = current ? this.run(current.runId) : undefined;
+      if (
+        !current ||
+        current.state !== "requested" ||
+        !run ||
+        (run.state !== "queued" && run.state !== "running") ||
+        !grant ||
+        grant.operationId !== operationId ||
+        grant.argumentDigest !== current.argumentDigest ||
+        grant.toolId !== current.invocation.tool.id ||
+        grant.toolVersion !== current.invocation.tool.version ||
+        grant.expiresAt <= Date.now()
+      ) {
+        return;
       }
-      const next = update(current);
-      this.put(`invocation:${operationId}`, next);
-      this.audit(current.runId, `tool.${next.state}`, {
-        operationId,
-        providerReceipt: next.providerReceipt,
-        toolId: next.invocation.tool.id,
-        toolVersion: next.invocation.tool.version,
-      });
+      const next: StoredInvocation = {
+        ...current,
+        attemptId: crypto.randomUUID(),
+        state: "running",
+      };
+      this.store.write("invocation", operationId, next);
       return next;
     });
   }
 
-  putApproval(approval: StoredApprovalRequest, runId: RunId): boolean {
-    return this.storage.transactionSync(() => {
-      if (this.read<StoredApprovalRequest>(`approval:${approval.id}`)) {
-        return false;
+  finishInvocation(operationId: OperationId, result: ToolExecution): void {
+    this.storage.transactionSync(() => {
+      const current = this.invocation(operationId);
+      if (!current || current.state !== "running") {
+        throw new Error("Invocation is not running");
       }
-      this.put(`approval:${approval.id}`, approval);
-      this.append(runId, { approvalId: approval.id, runId, type: "approval" });
-      return true;
+      this.store.write("invocation", operationId, {
+        ...current,
+        providerReceipt: result.providerReceipt,
+        result: structuredClone(result),
+        state: "succeeded",
+      } satisfies StoredInvocation);
+      this.audit(current.runId, "tool.succeeded", {
+        operationId,
+        providerReceipt: result.providerReceipt,
+      });
     });
   }
 
-  approval(approvalId: string): StoredApprovalRequest | undefined {
-    return this.read<StoredApprovalRequest>(`approval:${approvalId}`);
+  markUnknownOutcome(operationId: OperationId): void {
+    this.storage.transactionSync(() => {
+      const current = this.invocation(operationId);
+      if (!current || current.state !== "running") {
+        return;
+      }
+      const run = this.run(current.runId);
+      if (!run) {
+        throw new Error("Invocation run is missing");
+      }
+      this.store.write("invocation", operationId, {
+        ...current,
+        state: "unknown-outcome",
+      } satisfies StoredInvocation);
+      const next: StoredRun = {
+        ...run,
+        state: "unknown-outcome",
+      };
+      this.store.write("run", run.runId, next);
+      this.append(run.runId, { run: toRunState(next), type: "run" });
+    });
   }
 
   approve(
@@ -507,13 +517,7 @@ export class SessionLedger {
     options: EffectOptions
   ): PortResult<RunState> {
     return this.storage.transactionSync(() => {
-      const existing = this.read<{
-        kind: string;
-        digest: Digest;
-        approvalId?: string;
-        approverId?: PrincipalId;
-        state: RunState;
-      }>(`control:${options.operationId}`);
+      const existing = this.store.read("control", options.operationId);
       if (existing) {
         return existing.kind === "approve" &&
           existing.approvalId === approvalId &&
@@ -579,25 +583,25 @@ export class SessionLedger {
           status: "conflict",
         };
       }
-      this.put(`approval-event:${options.operationId}`, {
+      this.store.write("approval-event", options.operationId, {
         approvalId,
         grantedAt: Date.now(),
         operationId: approval.operationId,
       });
-      this.put(`approval-grant:${approvalId}`, {
+      this.store.write("approval-grant", approvalId, {
         ...approval,
         approverId,
       } satisfies Approval);
-      this.put(`invocation:${approval.operationId}`, {
+      this.store.write("invocation", approval.operationId, {
         ...invocation,
         state: "requested",
       });
       const next = { ...run, state: "queued" as const };
-      this.put(`run:${run.runId}`, next);
+      this.store.write("run", run.runId, next);
       const state = toRunState(next);
       this.append(run.runId, { run: state, type: "run" });
       this.audit(run.runId, "approval.granted", { approvalId, approverId });
-      this.put(`control:${options.operationId}`, {
+      this.store.write("control", options.operationId, {
         approvalId,
         approverId,
         digest: options.requestDigest,
@@ -610,12 +614,7 @@ export class SessionLedger {
 
   cancel(runId: RunId, options: EffectOptions): PortResult<RunState> {
     return this.storage.transactionSync(() => {
-      const existing = this.read<{
-        kind: string;
-        digest: Digest;
-        runId: RunId;
-        state: RunState;
-      }>(`control:${options.operationId}`);
+      const existing = this.store.read("control", options.operationId);
       if (existing) {
         return existing.kind === "cancel" &&
           existing.runId === runId &&
@@ -656,37 +655,26 @@ export class SessionLedger {
           status: "conflict",
         };
       }
+      const cancelledAt = Date.now();
       const next: StoredRun = {
         ...run,
-        endedAt: Date.now(),
+        endedAt: cancelledAt,
         state: "cancelled",
       };
-      this.put(`cancellation:${options.operationId}`, {
-        cancelledAt: next.endedAt,
+      this.store.write("cancellation", options.operationId, {
+        cancelledAt,
         runId,
       });
-      this.put(`run:${runId}`, next);
+      this.store.write("run", runId, next);
       const state = toRunState(next);
       this.append(runId, { run: state, type: "run" });
-      this.put(`control:${options.operationId}`, {
+      this.store.write("control", options.operationId, {
         digest: options.requestDigest,
         kind: "cancel",
         runId,
         state,
       });
       return { status: "ok", value: state };
-    });
-  }
-
-  recordDecision(operationId: OperationId, decision: unknown): unknown {
-    return this.storage.transactionSync(() => {
-      const key = `decision:${operationId}`;
-      const current = this.read<unknown>(key);
-      if (current !== undefined) {
-        return current;
-      }
-      this.put(key, decision);
-      return structuredClone(decision);
     });
   }
 
@@ -697,7 +685,7 @@ export class SessionLedger {
     unit: string
   ): void {
     this.storage.transactionSync(() => {
-      if (this.read(`usage:${operationId}`)) {
+      if (this.store.read("usage", operationId)) {
         return;
       }
       const address = this.address();
@@ -715,8 +703,8 @@ export class SessionLedger {
         runId,
         sessionId: address.sessionId,
       };
-      this.put(`usage:${operationId}`, event);
-      this.put(`outbox:usage:${operationId}`, event);
+      this.store.write("usage", operationId, event);
+      this.store.write("outbox", `usage:${operationId}`, event);
     });
   }
 
@@ -728,7 +716,7 @@ export class SessionLedger {
     const runs = this.runs();
     return {
       address,
-      agentVersion: runs.at(-1)?.agentVersion ?? 0,
+      agentVersion: runs.at(-1)?.agent.version ?? 0,
       cursor: this.row("sequence") ?? "0",
       runs: runs.map(toRunState),
     };
@@ -739,40 +727,16 @@ export class SessionLedger {
     if (!Number.isSafeInteger(after) || after < 0) {
       throw new Error("Invalid stream cursor");
     }
-    return this.db
-      .select()
-      .from(operationRows)
-      .where(like(operationRows.id, "stream:%"))
-      .all()
-      .filter((row) => Number(row.id.slice(7)) > after)
-      .toSorted((a, b) => a.id.localeCompare(b.id))
-      .map((row) => row.result as SessionStreamItem);
+    return this.store.streamAfter(String(after));
   }
 
   pendingOutbox(): OutboxEvent[] {
-    return this.db
-      .select()
-      .from(operationRows)
-      .where(like(operationRows.id, "outbox:%"))
-      .all()
-      .toSorted((a, b) => a.id.localeCompare(b.id))
-      .map((row) => row.result as OutboxEvent);
+    return this.store.list("outbox");
   }
 
   acknowledgeOutbox(eventId: string): void {
     this.storage.transactionSync(() => {
-      const event = this.db
-        .select()
-        .from(operationRows)
-        .where(like(operationRows.id, "outbox:%"))
-        .all()
-        .find((row) => (row.result as OutboxEvent).eventId === eventId);
-      if (event) {
-        this.db
-          .delete(operationRows)
-          .where(eq(operationRows.id, event.id))
-          .run();
-      }
+      this.store.deleteOutbox(eventId);
     });
   }
 }
