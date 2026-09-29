@@ -278,6 +278,9 @@ importers:
       '@cerebro/db':
         specifier: workspace:*
         version: link:../db
+      '@cerebro/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@orpc/client':
         specifier: 'catalog:'
         version: 1.15.4(@opentelemetry/api@1.9.1)
@@ -368,6 +371,28 @@ importers:
       drizzle-kit:
         specifier: 0.31.10
         version: 0.31.10
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+
+  packages/memory:
+    dependencies:
+      '@cerebro/authorization':
+        specifier: workspace:*
+        version: link:../authorization
+      '@cerebro/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@cerebro/db':
+        specifier: workspace:*
+        version: link:../db
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
+    devDependencies:
+      '@cerebro/config':
+        specifier: workspace:*
+        version: link:../config
       typescript:
         specifier: 'catalog:'
         version: 6.0.3

@@ -5,8 +5,14 @@ import type { DatabaseConfig } from "./config";
 import { authSchema } from "./schema/auth";
 import { organization } from "./schema/core";
 import { identitySchema } from "./schema/identity";
+import { memorySchema } from "./schema/memory";
 
-const schema = { ...authSchema, ...identitySchema, organization };
+const schema = {
+  ...authSchema,
+  ...identitySchema,
+  ...memorySchema,
+  organization,
+};
 const createDb = (client: ReturnType<typeof postgres>) =>
   drizzle(client, { schema });
 

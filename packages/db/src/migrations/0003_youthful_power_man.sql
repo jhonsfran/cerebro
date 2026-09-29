@@ -1,0 +1,1 @@
+ALTER TABLE "memory_record" ADD COLUMN "dependency_source_ids" jsonb DEFAULT '[]'::jsonb NOT NULL;

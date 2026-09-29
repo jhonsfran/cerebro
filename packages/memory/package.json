@@ -1,0 +1,23 @@
+{
+  "name": "@cerebro/memory",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "check-types": "tsc -b"
+  },
+  "dependencies": {
+    "@cerebro/authorization": "workspace:*",
+    "@cerebro/contracts": "workspace:*",
+    "@cerebro/db": "workspace:*",
+    "aws4fetch": "1.0.20"
+  },
+  "devDependencies": {
+    "@cerebro/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

@@ -6,6 +6,11 @@ allowBuilds:
   sharp: true
   msgpackr-extract: true
   workerd: true
+  "@parcel/watcher": false
+  core-js-pure: false
+  protobufjs: false
+  tree-sitter-bash: false
+  tree-sitter-powershell: false
 catalog:
   zod: ^4.5.4
   typescript: ^6.0.3
