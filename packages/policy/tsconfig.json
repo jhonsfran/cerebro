@@ -1,0 +1,9 @@
+{
+  "extends": "@cerebro/config/tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "composite": false,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"]
+}
