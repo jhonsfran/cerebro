@@ -1,0 +1,599 @@
+{
+  "cleanupError": null,
+  "memory": {
+    "source": "external-host-docker-stats",
+    "status": "external-measurement-required"
+  },
+  "ok": true,
+  "phases": [
+    {
+      "concurrency": 1,
+      "durationMs": 546,
+      "finishedAt": "2026-09-29T09:17:04.871Z",
+      "id": "baseline.one-session",
+      "latencyMs": {
+        "count": 1,
+        "max": 436,
+        "mean": 436,
+        "min": 436,
+        "p50": 436,
+        "p95": 436
+      },
+      "postgres": {
+        "database": "slice",
+        "observerError": null,
+        "peakTotal": 1,
+        "peakWorkload": 0,
+        "requestedSampleIntervalMs": 100,
+        "samples": [
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 16,
+            "period": "before",
+            "timestamp": "2026-09-29T09:17:04.341Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 33,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:04.357Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 134,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:04.459Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 237,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:04.561Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 342,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:04.666Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 443,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:04.768Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 546,
+            "period": "after",
+            "timestamp": "2026-09-29T09:17:04.870Z"
+          }
+        ]
+      },
+      "requests": [
+        {
+          "conversation": "99f076df-2cf9-48fa-b628-14737fef9ab0",
+          "durationMs": 436,
+          "httpStatus": 200,
+          "operationId": "745a5198-0329-4657-9b86-8147e4274ac2",
+          "reply": "Cerebro fixture completed.",
+          "sessionId": "ses_f138befdaffdINob3Jbs2s810w",
+          "status": "pass",
+          "toolCalls": 1
+        }
+      ],
+      "startedAt": "2026-09-29T09:17:04.324Z",
+      "status": "pass",
+      "uniqueSessions": 1
+    },
+    {
+      "concurrency": 10,
+      "durationMs": 2961,
+      "finishedAt": "2026-09-29T09:17:07.832Z",
+      "id": "baseline.ten-sessions",
+      "latencyMs": {
+        "count": 10,
+        "max": 2888,
+        "mean": 2626,
+        "min": 2434,
+        "p50": 2597,
+        "p95": 2888
+      },
+      "postgres": {
+        "database": "slice",
+        "observerError": null,
+        "peakTotal": 1,
+        "peakWorkload": 0,
+        "requestedSampleIntervalMs": 100,
+        "samples": [
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 0,
+            "period": "before",
+            "timestamp": "2026-09-29T09:17:04.871Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 4,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:04.875Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 106,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:04.977Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 208,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:05.079Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 310,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:05.180Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 413,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:05.283Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 515,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:05.385Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 616,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:05.487Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 717,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:05.588Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 818,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:05.689Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 919,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:05.790Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 1019,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:05.890Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 1122,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:05.992Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 1224,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:06.095Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 1325,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:06.196Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 1426,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:06.297Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 1527,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:06.398Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 1629,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:06.500Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 1730,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:06.601Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 1833,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:06.703Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 1938,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:06.809Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 2042,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:06.913Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 2144,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:07.014Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 2245,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:07.116Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 2346,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:07.217Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 2448,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:07.319Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 2555,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:07.426Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 2657,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:07.528Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 2761,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:07.631Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 2861,
+            "period": "during",
+            "timestamp": "2026-09-29T09:17:07.731Z"
+          },
+          {
+            "total": 1,
+            "observer": 1,
+            "workload": 0,
+            "active": 0,
+            "idle": 0,
+            "idle_in_transaction": 0,
+            "elapsedMs": 2961,
+            "period": "after",
+            "timestamp": "2026-09-29T09:17:07.832Z"
+          }
+        ]
+      },
+      "requests": [
+        {
+          "conversation": "d20d02ed-ca6f-411e-8d33-02ae48c00e86",
+          "durationMs": 2811,
+          "httpStatus": 200,
+          "operationId": "d695dff5-3afa-4363-87c3-d6be661c0a32",
+          "reply": "Cerebro fixture completed.",
+          "sessionId": "ses_f138bedc1ffd6h0NzPeM3QP1ls",
+          "status": "pass",
+          "toolCalls": 1
+        },
+        {
+          "conversation": "94516651-b89a-437c-b84f-63b94bdc5a75",
+          "durationMs": 2597,
+          "httpStatus": 200,
+          "operationId": "beb7640c-42ed-41b6-a6de-56637cd5a827",
+          "reply": "Cerebro fixture completed.",
+          "sessionId": "ses_f138bed20ffdWtQ50JGSiImBqH",
+          "status": "pass",
+          "toolCalls": 1
+        },
+        {
+          "conversation": "98c3d1a4-8826-4aee-9be8-377e7e7bb512",
+          "durationMs": 2455,
+          "httpStatus": 200,
+          "operationId": "87d93fc0-13a1-45d1-bca2-9153c5cefffb",
+          "reply": "Cerebro fixture completed.",
+          "sessionId": "ses_f138bed59ffd6wc2ibgBtc19Jd",
+          "status": "pass",
+          "toolCalls": 1
+        },
+        {
+          "conversation": "7d2ae790-b15f-49db-b723-0854d6949886",
+          "durationMs": 2437,
+          "httpStatus": 200,
+          "operationId": "10c26bc6-bd00-48e5-98ca-f9f66f1b748c",
+          "reply": "Cerebro fixture completed.",
+          "sessionId": "ses_f138bed70ffdQkM4m56Nd9ZSL9",
+          "status": "pass",
+          "toolCalls": 1
+        },
+        {
+          "conversation": "90b0bd72-d5e6-4238-affb-47eda5cdb741",
+          "durationMs": 2434,
+          "httpStatus": 200,
+          "operationId": "78e3d083-0b0f-48ea-8b4d-a12593b818fd",
+          "reply": "Cerebro fixture completed.",
+          "sessionId": "ses_f138beda1ffdkT86x4S3cqTvHM",
+          "status": "pass",
+          "toolCalls": 1
+        },
+        {
+          "conversation": "65c55a8b-d636-46f2-9037-73cb68d2d2f8",
+          "durationMs": 2807,
+          "httpStatus": 200,
+          "operationId": "13ca8377-d6b7-4a7f-b4eb-4bcceb41371a",
+          "reply": "Cerebro fixture completed.",
+          "sessionId": "ses_f138be817ffdjJRkKFsXRq8U6P",
+          "status": "pass",
+          "toolCalls": 1
+        },
+        {
+          "conversation": "16f2b9f0-836a-487b-ab85-b5e848664580",
+          "durationMs": 2620,
+          "httpStatus": 200,
+          "operationId": "e10e3c25-e43e-4a57-8fa2-fe3654e01e8e",
+          "reply": "Cerebro fixture completed.",
+          "sessionId": "ses_f138beca6ffdFWYjUt2OC1iwWW",
+          "status": "pass",
+          "toolCalls": 1
+        },
+        {
+          "conversation": "d7e65421-1d27-45f6-92e3-e81f90218b8b",
+          "durationMs": 2454,
+          "httpStatus": 200,
+          "operationId": "148adb2d-9cc0-453d-b588-6bfffb8e73b1",
+          "reply": "Cerebro fixture completed.",
+          "sessionId": "ses_f138bed3bffdrRiAWCi6aE9Opp",
+          "status": "pass",
+          "toolCalls": 1
+        },
+        {
+          "conversation": "efb44795-aa2a-4786-8382-17774c9d2110",
+          "durationMs": 2753,
+          "httpStatus": 200,
+          "operationId": "01966f33-9c0b-450d-a4af-2203b43a0a04",
+          "reply": "Cerebro fixture completed.",
+          "sessionId": "ses_f138be92affdpCCFOZGx1KsWHg",
+          "status": "pass",
+          "toolCalls": 1
+        },
+        {
+          "conversation": "51d51b41-5ea7-4efa-9d76-39e24523082c",
+          "durationMs": 2888,
+          "httpStatus": 200,
+          "operationId": "8651ce04-e96e-48a2-8119-976bf600a0c7",
+          "reply": "Cerebro fixture completed.",
+          "sessionId": "ses_f138be6ecffdiCQ7JDX3MGJwNB",
+          "status": "pass",
+          "toolCalls": 1
+        }
+      ],
+      "startedAt": "2026-09-29T09:17:04.871Z",
+      "status": "pass",
+      "uniqueSessions": 10
+    }
+  ],
+  "requestDeadlineMs": 60000,
+  "timestamp": "2026-09-29T09:17:07.835Z",
+  "workload": "Deterministic OpenCode fixture_probe loop; no real provider",
+  "validationImageId": "sha256:a2d9f8ab9dbc2be28b881d991c2e6b229d93d460b315f6d7a3b609dd42ad6cd9",
+  "validationWorkerVersion": "0b226a2f994ccfa9"
+}

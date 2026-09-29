@@ -2,61 +2,66 @@
   "name": "cerebro-celld-slice",
   "main": "src/api.ts",
   "compatibility_date": "2026-09-28",
-  "compatibility_flags": [
-    "nodejs_compat"
-  ],
+  "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "DATABASE_URL": "postgres://slice:slice-local-only@postgres:5432/slice",
     "AUTH_SECRET": "slice-local-only-auth-secret-do-not-use-in-production-000000000000",
     "AUTH_URL": "http://localhost:18765",
-    "FIXTURE_URL": "http://fixture:8090"
+    "FIXTURE_URL": "http://fixture:8090",
   },
   "durable_objects": {
     "bindings": [
       {
         "name": "SESSION",
-        "class_name": "Session"
+        "class_name": "Session",
       },
       {
         "name": "OPENCODE_CONTROL",
-        "class_name": "OpenCodeControl"
+        "class_name": "OpenCodeControl",
       },
       {
         "name": "MIGRATION_CONTROL",
-        "class_name": "MigrationControl"
-      }
-    ]
+        "class_name": "MigrationControl",
+      },
+      {
+        "name": "RECOVERY_SESSION",
+        "class_name": "RecoverySession",
+      },
+    ],
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": [
-        "Session"
-      ]
+      "new_sqlite_classes": ["Session"],
     },
     {
       "tag": "v2",
-      "new_sqlite_classes": [
-        "OpenCodeControl"
-      ]
+      "new_sqlite_classes": ["OpenCodeControl"],
     },
     {
       "tag": "v3",
-      "new_sqlite_classes": [
-        "MigrationControl"
-      ]
-    }
+      "new_sqlite_classes": ["MigrationControl"],
+    },
+    {
+      "tag": "v4",
+      "new_sqlite_classes": ["RecoverySession"],
+    },
   ],
   "worker_loaders": [
     {
-      "binding": "LOADER"
-    }
+      "binding": "LOADER",
+    },
   ],
   "services": [
     {
       "binding": "GATEWAY",
       "service": "cerebro-celld-slice",
-      "entrypoint": "FixtureGateway"
-    }
-  ]
+      "entrypoint": "FixtureGateway",
+    },
+    {
+      "binding": "EFFECT_GATEWAY",
+      "service": "cerebro-celld-slice",
+      "entrypoint": "EffectGateway",
+    },
+  ],
 }

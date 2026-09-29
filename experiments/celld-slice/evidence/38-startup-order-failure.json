@@ -1,0 +1,35 @@
+{
+  "cause": "celld started before MinIO was ready; startup bucket validation failed with connection refused",
+  "startupExit": 1,
+  "command": "docker compose up -d --no-deps --wait celld postgres minio-runtime minio-artifacts",
+  "migrationVerificationWhileRuntimeUnavailable": {
+    "mode": "verify",
+    "ok": false,
+    "results": [
+      {
+        "durationMs": 14,
+        "error": "Migration check failed; response bodies omitted",
+        "id": "migration.pending.verify",
+        "status": "fail"
+      },
+      {
+        "durationMs": 28,
+        "error": "Migration check failed; response bodies omitted",
+        "id": "migration.current.verify",
+        "status": "fail"
+      },
+      {
+        "durationMs": 14,
+        "error": "Migration check failed; response bodies omitted",
+        "id": "migration.legacy-names.verify",
+        "status": "fail"
+      }
+    ],
+    "timestamp": "2026-09-29T09:14:13.098Z"
+  },
+  "resolution": "Wait for postgres and both MinIO services, then start celld; migration verification and preserved-state verification passed",
+  "resolvedEvidence": [
+    "25-restart.json",
+    "39-final-migration-restart.json"
+  ]
+}

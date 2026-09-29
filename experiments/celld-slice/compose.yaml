@@ -13,7 +13,13 @@ x-minio: &minio
     MINIO_ROOT_USER: slice-local-only
     MINIO_ROOT_PASSWORD: slice-local-only-storage-secret
   healthcheck:
-    test: [CMD, node, -e, "fetch('http://localhost:9000/minio/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+    test:
+      [
+        CMD,
+        node,
+        -e,
+        "fetch('http://localhost:9000/minio/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+      ]
     interval: 2s
     timeout: 5s
     retries: 30
@@ -64,30 +70,66 @@ services:
         condition: service_healthy
   celld:
     <<: *experiment
-    command: [celld, --bucket, "s3://cerebro-runtime", --endpoint, "http://minio-runtime:9000", --region, us-east-1, --listen, "0.0.0.0:8080", --internal-listen, "0.0.0.0:8081", --advertise, "celld:8081"]
+    command:
+      [
+        celld,
+        --bucket,
+        "s3://cerebro-runtime",
+        --endpoint,
+        "http://minio-runtime:9000",
+        --region,
+        us-east-1,
+        --listen,
+        "0.0.0.0:8080",
+        --internal-listen,
+        "0.0.0.0:8081",
+        --advertise,
+        "celld:8081",
+      ]
     environment:
       <<: *storage-env
       CELLD_WATCH: /var/lib/celld/state
       CELLD_DURABILITY: bucket
       CELLD_TELEMETRY: "0"
       CELLD_V8_HEAP_LIMIT_MB: "256"
+      CELLD_IDLE_EVICT_S: "10"
+      CELLD_MAX_RESIDENT_CELLS: "16"
     ports:
       - "127.0.0.1:18765:8080"
+      - "127.0.0.1:18768:8080"
     volumes:
       - celld:/var/lib/celld
     depends_on:
       bootstrap:
         condition: service_completed_successfully
     healthcheck:
-      test: [CMD, node, -e, "fetch('http://localhost:8080/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:8080/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
       interval: 2s
       timeout: 5s
       retries: 30
   fixture:
     <<: *experiment
     command: [node, fixtures/provider.ts]
+    ports:
+      - "127.0.0.1:18766:8090"
+    environment:
+      FIXTURE_DATA_DIR: /fixture-data
+    volumes:
+      - fixture:/fixture-data
     healthcheck:
-      test: [CMD, node, -e, "fetch('http://localhost:8090/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:8090/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
       interval: 2s
       timeout: 5s
       retries: 30
@@ -96,6 +138,7 @@ services:
     profiles: [check]
     environment:
       BASE_URL: http://celld:8080
+      FIXTURE_URL: http://fixture:8090
       DATABASE_URL: postgres://slice:slice-local-only@postgres:5432/slice
     volumes:
       - ./results:/results
@@ -109,3 +152,4 @@ volumes:
   minio-runtime:
   minio-artifacts:
   celld:
+  fixture:

@@ -1,0 +1,170 @@
+{
+  "assertions": {
+    "approvedEffectOnly": true,
+    "changedRequestDenied": true,
+    "completedOperationReused": true,
+    "crossOperationApprovalDenied": true,
+    "duplicateApprovalReused": true,
+    "fixtureSecretAbsent": true,
+    "invalidDigestDenied": true,
+    "modelRequestSecretAbsent": true,
+    "modelResponseSecretAbsent": true,
+    "oneProviderEffect": true,
+    "sameOperationDifferentRouteDenied": true,
+    "toolArgumentsAndResultsObserved": true
+  },
+  "complete": {
+    "approvalEvents": [
+      {
+        "digest": "b0dd94b967e63e7e8730075319717b5afd9362d8e1872004c9d86101243ce673",
+        "eventId": "b6cba0a8-9d34-4071-ba13-9e0800fce861"
+      }
+    ],
+    "error": null,
+    "holdAfterEffect": false,
+    "invocation": {
+      "attempts": 1,
+      "digest": "b0dd94b967e63e7e8730075319717b5afd9362d8e1872004c9d86101243ce673",
+      "invocationId": "76ba141d-559a-4aa1-895f-5bf28abff608:effect",
+      "sdkAttempts": [
+        {
+          "callId": "call_fixture_effect_90b31405-1141-4add-b0f3-e1d62fcade67",
+          "messageId": "msg_0ec73e0b9001zrvyRhIWvhRG3F"
+        }
+      ],
+      "state": "completed",
+      "attemptId": "c859468c-c6b8-4497-a363-3ad9baebb995",
+      "instanceId": "84ee1d9d-9efe-481f-98a7-babaf7d9873f",
+      "result": {
+        "invocationId": "76ba141d-559a-4aa1-895f-5bf28abff608:effect",
+        "receipt": "76ba141d-559a-4aa1-895f-5bf28abff608:effect:1",
+        "value": "approved-fixture"
+      }
+    },
+    "messageId": "msg_9e8a2229f01340a1ee6f2e953b4ca439",
+    "mode": "idempotent",
+    "modelAttempts": [
+      "b6f9cedf-1e77-4077-95d5-f666d22d0ea5"
+    ],
+    "notBefore": 1790673411543,
+    "operationId": "76ba141d-559a-4aa1-895f-5bf28abff608",
+    "reply": "Cerebro fixture completed.",
+    "requestDigest": "2b428e72f6b7e6697fc8e269358a2f7f667873442a4e2e6d70bb73e17db6b375",
+    "sessionId": "ses_f138c204cffdUC59jgnnfmFFwz",
+    "status": "completed",
+    "toolDiagnostics": [
+      {
+        "callId": "call_fixture_effect_90b31405-1141-4add-b0f3-e1d62fcade67",
+        "errorKind": null,
+        "messageId": "msg_0ec73e0b9001zrvyRhIWvhRG3F",
+        "resultMatchesLedger": true,
+        "status": "completed",
+        "tool": "fixture_effect"
+      }
+    ]
+  },
+  "effect": {
+    "calls": 1,
+    "effects": 1,
+    "held": false,
+    "result": {
+      "invocationId": "76ba141d-559a-4aa1-895f-5bf28abff608:effect",
+      "receipt": "76ba141d-559a-4aa1-895f-5bf28abff608:effect:1",
+      "value": "approved-fixture"
+    }
+  },
+  "observations": [
+    {
+      "advertisedTools": [],
+      "model": "controlled",
+      "responseSecretPresent": false,
+      "secretPresent": false,
+      "toolCallsEmitted": 1,
+      "toolResultsObserved": 0
+    },
+    {
+      "advertisedTools": [
+        "fixture_effect"
+      ],
+      "model": "controlled",
+      "responseSecretPresent": false,
+      "secretPresent": false,
+      "toolCallsEmitted": 1,
+      "toolResultsObserved": 0
+    },
+    {
+      "advertisedTools": [
+        "fixture_effect"
+      ],
+      "model": "controlled",
+      "responseSecretPresent": false,
+      "secretPresent": false,
+      "toolCallsEmitted": 0,
+      "toolResultsObserved": 1
+    },
+    {
+      "advertisedTools": [],
+      "model": "controlled",
+      "responseSecretPresent": false,
+      "secretPresent": false,
+      "toolCallsEmitted": 1,
+      "toolResultsObserved": 0
+    },
+    {
+      "advertisedTools": [
+        "fixture_effect"
+      ],
+      "model": "controlled",
+      "responseSecretPresent": false,
+      "secretPresent": false,
+      "toolCallsEmitted": 1,
+      "toolResultsObserved": 0
+    },
+    {
+      "advertisedTools": [
+        "fixture_effect"
+      ],
+      "model": "controlled",
+      "responseSecretPresent": false,
+      "secretPresent": false,
+      "toolCallsEmitted": 0,
+      "toolResultsObserved": 1
+    }
+  ],
+  "operationId": "76ba141d-559a-4aa1-895f-5bf28abff608",
+  "timestamp": "2026-09-29T09:16:55.399Z",
+  "waiting": {
+    "approvalEvents": [],
+    "error": null,
+    "holdAfterEffect": false,
+    "invocation": {
+      "attempts": 0,
+      "digest": "b0dd94b967e63e7e8730075319717b5afd9362d8e1872004c9d86101243ce673",
+      "invocationId": "76ba141d-559a-4aa1-895f-5bf28abff608:effect",
+      "sdkAttempts": [
+        {
+          "callId": "call_fixture_effect_90b31405-1141-4add-b0f3-e1d62fcade67",
+          "messageId": "msg_0ec73e0b9001zrvyRhIWvhRG3F"
+        }
+      ],
+      "state": "waiting-for-approval",
+      "attemptId": null,
+      "instanceId": null,
+      "result": null
+    },
+    "messageId": "msg_9e8a2229f01340a1ee6f2e953b4ca439",
+    "mode": "idempotent",
+    "modelAttempts": [
+      "b6f9cedf-1e77-4077-95d5-f666d22d0ea5"
+    ],
+    "notBefore": 1790673411543,
+    "operationId": "76ba141d-559a-4aa1-895f-5bf28abff608",
+    "reply": null,
+    "requestDigest": "2b428e72f6b7e6697fc8e269358a2f7f667873442a4e2e6d70bb73e17db6b375",
+    "sessionId": "ses_f138c204cffdUC59jgnnfmFFwz",
+    "status": "waiting-for-approval",
+    "toolDiagnostics": []
+  },
+  "validationImageId": "sha256:a2d9f8ab9dbc2be28b881d991c2e6b229d93d460b315f6d7a3b609dd42ad6cd9",
+  "validationWorkerVersion": "0b226a2f994ccfa9"
+}

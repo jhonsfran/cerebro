@@ -11,6 +11,7 @@ const operationPattern = /^[A-Za-z0-9_-]{1,128}$/u;
 
 export class Session extends Agent<SessionEnvironment> {
   private ledger: Ledger | undefined;
+  private requests = Promise.resolve(null);
   private embedded:
     | Promise<{ client: OpenCodeWorkerd.Interface; sessionId: string }>
     | undefined;
@@ -84,18 +85,27 @@ export class Session extends Agent<SessionEnvironment> {
       ],
       storage: this.ctx.storage,
     });
-    const ledger = this.storage();
-    let sessionId = ledger.sessionId();
-    if (!sessionId) {
-      const session = await client.session.create();
-      sessionId = session.id;
-      ledger.saveSession(sessionId);
+    try {
+      const ledger = this.storage();
+      let sessionId = ledger.sessionId();
+      if (!sessionId) {
+        const session = await client.session.create();
+        sessionId = session.id;
+        ledger.saveSession(sessionId);
+      }
+      await client.session.get({ sessionID: sessionId });
+      return { client, sessionId };
+    } catch (error) {
+      await client.close();
+      throw error;
     }
-    await client.session.get({ sessionID: sessionId });
-    return { client, sessionId };
   }
 
-  private schemaProbe(request: Request): Response | undefined {
+  private async schemaProbe(request: Request): Promise<Response | undefined> {
+    const durability = await this.durabilityProbe(request);
+    if (durability) {
+      return durability;
+    }
     const path = new URL(request.url).pathname;
     if (path.endsWith("/seed-ledger") && request.method === "POST") {
       const ledger = this.storage();
@@ -121,9 +131,67 @@ export class Session extends Agent<SessionEnvironment> {
     return undefined;
   }
 
+  private async durabilityProbe(
+    request: Request
+  ): Promise<Response | undefined> {
+    const path = new URL(request.url).pathname;
+    if (path.endsWith("/durability") && request.method === "POST") {
+      const id = new URL(request.url).searchParams.get("id");
+      if (!id || !operationPattern.test(id)) {
+        return Response.json({ ok: false }, { status: 400 });
+      }
+      const ledger = this.storage();
+      if (!ledger.operation(id)) {
+        ledger.start(id);
+      }
+      ledger.complete(id, "durable-marker");
+      await this.ctx.storage.sync();
+      return Response.json({
+        id,
+        ok: true,
+        value: ledger.operation(id)?.result,
+      });
+    }
+    if (path.endsWith("/durability") && request.method === "GET") {
+      const id = new URL(request.url).searchParams.get("id");
+      return Response.json({
+        ok: true,
+        value: id ? (this.storage().operation(id)?.result ?? null) : null,
+      });
+    }
+    return undefined;
+  }
+
   async onRequest(request: Request): Promise<Response> {
+    const previous = this.requests;
+    const done = Promise.withResolvers<null>();
+    this.requests = done.promise;
+    await previous;
     try {
-      const probe = this.schemaProbe(request);
+      return await this.handleRequest(request);
+    } finally {
+      try {
+        const { embedded } = this;
+        this.embedded = undefined;
+        if (embedded) {
+          const [result] = await Promise.allSettled([embedded]);
+          if (result.status === "fulfilled") {
+            try {
+              await this.ctx.storage.sync();
+            } finally {
+              await result.value.client.close();
+            }
+          }
+        }
+      } finally {
+        done.resolve(null);
+      }
+    }
+  }
+
+  private async handleRequest(request: Request): Promise<Response> {
+    try {
+      const probe = await this.schemaProbe(request);
       if (probe) {
         return probe;
       }

@@ -37,7 +37,6 @@ const sentinel: Workspace = {
 
 export class MigrationControl extends DurableObject {
   private readonly instanceId = crypto.randomUUID();
-  private client: Promise<OpenCodeWorkerd.Interface> | undefined;
 
   private markers(): Marker[] {
     return this.ctx.storage.sql
@@ -134,12 +133,16 @@ export class MigrationControl extends DurableObject {
         { status: 409 }
       );
     }
-    this.client ??= OpenCodeWorkerd.create({
+    const client = await OpenCodeWorkerd.create({
       models: { fetch: false },
       storage: this.ctx.storage,
     });
-    const client = await this.client;
-    const health = await client.health.get();
+    let health: Awaited<ReturnType<typeof client.health.get>>;
+    try {
+      health = await client.health.get();
+    } finally {
+      await client.close();
+    }
     const after = this.markers();
     const [workspace] = this.ctx.storage.sql
       .exec<Workspace>(

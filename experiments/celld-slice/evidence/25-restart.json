@@ -1,0 +1,15 @@
+{
+  "agentMessagesPreserved": true,
+  "agentSessionPreserved": true,
+  "authSessionPreserved": true,
+  "committedKey": "commit-038531a3-742c-4807-a555-06fb7a73011a",
+  "committedRowPreserved": true,
+  "completedOperationReused": true,
+  "replayAddedNoMessages": true,
+  "rollbackAbsent": true,
+  "sessionId": "ses_f138f8580ffd4guMl87Lgod1O2",
+  "timestamp": "2026-09-29T09:15:47.866Z",
+  "userId": "Xa5rZIxyeeqk2318MtPr9Nuda7cvdxua",
+  "validationImageId": "sha256:a2d9f8ab9dbc2be28b881d991c2e6b229d93d460b315f6d7a3b609dd42ad6cd9",
+  "validationWorkerVersion": "0b226a2f994ccfa9"
+}

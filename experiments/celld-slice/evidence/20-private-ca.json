@@ -1,0 +1,22 @@
+{
+  "caSha256": "cf4e0d97585012fadf7983091c1ee26918025e9f475ee9ccff376c742f1a1729",
+  "nodeVerifiedPrivateCa": {
+    "ssl": true,
+    "version": "TLSv1.3",
+    "cipher": "TLS_AES_256_GCM_SHA384"
+  },
+  "worker": {
+    "driverWithPrivateCa": {
+      "accepted": false,
+      "failure": "unknown-issuer"
+    },
+    "publiclyTrustedPostgres": "not-tested",
+    "rawSocket": {
+      "accepted": false,
+      "failure": "unknown-issuer"
+    },
+    "target": "postgres-tls:5432"
+  },
+  "validationImageId": "sha256:a2d9f8ab9dbc2be28b881d991c2e6b229d93d460b315f6d7a3b609dd42ad6cd9",
+  "validationWorkerVersion": "0b226a2f994ccfa9"
+}

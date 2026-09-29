@@ -1,0 +1,390 @@
+[
+  {
+    "label": "before-capacity-policy",
+    "project": "cerebro-slice-final-20260929",
+    "timestamp": "2026-09-29T08:44:24.836Z",
+    "residentClasses": {
+      "OpenCodeControl": 7,
+      "RecoverySession": 7,
+      "Session": 16
+    },
+    "residentCount": 30,
+    "isolates": {
+      "cells": {
+        "cerebro-celld-slice": {
+          "cells": 30,
+          "external_bytes": 1357201,
+          "freed": 0,
+          "heap_bytes": 597721088,
+          "live": 1,
+          "live_empty": 0,
+          "requests": 21,
+          "retiring": 0,
+          "turns": 0
+        }
+      },
+      "services": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1285393,
+          "freed": 2,
+          "heap_bytes": 109649920,
+          "live": 1,
+          "live_empty": 1,
+          "requests": 0,
+          "retiring": 0,
+          "turns": 0
+        }
+      },
+      "stateless": {
+        "cells": 0,
+        "external_bytes": 1285393,
+        "freed": 2,
+        "heap_bytes": 109649920,
+        "live": 1,
+        "live_empty": 1,
+        "requests": 0,
+        "retiring": 0,
+        "turns": 0
+      }
+    },
+    "rssBytes": 906407936,
+    "heapMetric": "Pool aggregate committed physical V8 heap; busy heaps can be omitted"
+  },
+  {
+    "heapMetric": "Pool aggregate committed physical V8 heap; busy heaps can be omitted",
+    "isolates": {
+      "cells": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1329114,
+          "freed": 1,
+          "heap_bytes": 443621376,
+          "live": 0,
+          "live_empty": 0,
+          "requests": 11,
+          "retiring": 1,
+          "turns": 0
+        }
+      },
+      "services": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1286754,
+          "freed": 2,
+          "heap_bytes": 111013888,
+          "live": 1,
+          "live_empty": 1,
+          "requests": 0,
+          "retiring": 0,
+          "turns": 0
+        }
+      },
+      "stateless": {
+        "cells": 0,
+        "external_bytes": 1286754,
+        "freed": 2,
+        "heap_bytes": 111013888,
+        "live": 1,
+        "live_empty": 1,
+        "requests": 0,
+        "retiring": 0,
+        "turns": 0
+      }
+    },
+    "label": "after-capacity-idle",
+    "project": "cerebro-slice-final-20260929",
+    "residentClasses": {},
+    "residentCount": 0,
+    "rssBytes": 819445760,
+    "timestamp": "2026-09-29T08:45:56.110Z"
+  },
+  {
+    "heapMetric": "Pool aggregate committed physical V8 heap; busy heaps can be omitted",
+    "isolates": {
+      "cells": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 2648732,
+          "freed": 1,
+          "heap_bytes": 781860864,
+          "live": 0,
+          "live_empty": 0,
+          "requests": 22,
+          "retiring": 2,
+          "turns": 0
+        }
+      },
+      "services": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1285018,
+          "freed": 2,
+          "heap_bytes": 109125632,
+          "live": 1,
+          "live_empty": 1,
+          "requests": 0,
+          "retiring": 0,
+          "turns": 0
+        }
+      },
+      "stateless": {
+        "cells": 0,
+        "external_bytes": 1285018,
+        "freed": 2,
+        "heap_bytes": 109125632,
+        "live": 1,
+        "live_empty": 1,
+        "requests": 0,
+        "retiring": 0,
+        "turns": 0
+      }
+    },
+    "label": "capacity-after-second-check",
+    "project": "cerebro-slice-final-20260929",
+    "residentClasses": {},
+    "residentCount": 0,
+    "rssBytes": 1246892032,
+    "timestamp": "2026-09-29T08:49:36.472Z"
+  },
+  {
+    "heapMetric": "Pool aggregate committed physical V8 heap; busy heaps can be omitted",
+    "isolates": {
+      "cells": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1298595,
+          "freed": 0,
+          "heap_bytes": 223449088,
+          "live": 1,
+          "live_empty": 1,
+          "requests": 7,
+          "retiring": 0,
+          "turns": 0
+        }
+      },
+      "services": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 2611708,
+          "freed": 0,
+          "heap_bytes": 221134848,
+          "live": 2,
+          "live_empty": 2,
+          "requests": 0,
+          "retiring": 0,
+          "turns": 0
+        }
+      },
+      "stateless": {
+        "cells": 0,
+        "external_bytes": 2611708,
+        "freed": 0,
+        "heap_bytes": 221134848,
+        "live": 2,
+        "live_empty": 2,
+        "requests": 0,
+        "retiring": 0,
+        "turns": 0
+      }
+    },
+    "label": "lifecycle-first-main",
+    "project": "cerebro-slice-final-20260929",
+    "residentClasses": {},
+    "residentCount": 0,
+    "rssBytes": 653041664,
+    "timestamp": "2026-09-29T08:56:11.502Z"
+  },
+  {
+    "heapMetric": "Pool aggregate committed physical V8 heap; busy heaps can be omitted",
+    "isolates": {
+      "cells": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1298595,
+          "freed": 1,
+          "heap_bytes": 223449088,
+          "live": 0,
+          "live_empty": 0,
+          "requests": 0,
+          "retiring": 1,
+          "turns": 0
+        }
+      },
+      "services": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1286198,
+          "freed": 1,
+          "heap_bytes": 110698496,
+          "live": 1,
+          "live_empty": 1,
+          "requests": 0,
+          "retiring": 0,
+          "turns": 0
+        }
+      },
+      "stateless": {
+        "cells": 0,
+        "external_bytes": 1286198,
+        "freed": 1,
+        "heap_bytes": 110698496,
+        "live": 1,
+        "live_empty": 1,
+        "requests": 0,
+        "retiring": 0,
+        "turns": 0
+      }
+    },
+    "label": "lifecycle-after-baseline",
+    "project": "cerebro-slice-final-20260929",
+    "residentClasses": {},
+    "residentCount": 0,
+    "rssBytes": 540995584,
+    "timestamp": "2026-09-29T08:57:06.346Z"
+  },
+  {
+    "heapMetric": "Pool aggregate committed physical V8 heap; busy heaps can be omitted",
+    "isolates": {
+      "cells": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1298539,
+          "freed": 1,
+          "heap_bytes": 216739840,
+          "live": 0,
+          "live_empty": 0,
+          "requests": 7,
+          "retiring": 1,
+          "turns": 0
+        }
+      },
+      "services": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1285018,
+          "freed": 1,
+          "heap_bytes": 109637632,
+          "live": 1,
+          "live_empty": 1,
+          "requests": 0,
+          "retiring": 0,
+          "turns": 0
+        }
+      },
+      "stateless": {
+        "cells": 0,
+        "external_bytes": 1285018,
+        "freed": 1,
+        "heap_bytes": 109637632,
+        "live": 1,
+        "live_empty": 1,
+        "requests": 0,
+        "retiring": 0,
+        "turns": 0
+      }
+    },
+    "label": "lifecycle-second-main",
+    "project": "cerebro-slice-final-20260929",
+    "residentClasses": {},
+    "residentCount": 0,
+    "rssBytes": 535261184,
+    "timestamp": "2026-09-29T08:58:28.538Z"
+  },
+  {
+    "heapMetric": "Pool aggregate committed physical V8 heap; busy heaps can be omitted",
+    "isolates": {
+      "cells": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1298539,
+          "freed": 1,
+          "heap_bytes": 216743936,
+          "live": 0,
+          "live_empty": 0,
+          "requests": 0,
+          "retiring": 1,
+          "turns": 0
+        }
+      },
+      "services": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1285018,
+          "freed": 1,
+          "heap_bytes": 109387776,
+          "live": 1,
+          "live_empty": 1,
+          "requests": 0,
+          "retiring": 0,
+          "turns": 0
+        }
+      },
+      "stateless": {
+        "cells": 0,
+        "external_bytes": 1285018,
+        "freed": 1,
+        "heap_bytes": 109387776,
+        "live": 1,
+        "live_empty": 1,
+        "requests": 0,
+        "retiring": 0,
+        "turns": 0
+      }
+    },
+    "label": "lifecycle-second-main-idle",
+    "project": "cerebro-slice-final-20260929",
+    "residentClasses": {},
+    "residentCount": 0,
+    "rssBytes": 529952768,
+    "timestamp": "2026-09-29T08:58:57.650Z"
+  },
+  {
+    "heapMetric": "Pool aggregate committed physical V8 heap; busy heaps can be omitted",
+    "isolates": {
+      "cells": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 0,
+          "freed": 0,
+          "heap_bytes": 0,
+          "live": 0,
+          "live_empty": 0,
+          "requests": 0,
+          "retiring": 0,
+          "turns": 0
+        }
+      },
+      "services": {
+        "cerebro-celld-slice": {
+          "cells": 0,
+          "external_bytes": 1285618,
+          "freed": 0,
+          "heap_bytes": 110428160,
+          "live": 1,
+          "live_empty": 1,
+          "requests": 0,
+          "retiring": 0,
+          "turns": 0
+        }
+      },
+      "stateless": {
+        "cells": 0,
+        "external_bytes": 1285618,
+        "freed": 0,
+        "heap_bytes": 110428160,
+        "live": 1,
+        "live_empty": 1,
+        "requests": 0,
+        "retiring": 0,
+        "turns": 0
+      }
+    },
+    "label": "lifecycle-after-drain",
+    "project": "cerebro-slice-final-20260929",
+    "residentClasses": {},
+    "residentCount": 0,
+    "rssBytes": 307871744,
+    "timestamp": "2026-09-29T08:59:43.755Z"
+  }
+]

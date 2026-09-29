@@ -2,8 +2,6 @@ import { OpenCodeWorkerd } from "@opencode-ai/sdk/workerd";
 import { DurableObject } from "cloudflare:workers";
 
 export class OpenCodeControl extends DurableObject {
-  private client: Promise<OpenCodeWorkerd.Interface> | undefined;
-
   async fetch(request: Request): Promise<Response> {
     try {
       const fixture = new URL(request.url).searchParams.get("schema");
@@ -34,13 +32,16 @@ export class OpenCodeControl extends DurableObject {
           "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name"
         )
         .toArray();
-      this.client ??= OpenCodeWorkerd.create({
+      const client = await OpenCodeWorkerd.create({
         models: { fetch: false },
         storage: this.ctx.storage,
       });
-      const client = await this.client;
-      const health = await client.health.get();
-      return Response.json({ health, ok: true, tablesBefore });
+      try {
+        const health = await client.health.get();
+        return Response.json({ health, ok: true, tablesBefore });
+      } finally {
+        await client.close();
+      }
     } catch (error) {
       return Response.json(
         {

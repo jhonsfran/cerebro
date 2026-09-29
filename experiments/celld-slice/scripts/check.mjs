@@ -320,18 +320,32 @@ await check("tools.egress", async () => {
   });
   return body;
 });
+const broker = await check("tools.broker", async () => {
+  await import("./check-broker.mjs");
+  return { artifact: "broker-evidence.json" };
+});
+for (const id of ["tools.secrets", "tools.approval", "tools.replay"]) {
+  if (broker) {
+    results.push({ evidence: broker, id, status: "pass" });
+  } else {
+    pending(id, "The broker probe failed");
+  }
+}
+await check("tools.denied-paths", async () => {
+  await import("./check-tool-denial.mjs");
+  return { artifact: "tool-denial-evidence.json" };
+});
+await check("agent.reconnect", async () => {
+  await import("./check-reconnect.mjs");
+  return { artifact: "reconnect-evidence.json", transport: "HTTP long-poll" };
+});
 for (const id of [
   "database.tls-verified",
   "database.private-ca",
   "database.restart",
   "auth.restart",
   "auth.browser",
-  "agent.reconnect",
   "agent.real-provider",
-  "tools.broker",
-  "tools.secrets",
-  "tools.approval",
-  "tools.replay",
   "recovery.before-model",
   "recovery.approval",
   "recovery.idempotent-effect",
@@ -344,7 +358,10 @@ for (const id of [
   "baseline.ten-sessions",
   "deployment.clean-rebuild",
 ]) {
-  pending(id, "This stage has not produced runtime evidence");
+  pending(
+    id,
+    "Separate host, browser, or provider check; see README and the Session 0 receipt"
+  );
 }
 await sql.end();
 let gate = "incomplete";
