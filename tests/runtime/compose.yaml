@@ -1,0 +1,131 @@
+x-runtime: &runtime
+  build:
+    context: ../..
+    dockerfile: tests/runtime/Dockerfile
+  image: ${COMPOSE_PROJECT_NAME:-cerebro-runtime}-app
+
+services:
+  postgres:
+    image: postgres:17.9-bookworm@sha256:47f917f7409eacd22fc5dfb1dee634e1b55cf0c01d1a7eb701be2227a03e0641
+    environment:
+      POSTGRES_USER: runtime
+      POSTGRES_PASSWORD: runtime-local-only
+      POSTGRES_DB: runtime
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U runtime -d runtime]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  minio-runtime:
+    build:
+      context: ../../experiments/celld-slice
+      dockerfile: Dockerfile
+      target: minio
+    image: ${COMPOSE_PROJECT_NAME:-cerebro-runtime}-minio
+    command: [server, /data]
+    environment:
+      MINIO_ROOT_USER: runtime
+      MINIO_ROOT_PASSWORD: runtime-local-only-storage-secret
+    volumes:
+      - minio-runtime:/data
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:9000/minio/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  fixture:
+    <<: *runtime
+    command: [node, fixtures/provider.ts]
+    environment:
+      FIXTURE_DATA_DIR: /fixture-data
+    volumes:
+      - fixture:/fixture-data
+    ports:
+      - "127.0.0.1:${RUNTIME_FIXTURE_PORT:-18866}:8090"
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:8090/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  bootstrap:
+    <<: *runtime
+    command: [node, tests/runtime/bootstrap.mjs]
+    environment:
+      DATABASE_URL: postgres://runtime:runtime-local-only@postgres:5432/runtime
+      AWS_ACCESS_KEY_ID: runtime
+      AWS_SECRET_ACCESS_KEY: runtime-local-only-storage-secret
+      AWS_REGION: us-east-1
+      RUNTIME_EFFECT_MODE: ${RUNTIME_EFFECT_MODE:-idempotent}
+      RUNTIME_HOLD_AFTER_EFFECT: ${RUNTIME_HOLD_AFTER_EFFECT:-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-runtime:
+        condition: service_healthy
+  celld:
+    <<: *runtime
+    command:
+      [
+        celld,
+        --bucket,
+        s3://cerebro-runtime,
+        --endpoint,
+        "http://minio-runtime:9000",
+        --region,
+        us-east-1,
+        --listen,
+        "0.0.0.0:8080",
+        --internal-listen,
+        "0.0.0.0:8081",
+        --advertise,
+        "celld:8081",
+      ]
+    environment:
+      AWS_ACCESS_KEY_ID: runtime
+      AWS_SECRET_ACCESS_KEY: runtime-local-only-storage-secret
+      AWS_REGION: us-east-1
+      CELLD_DURABILITY: bucket
+      CELLD_TELEMETRY: "0"
+      CELLD_V8_HEAP_LIMIT_MB: "256"
+      CELLD_IDLE_EVICT_S: "10"
+      CELLD_MAX_RESIDENT_CELLS: "16"
+    ports:
+      - "127.0.0.1:${RUNTIME_API_PORT:-18865}:8080"
+    volumes:
+      - celld:/var/lib/celld
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+      fixture:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:8080/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  postgres:
+  minio-runtime:
+  fixture:
+  celld:
