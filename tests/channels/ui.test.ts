@@ -3,10 +3,16 @@ import assert from "node:assert/strict";
 
 import { z } from "zod";
 
-import { agentExecutionGrants } from "../../apps/web/src/features/product/configuration";
+import {
+  agentEditorValues,
+  agentExecutionGrants,
+} from "../../apps/web/src/features/product/configuration";
 import { operationFor } from "../../apps/web/src/features/product/intent";
 import type { OperationIntent } from "../../apps/web/src/features/product/intent";
-import type { ConversationItem } from "../../apps/web/src/features/product/types";
+import type {
+  AgentDetail,
+  ConversationItem,
+} from "../../apps/web/src/features/product/types";
 
 mock.module("../../apps/web/src/env.public", () => ({
   ENV: { VITE_SERVER_URL: "http://fixture.invalid" },
@@ -391,4 +397,125 @@ test("selected configured tools publish only their explicit connector execution 
       },
     },
   ]);
+});
+
+const obsoleteAgent: AgentDetail = {
+  access: [],
+  agentId: "company-assistant",
+  connectorChoices: [],
+  definition: {
+    agentId: "company-assistant",
+    enabledToolIds: ["fixture-read"],
+    grants: [
+      {
+        action: "read",
+        resource: {
+          id: "old-source",
+          kind: "memory",
+          organizationId: "company",
+        },
+      },
+    ],
+    instructions: "Answer company questions.",
+    model: "fixture-model",
+    organizationId: "company",
+    version: 1,
+  },
+  modelChoices: [
+    { id: "opencode/space-bunny-free", label: "Space Bunny Free" },
+  ],
+  name: "Company assistant",
+  sourceChoices: [],
+};
+
+test("agent editor replaces obsolete fixture choices with the current catalog", () => {
+  const agent = structuredClone(obsoleteAgent);
+  const original = structuredClone(agent);
+  assert.deepEqual(agentEditorValues(agent), {
+    catalog: {
+      connectorChoices: [],
+      modelChoices: [
+        { id: "opencode/space-bunny-free", label: "Space Bunny Free" },
+      ],
+      sourceChoices: [],
+    },
+    instructions: "Answer company questions.",
+    model: "opencode/space-bunny-free",
+    name: "Company assistant",
+    sourceIds: [],
+    toolIds: [],
+    unavailableSelections: {
+      model: "fixture-model",
+      sourceIds: ["old-source"],
+      toolIds: ["fixture-read"],
+    },
+  });
+  assert.deepEqual(agent, original);
+});
+
+test("agent editor preserves a valid nonfirst model and filters mixed tool and source IDs", () => {
+  const agent: AgentDetail = {
+    ...structuredClone(obsoleteAgent),
+    connectorChoices: [{ id: "read-policy", label: "Read policy" }],
+    definition: {
+      ...structuredClone(obsoleteAgent.definition),
+      enabledToolIds: ["fixture-read", "read-policy"],
+      grants: [
+        ...structuredClone(obsoleteAgent.definition.grants),
+        {
+          action: "read",
+          resource: {
+            id: "travel-source",
+            kind: "memory",
+            organizationId: "company",
+          },
+        },
+      ],
+      model: "company/model",
+    },
+    modelChoices: [
+      { id: "opencode/space-bunny-free", label: "Space Bunny Free" },
+      { id: "company/model", label: "Company model" },
+    ],
+    sourceChoices: [{ id: "travel-source", label: "Travel policy" }],
+  };
+  const original = structuredClone(agent);
+  const draft = agentEditorValues(agent);
+  assert.deepEqual(
+    {
+      model: draft.model,
+      sourceIds: draft.sourceIds,
+      toolIds: draft.toolIds,
+      unavailableSelections: draft.unavailableSelections,
+    },
+    {
+      model: "company/model",
+      sourceIds: ["travel-source"],
+      toolIds: ["read-policy"],
+      unavailableSelections: {
+        model: null,
+        sourceIds: ["old-source"],
+        toolIds: ["fixture-read"],
+      },
+    }
+  );
+  assert.deepEqual(agent, original);
+});
+
+test("agent editor leaves the model empty when no configured model is available", () => {
+  const draft = agentEditorValues({
+    ...structuredClone(obsoleteAgent),
+    modelChoices: [],
+  });
+  assert.deepEqual(
+    { model: draft.model, unavailableSelections: draft.unavailableSelections },
+    {
+      model: "",
+      unavailableSelections: {
+        model: "fixture-model",
+        sourceIds: ["old-source"],
+        toolIds: ["fixture-read"],
+      },
+    }
+  );
 });
