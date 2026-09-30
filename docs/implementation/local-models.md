@@ -39,3 +39,19 @@ An initial test failed before model dispatch because its test helper read the wr
 Host logs are `/tmp/cerebro-opencode-{integration,runtime,policy-runtime,channels,contracts,types,build}.log` and `/tmp/cerebro-opencode-live-final.log`. The rerunnable live check is [opencode.test.ts](../../tests/live/opencode.test.ts), invoked with `pnpm test:opencode`. It contacts the real free provider and remains separate from deterministic integration checks.
 
 Live acceptance now qualifies this one model path. Publicly trusted Worker PostgreSQL TLS, external MCP, enterprise identity, and actual Slack remain subject to the Session 7 qualification limits. See [operations](../operations/pilot.md) for local setup and existing-agent model changes.
+
+## Existing agent conversation repair
+
+The browser conversation failed because the saved support assistant still used `fixture-model` and `fixture-read`. The run moved from queued to failed in 41 ms, before any model request or usage reservation. The configuration selector displayed the first available model while its React state retained the unavailable fixture ID. Its hidden tool selection also retained `fixture-read`. Publication rejected those values with `Select configured models and connectors.`
+
+`agentEditorValues` now compares saved selections with the current catalog. It preserves valid selections, replaces an unavailable model with the first current choice, and removes unavailable tools and sources from the editable draft. A visible notice names the obsolete IDs and requires publication. An empty model catalog disables publication. The helper does not modify saved definitions.
+
+The actual browser published support assistant version 2 with `opencode/space-bunny-free`, no enabled tools, and no grants. The next `hi there` message in the current failed conversation returned `Hi there! What company question can I help you answer?`. Run `run:event:d09912201c17c9b78cf02d7de1d9fb1f8034ebf238ea72339a132e3b20dda427` completed. Its model reservation settled with maximum and incurred values of zero `usd-micro`. Version 1 and the earlier failed run remain available in history. Each new run resolves the current agent version.
+
+The editor regression first reported `8 pass` and `3 fail`. After the repair, it reported `11 pass` and `0 fail`. All 29 channel and UI tests passed. Scoped Ultracite, web type checks, and the rebuilt web image passed. Independent review found no actionable defect. The normal publish API, expected-version check, and operation identity remain unchanged.
+
+Two designs were compared. Catalog normalization required fewer form rules and matched the requested free-model transition. Explicit unavailable options preserved stale selections but required separate removal controls and validation. Both require publication before saved values change. The review used the configured inherited model and does not establish cross-model agreement.
+
+Fix Root Causes excluded provider transport through the failed run and usage records. Model the Domain kept catalog selection rules in one helper. Boundary Discipline retained the server publication checks. Laziness Protocol kept the repair within the existing editor. Test Behavior, Not Implementation required literal draft results and input preservation. Prove It Works required a visible browser reply and its settled receipt.
+
+![Completed conversation after agent repair](evidence/local-models/conversation-repair.jpg)

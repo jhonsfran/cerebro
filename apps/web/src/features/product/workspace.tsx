@@ -76,6 +76,11 @@ const AgentEditor = ({
   onCancel: () => void;
 }) => {
   const initial = agentEditorValues(agent);
+  const { unavailableSelections } = initial;
+  const hasUnavailableSelections =
+    unavailableSelections.model !== null ||
+    unavailableSelections.toolIds.length > 0 ||
+    unavailableSelections.sourceIds.length > 0;
   const [name, setName] = useState(initial.name);
   const [instructions, setInstructions] = useState(initial.instructions);
   const [model, setModel] = useState(initial.model);
@@ -161,6 +166,28 @@ const AgentEditor = ({
         Each save publishes a new version. Earlier versions remain available for
         existing runs.
       </p>
+      {hasUnavailableSelections ? (
+        <p className="muted-text">
+          <output>
+            {unavailableSelections.model === null
+              ? ""
+              : `Saved model ${unavailableSelections.model} is unavailable. `}
+            {unavailableSelections.model !== null && model
+              ? `This draft uses ${model}. `
+              : ""}
+            {unavailableSelections.model !== null && !model
+              ? "No configured model is available. "
+              : ""}
+            {unavailableSelections.toolIds.length > 0
+              ? `Unavailable tools removed from this draft: ${unavailableSelections.toolIds.join(", ")}. `
+              : ""}
+            {unavailableSelections.sourceIds.length > 0
+              ? `Unavailable sources removed from this draft: ${unavailableSelections.sourceIds.join(", ")}. `
+              : ""}
+            Publish a new version to apply these changes to new messages.
+          </output>
+        </p>
+      ) : null}
       {errorMessage ? (
         <p className="error-banner" role="alert">
           {errorMessage}
