@@ -2,6 +2,8 @@
 
 Session 7 was fast-forward merged into `main` at `ebaed39`. The obsolete experiment was removed in `a3fa970`. Required provider, lockfile, and dependency patch now belong to `tests/runtime`. Both native test stacks use that context. All 41 original evidence files remain under `docs/implementation/evidence/session-0`. JSON formatting was normalized; recorded values are unchanged. Historical experiment code remains available in Git at `ebaed39`.
 
+The model implementation is committed at `e4692b9`. The local `cerebro` Compose stack was rebuilt and started from this commit with its existing volumes preserved. API readiness returned `{ "ok": true }`, the web origin returned HTTP 200, and a fixture session route returned HTTP 404.
+
 Default local deployment now uses `opencode/space-bunny-free`. [OpenCode lists this model as free](https://opencode.ai/docs/en/zen/). The native SDK uses its genuine default identity and session headers with the public provider key. No client headers were forged. No paid fallback exists. The default catalog contains only the model that passed live acceptance.
 
 The default configuration has no fixture source or tool. Local mode uses real PostgreSQL, MinIO, authorization, durable sessions, audit, and zero-cost usage records. Its generated installation token is persistent and required for initial ownership. Local transport permits loopback HTTP and PostgreSQL without production TLS. Production transport requirements are unchanged.

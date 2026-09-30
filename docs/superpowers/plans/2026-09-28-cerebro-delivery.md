@@ -268,7 +268,7 @@ Run these checks through the deployed API and UI:
 
 **Verify.** Run `rtk proxy pnpm test:integration`, `rtk proxy pnpm check-types`, `rtk proxy pnpm check`, and `rtk proxy pnpm build`. Record latency to first response, tool duration, restart recovery time, memory use, and database connections under a stated concurrent-session load. Compare measurements on the same machine and fixture configuration. Do not claim a capacity figure from a successful single-user test.
 
-Local implementation and fixture acceptance are complete. [The session 7 receipt](../../implementation/session-7.md) records native and browser evidence. Live external providers and publicly trusted Worker PostgreSQL TLS remain unqualified.
+Local implementation and fixture acceptance are complete. [The session 7 receipt](../../implementation/session-7.md) records native and browser evidence. The native OpenCode Space Bunny Free path is now [live qualified](../../implementation/local-models.md). External MCP and publicly trusted Worker PostgreSQL TLS remain unqualified.
 
 **Exit condition.** A fresh installation passes the acceptance sequence. Record live results for each model, MCP, Entra, Unprice, Jev, or Slack integration enabled in the pilot. Mark unconfigured integrations as not applicable. A configured integration cannot be marked ready without its live check. The receipt identifies any deployment limit and recovery procedure.
 
