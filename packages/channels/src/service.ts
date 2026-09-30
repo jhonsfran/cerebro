@@ -815,6 +815,24 @@ export const createChannelService = (
       snapshot,
     };
   };
+  const chatAccess = async (userId: string, conversationId: string) => {
+    const context = await current(userId);
+    const row = await requireConversation(conversationId, context, "read");
+    const records = await database
+      .select({ item: channelItem.item })
+      .from(channelItem)
+      .where(
+        and(
+          eq(channelItem.organizationId, options.organizationId),
+          eq(channelItem.conversationId, conversationId)
+        )
+      );
+    for (const record of records) {
+      await authorize(database, options, context, "read", "agent", row.agentId);
+      await authorizeContent(database, options, context, record.item);
+    }
+    return { address: conversationAddress(row), context };
+  };
   const listConversations = async (userId: string) => {
     const context = await current(userId);
     const rows = await database
@@ -1069,6 +1087,7 @@ export const createChannelService = (
     budget,
     cancel,
     catalog,
+    chatAccess,
     createConversation,
     getAgent,
     history,

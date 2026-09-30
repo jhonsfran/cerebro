@@ -167,29 +167,3 @@ export const createOpenCodeClient = async (
     storage,
   });
 };
-
-export const readFinalReply = async (
-  client: OpenCodeWorkerd.Interface,
-  sessionId: string
-): Promise<string | undefined> => {
-  const messages = await client.message.list({
-    order: "asc",
-    sessionID: sessionId,
-  });
-  const assistant = messages.data.findLast(
-    (message) => message.type === "assistant"
-  );
-  if (
-    !assistant ||
-    assistant.error ||
-    assistant.finish === undefined ||
-    assistant.finish === "tool-calls"
-  ) {
-    return undefined;
-  }
-  return assistant.content
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
-    .join("")
-    .trim();
-};

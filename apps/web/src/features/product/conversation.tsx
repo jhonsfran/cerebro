@@ -1,16 +1,34 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useAgentChat } from "@cloudflare/ai-chat/react";
+import { useAgent } from "agents/react";
+import type { ChatStatus, DataUIPart } from "ai";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import {
+  apiUrl,
   cacheKey,
+  clearProductCache,
   assertCurrentAccess,
   currentAccessGeneration,
   encoded,
   mutate,
-  ProductError,
   productPath,
   request,
 } from "./api";
-import { readConversationStream } from "./stream";
+import {
+  conversationDataSchemas,
+  conversationItems,
+  loadChatMessages,
+  messageText,
+} from "./chat";
+import type { ConversationMessage } from "./chat";
 import type {
   Audit,
   Conversation,
@@ -23,13 +41,12 @@ import {
   auditSchema,
   conversationSchema,
   historySchema,
-  messageReceiptSchema,
   pendingSchema,
   sourceSchema,
   stateMutationSchema,
 } from "./types";
 
-type Connection = "connecting" | "connected" | "disconnected" | "current";
+type Connection = "connecting" | "connected" | "disconnected";
 type Detail =
   | { type: "source"; value: Source }
   | { type: "audit"; value: Audit };
@@ -121,7 +138,7 @@ const ConversationHeader = ({
       <span
         className={`connection-dot ${connection === "disconnected" ? "offline" : ""}`}
       />
-      <span>{connection === "current" ? "Up to date" : connection}</span>
+      <span>{connection}</span>
       <span title={sessionId}>
         Session {sessionId?.slice(0, 12) ?? "loading"}
       </span>
@@ -134,7 +151,61 @@ const ConversationHeader = ({
   </>
 );
 
-export const ConversationPanel = ({
+const ConversationComposer = ({
+  text,
+  setText,
+  sending,
+  connected,
+  pending,
+  fixture,
+  send,
+}: {
+  text: string;
+  setText: (value: string) => void;
+  sending: boolean;
+  connected: boolean;
+  pending: PendingMessage | null;
+  fixture: boolean;
+  send: (message: PendingMessage) => Promise<void>;
+}) => (
+  <form
+    className="message-composer"
+    onSubmit={(event) => {
+      event.preventDefault();
+      if (text.trim() && !pending) {
+        send({ eventId: crypto.randomUUID(), text: text.trim() });
+      }
+    }}
+  >
+    <label className="sr-only" htmlFor="message">
+      Message
+    </label>
+    <textarea
+      id="message"
+      value={text}
+      onChange={(event) => setText(event.target.value)}
+      placeholder="Ask your company assistant..."
+      rows={2}
+      disabled={sending || !connected || Boolean(pending)}
+    />
+    <div className="composer-footer">
+      <span>
+        {fixture
+          ? 'Try "Run the approval fixture" to review an approval.'
+          : "Your conversation is private."}
+      </span>
+      <button
+        className="primary-button"
+        type="submit"
+        disabled={sending || !connected || !text.trim() || Boolean(pending)}
+      >
+        {sending ? "Responding..." : "Send message"}
+      </button>
+    </div>
+  </form>
+);
+
+const ConversationSession = ({
   conversationId,
   userId,
   agentId,
@@ -148,7 +219,7 @@ export const ConversationPanel = ({
   fixture: boolean;
 }) => {
   const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [items, setItems] = useState<ConversationItem[]>([]);
+  const [initialItems, setInitialItems] = useState<ConversationItem[]>([]);
   const [history, setHistory] = useState<History | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
@@ -156,8 +227,9 @@ export const ConversationPanel = ({
   const [busy, setBusy] = useState(false);
   const [connection, setConnection] = useState<Connection>("connecting");
   const [connected, setConnected] = useState(true);
+  const [accessValid, setAccessValid] = useState(true);
+  const accessGeneration = useRef(currentAccessGeneration());
   const [revision, setRevision] = useState(0);
-  const cursor = useRef("");
   const transcript = useRef<HTMLDivElement>(null);
   const path = productPath(`conversations/${encoded(conversationId)}`);
   const pendingKey = cacheKey(userId, conversationId, "pending");
@@ -169,6 +241,94 @@ export const ConversationPanel = ({
       return null;
     }
   });
+  const pendingRef = useRef(pending);
+  const chatState = useRef<{
+    isRecovering: boolean;
+    isStreaming: boolean;
+    messages: ConversationMessage[];
+    status: ChatStatus;
+  }>({
+    isRecovering: false,
+    isStreaming: false,
+    messages: [],
+    status: "ready",
+  });
+  const acknowledge = useCallback(
+    (item: ConversationItem) => {
+      if (
+        item.type === "user" &&
+        item.eventId === pendingRef.current?.eventId
+      ) {
+        sessionStorage.removeItem(pendingKey);
+        pendingRef.current = null;
+        setPending(null);
+        setText("");
+      }
+    },
+    [pendingKey, setPending, setText]
+  );
+  const agent = useAgent({
+    agent: "session-agent",
+    basePath: `${path.slice(1)}/chat`,
+    host: new URL(apiUrl(path)).host,
+    name: conversationId,
+    onClose: (event) => {
+      setConnection("disconnected");
+      if ([1008, 4401, 4403].includes(event.code)) {
+        clearProductCache();
+        setErrorMessage("Conversation access is no longer available.");
+      }
+    },
+    onOpen: () => {
+      setConnection("connected");
+      setRevision((current) => current + 1);
+    },
+    startClosed: !connected,
+  });
+  const {
+    messages,
+    sendMessage,
+    setMessages,
+    status,
+    isStreaming,
+    isRecovering,
+    error: chatError,
+  } = useAgentChat<unknown, ConversationMessage>({
+    agent,
+    credentials: "include",
+    dataPartSchemas: conversationDataSchemas,
+    getInitialMessages: loadChatMessages,
+    onData: (part: DataUIPart<{ "conversation-item": ConversationItem }>) => {
+      if (accessGeneration.current !== currentAccessGeneration()) {
+        return;
+      }
+      if (part.type === "data-conversation-item") {
+        acknowledge(part.data);
+        setInitialItems((current) =>
+          current.some((item) => item.cursor === part.data.cursor)
+            ? current
+            : [...current, part.data]
+        );
+      }
+    },
+    onError: (error) => {
+      setErrorMessage(messageOf(error));
+      if (error.message === "Conversation access is no longer available.") {
+        clearProductCache();
+      }
+    },
+    syncMessagesToServer: false,
+  });
+  const replaceMessages = useEffectEvent((value: ConversationMessage[]) => {
+    setMessages(value);
+  });
+  useLayoutEffect(() => {
+    chatState.current = { isRecovering, isStreaming, messages, status };
+  }, [isRecovering, isStreaming, messages, status]);
+  const items = useMemo(
+    () => conversationItems(messages, initialItems),
+    [messages, initialItems]
+  );
   const runs = useMemo(() => {
     const result = new Map(
       (conversation?.snapshot.runs ?? []).map((run) => [run.runId, run])
@@ -180,13 +340,38 @@ export const ConversationPanel = ({
     }
     return result;
   }, [conversation, items]);
+  const historyRuns = useMemo(() => {
+    const result = new Map(
+      (history?.runs ?? []).map((run) => [run.runId, run])
+    );
+    for (const run of runs.values()) {
+      result.set(run.runId, {
+        auditHref: `${path}/audit/${encoded(run.runId)}`,
+        runId: run.runId,
+        state: run.state,
+      });
+    }
+    return [...result.values()];
+  }, [history, path, runs]);
+  const sending = busy || status === "submitted" || isStreaming || isRecovering;
+
+  useEffect(() => {
+    if (!connected) {
+      agent.close();
+    } else if (agent.readyState === 3) {
+      agent.reconnect();
+    }
+  }, [agent, connected]);
 
   useEffect(() => {
     const clear = () => {
-      setItems([]);
+      replaceMessages([]);
+      setAccessValid(false);
+      setInitialItems([]);
       setConversation(null);
       setHistory(null);
       setDetail(null);
+      pendingRef.current = null;
       setPending(null);
       setText("");
       setConnected(false);
@@ -198,49 +383,8 @@ export const ConversationPanel = ({
   useEffect(() => {
     const generation = currentAccessGeneration();
     const controller = new AbortController();
-    let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    const receive = (item: ConversationItem) => {
-      assertCurrentAccess(generation);
-      cursor.current = item.cursor;
-      sessionStorage.setItem(
-        cacheKey(userId, conversationId, "cursor"),
-        item.cursor
-      );
-      if (item.type === "run") {
-        setHistory((current) => {
-          if (!current) {
-            return current;
-          }
-          const existing = current.runs.some(
-            (run) => run.runId === item.run.runId
-          );
-          const updated = {
-            auditHref: `${path}/audit/${encoded(item.run.runId)}`,
-            runId: item.run.runId,
-            state: item.run.state,
-          };
-          return {
-            ...current,
-            runs: existing
-              ? current.runs.map((run) =>
-                  run.runId === item.run.runId ? updated : run
-                )
-              : [...current.runs, updated],
-          };
-        });
-      }
-      setItems((current) =>
-        current.some((prior) => prior.cursor === item.cursor)
-          ? current
-          : [...current, item]
-      );
-    };
     const load = async () => {
-      if (revision < 0) {
-        return;
-      }
       try {
-        setConnection(connected ? "connecting" : "disconnected");
         const [value, executionHistory] = await Promise.all([
           request(path, conversationSchema, { signal: controller.signal }),
           request(`${path}/history`, historySchema, {
@@ -257,93 +401,72 @@ export const ConversationPanel = ({
         ) {
           setErrorMessage("The conversation does not belong to this agent.");
           setConnected(false);
+          replaceMessages([]);
           return;
+        }
+        for (const item of value.items) {
+          acknowledge(item);
         }
         setConversation(value);
         setHistory(executionHistory);
-        setItems((existing) => {
-          const merged = new Map(existing.map((item) => [item.cursor, item]));
-          for (const item of value.items) {
-            merged.set(item.cursor, item);
+        setInitialItems((current) =>
+          conversationItems([], [...value.items, ...current])
+        );
+        const idle = () =>
+          ["ready", "error"].includes(chatState.current.status) &&
+          !chatState.current.isStreaming &&
+          !chatState.current.isRecovering;
+        if (idle()) {
+          const before = chatState.current;
+          const refreshed = await loadChatMessages({
+            url: apiUrl(`${path}/chat`),
+          });
+          assertCurrentAccess(generation);
+          if (
+            !controller.signal.aborted &&
+            idle() &&
+            chatState.current === before
+          ) {
+            replaceMessages(refreshed);
           }
-          const ordered = [...merged.values()];
-          // eslint-disable-next-line unicorn/no-array-sort -- The configured browser library predates toSorted; this array is a new copy.
-          ordered.sort(
-            (first, second) => Number(first.cursor) - Number(second.cursor)
-          );
-          return ordered;
-        });
-        if (!cursor.current) {
-          cursor.current = value.cursor;
         }
-        sessionStorage.setItem(
-          cacheKey(userId, conversationId, "cursor"),
-          cursor.current
-        );
-        if (!connected) {
-          return;
-        }
-        await readConversationStream(
-          path,
-          cursor.current,
-          controller.signal,
-          receive,
-          setConnection
-        );
       } catch (error) {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setErrorMessage(messageOf(error));
-        setConnection("disconnected");
-        if (
-          !(
-            error instanceof ProductError && [401, 403].includes(error.status)
-          ) &&
-          connected
-        ) {
-          retryTimer = setTimeout(
-            () => setRevision((current) => current + 1),
-            2000
-          );
+        if (!controller.signal.aborted) {
+          setErrorMessage(messageOf(error));
         }
       }
     };
-    load();
-    return () => {
-      controller.abort();
-      if (retryTimer) {
-        clearTimeout(retryTimer);
-      }
-    };
-  }, [agentId, connected, conversationId, path, revision, userId]);
-
-  const itemCount = items.length;
-  useEffect(() => {
-    if (itemCount === 0) {
-      return;
+    if (revision >= 0) {
+      load();
     }
-    transcript.current?.scrollTo({
-      behavior: "smooth",
-      top: transcript.current.scrollHeight,
-    });
-  }, [itemCount, transcript]);
+    return () => controller.abort();
+  }, [acknowledge, agentId, conversationId, path, revision]);
+
+  useEffect(() => {
+    if (items.length || messages.length) {
+      transcript.current?.scrollTo({
+        behavior: "smooth",
+        top: transcript.current.scrollHeight,
+      });
+    }
+  }, [items, messages]);
 
   const send = async (message: PendingMessage) => {
-    setBusy(true);
     setErrorMessage("");
     sessionStorage.setItem(pendingKey, JSON.stringify(message));
+    pendingRef.current = message;
     setPending(message);
     try {
-      await mutate(`${path}/messages`, message, messageReceiptSchema);
-      sessionStorage.removeItem(pendingKey);
-      setPending(null);
-      setText("");
-      setRevision((current) => current + 1);
+      const existing = messages.some((item) => item.id === message.eventId);
+      await sendMessage({
+        id: message.eventId,
+        ...(existing ? { messageId: message.eventId } : {}),
+        parts: [{ text: message.text, type: "text" }],
+        role: "user",
+      });
     } catch (error) {
       setErrorMessage(messageOf(error));
     }
-    setBusy(false);
   };
   const act = async (suffix: string) => {
     setBusy(true);
@@ -392,19 +515,27 @@ export const ConversationPanel = ({
     }
   };
 
+  if (!accessValid) {
+    return (
+      <p className="error-banner" role="alert">
+        Conversation access is no longer available.
+      </p>
+    );
+  }
+
   return (
     <section className="conversation-panel" aria-label="Conversation">
       <ConversationHeader
         agentName={agentName}
         sessionId={conversation?.sessionId}
         connected={connected}
-        connection={connection}
+        connection={connected ? connection : "disconnected"}
         fixture={fixture}
         toggle={() => setConnected((value) => !value)}
       />
-      {errorMessage ? (
+      {errorMessage || chatError ? (
         <p className="error-banner" role="alert">
-          {errorMessage}
+          {errorMessage || chatError?.message}
         </p>
       ) : null}
       <div
@@ -413,7 +544,7 @@ export const ConversationPanel = ({
         aria-live="polite"
         aria-relevant="additions"
       >
-        {items.length === 0 ? (
+        {messages.length === 0 ? (
           <div className="conversation-empty">
             <span className="empty-mark">c</span>
             <h3>Start with a question.</h3>
@@ -429,30 +560,27 @@ export const ConversationPanel = ({
             ) : null}
           </div>
         ) : null}
+        {messages.map((message) => {
+          const value = messageText(message);
+          return value ? (
+            <article
+              className={`chat-message ${message.role === "user" ? "user-message" : "answer-message"}`}
+              key={message.id}
+            >
+              <p className="message-label">
+                {message.role === "user" ? "You" : agentName}
+              </p>
+              <p>{value}</p>
+            </article>
+          ) : null;
+        })}
+        {isRecovering || status === "submitted" ? (
+          <output className="tool-status">
+            {isRecovering ? "Recovering response..." : "Preparing response..."}
+          </output>
+        ) : null}
         {items.map((item) => {
           switch (item.type) {
-            case "user": {
-              return (
-                <article
-                  className="chat-message user-message"
-                  key={item.cursor}
-                >
-                  <p className="message-label">You</p>
-                  <p>{item.text}</p>
-                </article>
-              );
-            }
-            case "output": {
-              return (
-                <article
-                  className="chat-message answer-message"
-                  key={item.cursor}
-                >
-                  <p className="message-label">{agentName}</p>
-                  <p>{item.text}</p>
-                </article>
-              );
-            }
             case "citation": {
               return (
                 <button
@@ -544,7 +672,7 @@ export const ConversationPanel = ({
           <p>A message awaits confirmation. Retry with the same event ID.</p>
           <button
             className="quiet-button"
-            disabled={busy}
+            disabled={sending}
             type="button"
             onClick={() => send(pending)}
           >
@@ -552,46 +680,20 @@ export const ConversationPanel = ({
           </button>
         </div>
       ) : null}
-      <form
-        className="message-composer"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (text.trim() && !pending) {
-            send({ eventId: crypto.randomUUID(), text: text.trim() });
-          }
-        }}
-      >
-        <label className="sr-only" htmlFor="message">
-          Message
-        </label>
-        <textarea
-          id="message"
-          value={text}
-          onChange={(event) => setText(event.target.value)}
-          placeholder="Ask your company assistant..."
-          rows={2}
-          disabled={busy || Boolean(pending)}
-        />
-        <div className="composer-footer">
-          <span>
-            {fixture
-              ? 'Try "Run the approval fixture" to review an approval.'
-              : "Your conversation is private."}
-          </span>
-          <button
-            className="primary-button"
-            type="submit"
-            disabled={busy || !text.trim() || Boolean(pending)}
-          >
-            {busy ? "Sending..." : "Send message"}
-          </button>
-        </div>
-      </form>
+      <ConversationComposer
+        text={text}
+        setText={setText}
+        sending={sending}
+        connected={connected}
+        pending={pending}
+        fixture={fixture}
+        send={send}
+      />
       <details className="execution-history">
         <summary>
-          Execution history <span>{history?.runs.length ?? 0} runs</span>
+          Execution history <span>{historyRuns.length} runs</span>
         </summary>
-        {history?.runs.map((run) => (
+        {historyRuns.map((run) => (
           <div className="history-row" key={run.runId}>
             <span>{run.runId.slice(0, 18)}</span>
             <span className="status-pill">
@@ -618,3 +720,12 @@ export const ConversationPanel = ({
     </section>
   );
 };
+
+export const ConversationPanel = (
+  props: Parameters<typeof ConversationSession>[0]
+) => (
+  <ConversationSession
+    key={`${props.userId}:${props.conversationId}`}
+    {...props}
+  />
+);

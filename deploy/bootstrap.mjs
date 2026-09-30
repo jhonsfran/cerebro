@@ -143,9 +143,9 @@ try {
           deadlineMs: 90_000,
           id: `opencode/${model}`,
           maxInputBytes: 65_536,
-          maxOutputTokens: 2048,
+          maxOutputTokens: 8192,
           maxRequestsPerRun: 8,
-          maxResponseBytes: 262_144,
+          maxResponseBytes: 1_048_576,
           model,
           pricing: {
             inputPerToken: 0,

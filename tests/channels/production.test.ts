@@ -2,11 +2,13 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
+import { requireChatSession } from "../../apps/server/src/chat-session";
 import { createProductHandler } from "../../packages/api/src/routers/conversations";
 import { createIdentityRouter } from "../../packages/api/src/routers/identity";
 import { drainChannelWork } from "../../packages/channels/src/drain";
 import { createFixtureSessionService } from "../../packages/channels/src/fixture-session";
 import { unwrap } from "../../packages/channels/src/security";
+import { createChannelService } from "../../packages/channels/src/service";
 import type { ProductHandlerOptions } from "../../packages/channels/src/types";
 import { id } from "../../packages/contracts/src/index";
 import { eq } from "../../packages/db/node_modules/drizzle-orm";
@@ -18,6 +20,7 @@ import {
   channelReply,
 } from "../../packages/db/src/schema/agents";
 import { auditEvent } from "../../packages/db/src/schema/audit";
+import { session as authSession } from "../../packages/db/src/schema/auth";
 import { organization } from "../../packages/db/src/schema/core";
 import {
   identityPrincipal,
@@ -46,6 +49,140 @@ const configuredRequest = (options: ProductHandlerOptions) => {
       })
     );
 };
+test("chat connections reject foreign, expired and deleted Better Auth sessions", async () => {
+  const app = await createTestProduct();
+  const identity = { authSessionId: crypto.randomUUID(), userId: "test-owner" };
+  await app.options.withDatabase(async (database) => {
+    await database.insert(authSession).values({
+      expiresAt: new Date(Date.now() + 60_000),
+      id: identity.authSessionId,
+      token: crypto.randomUUID(),
+      updatedAt: new Date(),
+      userId: identity.userId,
+    });
+    await requireChatSession(database, identity);
+    await assert.rejects(
+      requireChatSession(database, { ...identity, userId: "test-other" }),
+      { code: "unauthorized", status: 401 }
+    );
+    await database
+      .update(authSession)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(authSession.id, identity.authSessionId));
+    await assert.rejects(requireChatSession(database, identity), {
+      code: "unauthorized",
+      status: 401,
+    });
+    await database
+      .update(authSession)
+      .set({ expiresAt: new Date(Date.now() + 60_000) })
+      .where(eq(authSession.id, identity.authSessionId));
+    await requireChatSession(database, identity);
+    await database
+      .delete(authSession)
+      .where(eq(authSession.id, identity.authSessionId));
+    await assert.rejects(requireChatSession(database, identity), {
+      code: "unauthorized",
+      status: 401,
+    });
+  });
+});
+
+test("chat access checks the conversation owner and current agent read access", async () => {
+  const app = await createTestProduct();
+  const setup = await app.install();
+  const principalId = string(setup.principalId);
+  const agent = await app.createAgent();
+  const agentId = string(agent.agentId);
+  const response = await app.request("/api/product/conversations", "POST", {
+    agentId,
+    operationId: "chat-access",
+  });
+  const created = object(await response.json());
+  const conversationId = string(created.conversationId);
+  await app.options.withDatabase(async (db) => {
+    const service = createChannelService(db, app.options);
+    const access = await service.chatAccess("test-owner", conversationId);
+    assert.deepEqual(access.address, {
+      agentId,
+      conversationId,
+      organizationId: app.options.organizationId,
+      sessionId: created.sessionId,
+    });
+    assert.equal(access.context.actor.id, principalId);
+    await createIdentityRepository(db).provisionHumanPrincipal(
+      app.options.organizationId,
+      "test-other"
+    );
+    await assert.rejects(service.chatAccess("test-other", conversationId), {
+      status: 404,
+    });
+    await createIdentityRepository(db).setManualGrant(
+      app.options.organizationId,
+      principalId,
+      { action: "read", resourceId: agentId, resourceKind: "agent" },
+      false
+    );
+    await assert.rejects(service.chatAccess("test-owner", conversationId), {
+      status: 403,
+    });
+  });
+});
+
+test("chat access denies revoked content beyond the first transcript page", async () => {
+  const app = await createTestProduct();
+  const setup = await app.install();
+  const principalId = string(setup.principalId);
+  const agent = await app.createAgent();
+  const response = await app.request("/api/product/conversations", "POST", {
+    agentId: string(agent.agentId),
+    operationId: "chat-history-access",
+  });
+  const created = object(await response.json());
+  const conversationId = string(created.conversationId);
+  const sourceId = id.source("chat-private-source");
+  await app.options.withDatabase(async (db) => {
+    const identity = createIdentityRepository(db);
+    await identity.setManualGrant(
+      app.options.organizationId,
+      principalId,
+      { action: "read", resourceId: sourceId, resourceKind: "memory" },
+      true
+    );
+    await db.insert(channelItem).values(
+      Array.from({ length: 201 }, (_, index) => ({
+        conversationId,
+        item: {
+          dependencies: {
+            sourceIds: index === 200 ? [sourceId] : [],
+            toolIds: [],
+          },
+          runId: `chat-run-${index}`,
+          text: index === 200 ? "Private company content" : "Public content",
+          type: "output" as const,
+        },
+        itemKey: `chat-history-${index}`,
+        organizationId: app.options.organizationId,
+      }))
+    );
+    const service = createChannelService(db, app.options);
+    await service.chatAccess("test-owner", conversationId);
+    await identity.setManualGrant(
+      app.options.organizationId,
+      principalId,
+      { action: "read", resourceId: sourceId, resourceKind: "memory" },
+      false
+    );
+    const firstPage = await service.readConversation(
+      "test-owner",
+      conversationId
+    );
+    assert.equal(firstPage.items.length, 200);
+    await assert.rejects(service.chatAccess("test-owner", conversationId), {
+      status: 403,
+    });
+  });
+});
 test("production setup requires trusted credentials and preserves the exact local owner", async () => {
   const app = await createTestProduct();
   const request = configuredRequest({

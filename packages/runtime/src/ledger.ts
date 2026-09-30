@@ -107,8 +107,10 @@ const toRunState = (run: StoredRun): RunState => {
 export class SessionLedger {
   private readonly store: LedgerStore;
   private readonly storage: DurableObjectStorage;
+  private readonly onChange: (() => void) | undefined;
 
-  constructor(storage: DurableObjectStorage) {
+  constructor(storage: DurableObjectStorage, onChange?: () => void) {
+    this.onChange = onChange;
     this.storage = storage;
     migrateLedger(storage);
     this.store = new LedgerStore(storage);
@@ -189,6 +191,7 @@ export class SessionLedger {
       sessionId: address.sessionId,
     };
     this.store.write("outbox", sequence.toString().padStart(16, "0"), outbox);
+    this.onChange?.();
     return cursor;
   }
 
@@ -824,7 +827,7 @@ export class SessionLedger {
     };
   }
 
-  stream(cursor: string | undefined): SessionStreamItem[] {
+  stream(cursor?: string): SessionStreamItem[] {
     const after = Number(cursor ?? "0");
     if (!Number.isSafeInteger(after) || after < 0) {
       throw new Error("Invalid stream cursor");

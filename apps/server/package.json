@@ -8,6 +8,7 @@
     "compile": "bun build --compile --no-compile-autoload-dotenv --minify --sourcemap --bytecode ./src/index.ts --outfile server"
   },
   "dependencies": {
+    "@ai-sdk/react": "3.0.298",
     "@cerebro/api": "workspace:*",
     "@cerebro/auth": "workspace:*",
     "@cerebro/authorization": "workspace:*",
@@ -18,13 +19,16 @@
     "@cerebro/policy": "workspace:*",
     "@cerebro/runtime": "workspace:*",
     "@cerebro/tools": "workspace:*",
+    "@cloudflare/ai-chat": "0.12.0",
     "@orpc/openapi": "catalog:",
     "@orpc/server": "catalog:",
     "@orpc/zod": "catalog:",
     "agents": "0.24.0",
+    "ai": "6.0.296",
     "better-auth": "catalog:",
     "drizzle-orm": "catalog:",
     "hono": "^4.13.7",
+    "react": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

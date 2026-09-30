@@ -16,6 +16,7 @@ import { cors } from "hono/cors";
 import { z } from "zod";
 
 import { createChannelOptions } from "./channel-services";
+import { handleChatRequest } from "./chat-routing";
 import { createContext } from "./context";
 import { assertWorkerEnv } from "./env.server";
 import type { WorkerEnv } from "./env.server";
@@ -310,6 +311,19 @@ app.on(["POST", "GET"], "/fixture/sessions/:name", (context) => {
     return durable.fetch(request);
   });
 });
+
+for (const path of [
+  "/api/product/conversations/:conversationId/chat",
+  "/api/product/conversations/:conversationId/chat/get-messages",
+] as const) {
+  app.get(path, (context) =>
+    handleChatRequest(
+      context.req.raw,
+      context.env,
+      context.req.param("conversationId")
+    )
+  );
+}
 
 app.use("*", async (context, next) => {
   const { path } = context.req;

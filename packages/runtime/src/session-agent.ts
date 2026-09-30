@@ -15,8 +15,8 @@ import type {
 import { approvalMatches, digestToolArguments } from "@cerebro/contracts/tools";
 import type { ToolExecution, ToolInvocation } from "@cerebro/contracts/tools";
 import type { PaidWorkRequest } from "@cerebro/policy/authorization-gate";
+import { AIChatAgent } from "@cloudflare/ai-chat";
 import type { OpenCodeWorkerd } from "@opencode-ai/sdk/workerd";
-import { Agent } from "agents";
 
 import { sameAddress, validateEvent } from "./event-handler.ts";
 import {
@@ -36,9 +36,9 @@ import {
   createOpenCodeClient,
   fixturePrompt,
   fixtureReplyMatches,
-  readFinalReply,
 } from "./opencode-adapter.ts";
 import type { ModelToolCall } from "./opencode-adapter.ts";
+import { readFinalReply } from "./opencode-reply.ts";
 import { drainOutbox } from "./outbox.ts";
 import { isPinnedAgent } from "./pinned-agent.ts";
 import {
@@ -99,7 +99,12 @@ const isEffectOptions = (value: unknown): value is EffectOptions =>
   "deadlineAt" in value &&
   typeof value.deadlineAt === "number";
 
-export class SessionAgent extends Agent<SessionEnvironment> {
+export class SessionAgent extends AIChatAgent<SessionEnvironment> {
+  private readonly chatChanges = new Set<() => void>();
+  private readonly chatText = new Map<
+    string,
+    { readonly messageId: string; readonly text: string }
+  >();
   private runtimePorts: RuntimePorts | undefined;
   private ledger: SessionLedger | undefined;
   private client: Promise<OpenCodeWorkerd.Interface> | undefined;
@@ -111,8 +116,133 @@ export class SessionAgent extends Agent<SessionEnvironment> {
   private modelAttemptId: string | undefined;
 
   protected storage(): SessionLedger {
-    this.ledger ??= new SessionLedger(this.ctx.storage);
+    this.ledger ??= new SessionLedger(this.ctx.storage, () =>
+      this.notifyChat()
+    );
     return this.ledger;
+  }
+
+  private notifyChat(): void {
+    for (const notify of this.chatChanges) {
+      notify();
+    }
+  }
+
+  protected async *observeChatRun(
+    runId: string,
+    signal: AbortSignal
+  ): AsyncIterable<{
+    readonly run: StoredRun;
+    readonly items: readonly SessionStreamItem[];
+    readonly text: string;
+    readonly textId: string;
+  }> {
+    let changed = Promise.withResolvers<null>();
+    const notify = () => changed.resolve(null);
+    this.chatChanges.add(notify);
+    signal.addEventListener("abort", notify, { once: true });
+    let cursor: string | undefined;
+    try {
+      while (!signal.aborted) {
+        const run = this.storage().run(id.run(runId));
+        if (!run) {
+          throw new Error("The admitted chat run is missing.");
+        }
+        const items = this.storage().stream(cursor);
+        cursor = items.at(-1)?.cursor ?? cursor;
+        const text = this.chatText.get(runId);
+        yield {
+          items: items.filter(
+            (item) =>
+              (item.type === "run" ? item.run.runId : item.runId) === runId
+          ),
+          run,
+          text: terminal(run.state) ? (run.output ?? "") : (text?.text ?? ""),
+          textId: text?.messageId ?? runId,
+        };
+        if (terminal(run.state)) {
+          this.chatText.delete(runId);
+          return;
+        }
+        await changed.promise;
+        changed = Promise.withResolvers<null>();
+      }
+    } finally {
+      signal.removeEventListener("abort", notify);
+      this.chatChanges.delete(notify);
+    }
+  }
+
+  private observeOpenCodeText(
+    client: OpenCodeWorkerd.Interface,
+    run: StoredRun,
+    sessionId: string,
+    parentSignal: AbortSignal
+  ): { readonly ready: Promise<null>; readonly closed: Promise<void> } {
+    const connected = Promise.withResolvers<null>();
+    const interrupted = Promise.withResolvers<never>();
+    const abort = new AbortController();
+    const signal = AbortSignal.any([parentSignal, abort.signal]);
+    const deadline = setTimeout(() => {
+      abort.abort(
+        new Error("OpenCode event subscription did not become ready.")
+      );
+    }, 5000);
+    const onAbort = () => interrupted.reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+    }
+    const events = client.events.subscribe({ signal })[Symbol.asyncIterator]();
+    const closed = (async () => {
+      try {
+        for (;;) {
+          const next = await Promise.race([events.next(), interrupted.promise]);
+          if (next.done) {
+            throw new Error("OpenCode event subscription ended unexpectedly.");
+          }
+          const event = next.value;
+          if (event.type === "server.connected") {
+            clearTimeout(deadline);
+            connected.resolve(null);
+          }
+          if (
+            event.type === "session.text.delta" &&
+            event.data.sessionID === sessionId
+          ) {
+            const prior = this.chatText.get(run.runId);
+            this.chatText.set(run.runId, {
+              messageId: event.data.assistantMessageID,
+              text:
+                (prior?.messageId === event.data.assistantMessageID
+                  ? prior.text
+                  : "") + event.data.delta,
+            });
+            this.notifyChat();
+          }
+        }
+      } catch (error) {
+        connected.reject(error);
+        if (!signal.aborted) {
+          throw error;
+        }
+      } finally {
+        clearTimeout(deadline);
+        signal.removeEventListener("abort", onAbort);
+        abort.abort();
+        let cleanupDeadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+          if (events.return) {
+            const timeout = Promise.withResolvers<null>();
+            cleanupDeadline = setTimeout(() => timeout.resolve(null), 1000);
+            await Promise.race([events.return(), timeout.promise]);
+          }
+        } finally {
+          clearTimeout(cleanupDeadline);
+        }
+      }
+    })();
+    return { closed, ready: connected.promise };
   }
 
   protected createRuntime(_run: StoredRun): Promise<RuntimePorts | undefined> {
@@ -452,9 +582,8 @@ export class SessionAgent extends Agent<SessionEnvironment> {
             }
           },
         });
-      } catch {
-        // Durable state remains pending for recovery.
-      }
+        // oxlint-disable-next-line no-empty -- Recovery retries unfinished durable work.
+      } catch {}
     }
     const [run] = ledger
       .runs()
@@ -930,9 +1059,8 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         { continue: false, sessionID: sessionId },
         { signal: AbortSignal.timeout(5000) }
       );
-    } catch {
-      // Durable state remains pending for recovery.
-    }
+      // oxlint-disable-next-line no-empty -- Recovery retries unfinished durable work.
+    } catch {}
   }
 
   private async closeClient(): Promise<void> {
@@ -960,9 +1088,8 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         const client = await pending;
         await this.ctx.storage.sync();
         await client.close();
-      } catch {
-        // Durable state remains pending for recovery.
-      }
+        // oxlint-disable-next-line no-empty -- Recovery retries unfinished durable work.
+      } catch {}
     }
   }
 
@@ -1063,6 +1190,9 @@ export class SessionAgent extends Agent<SessionEnvironment> {
 
   // oxlint-disable-next-line complexity
   private async runModel(initial: StoredRun): Promise<void> {
+    const textAbort = new AbortController();
+    let textTask: Promise<void> | undefined;
+    let phase = "runtime-composition";
     if (this.closingClient) {
       await this.closingClient;
     }
@@ -1185,8 +1315,12 @@ export class SessionAgent extends Agent<SessionEnvironment> {
           await this.ctx.storage.sync();
         }
         modelPlugin = createModelHttpPlugin({
-          failed: (result) => {
-            ledger.recordFailure(initial.runId, "model", result);
+          failed: (result, transportPhase) => {
+            ledger.recordFailure(
+              initial.runId,
+              transportPhase ? `model:${transportPhase}` : "model",
+              result
+            );
             const currentRun = ledger.run(initial.runId);
             if (currentRun && !terminal(currentRun.state)) {
               ledger.updateRun(initial.runId, (record) => ({
@@ -1217,7 +1351,11 @@ export class SessionAgent extends Agent<SessionEnvironment> {
           storage: this.ctx.storage,
         });
       }
+      if (!this.client) {
+        this.chatText.clear();
+      }
       this.clientRunId = run.runId;
+      phase = "sdk-bootstrap";
       this.client ??= createOpenCodeClient(
         this.ctx.storage,
         this.env,
@@ -1241,6 +1379,22 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         ledger.saveOpenCodeSessionId(sessionId);
       }
       const messageId = run.messageId ?? `msg_${run.eventId}`;
+      phase = "event-subscription";
+      const observation = this.observeOpenCodeText(
+        client,
+        run,
+        sessionId,
+        textAbort.signal
+      );
+      textTask = (async () => {
+        try {
+          await observation.closed;
+        } catch {
+          textAbort.abort();
+        }
+      })();
+      await observation.ready;
+      phase = "sdk-prompt";
       if (!run.messageId) {
         run = ledger.updateRun(run.runId, (current) => ({
           ...current,
@@ -1261,15 +1415,31 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         });
       } else {
         const active = await client.session.active();
-        if (!active[sessionId]) {
-          await client.session.prompt({
-            id: messageId,
-            sessionID: sessionId,
-            text: run.modelPrompt ?? fixturePrompt(run),
-          });
+        const assistant = messages.data.findLast(
+          (message) => message.type === "assistant"
+        );
+        if (
+          !active[sessionId] &&
+          assistant &&
+          !assistant.error &&
+          (assistant.finish === undefined || assistant.finish === "tool-calls")
+        ) {
+          const resumeId = `msg_resume_${run.eventId}_${this.modelAttemptId}`;
+          if (
+            !messages.data.some((message) => message.id === resumeId) &&
+            !inbox.some((message) => message.id === resumeId)
+          ) {
+            await client.session.synthetic({
+              description: "Resume the interrupted run.",
+              id: resumeId,
+              sessionID: sessionId,
+              text: "Continue the interrupted turn. Use the existing tool results.",
+            });
+          }
         }
       }
       try {
+        phase = "sdk-wait";
         await client.session.wait(
           { sessionID: sessionId },
           { signal: AbortSignal.timeout(60_000) }
@@ -1283,6 +1453,7 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         }
         throw error;
       }
+      phase = "sdk-final-response";
       const reply = await readFinalReply(client, sessionId);
       const latest = ledger.run(run.runId);
       const effectNeedsRetry = ledger.hasRetryableInvocation(run.runId);
@@ -1294,9 +1465,12 @@ export class SessionAgent extends Agent<SessionEnvironment> {
       ) {
         return;
       }
-      if (reply === undefined) {
+      if (reply.kind === "pending") {
+        return;
+      }
+      if (reply.kind === "invalid") {
         ledger.recordFailure(run.runId, "model-response", {
-          reason: "The SDK completed without a final model response.",
+          reason: reply.reason,
           status: "invalid-input",
         });
         ledger.updateRun(run.runId, (current) => ({
@@ -1314,7 +1488,7 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         );
       if (
         !this.runtimePorts &&
-        (!confirmedEffect || !fixtureReplyMatches(reply))
+        (!confirmedEffect || !fixtureReplyMatches(reply.text))
       ) {
         ledger.updateRun(run.runId, (current) => ({
           ...current,
@@ -1337,7 +1511,7 @@ export class SessionAgent extends Agent<SessionEnvironment> {
       ledger.updateRun(run.runId, (current) => ({
         ...current,
         endedAt: Date.now(),
-        output: reply,
+        output: reply.text,
         state: "completed",
       }));
       if (!this.runtimePorts) {
@@ -1352,6 +1526,11 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         current.state !== "waiting-for-approval" &&
         !effectNeedsRetry
       ) {
+        ledger.recordFailure(current.runId, `model-runtime:${phase}`, {
+          code: "provider-unavailable",
+          reason: `Model runtime failed during ${phase}.`,
+          status: "unavailable",
+        });
         ledger.updateRun(current.runId, (run) => ({
           ...run,
           endedAt: Date.now(),
@@ -1360,6 +1539,8 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         }));
       }
     } finally {
+      textAbort.abort();
+      await textTask;
       const latest = ledger.run(initial.runId);
       const effectNeedsRetry = ledger.hasRetryableInvocation(initial.runId);
       if (
@@ -1370,6 +1551,7 @@ export class SessionAgent extends Agent<SessionEnvironment> {
         await this.closeClient();
       }
       this.modelTask = undefined;
+      this.notifyChat();
     }
   }
 }

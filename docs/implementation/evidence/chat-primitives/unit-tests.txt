@@ -1,0 +1,480 @@
+TAP version 13
+# Subtest: a disabled principal and an expired delegation cannot enter a session
+ok 1 - a disabled principal and an expired delegation cannot enter a session
+  ---
+  duration_ms: 0.576
+  type: 'test'
+  ...
+# Subtest: the inbox detects duplicate delivery and rejects changed payloads
+ok 2 - the inbox detects duplicate delivery and rejects changed payloads
+  ---
+  duration_ms: 0.118125
+  type: 'test'
+  ...
+# Subtest: one operation ID cannot be reused with different arguments
+ok 3 - one operation ID cannot be reused with different arguments
+  ---
+  duration_ms: 0.055917
+  type: 'test'
+  ...
+# Subtest: a past deadline and a cancelled signal stop a new effect
+ok 4 - a past deadline and a cancelled signal stop a new effect
+  ---
+  duration_ms: 0.344
+  type: 'test'
+  ...
+# Subtest: approval binds the exact tool, arguments, principal, policy, and expiry
+ok 5 - approval binds the exact tool, arguments, principal, policy, and expiry
+  ---
+  duration_ms: 17.280167
+  type: 'test'
+  ...
+# Subtest: approval rejects changed arguments when the stored digest is reused
+ok 6 - approval rejects changed arguments when the stored digest is reused
+  ---
+  duration_ms: 1.450875
+  type: 'test'
+  ...
+# Subtest: approval binds the delegated actor and delegation ID
+ok 7 - approval binds the delegated actor and delegation ID
+  ---
+  duration_ms: 2.270167
+  type: 'test'
+  ...
+# Subtest: a capability cannot authorize a different tool invocation
+ok 8 - a capability cannot authorize a different tool invocation
+  ---
+  duration_ms: 0.998125
+  type: 'test'
+  ...
+# Subtest: fixture policy denies an active principal without a grant
+ok 9 - fixture policy denies an active principal without a grant
+  ---
+  duration_ms: 3.143917
+  type: 'test'
+  ...
+# Subtest: fixture budget denies depleted capacity and preserves retry outcome
+ok 10 - fixture budget denies depleted capacity and preserves retry outcome
+  ---
+  duration_ms: 0.991417
+  type: 'test'
+  ...
+# Subtest: fixture session accepts one event and replays duplicate delivery
+ok 11 - fixture session accepts one event and replays duplicate delivery
+  ---
+  duration_ms: 0.310458
+  type: 'test'
+  ...
+# Subtest: fixture tool reports an unknown outcome without a second effect
+ok 12 - fixture tool reports an unknown outcome without a second effect
+  ---
+  duration_ms: 5.13625
+  type: 'test'
+  ...
+# Subtest: fixture adapters reject production mode
+ok 13 - fixture adapters reject production mode
+  ---
+  duration_ms: 0.272667
+  type: 'test'
+  ...
+# Subtest: agent repository reads a pinned version after a new version is published
+ok 14 - agent repository reads a pinned version after a new version is published
+  ---
+  duration_ms: 0.854167
+  type: 'test'
+  ...
+# Subtest: fixture approval replays and a final run cannot be cancelled
+ok 15 - fixture approval replays and a final run cannot be cancelled
+  ---
+  duration_ms: 2.510417
+  type: 'test'
+  ...
+# Subtest: fixture session inspection excludes another session's run
+ok 16 - fixture session inspection excludes another session's run
+  ---
+  duration_ms: 3.427042
+  type: 'test'
+  ...
+# Subtest: fixture tool rejects changed arguments even when the caller reuses a digest
+ok 17 - fixture tool rejects changed arguments even when the caller reuses a digest
+  ---
+  duration_ms: 3.283875
+  type: 'test'
+  ...
+# Subtest: a delegated capability binds the actor as well as the represented user
+ok 18 - a delegated capability binds the actor as well as the represented user
+  ---
+  duration_ms: 1.110917
+  type: 'test'
+  ...
+# Subtest: grant-scoped memory follows current fixture grants
+ok 19 - grant-scoped memory follows current fixture grants
+  ---
+  duration_ms: 0.501792
+  type: 'test'
+  ...
+# Subtest: tool argument digests ignore object key order and reject non-JSON values
+ok 20 - tool argument digests ignore object key order and reject non-JSON values
+  ---
+  duration_ms: 3.569458
+  type: 'test'
+  ...
+# Subtest: artifact fixture checks current grants and copies stored bytes
+ok 21 - artifact fixture checks current grants and copies stored bytes
+  ---
+  duration_ms: 0.696791
+  type: 'test'
+  ...
+# Subtest: decision fixture chooses only a supplied action and replays it
+ok 22 - decision fixture chooses only a supplied action and replays it
+  ---
+  duration_ms: 0.758875
+  type: 'test'
+  ...
+# Subtest: budget fixture binds reservation requests and finalization targets
+ok 23 - budget fixture binds reservation requests and finalization targets
+  ---
+  duration_ms: 0.363834
+  type: 'test'
+  ...
+# Subtest: agent publish replay checks the definition and expected version
+ok 24 - agent publish replay checks the definition and expected version
+  ---
+  duration_ms: 0.334875
+  type: 'test'
+  ...
+# Subtest: memory fixture binds record, source, and scope on replay
+ok 25 - memory fixture binds record, source, and scope on replay
+  ---
+  duration_ms: 0.778209
+  type: 'test'
+  ...
+# Subtest: artifact delete replay binds artifact and actor
+ok 26 - artifact delete replay binds artifact and actor
+  ---
+  duration_ms: 0.386958
+  type: 'test'
+  ...
+# Subtest: session fixture rejects one operation ID across command types
+ok 27 - session fixture rejects one operation ID across command types
+  ---
+  duration_ms: 0.308708
+  type: 'test'
+  ...
+# Subtest: tool fixture replay checks the authorized call identity
+ok 28 - tool fixture replay checks the authorized call identity
+  ---
+  duration_ms: 8.321458
+  type: 'test'
+  ...
+# Subtest: session cancel replay binds the run and caller
+ok 29 - session cancel replay binds the run and caller
+  ---
+  duration_ms: 0.239917
+  type: 'test'
+  ...
+# Subtest: session fixture returns typed invalid-input for non-JSON event data
+ok 30 - session fixture returns typed invalid-input for non-JSON event data
+  ---
+  duration_ms: 0.0855
+  type: 'test'
+  ...
+# Subtest: budget reservation ignores mutations to input and returned amounts
+ok 31 - budget reservation ignores mutations to input and returned amounts
+  ---
+  duration_ms: 0.109417
+  type: 'test'
+  ...
+# Subtest: agent definitions cannot change through input or read aliases
+ok 32 - agent definitions cannot change through input or read aliases
+  ---
+  duration_ms: 0.120625
+  type: 'test'
+  ...
+# Subtest: memory and artifact visibility ignore caller mutation
+ok 33 - memory and artifact visibility ignore caller mutation
+  ---
+  duration_ms: 0.146834
+  type: 'test'
+  ...
+# Subtest: session state ignores mutations to submitted and inspected objects
+ok 34 - session state ignores mutations to submitted and inspected objects
+  ---
+  duration_ms: 0.182333
+  type: 'test'
+  ...
+# Subtest: tool output and decision replay ignore returned object mutation
+ok 35 - tool output and decision replay ignore returned object mutation
+  ---
+  duration_ms: 0.977125
+  type: 'test'
+  ...
+# Subtest: chat submission replaces forged history and identity with server values
+ok 36 - chat submission replaces forged history and identity with server values
+  ---
+  duration_ms: 2.251416
+  type: 'test'
+  ...
+# Subtest: message retries preserve saved history and reject changed content
+ok 37 - message retries preserve saved history and reject changed content
+  ---
+  duration_ms: 0.422959
+  type: 'test'
+  ...
+# Subtest: chat submission rejects regeneration, client tools, metadata and nontext edits
+ok 38 - chat submission rejects regeneration, client tools, metadata and nontext edits
+  ---
+  duration_ms: 0.793166
+  type: 'test'
+  ...
+# Subtest: chat submission joins text parts and removes surrounding whitespace
+ok 39 - chat submission joins text parts and removes surrounding whitespace
+  ---
+  duration_ms: 0.138
+  type: 'test'
+  ...
+# Subtest: legacy history keeps user prompts, assistant IDs and projected run details
+ok 40 - legacy history keeps user prompts, assistant IDs and projected run details
+  ---
+  duration_ms: 0.157666
+  type: 'test'
+  ...
+# Subtest: legacy history follows admission time and retains failed run details
+ok 41 - legacy history follows admission time and retains failed run details
+  ---
+  duration_ms: 0.095
+  type: 'test'
+  ...
+# Subtest: chat history restores a missing completed run after existing SDK history
+ok 42 - chat history restores a missing completed run after existing SDK history
+  ---
+  duration_ms: 0.260792
+  type: 'test'
+  ...
+# Subtest: chat history preserves active SDK parts and does not add an active placeholder
+ok 43 - chat history preserves active SDK parts and does not add an active placeholder
+  ---
+  duration_ms: 0.25325
+  type: 'test'
+  ...
+# Subtest: terminal ledger output repairs a partial SDK assistant without deleting its parts
+ok 44 - terminal ledger output repairs a partial SDK assistant without deleting its parts
+  ---
+  duration_ms: 0.540625
+  type: 'test'
+  ...
+# Subtest: chat history maps hashed admission IDs to durable client message IDs
+ok 45 - chat history maps hashed admission IDs to durable client message IDs
+  ---
+  duration_ms: 0.286458
+  type: 'test'
+  ...
+# Subtest: chat history uses saved acknowledgements to remove hashed user duplicates
+ok 46 - chat history uses saved acknowledgements to remove hashed user duplicates
+  ---
+  duration_ms: 0.122416
+  type: 'test'
+  ...
+# Subtest: session citations and tool results retain dependencies with distinct cursors
+ok 47 - session citations and tool results retain dependencies with distinct cursors
+  ---
+  duration_ms: 0.081167
+  type: 'test'
+  ...
+# (node:30806) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: a recovered tool receipt projects one stream and audit event and rejects changed content
+ok 48 - a recovered tool receipt projects one stream and audit event and rejects changed content
+  ---
+  duration_ms: 6.287041
+  type: 'test'
+  ...
+# Subtest: an existing tool stream from the prior ledger format is reused without a second audit
+ok 49 - an existing tool stream from the prior ledger format is reused without a second audit
+  ---
+  duration_ms: 1.487583
+  type: 'test'
+  ...
+# Subtest: a recovered running tool assistant remains pending until its continuation finishes
+ok 50 - a recovered running tool assistant remains pending until its continuation finishes
+  ---
+  duration_ms: 0.852917
+  type: 'test'
+  ...
+# Subtest: a completed tool-call step is pending rather than a final answer
+ok 51 - a completed tool-call step is pending rather than a final answer
+  ---
+  duration_ms: 0.099917
+  type: 'test'
+  ...
+# Subtest: reasoning that exhausts the token cap without text cannot become a completed answer
+ok 52 - reasoning that exhausts the token cap without text cannot become a completed answer
+  ---
+  duration_ms: 0.078667
+  type: 'test'
+  ...
+# Subtest: a final response exposes only its visible answer text
+ok 53 - a final response exposes only its visible answer text
+  ---
+  duration_ms: 0.074625
+  type: 'test'
+  ...
+# Subtest: an errored or empty final assistant cannot complete the run
+ok 54 - an errored or empty final assistant cannot complete the run
+  ---
+  duration_ms: 0.091208
+  type: 'test'
+  ...
+# (node:30808) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: model tokens arrive before provider EOF and EOF waits for durable accounting
+ok 55 - model tokens arrive before provider EOF and EOF waits for durable accounting
+  ---
+  duration_ms: 56.463917
+  type: 'test'
+  ...
+# Subtest: an OpenCode consumer can cancel after fragmented DONE with a durable known receipt
+ok 56 - an OpenCode consumer can cancel after fragmented DONE with a durable known receipt
+  ---
+  duration_ms: 48.7455
+  type: 'test'
+  ...
+# Subtest: cancelled model streaming settles unknown once and cancels the provider
+ok 57 - cancelled model streaming settles unknown once and cancels the provider
+  ---
+  duration_ms: 3.126583
+  type: 'test'
+  ...
+# Subtest: missing provider usage fails the stream and preserves unknown accounting
+ok 58 - missing provider usage fails the stream and preserves unknown accounting
+  ---
+  duration_ms: 5.045334
+  type: 'test'
+  ...
+# Subtest: a response byte bound stops delivery before the excess chunk
+ok 59 - a response byte bound stops delivery before the excess chunk
+  ---
+  duration_ms: 3.99425
+  type: 'test'
+  ...
+# Subtest: a stalled provider stream fails on the request deadline
+ok 60 - a stalled provider stream fails on the request deadline
+  ---
+  duration_ms: 60.304584
+  type: 'test'
+  ...
+# Subtest: provider transport failure settles unknown without recording a reply
+ok 61 - provider transport failure settles unknown without recording a reply
+  ---
+  duration_ms: 2.444917
+  type: 'test'
+  ...
+# Subtest: current content access is checked before each model chunk leaves the adapter
+ok 62 - current content access is checked before each model chunk leaves the adapter
+  ---
+  duration_ms: 1.015708
+  type: 'test'
+  ...
+# Subtest: a known provider usage receipt cannot finish the stream after accounting fails
+ok 63 - a known provider usage receipt cannot finish the stream after accounting fails
+  ---
+  duration_ms: 3.4735
+  type: 'test'
+  ...
+# Subtest: closing the OpenCode transport interrupts its active provider stream once
+ok 64 - closing the OpenCode transport interrupts its active provider stream once
+  ---
+  duration_ms: 1.577958
+  type: 'test'
+  ...
+# Subtest: provider usage above the reserved bound fails instead of completing
+ok 65 - provider usage above the reserved bound fails instead of completing
+  ---
+  duration_ms: 1.653584
+  type: 'test'
+  ...
+# (node:30809) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: SQLite claims, snapshots, namespace separation and reconciliation survive reopen
+ok 66 - SQLite claims, snapshots, namespace separation and reconciliation survive reopen
+  ---
+  duration_ms: 60.113458
+  type: 'test'
+  ...
+# Subtest: SQLite paid outcome receipt survives reopen and completion cannot change it
+ok 67 - SQLite paid outcome receipt survives reopen and completion cannot change it
+  ---
+  duration_ms: 30.847584
+  type: 'test'
+  ...
+# Subtest: SQLite reservation intent survives reopen and only one dispatcher succeeds
+ok 68 - SQLite reservation intent survives reopen and only one dispatcher succeeds
+  ---
+  duration_ms: 12.273583
+  type: 'test'
+  ...
+# Subtest: SQLite release wins the release and dispatch race and survives reopen
+ok 69 - SQLite release wins the release and dispatch race and survives reopen
+  ---
+  duration_ms: 4.667334
+  type: 'test'
+  ...
+# Subtest: SQLite dispatch wins the release and dispatch race and survives reopen
+ok 70 - SQLite dispatch wins the release and dispatch race and survives reopen
+  ---
+  duration_ms: 6.998917
+  type: 'test'
+  ...
+# Subtest: production accepts bounded ports and registers connector credentials for redaction
+ok 71 - production accepts bounded ports and registers connector credentials for redaction
+  ---
+  duration_ms: 5.363541
+  type: 'test'
+  ...
+# Subtest: production rejects fixture model, write connector and deployment mode selection
+ok 72 - production rejects fixture model, write connector and deployment mode selection
+  ---
+  duration_ms: 0.8175
+  type: 'test'
+  ...
+# Subtest: production rejects local, insecure and credential-bearing transport targets
+ok 73 - production rejects local, insecure and credential-bearing transport targets
+  ---
+  duration_ms: 1.949583
+  type: 'test'
+  ...
+# Subtest: production rejects unsafe reservations, unsupported adapters and conflicting connector credentials
+ok 74 - production rejects unsafe reservations, unsupported adapters and conflicting connector credentials
+  ---
+  duration_ms: 0.746667
+  type: 'test'
+  ...
+# Subtest: local mode preserves real-provider and trusted-setup boundaries
+ok 75 - local mode preserves real-provider and trusted-setup boundaries
+  ---
+  duration_ms: 0.286875
+  type: 'test'
+  ...
+# (node:30811) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: deploy patch supports fresh AIChatAgent storage, upgrades its prior patch, and rejects unknown source
+ok 76 - deploy patch supports fresh AIChatAgent storage, upgrades its prior patch, and rejects unknown source
+  ---
+  duration_ms: 326.055166
+  type: 'test'
+  ...
+# Subtest: runtime patch supports fresh AIChatAgent storage, upgrades its prior patch, and rejects unknown source
+ok 77 - runtime patch supports fresh AIChatAgent storage, upgrades its prior patch, and rejects unknown source
+  ---
+  duration_ms: 158.492333
+  type: 'test'
+  ...
+1..77
+# tests 77
+# suites 0
+# pass 77
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 714.509334

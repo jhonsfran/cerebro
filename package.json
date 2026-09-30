@@ -16,6 +16,7 @@
     "deploy": "docker compose build bootstrap && docker compose run --rm bootstrap",
     "test:contracts": "node --test tests/contracts/contracts.test.ts",
     "test:opencode": "node --test tests/live/opencode.test.ts",
+    "test:chat": "node --test tests/live/chat-stream.test.ts",
     "test:boot": "node --test tests/integration/boot.test.ts",
     "test:runtime": "node --test tests/runtime/*.test.ts",
     "test:identity": "bun test tests/identity/*.test.ts",
@@ -46,7 +47,8 @@
     "oxlint": "1.85.0",
     "turbo": "^2.10.12",
     "typescript": "catalog:",
-    "ultracite": "7.11.0"
+    "ultracite": "7.11.0",
+    "ws": "8.22.0"
   },
   "packageManager": "pnpm@11.9.0"
 }

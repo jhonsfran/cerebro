@@ -1,0 +1,24 @@
+Command: rtk proxy env CEREBRO_CHAT_IMAGE_PROJECT=cerebro-chat-8a4b1235 node --test tests/live/chat-stream.test.ts
+
+Fresh disposable native deployment; current server/runtime/channels/bootstrap source mounted into retained test images. Fixture disabled. Real free OpenCode model. Disposable stack removed after verification.
+
+TAP version 13
+# Disposable native chat stack ready in cerebro-chat-e69e2287.
+# First text arrived in 18106 ms; active reconnect replay passed.
+# Sign-out status 200. Active session rows before 1; after 0. Original-cookie session present: false. Close listener registered at 20020 ms; sign-out checks ended at 20251 ms.
+# Chat check passed. First text 18106 ms. Completion 19411 ms. Restored text 1484 characters. One user message, one run, one usage receipt.
+# Subtest: native chat streams early text and resumes without duplicate admission or usage
+ok 1 - native chat streams early text and resumes without duplicate admission or usage
+  ---
+  duration_ms: 53655.599834
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 53778.567958

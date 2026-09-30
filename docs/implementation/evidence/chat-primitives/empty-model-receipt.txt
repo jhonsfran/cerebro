@@ -1,0 +1,3 @@
+(node:72265) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+{"journalState":"completed","status":200,"inputTokens":463,"outputTokens":2048,"units":0,"unit":"usd-micro","counts":{"contentFrames":0,"contentCharacters":0,"reasoningFrames":66,"reasoningCharacters":9770,"toolFrames":0,"doneFrames":1,"finishReasons":["length"],"usage":[{"promptTokens":463,"completionTokens":2048,"totalTokens":2511,"reasoningTokens":2048}]}}

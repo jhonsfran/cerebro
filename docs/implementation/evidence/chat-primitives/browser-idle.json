@@ -1,0 +1,16 @@
+{
+  "note": "The request logger groups /history under its /stream template. Counts contain no request content or credentials.",
+  "before": {
+    "windowSeconds": 30,
+    "snapshotRequests": 426,
+    "historyRequests": 417,
+    "overloadRefusals": 0
+  },
+  "after": {
+    "startedAt": "2026-09-30T11:37:58.994Z",
+    "endedAt": "2026-09-30T11:40:00.973Z",
+    "snapshotRequests": 0,
+    "historyRequests": 0,
+    "overloadRefusals": 0
+  }
+}

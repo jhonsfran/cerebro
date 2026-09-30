@@ -1,0 +1,192 @@
+Warning: truncated output (original token count: 7462)
+Total output lines: 1184
+
+bun test v1.4.0 (34cbb9a40)
+
+tests/channels/slack.test.ts:
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"identity_delegation\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_source\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"identity_delegation_scope\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_artifact\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_dependency\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_record\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+(pass) signed Slack identity linking, inbox replay, thread sessions, and outbox delivery persist in PostgreSQL [692.73ms]
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"identity_delegation\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_source\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"identity_delegation_scope\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_artifact\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_dependency\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_record\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+(pass) ambiguous Slack delivery and abandoned claims never retry automatically [1351.09ms]
+{
+  severity_local: "NOTICE",
+  severity: "N…6062 tokens truncated… "00000",
+  message: "truncate cascades to table \"identity_delegation\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_source\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"identity_delegation_scope\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_artifact\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_dependency\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+{
+  severity_local: "NOTICE",
+  severity: "NOTICE",
+  code: "00000",
+  message: "truncate cascades to table \"memory_record\"",
+  file: "tablecmds.c",
+  line: "1958",
+  routine: "ExecuteTruncateGuts",
+}
+(pass) audit reads require current company audit permission as well as conversation access [369.24ms]
+
+tests/channels/ui.test.ts:
+(pass) resource denial rejects delayed source and agent responses and clears private cache [0.82ms]
+(pass) logout rejects delayed reads and mutations but permits fresh authorized responses [0.41ms]
+(pass) optional budget denial retains pending messages and permitted concurrent responses [0.21ms]
+(pass) unauthenticated optional budget requests still clear private state [0.07ms]
+(pass) a new SDK chat loads an empty transcript [0.17ms]
+(pass) SDK chat history cannot expose a stale response after access changes [0.12ms]
+(pass) SDK chat history clears private cache on denied access [0.07ms]
+(pass) SDK chat parts preserve text and deduplicate execution records by domain identity [3.39ms]
+(pass) SDK replay cannot replace a settled run with an earlier state [0.05ms]
+(pass) settled output replaces streamed assistant steps with the canonical answer [0.03ms]
+(pass) operation intent remains stable for canonical retries and changes for new input or reset [0.46ms]
+(pass) explicit agent selections publish tool read/execute and source read grants [0.09ms]
+(pass) selected configured tools publish only their explicit connector execution grants [0.06ms]
+(pass) agent editor replaces obsolete fixture choices with the current catalog [0.14ms]
+(pass) agent editor preserves a valid nonfirst model and filters mixed tool and source IDs [0.14ms]
+(pass) agent editor leaves the model empty when no configured model is available [0.12ms]
+
+ 37 pass
+ 0 fail
+Ran 37 tests across 4 files. [19.53s]

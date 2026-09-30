@@ -9,10 +9,7 @@ import {
 } from "../../apps/web/src/features/product/configuration";
 import { operationFor } from "../../apps/web/src/features/product/intent";
 import type { OperationIntent } from "../../apps/web/src/features/product/intent";
-import type {
-  AgentDetail,
-  ConversationItem,
-} from "../../apps/web/src/features/product/types";
+import type { AgentDetail } from "../../apps/web/src/features/product/types";
 
 mock.module("../../apps/web/src/env.public", () => ({
   ENV: { VITE_SERVER_URL: "http://fixture.invalid" },
@@ -24,8 +21,8 @@ const {
   mutate,
   request,
 } = await import("../../apps/web/src/features/product/api");
-const { readConversationStream } =
-  await import("../../apps/web/src/features/product/stream");
+const { conversationItems, loadChatMessages, messageText } =
+  await import("../../apps/web/src/features/product/chat");
 
 class MemoryStorage {
   private readonly values = new Map<string, string>();
@@ -220,54 +217,130 @@ test("unauthenticated optional budget requests still clear private state", async
   assert.equal(storage.getItem(pendingKey), null);
 });
 
-test("stale streams emit no records and fresh streams emit validated records", async () => {
-  const stream = new TransformStream<Uint8Array>();
-  const writer = stream.writable.getWriter();
-  const connected = Promise.withResolvers<null>();
-  const signal = new AbortController();
-  const received: ConversationItem[] = [];
-  installFetch(() => new Response(stream.readable));
-  const oldStream = readConversationStream(
-    "/conversation",
-    "0",
-    signal.signal,
-    (item) => received.push(item),
-    () => connected.resolve(null)
+test("a new SDK chat loads an empty transcript", async () => {
+  installFetch(() => Response.json([]));
+  assert.deepEqual(
+    await loadChatMessages({ url: "http://fixture.invalid/conversation/chat" }),
+    []
   );
-  const stale = assert.rejects(oldStream, accessChanged);
-  await connected.promise;
-  clearProductCache();
-  const item = {
-    cursor: "1",
-    runId: "run",
-    text: "private output",
-    type: "output",
-  };
-  await writer.write(
-    new TextEncoder().encode(`event: item\ndata: ${JSON.stringify(item)}\n\n`)
-  );
-  await stale;
-  signal.abort();
-  await writer.close();
-  assert.deepEqual(received, []);
+});
 
-  installFetch(
-    () => new Response(`event: item\ndata: ${JSON.stringify(item)}\n\n`)
-  );
-  const freshSignal = new AbortController();
-  await readConversationStream(
-    "/conversation",
-    "0",
-    freshSignal.signal,
-    (record) => {
-      received.push(record);
-      freshSignal.abort();
+test("SDK chat history cannot expose a stale response after access changes", async () => {
+  const history = delayedJson();
+  installFetch(() => history.response);
+  const oldHistory = loadChatMessages({
+    url: "http://fixture.invalid/conversation/chat",
+  });
+  clearProductCache();
+  await history.finish([
+    {
+      id: "assistant:run",
+      parts: [{ text: "private output", type: "text" }],
+      role: "assistant",
     },
-    () => {}
-  );
-  assert.deepEqual(received, [
-    { cursor: "1", runId: "run", text: "private output", type: "output" },
   ]);
+  assert.deepEqual(await oldHistory, []);
+});
+
+test("SDK chat history clears private cache on denied access", async () => {
+  storage.setItem(pendingKey, "private pending message");
+  installFetch(() => forbidden());
+  assert.deepEqual(
+    await loadChatMessages({ url: "http://fixture.invalid/conversation/chat" }),
+    []
+  );
+  assert.equal(storage.getItem(pendingKey), null);
+});
+
+test("SDK chat parts preserve text and deduplicate execution records by domain identity", async () => {
+  installFetch(() =>
+    Response.json([
+      {
+        id: "assistant:run",
+        parts: [
+          { text: "Live ", type: "text" },
+          { text: "response", type: "text" },
+          {
+            data: {
+              cursor: "2",
+              run: { runId: "run", state: "completed" },
+              type: "run",
+            },
+            type: "data-conversation-item",
+          },
+        ],
+        role: "assistant",
+      },
+    ])
+  );
+  const messages = await loadChatMessages({
+    url: "http://fixture.invalid/conversation/chat",
+  });
+  const [first] = messages;
+  assert.ok(first);
+  assert.equal(messageText(first), "Live response");
+  assert.deepEqual(
+    conversationItems(messages, [
+      { cursor: "1", eventId: "event", text: "Hello", type: "user" },
+      {
+        cursor: "projection:2",
+        run: { runId: "run", state: "running" },
+        type: "run",
+      },
+    ]),
+    [
+      { cursor: "1", eventId: "event", text: "Hello", type: "user" },
+      { cursor: "2", run: { runId: "run", state: "completed" }, type: "run" },
+    ]
+  );
+});
+
+test("SDK replay cannot replace a settled run with an earlier state", () => {
+  assert.deepEqual(
+    conversationItems(
+      [
+        {
+          id: "assistant:run",
+          parts: [
+            {
+              data: {
+                cursor: "session:2",
+                run: { runId: "run", state: "running" },
+                type: "run",
+              },
+              type: "data-conversation-item",
+            },
+          ],
+          role: "assistant",
+        },
+      ],
+      [{ cursor: "10", run: { runId: "run", state: "completed" }, type: "run" }]
+    ),
+    [{ cursor: "10", run: { runId: "run", state: "completed" }, type: "run" }]
+  );
+});
+
+test("settled output replaces streamed assistant steps with the canonical answer", () => {
+  assert.equal(
+    messageText({
+      id: "assistant:run",
+      parts: [
+        { text: "I will check. ", type: "text" },
+        { text: "Streamed draft answer.", type: "text" },
+        {
+          data: {
+            cursor: "session:8",
+            runId: "run",
+            text: "Verified final answer.",
+            type: "output",
+          },
+          type: "data-conversation-item",
+        },
+      ],
+      role: "assistant",
+    }),
+    "Verified final answer."
+  );
 });
 
 /* eslint-disable sort-keys -- These inputs deliberately change key order to test canonical retries. */

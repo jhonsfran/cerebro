@@ -16,7 +16,11 @@ interface PendingRequest {
     typeof Promise.withResolvers<WorkOutcome<ModelHttpReceipt>>
   >;
   readonly accounted: Promise<PortResult<ModelHttpReceipt>>;
+  readonly abort: AbortController;
+  readonly deadlineAt: number;
+  readonly classifyFailure: (phase: string) => void;
 }
+const terminalEventPattern = /^data:\s*\[DONE\]$/u;
 const boundedText = async (
   response: Response,
   maximum: number,
@@ -100,12 +104,46 @@ const usageFrom = (body: string, contentType: string) => {
   }
   return usage;
 };
+
+const eventStreamDelivery = () => {
+  const decoder = new TextDecoder();
+  let pending = new Uint8Array();
+  let terminal = false;
+  const held: Uint8Array[] = [];
+  return {
+    finish: () => [...held, pending].filter((chunk) => chunk.byteLength > 0),
+    receive(chunk: Uint8Array): Uint8Array | undefined {
+      if (terminal) {
+        held.push(chunk);
+        return;
+      }
+      const bytes = new Uint8Array(pending.byteLength + chunk.byteLength);
+      bytes.set(pending);
+      bytes.set(chunk, pending.byteLength);
+      let start = 0;
+      let end = bytes.indexOf(10, start);
+      while (end !== -1) {
+        const line = decoder.decode(bytes.subarray(start, end)).trim();
+        if (terminalEventPattern.test(line)) {
+          terminal = true;
+          held.push(bytes.subarray(start));
+          pending = new Uint8Array();
+          return start > 0 ? bytes.subarray(0, start) : undefined;
+        }
+        start = end + 1;
+        end = bytes.indexOf(10, start);
+      }
+      pending = bytes.subarray(start);
+      return start > 0 ? bytes.subarray(0, start) : undefined;
+    },
+  };
+};
 export const createModelHttpPlugin = (dependencies: {
   readonly storage: DurableObjectStorage;
   readonly ports: RuntimePorts;
   readonly run: () => StoredRun;
   readonly recorded: (operationId: string, receipt: ModelHttpReceipt) => void;
-  readonly failed: (result: PortResult<unknown>) => void;
+  readonly failed: (result: PortResult<unknown>, phase?: string) => void;
 }): Plugin.Plugin => {
   const pending = new Map<string, PendingRequest>();
   const { model } = dependencies.ports;
@@ -243,7 +281,11 @@ export const createModelHttpPlugin = (dependencies: {
         let dispatched = false;
         const gate = Promise.withResolvers<null>();
         const outcome = Promise.withResolvers<WorkOutcome<ModelHttpReceipt>>();
+        const abort = new AbortController();
+        let failurePhase: string | undefined;
         const timer = setTimeout(() => {
+          failurePhase ??= "deadline";
+          abort.abort(new Error("Model transport deadline expired."));
           outcome.resolve({
             result: {
               operationId,
@@ -287,25 +329,38 @@ export const createModelHttpPlugin = (dependencies: {
             );
           }
           if (result.status !== "ok") {
-            dependencies.failed(result);
+            dependencies.failed(result, failurePhase);
             gate.reject(
               new Error(`Paid model request returned ${result.status}.`)
             );
           }
           return result;
         })();
-        pending.set(operationId, { accounted, outcome });
-        await gate.promise;
+        pending.set(operationId, {
+          abort,
+          accounted,
+          classifyFailure: (phase) => {
+            failurePhase ??= phase;
+          },
+          deadlineAt: options.deadlineAt,
+          outcome,
+        });
+        try {
+          await gate.promise;
+        } catch (error) {
+          pending.delete(operationId);
+          throw error;
+        }
         const headers = new Headers(event.request.headers);
         headers.set("X-Cerebro-Model-Operation", operationId);
         event.request = new Request(event.request, {
           body: boundedBody,
           headers,
           method: "POST",
-          signal: AbortSignal.timeout(model.deadlineMs),
+          signal: abort.signal,
         });
       });
-      await context.session.hook("http.response", async (event) => {
+      await context.session.hook("http.response", (event) => {
         const operationId = event.request.headers.get(
           "X-Cerebro-Model-Operation"
         );
@@ -313,75 +368,205 @@ export const createModelHttpPlugin = (dependencies: {
         if (!operationId || !work) {
           throw new Error("Model response has no paid request occurrence.");
         }
-        try {
-          const body = await boundedText(
-            event.response,
-            model.maxResponseBytes,
-            AbortSignal.timeout(model.deadlineMs)
-          );
-          const usage = usageFrom(
-            body,
-            event.response.headers.get("Content-Type") ?? ""
-          );
-          if (
-            !usage ||
-            usage.input > model.maxInputBytes ||
-            usage.output > model.maxOutputTokens
-          ) {
-            throw new Error(
-              "Model response has no bounded authoritative usage."
-            );
-          }
-          const units =
-            usage.input * model.pricing.inputPerToken +
-            usage.output * model.pricing.outputPerToken;
-          const receipt: ModelHttpReceipt = {
-            body,
-            headers: {
-              "Content-Type":
-                event.response.headers.get("Content-Type") ??
-                "application/json",
+        const { response } = event;
+        const contentType =
+          response.headers.get("Content-Type") ?? "application/json";
+        const sse = contentType.includes("text/event-stream")
+          ? eventStreamDelivery()
+          : undefined;
+        const reader = response.body?.getReader();
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        let state: "reading" | "accounting" | "closed" = "reading";
+        let phase = "provider-read";
+        let failure: Promise<void> | undefined;
+        let abortCleanup: Promise<void> | undefined;
+        let controller: ReadableStreamDefaultController<Uint8Array>;
+        const delivery = {
+          cleanup() {
+            work.abort.signal.removeEventListener("abort", delivery.onAbort);
+            reader?.releaseLock();
+            pending.delete(operationId);
+            state = "closed";
+          },
+          complete(current: ReadableStreamDefaultController<Uint8Array>) {
+            if (state === "accounting") {
+              for (const held of sse?.finish() ?? []) {
+                current.enqueue(held);
+              }
+              current.close();
+            }
+            delivery.cleanup();
+          },
+          fail(error: unknown): Promise<void> {
+            failure ??= (async () => {
+              work.classifyFailure(phase);
+              work.outcome.resolve({
+                result: {
+                  operationId: id.operation(operationId),
+                  reason: `The provider response failed during ${phase}.`,
+                  status: "unknown-outcome",
+                },
+                usage: { state: "unknown" },
+              });
+              try {
+                await reader?.cancel(error);
+              } catch {
+                work.abort.abort(error);
+              } finally {
+                await work.accounted;
+                delivery.cleanup();
+              }
+            })();
+            return failure;
+          },
+          onAbort() {
+            if (state !== "reading") {
+              return;
+            }
+            const error = work.abort.signal.reason;
+            state = "closed";
+            controller.error(error);
+            abortCleanup = delivery.fail(error);
+          },
+        };
+        const stream = new ReadableStream<Uint8Array>(
+          {
+            async cancel(reason) {
+              phase = "consumer-cancellation";
+              state = "closed";
+              await delivery.fail(reason);
             },
-            inputTokens: usage.input,
-            outputTokens: usage.output,
-            status: event.response.status,
-            unit: model.pricing.unit,
-            units,
-          };
-          work.outcome.resolve({
-            result: { status: "ok", value: receipt },
-            usage: {
-              incurred: { unit: model.pricing.unit, units },
-              state: "known",
+            async pull(current) {
+              try {
+                for (;;) {
+                  phase = "provider-read";
+                  const chunk = await reader?.read();
+                  if (state !== "reading") {
+                    await abortCleanup;
+                    return;
+                  }
+                  if (chunk && !chunk.done) {
+                    phase = "response-byte-bound";
+                    size += chunk.value.byteLength;
+                    if (size > model.maxResponseBytes) {
+                      throw new Error("Model response exceeds its byte bound.");
+                    }
+                    const run = dependencies.run();
+                    phase = "content-authorization";
+                    const allowed = await dependencies.ports.checkDependencies(
+                      run,
+                      run.dependencies ?? { sourceIds: [], toolIds: [] },
+                      {
+                        deadlineAt: work.deadlineAt,
+                        signal: work.abort.signal,
+                      }
+                    );
+                    if (state !== "reading") {
+                      await abortCleanup;
+                      return;
+                    }
+                    if (allowed.status !== "ok") {
+                      throw new Error(
+                        `Model stream authorization returned ${allowed.status}.`
+                      );
+                    }
+                    chunks.push(chunk.value);
+                    const delivered = sse
+                      ? sse.receive(chunk.value)
+                      : chunk.value;
+                    if (delivered) {
+                      current.enqueue(delivered);
+                      return;
+                    }
+                    continue;
+                  }
+                  phase = "usage-validation";
+                  const bytes = new Uint8Array(size);
+                  let offset = 0;
+                  for (const received of chunks) {
+                    bytes.set(received, offset);
+                    offset += received.byteLength;
+                  }
+                  const body = new TextDecoder("utf-8", {
+                    fatal: true,
+                    ignoreBOM: false,
+                  }).decode(bytes);
+                  const usage = usageFrom(body, contentType);
+                  if (
+                    !usage ||
+                    usage.input > model.maxInputBytes ||
+                    usage.output > model.maxOutputTokens
+                  ) {
+                    throw new Error(
+                      "Model response has no bounded authoritative usage."
+                    );
+                  }
+                  state = "accounting";
+                  const units =
+                    usage.input * model.pricing.inputPerToken +
+                    usage.output * model.pricing.outputPerToken;
+                  const receipt: ModelHttpReceipt = {
+                    body,
+                    headers: { "Content-Type": contentType },
+                    inputTokens: usage.input,
+                    outputTokens: usage.output,
+                    status: response.status,
+                    unit: model.pricing.unit,
+                    units,
+                  };
+                  work.outcome.resolve({
+                    result: { status: "ok", value: receipt },
+                    usage: {
+                      incurred: { unit: model.pricing.unit, units },
+                      state: "known",
+                    },
+                  });
+                  phase = "accounting";
+                  const result = await work.accounted;
+                  if (result.status !== "ok") {
+                    throw new Error(
+                      `Model accounting returned ${result.status}.`
+                    );
+                  }
+                  phase = "receipt-persistence";
+                  dependencies.recorded(operationId, result.value);
+                  await dependencies.storage.sync();
+                  delivery.complete(current);
+                  return;
+                }
+              } catch (error) {
+                if (state !== "closed") {
+                  state = "closed";
+                  current.error(error);
+                }
+                await delivery.fail(error);
+              }
             },
-          });
-          const result = await work.accounted;
-          if (result.status !== "ok") {
-            throw new Error(`Model accounting returned ${result.status}.`);
-          }
-          dependencies.recorded(operationId, result.value);
-          await dependencies.storage.sync();
-          event.response = new Response(result.value.body, {
-            headers: result.value.headers,
-            status: result.value.status,
-          });
-        } catch (error) {
-          work.outcome.resolve({
-            result: {
-              operationId: id.operation(operationId),
-              reason: "The provider response could not be recorded.",
-              status: "unknown-outcome",
+            start(current) {
+              controller = current;
+              work.abort.signal.addEventListener("abort", delivery.onAbort, {
+                once: true,
+              });
+              if (work.abort.signal.aborted) {
+                delivery.onAbort();
+              }
             },
-            usage: { state: "unknown" },
-          });
-          await work.accounted;
-          throw error;
-        } finally {
-          pending.delete(operationId);
-        }
+          },
+          { highWaterMark: 0 }
+        );
+        event.response = new Response(stream, {
+          headers: response.headers,
+          status: response.status,
+          statusText: response.statusText,
+        });
       });
       return async () => {
         for (const [operationId, work] of pending) {
+          work.classifyFailure("transport-teardown");
+          work.abort.abort(
+            new Error("Model transport closed before its receipt.")
+          );
           work.outcome.resolve({
             result: {
               operationId: id.operation(operationId),
