@@ -731,3 +731,74 @@ test("empty runtime sessions become idle but pending or accepted admissions rema
     assert.equal(accepted?.projectionState, "active");
   });
 });
+
+test("local Slack delivery denies a queued reply without an authorized output projection", async () => {
+  let delivered = 0;
+  const app = await createTestProduct();
+  const setup = await app.install();
+  const principalId = string(setup.principalId);
+  const agent = await app.createAgent();
+  const agentId = string(agent.agentId);
+  const createdResponse = await app.request(
+    "/api/product/conversations",
+    "POST",
+    { agentId, operationId: "missing-local-output" }
+  );
+  assert.equal(createdResponse.status, 200);
+  const created = object(await createdResponse.json());
+  const conversationId = string(created.conversationId);
+  await app.options.withDatabase(async (db) => {
+    await db
+      .update(channelConversation)
+      .set({
+        channelId: "channel",
+        kind: "slack",
+        projectionState: "idle",
+        rootTimestamp: "123",
+        slackUserId: "slack-user",
+        workspaceId: "workspace",
+      })
+      .where(eq(channelConversation.conversationId, conversationId));
+    await db.insert(identitySlackLink).values({
+      id: "local-output-link",
+      organizationId: app.options.organizationId,
+      principalId,
+      slackUserId: "slack-user",
+      workspaceId: "workspace",
+    });
+    await db.insert(channelReply).values({
+      conversationId,
+      organizationId: app.options.organizationId,
+      replyId: "missing-output-reply",
+      runId: "missing-output-run",
+      state: "ready",
+      text: "Private untracked output",
+    });
+  });
+  const result = await drainChannelWork({
+    ...app.options,
+    fetch: () => {
+      delivered += 1;
+      return Promise.resolve(
+        Response.json({ channel: "channel", ok: true, ts: "124" })
+      );
+    },
+    mode: "local",
+    slack: {
+      agentId,
+      appId: "app",
+      botToken: "test",
+      signingSecret: "test",
+      workspaceId: "workspace",
+    },
+  });
+  assert.equal(result.sent, 0);
+  assert.equal(delivered, 0);
+  await app.options.withDatabase(async (db) => {
+    const [reply] = await db.select().from(channelReply);
+    assert.equal(reply.state, "failed");
+    assert.deepEqual(reply.providerReceipt, {
+      reason: "Current authorization denied reply delivery.",
+    });
+  });
+});

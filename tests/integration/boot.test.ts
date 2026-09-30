@@ -54,9 +54,11 @@ test("fresh Compose boot preserves an auth user, session, and artifact", async (
   const environment = {
     ...process.env,
     CEREBRO_API_PORT: String(apiPort),
+    CEREBRO_DEPLOY_MODE: "fixture",
     CEREBRO_PUBLIC_API_URL: baseUrl,
     CEREBRO_PUBLIC_WEB_URL: `http://localhost:${webPort}`,
     CEREBRO_WEB_PORT: String(webPort),
+    COMPOSE_PROFILES: "fixture",
   };
   const docker = (...arguments_: string[]) =>
     exec("docker", [...compose, ...arguments_], {

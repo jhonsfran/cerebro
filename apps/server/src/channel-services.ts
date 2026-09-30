@@ -34,7 +34,7 @@ export const createChannelOptions = (env: WorkerEnv) => {
   const slack = env.SLACK_CHANNEL_JSON
     ? slackConfiguration.parse(JSON.parse(env.SLACK_CHANNEL_JSON))
     : undefined;
-  if (env.DEPLOY_MODE === "production" && slack?.apiUrl) {
+  if (env.DEPLOY_MODE !== "fixture" && slack?.apiUrl) {
     throw new Error(
       "A custom Slack API URL is permitted only in fixture mode."
     );

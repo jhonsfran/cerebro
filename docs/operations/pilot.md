@@ -2,6 +2,16 @@
 
 Local fixture acceptance is complete. External production qualification remains incomplete. Read [the session 7 receipt](../implementation/session-7.md) before enabling a pilot. A fixture result does not qualify an external provider.
 
+## Default local models
+
+The default Compose deployment uses `local` mode. It offers `opencode/space-bunny-free` through the native OpenCode SDK. The model uses `https://opencode.ai/zen/v1`, the SDK public key, and zero input/output prices in `usd-micro` units. [OpenCode lists the model as free](https://opencode.ai/docs/en/zen/). The native live check completed and settled one operation with zero charge. Big Pickle returned no authoritative usage receipt in the native check and is excluded from the default catalog. There is no paid fallback. The provider can remove free access. Check the current model terms before using company data.
+
+Local mode creates a persistent `bootstrap-token` alongside the other local secrets. Installation setup requires this token. It uses real policy, PostgreSQL, artifact storage, and durable usage accounting. Fixture routes, test grants, sources, and tools are disabled. Configure read-only MCP tools explicitly if needed. Existing agents must select a registered model and start a new conversation after a model change.
+
+Local model limits are 65,536 input bytes, 2,048 output tokens, 262,144 response bytes, 90 seconds per request, and eight requests per run. Usage must still have an authoritative token receipt. Unknown outcomes stop for reconciliation even when the charge is zero. Local HTTP origins and local PostgreSQL are permitted; production retains HTTPS and verified PostgreSQL TLS requirements.
+
+Use `CEREBRO_DEPLOY_MODE=fixture COMPOSE_PROFILES=fixture` for deterministic testing. Use `production` with the production Compose override and explicit runtime configuration for an external deployment. A protected runtime file with a different mode is rejected rather than silently reused.
+
 ## Configure an installation
 
 Use one company per installation. Keep the public API and web origins stable. The default host ports are API `18765` and web `3001`; `CEREBRO_API_PORT` and `CEREBRO_WEB_PORT` select other loopback ports. Set `CEREBRO_PUBLIC_API_URL` and `CEREBRO_PUBLIC_WEB_URL` to the matching origins before building. The web bundle contains its public API origin, so an origin change needs a web rebuild.

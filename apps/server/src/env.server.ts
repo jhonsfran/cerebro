@@ -8,7 +8,7 @@ export interface WorkerEnv {
   BETTER_AUTH_SECRET: string;
   ENTERPRISE_IDENTITY_JSON?: string;
   CORS_ORIGIN: string;
-  DEPLOY_MODE: "fixture" | "production";
+  DEPLOY_MODE: "local" | "fixture" | "production";
   FIXTURE_ADAPTERS: "0" | "1";
   CHANNEL_DISPATCHER: DurableObjectNamespace;
   CHANNEL_ORGANIZATION_ID?: string;
@@ -31,11 +31,11 @@ export const assertWorkerEnv = (env: WorkerEnv): void => {
   if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 32) {
     throw new Error("Authentication secret is missing or too short");
   }
-  if (env.DEPLOY_MODE !== "fixture" && env.DEPLOY_MODE !== "production") {
+  if (!["local", "fixture", "production"].includes(env.DEPLOY_MODE)) {
     throw new Error("Invalid deployment mode");
   }
-  if (env.DEPLOY_MODE === "production" && env.FIXTURE_ADAPTERS !== "0") {
-    throw new Error("Fixture adapters are forbidden in production");
+  if (env.DEPLOY_MODE !== "fixture" && env.FIXTURE_ADAPTERS !== "0") {
+    throw new Error("Fixture adapters require explicit fixture mode");
   }
   if (
     env.DEPLOY_MODE === "production" &&

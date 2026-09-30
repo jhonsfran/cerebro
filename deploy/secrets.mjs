@@ -3,8 +3,13 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const directory = process.env.CEREBRO_SECRETS_DIR ?? "/run/cerebro-secrets";
-const mode = process.env.DEPLOY_MODE ?? "fixture";
-const names = ["postgres-password", "minio-password", "auth-secret"];
+const mode = process.env.DEPLOY_MODE ?? "local";
+const names = [
+  "postgres-password",
+  "minio-password",
+  "auth-secret",
+  ...(mode === "local" ? ["bootstrap-token"] : []),
+];
 
 const writeSecret = async (secretPath, value) => {
   const temporaryPath = `${secretPath}.tmp`;
@@ -13,7 +18,7 @@ const writeSecret = async (secretPath, value) => {
   await rename(temporaryPath, secretPath);
 };
 
-if (mode !== "fixture" && mode !== "production") {
+if (!["local", "fixture", "production"].includes(mode)) {
   throw new Error("Invalid deployment mode");
 }
 await mkdir(directory, { mode: 0o700, recursive: true });
@@ -40,7 +45,7 @@ await Promise.all(
     await writeSecret(secretPath, randomBytes(36).toString("base64url"));
   })
 );
-if (mode === "fixture") {
+if (mode !== "production") {
   await Promise.all(
     [
       ["postgres-password", "/run/postgres-credential"],

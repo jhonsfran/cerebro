@@ -70,7 +70,7 @@ const schema = z.strictObject({
     unit: z.string().min(1),
   }),
   gatewaySigningKey: z.string().min(32),
-  mode: z.enum(["fixture", "production"]),
+  mode: z.enum(["local", "fixture", "production"]),
   models: z.array(modelSchema).min(1),
   retrievalMode: z.literal("full-text"),
   tools: z.array(toolSchema),
@@ -108,7 +108,7 @@ const fixtureHost = (value: string): boolean => {
 };
 export const parseRuntimeConfiguration = (
   serialized: string,
-  mode: "fixture" | "production"
+  mode: "local" | "fixture" | "production"
 ): RuntimeConfiguration => {
   try {
     const config = schema.parse(JSON.parse(serialized));
@@ -139,14 +139,16 @@ export const parseRuntimeConfiguration = (
       throw new Error("Invalid runtime model configuration");
     }
     if (
-      mode === "production" &&
+      mode !== "fixture" &&
       !config.bootstrapToken &&
       !config.trustedOwnerUserId
     ) {
-      throw new Error("Production requires trusted setup credentials.");
+      throw new Error(
+        "Local and production deployments require trusted setup credentials."
+      );
     }
     if (
-      mode === "production" &&
+      mode !== "fixture" &&
       config.models.some(
         (model) =>
           model.id.startsWith("fixture") ||
@@ -155,10 +157,12 @@ export const parseRuntimeConfiguration = (
           new URL(model.baseUrl).protocol !== "https:"
       )
     ) {
-      throw new Error("Production models must use real HTTPS providers");
+      throw new Error(
+        "Local and production models must use real HTTPS providers"
+      );
     }
     if (
-      mode === "production" &&
+      mode !== "fixture" &&
       config.tools.some(
         (tool) =>
           tool.effect !== "read" ||
@@ -167,7 +171,9 @@ export const parseRuntimeConfiguration = (
           tool.id.startsWith("fixture")
       )
     ) {
-      throw new Error("Production permits configured real read-only MCP tools");
+      throw new Error(
+        "Local and production permit configured real read-only MCP tools"
+      );
     }
     const connectorIdentities = new Map<string, string>();
     for (const tool of config.tools) {

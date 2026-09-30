@@ -49,7 +49,7 @@ import type { RuntimePorts, ModelHttpReceipt } from "./runtime-ports.ts";
 import { priorInvocationForCall, sdkCallKey } from "./tool-call-identity.ts";
 
 export interface SessionEnvironment {
-  readonly DEPLOY_MODE: "fixture" | "production";
+  readonly DEPLOY_MODE: "local" | "fixture" | "production";
   readonly FIXTURE_URL: string;
   readonly TOOL_GATEWAY: Fetcher;
   readonly AUDIT_SINK?: Fetcher;

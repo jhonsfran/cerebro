@@ -15,6 +15,7 @@
     "db:generate": "turbo run db:generate -F @cerebro/db --",
     "deploy": "docker compose build bootstrap && docker compose run --rm bootstrap",
     "test:contracts": "node --test tests/contracts/contracts.test.ts",
+    "test:opencode": "node --test tests/live/opencode.test.ts",
     "test:boot": "node --test tests/integration/boot.test.ts",
     "test:runtime": "node --test tests/runtime/*.test.ts",
     "test:identity": "bun test tests/identity/*.test.ts",

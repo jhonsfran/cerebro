@@ -48,7 +48,7 @@ export interface AuditView {
   }[];
 }
 export interface ChannelOptions {
-  readonly mode: "fixture" | "production";
+  readonly mode: "local" | "fixture" | "production";
   readonly organizationId: string;
   readonly withDatabase: <T>(
     run: (database: Database) => Promise<T>

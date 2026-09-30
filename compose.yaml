@@ -7,7 +7,7 @@ x-app: &app
       VITE_SERVER_URL: ${CEREBRO_PUBLIC_API_URL:-http://localhost:18765}
   environment:
     CEREBRO_SECRETS_DIR: /run/cerebro-secrets
-    DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-fixture}
+    DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-local}
 
 x-minio: &minio
   build:
@@ -33,6 +33,7 @@ x-minio: &minio
 
 services:
   fixture:
+    profiles: [fixture]
     <<: *app
     command: [node, deploy/pilot-provider.mjs]
     ports:
@@ -94,7 +95,7 @@ services:
       - secrets:/run/cerebro-secrets:ro
     environment:
       CEREBRO_SECRETS_DIR: /run/cerebro-secrets
-      DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-fixture}
+      DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-local}
       CEREBRO_PUBLIC_API_URL: ${CEREBRO_PUBLIC_API_URL:-http://localhost:18765}
       CEREBRO_PUBLIC_WEB_URL: ${CEREBRO_PUBLIC_WEB_URL:-http://localhost:3001}
       CEREBRO_DATABASE_URL: ${CEREBRO_DATABASE_URL:-}
@@ -110,7 +111,7 @@ services:
     command: [node, deploy/entrypoint.mjs, celld]
     environment:
       CEREBRO_SECRETS_DIR: /run/cerebro-secrets
-      DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-fixture}
+      DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-local}
       CELLD_WATCH: /var/lib/celld/state
       CELLD_DURABILITY: bucket
       CELLD_TELEMETRY: "0"
@@ -141,7 +142,7 @@ services:
     command: [pnpm, --filter, web, serve, --host, 0.0.0.0, --port, "3001"]
     environment:
       CEREBRO_SECRETS_DIR: /run/cerebro-secrets
-      DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-fixture}
+      DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-local}
       PORT: "3001"
       HOST: "0.0.0.0"
       INTERNAL_API_URL: http://celld:8080

@@ -208,7 +208,7 @@ Test Behavior, Not Implementation motivates independent provider counters, liter
 
 The guarded OpenCode patch preserves only `cerebro_session` and `cerebro_operation`. Session journals must use the existing `cerebro_operation` table with record kinds and namespace keys. Do not add a SessionAgent table that the SDK storage census can wipe. Keep legacy Session 0 rows readable through kind-filtered queries. GatewayJournal has no OpenCode storage owner and can retain its separate migrated tables.
 
-`deploy/patch-dependencies.mjs` currently patches auth only. The coordinator identified the hash-guarded storage census patch in `experiments/celld-slice/scripts/patch-dependencies.mjs`. The production Docker build must resolve the pinned OpenCode dependency and apply the equivalent guarded patch. A hash mismatch stops the build. Run migration and real SDK reopen checks before acceptance. New deployments and upgrades must test this production patch, not only the experiment runner.
+`deploy/patch-dependencies.mjs` currently patches auth only. The coordinator identified the hash-guarded storage census patch in the former experiment, now at `tests/runtime/scripts/patch-dependencies.mjs`. The production Docker build must resolve the pinned OpenCode dependency and apply the equivalent guarded patch. A hash mismatch stops the build. Run migration and real SDK reopen checks before acceptance. New deployments and upgrades must test this production patch, not only the experiment runner.
 
 ## Risk verdict
 

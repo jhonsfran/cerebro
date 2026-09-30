@@ -2,6 +2,8 @@
 
 Implementation and local fixture acceptance are complete. External production qualification remains incomplete.
 
+After delivery, Session 7 was merged into `main`. [The local-model follow-up](local-models.md) records experiment retirement and live OpenCode acceptance. The remaining receipt describes the original delivery.
+
 Base is `62aadee`. Work is on `codex/pilot-integration`. Backup is committed at `205f3a7`; runtime, product, and acceptance code are committed at `dce5c02`. The main checkout is unchanged. There is no Git remote.
 
 Native images were built from the source changes before the code commit. The full acceptance run passed before the final fixture-only approval wording change. Its affected native restart test passed afterward. Production code did not change in that follow-up.

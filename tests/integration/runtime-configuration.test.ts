@@ -131,3 +131,35 @@ test("production rejects unsafe reservations, unsupported adapters and conflicti
   });
   assert.throws(() => parse(conflicting));
 });
+
+const parseLocal = (value: unknown) =>
+  parseRuntimeConfiguration(JSON.stringify(value), "local");
+
+test("local mode preserves real-provider and trusted-setup boundaries", () => {
+  const local = { ...configured(), mode: "local" };
+  local.models[0] = {
+    ...local.models[0],
+    apiKey: "public",
+    baseUrl: "https://opencode.ai/zen/v1",
+    id: "opencode/big-pickle",
+    model: "big-pickle",
+    pricing: {
+      inputPerToken: 0,
+      outputPerToken: 0,
+      unit: "test-units",
+      version: "opencode-free",
+    },
+    provider: "opencode",
+  };
+  local.tools = [];
+
+  const result = parseLocal(local);
+  assert.equal(result.models[0].id, "opencode/big-pickle");
+  assert.equal(result.models[0].pricing.inputPerToken, 0);
+  assert.equal(result.models[0].pricing.outputPerToken, 0);
+  assert.deepEqual(result.tools, []);
+  assert.throws(() => parseLocal({ ...local, bootstrapToken: undefined }));
+  assert.throws(() => parseLocal({ ...local, mode: "fixture" }));
+  local.models[0].baseUrl = "http://fixture:8090/v1";
+  assert.throws(() => parseLocal(local));
+});

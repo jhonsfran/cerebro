@@ -153,7 +153,7 @@ export const authorizeContent = async (
   if (!item.dependencies) {
     if (
       item.type !== "user" &&
-      (options.mode === "production" || options.checkContentDependencies)
+      (options.mode !== "fixture" || options.checkContentDependencies)
     ) {
       throw new ChannelError(
         403,
@@ -180,7 +180,7 @@ export const authorizeContent = async (
       )
     );
   } else if (
-    options.mode === "production" &&
+    options.mode !== "fixture" &&
     item.dependencies.sourceIds.length > 0
   ) {
     throw new ChannelError(

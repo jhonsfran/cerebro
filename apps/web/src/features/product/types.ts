@@ -15,7 +15,7 @@ export const catalogSchema = z.object({
 });
 export const setupSchema = z.object({
   bootstrapTokenRequired: z.boolean().default(false),
-  mode: z.enum(["fixture", "production"]),
+  mode: z.enum(["local", "fixture", "production"]),
   organizationId: z.string(),
   owner: z.boolean(),
   principalId: z.string().nullable(),

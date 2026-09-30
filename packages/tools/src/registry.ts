@@ -77,7 +77,7 @@ const validateByteBounds = (registration: ToolRegistration): void => {
 
 export const createToolRegistry = (
   registrations: readonly ToolRegistration[],
-  mode: "fixture" | "production"
+  mode: "local" | "fixture" | "production"
 ): ToolRegistry => {
   const entries = new Map<ToolId, RegisteredTool>();
   for (const registration of registrations) {

@@ -301,10 +301,12 @@ before(
     environment = {
       ...process.env,
       CEREBRO_API_PORT: String(apiPort),
+      CEREBRO_DEPLOY_MODE: "fixture",
       CEREBRO_FIXTURE_PORT: String(fixturePort),
       CEREBRO_PUBLIC_API_URL: apiUrl,
       CEREBRO_PUBLIC_WEB_URL: webUrl,
       CEREBRO_WEB_PORT: String(webPort),
+      COMPOSE_PROFILES: "fixture",
     };
     metrics.apiUrl = apiUrl;
     metrics.webUrl = webUrl;

@@ -294,7 +294,7 @@ export const drainChannelWork = async (
           (entry) =>
             entry.item.runId === row.runId && entry.item.type === "output"
         );
-        if (options.mode === "production" && outputs.length === 0) {
+        if (options.mode !== "fixture" && outputs.length === 0) {
           throw new ChannelError(
             403,
             "unauthorized",

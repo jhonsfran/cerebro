@@ -51,7 +51,7 @@ import {
 type PortFailure = Exclude<PortResult<never>, { readonly status: "ok" }>;
 
 export interface FixtureOptions {
-  readonly mode: "fixture" | "production";
+  readonly mode: "local" | "fixture" | "production";
   readonly now?: number;
   readonly budgetUnits?: number;
   readonly grantIdsByPrincipal?: ReadonlyMap<PrincipalId, ReadonlySet<string>>;

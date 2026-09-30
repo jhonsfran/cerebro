@@ -10,7 +10,15 @@ Docker is the host prerequisite for the application stack. From a fresh checkout
 docker compose up --build -d --wait
 ```
 
-Open [the web app](http://localhost:3001). Readiness is available at [the API](http://localhost:18765/ready). The default local mode uses deterministic external-provider fixtures. It does not qualify a live provider.
+Open [the web app](http://localhost:3001). Readiness is available at [the API](http://localhost:18765/ready). The default local mode uses the free `opencode/space-bunny-free` model. Calls use the pinned OpenCode SDK and its public provider key. No paid model fallback is configured. The native live check passed with one settled zero-cost usage receipt. Big Pickle did not pass that check and is excluded from the default catalog. Free model availability can change. Read [OpenCode pricing and privacy](https://opencode.ai/docs/en/zen/) before sending company data.
+
+Local setup requires the generated installation token. Read it from the protected secret volume, then enter it in the setup form:
+
+```sh
+docker compose run --rm --no-deps bootstrap node --input-type=module -e 'import {readFile} from "node:fs/promises";process.stdout.write(await readFile("/run/cerebro-secrets/bootstrap-token","utf8"))'
+```
+
+Local mode uses real PostgreSQL, MinIO, authorization, and usage records. Model charges are zero `usd-micro` units. No fixture model, source, or tool is enabled. For an existing agent, select an OpenCode model in the editor, remove obsolete fixture tools, and start a new conversation. Existing data stays in its volumes.
 
 Compose generates local secrets once. PostgreSQL, both MinIO services, celld, and credentials use seven named volumes. `docker compose down` preserves that state. `docker compose down --volumes` deletes it.
 
@@ -29,12 +37,23 @@ pnpm test:policy
 pnpm test:memory
 pnpm test:channels
 pnpm test:integration
+pnpm test:opencode
 pnpm check-types
 pnpm check
 pnpm build
 ```
 
-Integration tests use isolated Compose projects. The backup tests restore all seven stores into fresh volumes and start the recorded source images. Read [the session 7 receipt](docs/implementation/session-7.md) for current deployed acceptance evidence and known check limits.
+Integration tests explicitly select deterministic fixture mode in isolated Compose projects. `pnpm test:opencode` separately calls the live free provider through the native deployment and verifies a zero-cost usage receipt.
+
+To run the local demonstration with controlled providers instead, use:
+
+```sh
+CEREBRO_DEPLOY_MODE=fixture COMPOSE_PROFILES=fixture docker compose up --build -d --wait
+```
+
+Use separate Compose project names for local and fixture deployments. A protected `runtime.json` must match its deployment mode.
+
+The backup tests restore all seven stores into fresh volumes and start the recorded source images. Read [the session 7 receipt](docs/implementation/session-7.md) for current deployed acceptance evidence and known check limits.
 
 ## Data ownership
 

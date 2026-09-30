@@ -7,7 +7,7 @@ import type { RuntimePorts } from "./runtime-ports.ts";
 
 export interface FixtureModelEnvironment {
   readonly FIXTURE_URL: string;
-  readonly DEPLOY_MODE: "fixture" | "production";
+  readonly DEPLOY_MODE: "local" | "fixture" | "production";
 }
 
 export interface ModelToolCall {

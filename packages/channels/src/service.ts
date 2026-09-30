@@ -117,7 +117,7 @@ export const createChannelService = (
     ).findPrincipalByUser(options.organizationId, userId);
     return {
       bootstrapTokenRequired:
-        options.mode === "production" && Boolean(options.bootstrapToken),
+        options.mode !== "fixture" && Boolean(options.bootstrapToken),
       mode: options.mode,
       organizationId: options.organizationId,
       owner: record?.ownerUserId === userId,
@@ -148,7 +148,7 @@ export const createChannelService = (
         return;
       }
       if (
-        options.mode === "production" &&
+        options.mode !== "fixture" &&
         !(await trustedSetupCredential(options, userId, bootstrapToken))
       ) {
         throw new ChannelError(
