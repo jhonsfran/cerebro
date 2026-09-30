@@ -243,15 +243,15 @@ Each subsystem owns separate PostgreSQL schema modules. The coordinator generate
 
 **Files.** Own shared composition and migration files, `tests/integration/**`, `deploy/**`, `README.md`, and `docs/operations/**`. Coordinate subsystem fixes with their owners.
 
-- [ ] Integrate session 2, then session 3, then session 4, then session 5, then session 6. Generate PostgreSQL migrations after each schema addition.
-- [ ] Run the affected contracts after each integration. Resolve interface drift before adding the next subsystem.
-- [ ] Replace fixture adapters with real adapters in production composition. Assert that no production path can select an allow-all policy or a fake provider.
-- [ ] Connect the API Worker, session DO, tool broker, PostgreSQL, and MinIO in the actual celld deployment graph.
-- [ ] Implement readiness, redacted structured logs, trace IDs, and audit correlation. Distinguish an authorization denial from a provider outage.
-- [ ] Verify company-scoped usage and audit export. Confirm that ledger replay never duplicates exported charges or records.
-- [ ] Add backup and restore instructions for PostgreSQL, MinIO, and all celld state required by the pinned release. Restore into fresh volumes and verify sessions and memory.
-- [ ] Run the pilot acceptance sequence below. Record external checks that remain blocked by credentials as incomplete, not passed.
-- [ ] Document upgrades, migration rollback limits, secret rotation, port configuration, and the tested deployment size in `docs/operations/pilot.md`.
+- [x] Integrate session 2, then session 3, then session 4, then session 5, then session 6. Generate PostgreSQL migrations after each schema addition.
+- [x] Run the affected contracts after each integration. Resolve interface drift before adding the next subsystem.
+- [x] Replace fixture adapters with real adapters in production composition. Assert that no production path can select an allow-all policy or a fake provider.
+- [x] Connect the API Worker, session DO, tool broker, PostgreSQL, and MinIO in the actual celld deployment graph.
+- [x] Implement readiness, redacted structured logs, trace IDs, and audit correlation. Distinguish an authorization denial from a provider outage.
+- [x] Verify company-scoped usage and audit export. Confirm that ledger replay never duplicates exported charges or records.
+- [x] Add backup and restore instructions for PostgreSQL, MinIO, and all celld state required by the pinned release. Restore into fresh volumes and verify sessions and memory.
+- [x] Run the pilot acceptance sequence below. Record external checks that remain blocked by credentials as incomplete, not passed.
+- [x] Document upgrades, migration rollback limits, secret rotation, port configuration, and the tested deployment size in `docs/operations/pilot.md`.
 
 Run these checks through the deployed API and UI:
 
@@ -267,6 +267,8 @@ Run these checks through the deployed API and UI:
 10. Restore backups into a fresh Compose project. Verify auth, conversations, ledger entries, source access, and artifacts.
 
 **Verify.** Run `rtk proxy pnpm test:integration`, `rtk proxy pnpm check-types`, `rtk proxy pnpm check`, and `rtk proxy pnpm build`. Record latency to first response, tool duration, restart recovery time, memory use, and database connections under a stated concurrent-session load. Compare measurements on the same machine and fixture configuration. Do not claim a capacity figure from a successful single-user test.
+
+Local implementation and fixture acceptance are complete. [The session 7 receipt](../../implementation/session-7.md) records native and browser evidence. Live external providers and publicly trusted Worker PostgreSQL TLS remain unqualified.
 
 **Exit condition.** A fresh installation passes the acceptance sequence. Record live results for each model, MCP, Entra, Unprice, Jev, or Slack integration enabled in the pilot. Mark unconfigured integrations as not applicable. A configured integration cannot be marked ready without its live check. The receipt identifies any deployment limit and recovery procedure.
 

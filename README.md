@@ -1,58 +1,51 @@
 # Cerebro
 
-Cerebro is a self-hosted company assistant. This repository currently contains the session 1 foundation: domain contracts, a Hono and Better Auth API Worker, PostgreSQL, a Durable Object storage fixture, MinIO, and a TanStack Start web container. The agent runtime and product flows are later sessions.
+Cerebro is a self-hosted company assistant. It includes company identity and policy, durable conversations, budget admission, controlled tools, cited memory, web chat, and optional Slack direct messages. Session 7 connects these subsystems in the native celld deployment.
 
-## Start the local fixture
+## Start the local stack
 
-Docker is the only host prerequisite for the application stack. From a fresh checkout, run:
+Docker is the host prerequisite for the application stack. From a fresh checkout, run:
 
 ```sh
 docker compose up --build -d --wait
 ```
 
-Open the web app at [http://localhost:3001](http://localhost:3001). The API readiness endpoint is [http://localhost:18765/ready](http://localhost:18765/ready). Compose generates local secrets once in a named volume. PostgreSQL, both MinIO services, and celld also use named volumes.
+Open [the web app](http://localhost:3001). Readiness is available at [the API](http://localhost:18765/ready). The default local mode uses deterministic external-provider fixtures. It does not qualify a live provider.
 
-Stop the containers with `docker compose down`. A later `docker compose up -d --wait` preserves users, sessions, artifacts, and local secrets. `docker compose down --volumes` deletes that local state.
+Compose generates local secrets once. PostgreSQL, both MinIO services, celld, and credentials use seven named volumes. `docker compose down` preserves that state. `docker compose down --volumes` deletes it.
 
-The one-shot `bootstrap` service creates the MinIO buckets, applies PostgreSQL migrations, and publishes the API Worker with native `celld deploy`. Run `pnpm deploy` after changing the Worker in an existing local stack.
+The bootstrap service creates MinIO buckets, applies PostgreSQL migrations, and publishes the API Worker with native `celld deploy`. Run `pnpm deploy` after changing the Worker in an existing local stack.
 
 ## Run checks
 
-For repository development, install pnpm 11.9.0 and run:
+Install pnpm 11.9.0 for repository development.
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm check-types
-pnpm build
 pnpm test:contracts
-pnpm test:boot
+pnpm test:runtime
+pnpm test:identity
+pnpm test:policy
+pnpm test:memory
+pnpm test:channels
+pnpm test:integration
+pnpm check-types
+pnpm check
+pnpm build
 ```
 
-`test:boot` starts an isolated Compose project. It creates an auth user, a Durable Object session, and a MinIO artifact. It stops and starts the stack, then reads all three records. The test deletes only its own volumes after a pass.
-
-The repository-wide `pnpm check` still reports formatting and lint issues in files outside session 1. The session 1 files have a separate scoped lint check recorded in [the session 1 handoff](docs/implementation/session-1.md).
+Integration tests use isolated Compose projects. The backup tests restore all seven stores into fresh volumes and start the recorded source images. Read [the session 7 receipt](docs/implementation/session-7.md) for current deployed acceptance evidence and known check limits.
 
 ## Data ownership
 
-PostgreSQL owns Better Auth data and the shared organization record. `packages/db/src/migrations` is the PostgreSQL migration sequence. A PostgreSQL repository operation uses one request-scoped connection and one transaction when it changes related rows.
+Session Durable Objects own execution, conversation state, and replay receipts. PostgreSQL owns company identity, current grants, shared budget, memory metadata, and audit projections. Runtime MinIO preserves celld state. Artifact MinIO holds source and application objects. No transaction spans these stores.
 
-Session Durable Objects own conversation state. `packages/db/src/durable.ts` supplies the separate Drizzle SQLite adapter. Session 2 owns the Durable Object ledger schema and migrations. The session 1 fixture stores only a test session.
-
-MinIO runtime storage holds celld state. A separate MinIO service holds application artifacts. No transaction spans PostgreSQL, a Durable Object, and MinIO.
+The tool loader has no general outbound network access. It receives the named tool gateway as its capability. Each paid operation needs current authorization and a budget reservation before dispatch. An uncertain model dispatch retains its budget reservation. An uncertain non-idempotent tool stops for reconciliation.
 
 ## Production settings
 
-`compose.production.yaml` selects production mode. It requires an external directory with `auth-secret`, `postgres-password`, and `minio-password` files. Each secret must contain at least 32 characters. Set `CEREBRO_DATABASE_URL` to a PostgreSQL URL with `sslmode=verify-full`. Set both public URLs to HTTPS origins. Production mode rejects fixture adapters.
+`compose.production.yaml` requires an external directory with `auth-secret`, `postgres-password`, `minio-password`, and the protected `runtime.json` configuration. Set a PostgreSQL URL with `sslmode=verify-full` and HTTPS public origins. Put a TLS reverse proxy in front of the loopback API and web ports. Production rejects fixture providers and policies. Read [the pilot operations guide](docs/operations/pilot.md) for the runtime schema and trusted installation setup.
 
-Use a TLS reverse proxy in front of the loopback API and web ports. The session 0 receipt still has two open checks: a real model provider and Worker PostgreSQL over publicly trusted TLS. The production configuration is not a qualified pilot deployment until those checks and later session tests pass.
+Read [the backup procedure](docs/operations/backup.md) before maintenance. The automated backup command supports named volumes. Production bind-mounted secrets require the separate procedure in that guide.
 
-## Packages
-
-- `apps/server` contains the Hono API Worker.
-- `apps/web` contains the TanStack Start web app.
-- `packages/contracts` defines domain types, ports, and deterministic fixtures.
-- `packages/db` defines PostgreSQL schemas, migrations, and the separate Durable SQLite adapter.
-- `packages/auth` configures Better Auth.
-- `packages/api` contains oRPC routes.
-
-See [the delivery plan](docs/superpowers/plans/2026-09-28-cerebro-delivery.md) for later sessions.
+A pilot requires live results for every configured model, MCP, identity, budget, telemetry, and Slack integration. Publicly trusted Worker PostgreSQL TLS also requires a live result. The [delivery plan](docs/superpowers/plans/2026-09-28-cerebro-delivery.md) and [session 7 receipt](docs/implementation/session-7.md) identify incomplete qualification checks.

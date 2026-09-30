@@ -42,12 +42,14 @@ node deploy/backup.mjs restore --project cerebro-restored --directory /secure/ba
 
 The tool rejects the source project, existing target containers, and existing target volumes. It verifies all archive hashes before it creates a volume. It then creates seven volumes and restores each archive into an empty volume. It never deletes existing data. If a restore fails after volume creation, retain that project for diagnosis. Retry with another fresh project.
 
-7. Set unused host ports and the correct public URLs for the restored project.
+7. For an API restore rehearsal, select unused host ports and retain the recorded public origins. The recorded web image contains its compiled API origin. A new public URL environment value does not change that bundle.
 8. Start the restored project with the generated image override. Do not rebuild its images.
 
 ```sh
 CEREBRO_API_PORT=18766 CEREBRO_WEB_PORT=3002 docker compose -p cerebro-restored -f compose.yaml -f /secure/backups/cerebro-2026-09-30/cerebro-restored.images.yaml up -d --wait
 ```
+
+For browser verification with the recorded images, stop the source and use its original ports, or use an isolated reverse proxy that preserves the recorded API and web origins. Prevent rehearsal traffic from reaching the source. Do not treat a web page on a new port as proof that it uses the restored API. A deliberate origin change requires a rebuilt web image and separate verification.
 
 9. Verify the API readiness response.
 10. Verify an existing auth user and session with the original auth credentials.
@@ -60,4 +62,4 @@ Do not use this tool with `compose.production.yaml`. It refuses bind mounts befo
 
 Use a separate approved procedure for that deployment. Stop API, web, and celld first. Stop both MinIO services and PostgreSQL next. While all stores are stopped, archive their data volumes and the full `CEREBRO_PRODUCTION_SECRETS_DIR` directory. Preserve file ownership and modes. Protect `postgres-password`, `minio-password`, and `auth-secret` together with the snapshots. Also retain the PostgreSQL connection configuration and any externally managed database backup. Restore those secrets before the production secrets check or any service starts. Do not generate new secrets for old data.
 
-For restore rehearsal, use a fresh production project, fresh data volumes, and a separate secret directory. Use the same pinned images and external database release. Check the deployed API records before you move traffic.
+For restore rehearsal, use a fresh production project, fresh data volumes, and a separate secret directory. Restore any external database into a separate database of the same release. Set a restore-specific `CEREBRO_DATABASE_URL` with `sslmode=verify-full` before bootstrap or migrations run. Do not copy the live database URL into the rehearsal. Use the same pinned images and preserve the recorded origins through isolated routing. Check the deployed API records before you move traffic.
