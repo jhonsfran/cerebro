@@ -1,5 +1,5 @@
 x-runtime: &runtime
-  image: cerebro-slice-experiment:latest
+  image: ${COMPOSE_PROJECT_NAME:-cerebro-policy-runtime}-app
   volumes:
     - ${CEREBRO_S4_WORKTREE:?set worktree}:/workspace:ro
     - bundle:/run/s4
@@ -9,9 +9,10 @@ x-storage: &storage
   AWS_REGION: us-east-1
 services:
   minio:
-    image: cerebro-slice-minio:latest
+    image: ${COMPOSE_PROJECT_NAME:-cerebro-policy-runtime}-minio
     build:
-      context: ../../../experiments/celld-slice
+      context: ../../..
+      dockerfile: tests/runtime/Dockerfile
       target: minio
     command: [server, /data]
     environment:
@@ -32,8 +33,9 @@ services:
   bootstrap:
     <<: *runtime
     build:
-      context: ../../../experiments/celld-slice
-      target: experiment
+      context: ../../..
+      dockerfile: tests/runtime/Dockerfile
+      target: dependencies
     command: [node, /workspace/tests/policy/runtime/bootstrap.mjs]
     environment:
       <<: *storage

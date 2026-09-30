@@ -1,5 +1,7 @@
 # Cerebro celld slice implementation plan
 
+This is the historical Session 0 plan. The experiment sources were removed after Session 7. [The Session 0 receipt](../../implementation/session-0.md) preserves the result and evidence.
+
 > **For agentic workers:** Use the local `executing-plans` skill for this session. Check a box only when the deployed runtime produced the recorded result.
 
 **Goal:** Prove that the selected stack can execute and recover one controlled agent conversation on celld.

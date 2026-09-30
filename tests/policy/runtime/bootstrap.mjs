@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 
-const require = createRequire("/experiment/package.json");
+const require = createRequire("/runtime/package.json");
 const { AwsClient } = require("aws4fetch");
 const versions = {
   "@opencode-ai/plugin": "0.0.0-dev-18697",
@@ -13,7 +13,7 @@ const versions = {
 await Promise.all(
   Object.entries(versions).map(async ([name, expected]) => {
     const metadata = JSON.parse(
-      await readFile(`/experiment/node_modules/${name}/package.json`, "utf-8")
+      await readFile(`/runtime/node_modules/${name}/package.json`, "utf-8")
     );
     assert.equal(metadata.version, expected, `Pinned runtime version ${name}`);
   })
@@ -58,19 +58,19 @@ await Promise.all(
   })
 );
 try {
-  await symlink("/experiment/node_modules", "/run/s4/node_modules");
+  await symlink("/runtime/node_modules", "/run/s4/node_modules");
 } catch (error) {
   if (error.code !== "EEXIST") {
     throw error;
   }
 }
-await mkdir("/experiment/node_modules/@cerebro", { recursive: true });
+await mkdir("/runtime/node_modules/@cerebro", { recursive: true });
 await Promise.all(
   ["tools", "contracts"].map(async (name) => {
     try {
       await symlink(
         `/run/s4/packages/${name}`,
-        `/experiment/node_modules/@cerebro/${name}`
+        `/runtime/node_modules/@cerebro/${name}`
       );
     } catch (error) {
       if (error.code !== "EEXIST") {

@@ -1,0 +1,577 @@
+{
+  "commands": [
+    {
+      "args": ["kill", "-s", "SIGKILL", "celld"],
+      "exit": 0
+    },
+    {
+      "args": ["ps", "-aq", "celld"],
+      "exit": 0
+    },
+    {
+      "containerExitCode": 137
+    },
+    {
+      "args": ["up", "-d", "--no-deps", "--wait", "celld"],
+      "exit": 0
+    },
+    {
+      "args": ["kill", "-s", "SIGKILL", "celld"],
+      "exit": 0
+    },
+    {
+      "args": ["ps", "-aq", "celld"],
+      "exit": 0
+    },
+    {
+      "containerExitCode": 137
+    },
+    {
+      "args": ["up", "-d", "--no-deps", "--wait", "celld"],
+      "exit": 0
+    },
+    {
+      "args": ["kill", "-s", "SIGKILL", "celld"],
+      "exit": 0
+    },
+    {
+      "args": ["ps", "-aq", "celld"],
+      "exit": 0
+    },
+    {
+      "containerExitCode": 137
+    },
+    {
+      "args": ["up", "-d", "--no-deps", "--wait", "celld"],
+      "exit": 0
+    },
+    {
+      "args": ["kill", "-s", "SIGKILL", "celld"],
+      "exit": 0
+    },
+    {
+      "args": ["ps", "-aq", "celld"],
+      "exit": 0
+    },
+    {
+      "containerExitCode": 137
+    },
+    {
+      "args": ["up", "-d", "--no-deps", "--wait", "celld"],
+      "exit": 0
+    },
+    {
+      "args": ["kill", "-s", "SIGKILL", "celld"],
+      "exit": 0
+    },
+    {
+      "args": ["ps", "-aq", "celld"],
+      "exit": 0
+    },
+    {
+      "containerExitCode": 137
+    },
+    {
+      "args": ["up", "-d", "--no-deps", "--wait", "celld"],
+      "exit": 0
+    }
+  ],
+  "project": "cerebro-slice-final-20260929",
+  "results": [
+    {
+      "durationMs": 184716,
+      "evidence": {
+        "complete": {
+          "approvalEvents": [
+            {
+              "digest": "52c77cd4af24c97b6069842a4321552463cdff5e2b7f377c60b5a7efb7513bb8",
+              "eventId": "95e73728-0665-455f-b4a4-7bcc84f1302c"
+            }
+          ],
+          "error": null,
+          "holdAfterEffect": false,
+          "invocation": {
+            "attempts": 1,
+            "digest": "52c77cd4af24c97b6069842a4321552463cdff5e2b7f377c60b5a7efb7513bb8",
+            "invocationId": "a6c8e0b8-1d5b-41c4-8556-d4969fbb29b6:effect",
+            "sdkAttempts": [
+              {
+                "callId": "call_fixture_effect_25",
+                "messageId": "msg_0ec454f6f001q0fXzpX3FQGBdG"
+              }
+            ],
+            "state": "completed",
+            "attemptId": "e91443f1-ae3f-43fb-8023-9d3ee025eb72",
+            "instanceId": "cfbfee3b-5d28-4f0f-9c03-11840a6e6040",
+            "result": {
+              "invocationId": "a6c8e0b8-1d5b-41c4-8556-d4969fbb29b6:effect",
+              "receipt": "a6c8e0b8-1d5b-41c4-8556-d4969fbb29b6:effect:1",
+              "value": "approved-fixture"
+            }
+          },
+          "messageId": "msg_96dc642975af614c1e1cec4750eace37",
+          "mode": "idempotent",
+          "modelAttempts": ["0728354c-8b76-43ec-8050-fff1736c30d9"],
+          "notBefore": 1790670192840,
+          "operationId": "a6c8e0b8-1d5b-41c4-8556-d4969fbb29b6",
+          "reply": "Cerebro fixture completed.",
+          "requestDigest": "6a34a962c414f0d1b203200730ba450130fe1176903054eef111270b33309b78",
+          "sessionId": "ses_f13bab2a3ffdNckKOQeyh01a6i",
+          "status": "completed",
+          "toolDiagnostics": [
+            {
+              "callId": "call_fixture_effect_25",
+              "errorKind": null,
+              "messageId": "msg_0ec454f6f001q0fXzpX3FQGBdG",
+              "resultMatchesLedger": true,
+              "status": "completed",
+              "tool": "fixture_effect"
+            }
+          ]
+        },
+        "id": "a6c8e0b8-1d5b-41c4-8556-d4969fbb29b6",
+        "noSessionRequestBeforeWake": true,
+        "wake": {
+          "operationId": "a6c8e0b8-1d5b-41c4-8556-d4969fbb29b6",
+          "phases": [
+            {
+              "at": 1790670177863,
+              "instance": "c2eb5ee9-ca5d-41cc-8c5c-81499998cf56",
+              "phase": "accepted"
+            },
+            {
+              "at": 1790670178009,
+              "instance": "c2eb5ee9-ca5d-41cc-8c5c-81499998cf56",
+              "phase": "wake"
+            },
+            {
+              "at": 1790670359854,
+              "instance": "cfbfee3b-5d28-4f0f-9c03-11840a6e6040",
+              "phase": "wake"
+            },
+            {
+              "at": 1790670359982,
+              "instance": "cfbfee3b-5d28-4f0f-9c03-11840a6e6040",
+              "phase": "model-started"
+            },
+            {
+              "at": 1790670360508,
+              "instance": "cfbfee3b-5d28-4f0f-9c03-11840a6e6040",
+              "phase": "waiting-for-approval"
+            }
+          ]
+        }
+      },
+      "id": "recovery.before-model",
+      "status": "pass"
+    },
+    {
+      "durationMs": 11719,
+      "evidence": {
+        "complete": {
+          "approvalEvents": [
+            {
+              "digest": "a83e25cac9fcbca667dbe975ffce3d67ae6a81f53d9d5a00f442b14923e46570",
+              "eventId": "c50ed532-d8e3-42ef-a0c4-93df967cf30d"
+            }
+          ],
+          "error": null,
+          "holdAfterEffect": false,
+          "invocation": {
+            "attempts": 1,
+            "digest": "a83e25cac9fcbca667dbe975ffce3d67ae6a81f53d9d5a00f442b14923e46570",
+            "invocationId": "08996636-43ef-45ab-9e9f-9cb56b1600e2:effect",
+            "sdkAttempts": [
+              {
+                "callId": "call_fixture_effect_28",
+                "messageId": "msg_0ec455ae8001KFsjPB2Thg3zqL"
+              },
+              {
+                "callId": "call_fixture_effect_30",
+                "messageId": "msg_0ec458394001Lza5Vl2sj1Zw1t"
+              }
+            ],
+            "state": "completed",
+            "attemptId": "848b5d55-47b1-4e63-accb-b10b689ec381",
+            "instanceId": "44b4fa47-233d-4a5f-9624-67c60e01e89c",
+            "result": {
+              "invocationId": "08996636-43ef-45ab-9e9f-9cb56b1600e2:effect",
+              "receipt": "08996636-43ef-45ab-9e9f-9cb56b1600e2:effect:1",
+              "value": "approved-fixture"
+            }
+          },
+          "messageId": "msg_5bf2ae52c170fb3d478617285ad62d4d",
+          "mode": "idempotent",
+          "modelAttempts": [
+            "aee21b47-e16e-4172-8466-e7ac184e3c57",
+            "a8a2ba59-4d2f-481f-9849-29787ec29074"
+          ],
+          "notBefore": 1790670362378,
+          "operationId": "08996636-43ef-45ab-9e9f-9cb56b1600e2",
+          "reply": "Cerebro fixture completed.",
+          "requestDigest": "8c2d4e96f76df7c18095889e10e77ff82ad869ed913011c1393d96b1fba64df0",
+          "sessionId": "ses_f13baa662ffduYdXMTfdmGjvCe",
+          "status": "completed",
+          "toolDiagnostics": [
+            {
+              "callId": "call_fixture_effect_28",
+              "errorKind": "other",
+              "messageId": "msg_0ec455ae8001KFsjPB2Thg3zqL",
+              "resultMatchesLedger": false,
+              "status": "error",
+              "tool": "fixture_effect"
+            },
+            {
+              "callId": "call_fixture_effect_30",
+              "errorKind": null,
+              "messageId": "msg_0ec458394001Lza5Vl2sj1Zw1t",
+              "resultMatchesLedger": true,
+              "status": "completed",
+              "tool": "fixture_effect"
+            }
+          ]
+        },
+        "effect": {
+          "calls": 1,
+          "effects": 1,
+          "held": false,
+          "result": {
+            "invocationId": "08996636-43ef-45ab-9e9f-9cb56b1600e2:effect",
+            "receipt": "08996636-43ef-45ab-9e9f-9cb56b1600e2:effect:1",
+            "value": "approved-fixture"
+          }
+        },
+        "id": "08996636-43ef-45ab-9e9f-9cb56b1600e2",
+        "pendingApprovalPreserved": true
+      },
+      "id": "recovery.approval",
+      "status": "pass"
+    },
+    {
+      "durationMs": 186930,
+      "evidence": {
+        "checkpoint": {
+          "operationId": "4e318a22-f9ef-4ca8-b12e-815a83614e84",
+          "phases": [
+            {
+              "at": 1790670374120,
+              "instance": "debd666b-94ea-4204-aad5-9c53b7df01b7",
+              "phase": "accepted"
+            },
+            {
+              "at": 1790670375017,
+              "instance": "debd666b-94ea-4204-aad5-9c53b7df01b7",
+              "phase": "wake"
+            },
+            {
+              "at": 1790670375067,
+              "instance": "debd666b-94ea-4204-aad5-9c53b7df01b7",
+              "phase": "model-started"
+            },
+            {
+              "at": 1790670375414,
+              "instance": "debd666b-94ea-4204-aad5-9c53b7df01b7",
+              "phase": "waiting-for-approval"
+            },
+            {
+              "at": 1790670376032,
+              "instance": "debd666b-94ea-4204-aad5-9c53b7df01b7",
+              "phase": "wake"
+            },
+            {
+              "at": 1790670376048,
+              "instance": "debd666b-94ea-4204-aad5-9c53b7df01b7",
+              "phase": "executing"
+            },
+            {
+              "at": 1790670558242,
+              "instance": "9f72aaa0-107a-47a6-8e35-8cd8609fa853",
+              "phase": "wake"
+            },
+            {
+              "at": 1790670558329,
+              "instance": "9f72aaa0-107a-47a6-8e35-8cd8609fa853",
+              "phase": "executing"
+            },
+            {
+              "at": 1790670558846,
+              "instance": "9f72aaa0-107a-47a6-8e35-8cd8609fa853",
+              "phase": "completed"
+            }
+          ]
+        },
+        "committed": {
+          "calls": 1,
+          "effects": 1,
+          "held": true,
+          "result": {
+            "invocationId": "4e318a22-f9ef-4ca8-b12e-815a83614e84:effect",
+            "receipt": "4e318a22-f9ef-4ca8-b12e-815a83614e84:effect:1",
+            "value": "approved-fixture"
+          }
+        },
+        "effect": {
+          "calls": 2,
+          "effects": 1,
+          "held": false,
+          "result": {
+            "invocationId": "4e318a22-f9ef-4ca8-b12e-815a83614e84:effect",
+            "receipt": "4e318a22-f9ef-4ca8-b12e-815a83614e84:effect:1",
+            "value": "approved-fixture"
+          }
+        },
+        "id": "4e318a22-f9ef-4ca8-b12e-815a83614e84",
+        "noSessionRequestBeforeRecovery": true,
+        "recovered": {
+          "approvalEvents": [
+            {
+              "digest": "54e2e85969f73c50a4cc0b066afbee54c43955a4c3d3c3f0901ea9e95c8bcc47",
+              "eventId": "2d2ee350-140b-4710-9d94-5cfaa8a24f45"
+            }
+          ],
+          "error": null,
+          "holdAfterEffect": true,
+          "invocation": {
+            "attempts": 2,
+            "digest": "54e2e85969f73c50a4cc0b066afbee54c43955a4c3d3c3f0901ea9e95c8bcc47",
+            "invocationId": "4e318a22-f9ef-4ca8-b12e-815a83614e84:effect",
+            "sdkAttempts": [
+              {
+                "callId": "call_fixture_effect_33",
+                "messageId": "msg_0ec4589c1001hTqS42n8HXIJwK"
+              },
+              {
+                "callId": "call_fixture_effect_34",
+                "messageId": "msg_0ec4855bf0011DyX0BvrKorjbi"
+              }
+            ],
+            "state": "completed",
+            "attemptId": "29574f0d-9006-4248-960f-994d34652d83",
+            "instanceId": "9f72aaa0-107a-47a6-8e35-8cd8609fa853",
+            "result": {
+              "invocationId": "4e318a22-f9ef-4ca8-b12e-815a83614e84:effect",
+              "receipt": "4e318a22-f9ef-4ca8-b12e-815a83614e84:effect:1",
+              "value": "approved-fixture"
+            }
+          },
+          "messageId": "msg_7be0f404028fdbd5cddbb3e223aaeff3",
+          "mode": "idempotent",
+          "modelAttempts": [
+            "24f2b784-d952-43b9-8e6c-a88beeee5a1d",
+            "1f95350c-18b2-40b9-b741-4fde39cf5480"
+          ],
+          "notBefore": 1790670374092,
+          "operationId": "4e318a22-f9ef-4ca8-b12e-815a83614e84",
+          "reply": "Cerebro fixture completed.",
+          "requestDigest": "dce4df9e8779f723db1b8a84f2819d0e4703f2b6fc60c3dd7682dbcd8e9b7200",
+          "sessionId": "ses_f13ba7787ffddpQfW0FxH8VQvO",
+          "status": "completed",
+          "toolDiagnostics": [
+            {
+              "callId": "call_fixture_effect_33",
+              "errorKind": "other",
+              "messageId": "msg_0ec4589c1001hTqS42n8HXIJwK",
+              "resultMatchesLedger": false,
+              "status": "error",
+              "tool": "fixture_effect"
+            },
+            {
+              "callId": "call_fixture_effect_34",
+              "errorKind": null,
+              "messageId": "msg_0ec4855bf0011DyX0BvrKorjbi",
+              "resultMatchesLedger": true,
+              "status": "completed",
+              "tool": "fixture_effect"
+            }
+          ]
+        }
+      },
+      "id": "recovery.idempotent-effect",
+      "status": "pass"
+    },
+    {
+      "durationMs": 186884,
+      "evidence": {
+        "checkpoint": {
+          "operationId": "5fc25146-45b4-4690-b7e4-fe779a4e33cc",
+          "phases": [
+            {
+              "at": 1790670561123,
+              "instance": "7abea40e-6534-4ce4-b9a4-e0beb13df5d7",
+              "phase": "accepted"
+            },
+            {
+              "at": 1790670562030,
+              "instance": "7abea40e-6534-4ce4-b9a4-e0beb13df5d7",
+              "phase": "wake"
+            },
+            {
+              "at": 1790670562075,
+              "instance": "7abea40e-6534-4ce4-b9a4-e0beb13df5d7",
+              "phase": "model-started"
+            },
+            {
+              "at": 1790670562385,
+              "instance": "7abea40e-6534-4ce4-b9a4-e0beb13df5d7",
+              "phase": "waiting-for-approval"
+            },
+            {
+              "at": 1790670563048,
+              "instance": "7abea40e-6534-4ce4-b9a4-e0beb13df5d7",
+              "phase": "wake"
+            },
+            {
+              "at": 1790670563061,
+              "instance": "7abea40e-6534-4ce4-b9a4-e0beb13df5d7",
+              "phase": "executing"
+            },
+            {
+              "at": 1790670745319,
+              "instance": "3611fdb5-5a9d-432b-8e81-6ad7bd7b84e4",
+              "phase": "wake"
+            },
+            {
+              "at": 1790670745330,
+              "instance": "3611fdb5-5a9d-432b-8e81-6ad7bd7b84e4",
+              "phase": "unknown-outcome"
+            }
+          ]
+        },
+        "committed": {
+          "calls": 1,
+          "effects": 1,
+          "held": true,
+          "result": {
+            "invocationId": "5fc25146-45b4-4690-b7e4-fe779a4e33cc:effect",
+            "receipt": "5fc25146-45b4-4690-b7e4-fe779a4e33cc:effect:1",
+            "value": "approved-fixture"
+          }
+        },
+        "effect": {
+          "calls": 1,
+          "effects": 1,
+          "held": false,
+          "result": {
+            "invocationId": "5fc25146-45b4-4690-b7e4-fe779a4e33cc:effect",
+            "receipt": "5fc25146-45b4-4690-b7e4-fe779a4e33cc:effect:1",
+            "value": "approved-fixture"
+          }
+        },
+        "id": "5fc25146-45b4-4690-b7e4-fe779a4e33cc",
+        "noSessionRequestBeforeRecovery": true,
+        "recovered": {
+          "approvalEvents": [
+            {
+              "digest": "7bf2ce869eb5efdb23fdadc7dfe4092def7f2d1d1eb4dae1335e81916c3d44ef",
+              "eventId": "eb41f3f8-ece2-42e1-89e1-01feb0c39dc1"
+            }
+          ],
+          "error": "Effect outcome was not durably recorded",
+          "holdAfterEffect": true,
+          "invocation": {
+            "attempts": 1,
+            "digest": "7bf2ce869eb5efdb23fdadc7dfe4092def7f2d1d1eb4dae1335e81916c3d44ef",
+            "invocationId": "5fc25146-45b4-4690-b7e4-fe779a4e33cc:effect",
+            "sdkAttempts": [
+              {
+                "callId": "call_fixture_effect_37",
+                "messageId": "msg_0ec48641b001wbE5VYrS47oiu3"
+              }
+            ],
+            "state": "unknown-outcome",
+            "attemptId": "25d2f874-5cd3-49b9-8fc7-f871b76f22d4",
+            "instanceId": "7abea40e-6534-4ce4-b9a4-e0beb13df5d7",
+            "reason": "Effect outcome was not durably recorded",
+            "result": null
+          },
+          "messageId": "msg_a8bab5d3a411d55798669993595d2d05",
+          "mode": "non-idempotent",
+          "modelAttempts": ["1662b5d4-5760-407d-ba5b-1dee7d0feefc"],
+          "notBefore": 1790670561025,
+          "operationId": "5fc25146-45b4-4690-b7e4-fe779a4e33cc",
+          "reply": null,
+          "requestDigest": "2c38d6ab59cfdf2e5fd74e59bc682250b4276620493dacdbb0a196e4e9d83651",
+          "sessionId": "ses_f13b79d01ffdUVkW5w7VNTZe3B",
+          "status": "unknown-outcome",
+          "toolDiagnostics": []
+        }
+      },
+      "id": "recovery.unknown-effect",
+      "status": "pass"
+    },
+    {
+      "durationMs": 10982,
+      "evidence": {
+        "effect": {
+          "calls": 1,
+          "effects": 1,
+          "held": false,
+          "result": {
+            "invocationId": "49bf32ff-a961-4c74-8615-6471f8c31f32:effect",
+            "receipt": "49bf32ff-a961-4c74-8615-6471f8c31f32:effect:1",
+            "value": "approved-fixture"
+          }
+        },
+        "id": "49bf32ff-a961-4c74-8615-6471f8c31f32",
+        "lost": {
+          "disconnected": true
+        },
+        "repeated": {
+          "instanceId": "06065433-8eea-4f70-a9ea-dd02f69766d9",
+          "ok": true,
+          "run": {
+            "approvalEvents": [
+              {
+                "digest": "9994b8927806eed2984e44ebe79f752a19b8c513e765a3243fce30094c71dee6",
+                "eventId": "83eb820b-fc9d-43fa-8bd7-0e8f383eb145"
+              }
+            ],
+            "error": null,
+            "holdAfterEffect": false,
+            "invocation": {
+              "attempts": 1,
+              "digest": "9994b8927806eed2984e44ebe79f752a19b8c513e765a3243fce30094c71dee6",
+              "invocationId": "49bf32ff-a961-4c74-8615-6471f8c31f32:effect",
+              "sdkAttempts": [
+                {
+                  "callId": "call_fixture_effect_38",
+                  "messageId": "msg_0ec4b3be1001TXY8UBRprfpbMJ"
+                }
+              ],
+              "state": "completed",
+              "attemptId": "03e1d05a-d964-4d42-ab2d-1c100c3aa865",
+              "instanceId": "6b0b2422-8eed-4cf9-bac5-cb42520f9d63",
+              "result": {
+                "invocationId": "49bf32ff-a961-4c74-8615-6471f8c31f32:effect",
+                "receipt": "49bf32ff-a961-4c74-8615-6471f8c31f32:effect:1",
+                "value": "approved-fixture"
+              }
+            },
+            "messageId": "msg_da5e8976b633309aa6206a8ebfd31ae5",
+            "mode": "idempotent",
+            "modelAttempts": ["8c9e608a-0500-43ba-8231-bae91d4fb061"],
+            "notBefore": 1790670747916,
+            "operationId": "49bf32ff-a961-4c74-8615-6471f8c31f32",
+            "reply": "Cerebro fixture completed.",
+            "requestDigest": "42d622a6a670a84e6bc65b4d91fa0da7b53bd5bddb6c8c20f0f00fa283238b26",
+            "sessionId": "ses_f13b4c5bcffdqW75Ti0l3l843Y",
+            "status": "completed",
+            "toolDiagnostics": [
+              {
+                "callId": "call_fixture_effect_38",
+                "errorKind": null,
+                "messageId": "msg_0ec4b3be1001TXY8UBRprfpbMJ",
+                "resultMatchesLedger": true,
+                "status": "completed",
+                "tool": "fixture_effect"
+              }
+            ]
+          }
+        }
+      },
+      "id": "recovery.completed",
+      "status": "pass"
+    }
+  ],
+  "timestamp": "2026-09-29T08:32:38.873Z"
+}

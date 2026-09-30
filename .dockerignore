@@ -16,6 +16,3 @@ node_modules
 **/dist
 **/.output
 **/.turbo
-experiments/celld-slice/evidence
-experiments/celld-slice/results
-experiments/celld-slice/node_modules

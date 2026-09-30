@@ -20,8 +20,8 @@ services:
       retries: 30
   minio-runtime:
     build:
-      context: ../../experiments/celld-slice
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: tests/runtime/Dockerfile
       target: minio
     image: ${COMPOSE_PROJECT_NAME:-cerebro-runtime}-minio
     command: [server, /data]
@@ -43,7 +43,7 @@ services:
       retries: 30
   fixture:
     <<: *runtime
-    command: [node, fixtures/provider.ts]
+    command: [node, tests/runtime/provider.ts]
     environment:
       FIXTURE_DATA_DIR: /fixture-data
     volumes:

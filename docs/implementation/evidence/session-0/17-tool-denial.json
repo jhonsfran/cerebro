@@ -1,0 +1,147 @@
+{
+  "results": [
+    {
+      "effect": {
+        "calls": 0,
+        "effects": 0,
+        "held": false,
+        "result": null
+      },
+      "operationId": "49a3558e-62e3-43e1-9dc9-310bf678a646",
+      "run": {
+        "approvalEvents": [],
+        "error": "OpenCode did not complete the brokered effect",
+        "holdAfterEffect": false,
+        "invocation": null,
+        "messageId": "msg_ece47d4897bd1a3359ff145a4c92defc",
+        "mode": "idempotent",
+        "modelAttempts": ["00af340f-bf42-451f-aa57-1fc659cca026"],
+        "notBefore": 1790673415427,
+        "operationId": "49a3558e-62e3-43e1-9dc9-310bf678a646",
+        "reply": null,
+        "requestDigest": "833c3ea1ed73d84bb4e458d6fd273d7cfd2d84a8caa085d025f858af7babdf91",
+        "sessionId": "ses_f138c10aaffdltgMnJJg6CGjS6",
+        "status": "failed",
+        "toolDiagnostics": [
+          {
+            "callId": "call_shell_67c4d160-d884-4d7a-b6c2-714ba623632f",
+            "errorKind": "denied",
+            "messageId": "msg_0ec73f067001CCGgWV3N9KI9Mt",
+            "resultMatchesLedger": false,
+            "status": "error",
+            "tool": "shell"
+          }
+        ]
+      },
+      "tool": "shell"
+    },
+    {
+      "effect": {
+        "calls": 0,
+        "effects": 0,
+        "held": false,
+        "result": null
+      },
+      "operationId": "4d4351f2-9d65-4e9e-bc1b-0506fff3e2f5",
+      "run": {
+        "approvalEvents": [],
+        "error": "OpenCode did not complete the brokered effect",
+        "holdAfterEffect": false,
+        "invocation": null,
+        "messageId": "msg_cded7a88110527cf29e9c8573f16f9d8",
+        "mode": "idempotent",
+        "modelAttempts": ["68e1a552-4ae8-4f0f-b8b8-72121aa96386"],
+        "notBefore": 1790673416402,
+        "operationId": "4d4351f2-9d65-4e9e-bc1b-0506fff3e2f5",
+        "reply": null,
+        "requestDigest": "5edbeb708f4b0ac9d4980455e1b856aa5d74507a90c0860705a16e69012c986f",
+        "sessionId": "ses_f138c0cb9ffdLjo3223WNMTLVk",
+        "status": "failed",
+        "toolDiagnostics": [
+          {
+            "callId": "call_webfetch_8801fd53-3527-40e4-92cc-108477ea7fc6",
+            "errorKind": "denied",
+            "messageId": "msg_0ec73f455001htGXu3Zypz98Pe",
+            "resultMatchesLedger": false,
+            "status": "error",
+            "tool": "webfetch"
+          }
+        ]
+      },
+      "tool": "webfetch"
+    },
+    {
+      "effect": {
+        "calls": 0,
+        "effects": 0,
+        "held": false,
+        "result": null
+      },
+      "operationId": "86c3069e-dfc0-4144-83a6-6c3bb963f567",
+      "run": {
+        "approvalEvents": [],
+        "error": "OpenCode did not complete the brokered effect",
+        "holdAfterEffect": false,
+        "invocation": null,
+        "messageId": "msg_4c818982ded47cbcbaaef331a8b00e52",
+        "mode": "idempotent",
+        "modelAttempts": ["3a654658-97ae-462d-bba7-0a392f22880e"],
+        "notBefore": 1790673417423,
+        "operationId": "86c3069e-dfc0-4144-83a6-6c3bb963f567",
+        "reply": null,
+        "requestDigest": "a999403aac77371781212dd0a139ff028b56b358ddfb10f7a2b75949f3652938",
+        "sessionId": "ses_f138c08d7ffd6eLGcDuqD338hG",
+        "status": "failed",
+        "toolDiagnostics": [
+          {
+            "callId": "call_execute_7fc965a8-949c-4680-8532-527e05c8c48d",
+            "errorKind": "denied",
+            "messageId": "msg_0ec73f8360015v9CGe2Wz56OCS",
+            "resultMatchesLedger": false,
+            "status": "error",
+            "tool": "execute"
+          }
+        ]
+      },
+      "tool": "execute"
+    },
+    {
+      "effect": {
+        "calls": 0,
+        "effects": 0,
+        "held": false,
+        "result": null
+      },
+      "operationId": "3b2d1b9a-7c32-492a-ac37-adfe8deea972",
+      "run": {
+        "approvalEvents": [],
+        "error": "OpenCode did not complete the brokered effect",
+        "holdAfterEffect": false,
+        "invocation": null,
+        "messageId": "msg_8e04f0a73ac9a92ed0fdde1612919c8f",
+        "mode": "idempotent",
+        "modelAttempts": ["96af7679-641f-4bea-bd73-30fa82c36b9f"],
+        "notBefore": 1790673418419,
+        "operationId": "3b2d1b9a-7c32-492a-ac37-adfe8deea972",
+        "reply": null,
+        "requestDigest": "db73bb836ef33098998e0f481e87421c84ce597c0e34d8e092929b635919e4df",
+        "sessionId": "ses_f138c04edffdCSz7y6NDlFiFt7",
+        "status": "failed",
+        "toolDiagnostics": [
+          {
+            "callId": "call_mcp_unregistered_2628293d-0046-401e-a111-6085bada0075",
+            "errorKind": "denied",
+            "messageId": "msg_0ec73fc1c001pCTOpE4CstcVFl",
+            "resultMatchesLedger": false,
+            "status": "error",
+            "tool": "mcp_unregistered"
+          }
+        ]
+      },
+      "tool": "mcp_unregistered"
+    }
+  ],
+  "timestamp": "2026-09-29T09:16:59.371Z",
+  "validationImageId": "sha256:a2d9f8ab9dbc2be28b881d991c2e6b229d93d460b315f6d7a3b609dd42ad6cd9",
+  "validationWorkerVersion": "0b226a2f994ccfa9"
+}
