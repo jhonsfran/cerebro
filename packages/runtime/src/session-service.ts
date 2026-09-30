@@ -1,3 +1,4 @@
+/* oxlint-disable no-await-in-loop -- Each item must pass current authorization before it leaves the stream. */
 import type { EventAddress } from "@cerebro/contracts/events";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type {
@@ -18,6 +19,7 @@ import type {
   SessionService,
   SessionSnapshot,
   SessionStreamItem,
+  ContentDependencies,
 } from "@cerebro/contracts/session";
 import { getAgentByName } from "agents";
 
@@ -34,6 +36,11 @@ export interface SessionServiceDependencies {
   readonly agentRepository: AgentRepository;
   readonly authorizationPolicy: AuthorizationPolicy;
   readonly entitlementPolicy: EntitlementPolicy;
+  readonly checkContentDependencies?: (
+    context: ExecutionContext,
+    dependencies: ContentDependencies,
+    options: ReadOptions
+  ) => Promise<PortResult<void>>;
 }
 
 const unavailable = (): PortResult<never> => ({
@@ -167,6 +174,42 @@ export const createSessionService = (
       return;
     }
     for (const item of result.value) {
+      const current = await authorizeSession(
+        dependencies.authorizationPolicy,
+        dependencies.entitlementPolicy,
+        address,
+        context,
+        "read",
+        options
+      );
+      if (current.status !== "ok") {
+        yield current;
+        return;
+      }
+      if (
+        dependencies.checkContentDependencies &&
+        (item.type === "output" ||
+          item.type === "citation" ||
+          item.type === "tool")
+      ) {
+        if (!item.dependencies) {
+          yield {
+            code: "unauthorized",
+            reason: "Sensitive output has no content dependencies.",
+            status: "denied",
+          };
+          return;
+        }
+        const allowed = await dependencies.checkContentDependencies(
+          context,
+          item.dependencies,
+          options
+        );
+        if (allowed.status !== "ok") {
+          yield allowed;
+          return;
+        }
+      }
       yield { status: "ok", value: item };
     }
   },

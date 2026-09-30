@@ -5,13 +5,18 @@
   "exports": {
     ".": "./src/session-service.ts",
     "./session-agent": "./src/session-agent.ts",
-    "./ledger": "./src/ledger.ts"
+    "./ledger": "./src/ledger.ts",
+    "./operation-journal": "./src/operation-journal.ts",
+    "./runtime-ports": "./src/runtime-ports.ts"
   },
   "scripts": {
     "check-types": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@cerebro/contracts": "workspace:*",
+    "@cerebro/policy": "workspace:*",
+    "@cerebro/tools": "workspace:*",
+    "@opencode-ai/plugin": "0.0.0-dev-18697",
     "@opencode-ai/sdk": "0.0.0-dev-18697",
     "agents": "0.24.0",
     "drizzle-orm": "catalog:"

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { z } from "zod";
 
+import { agentExecutionGrants } from "../../apps/web/src/features/product/configuration";
 import { operationFor } from "../../apps/web/src/features/product/intent";
 import type { OperationIntent } from "../../apps/web/src/features/product/intent";
 import type { ConversationItem } from "../../apps/web/src/features/product/types";
@@ -310,3 +311,84 @@ test("operation intent remains stable for canonical retries and changes for new 
 });
 
 /* eslint-enable sort-keys */
+
+test("explicit agent selections publish tool read/execute and source read grants", () => {
+  assert.deepEqual(
+    agentExecutionGrants("company", ["read-policy"], ["travel-source"]),
+    [
+      {
+        action: "read",
+        resource: {
+          id: "read-policy",
+          kind: "tool",
+          organizationId: "company",
+        },
+      },
+      {
+        action: "execute",
+        resource: {
+          id: "read-policy",
+          kind: "tool",
+          organizationId: "company",
+        },
+      },
+      {
+        action: "read",
+        resource: {
+          id: "travel-source",
+          kind: "memory",
+          organizationId: "company",
+        },
+      },
+    ]
+  );
+  assert.deepEqual(agentExecutionGrants("company", [], []), []);
+});
+
+test("selected configured tools publish only their explicit connector execution grants", () => {
+  const grants = agentExecutionGrants(
+    "company",
+    ["read-policy", "read-directory"],
+    [],
+    [],
+    [
+      { connectorId: "company-connector", id: "read-policy" },
+      { connectorId: "company-connector", id: "read-directory" },
+      { connectorId: "other-connector", id: "unselected" },
+    ]
+  );
+  assert.deepEqual(grants, [
+    {
+      action: "read",
+      resource: { id: "read-policy", kind: "tool", organizationId: "company" },
+    },
+    {
+      action: "execute",
+      resource: { id: "read-policy", kind: "tool", organizationId: "company" },
+    },
+    {
+      action: "read",
+      resource: {
+        id: "read-directory",
+        kind: "tool",
+        organizationId: "company",
+      },
+    },
+    {
+      action: "execute",
+      resource: {
+        id: "read-directory",
+        kind: "tool",
+        organizationId: "company",
+      },
+    },
+    {
+      action: "execute",
+      resource: {
+        id: "company-connector",
+        kind: "tool",
+        organizationId: "company",
+      },
+    },
+  ]);
+});

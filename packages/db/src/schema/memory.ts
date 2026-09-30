@@ -66,9 +66,9 @@ export const memoryRecord = pgTable(
       .$type<readonly string[]>()
       .notNull()
       .default([]),
-    embedding: embeddingVector("embedding").notNull(),
-    embeddingDimensions: integer("embedding_dimensions").notNull(),
-    embeddingModel: text("embedding_model").notNull(),
+    embedding: embeddingVector("embedding"),
+    embeddingDimensions: integer("embedding_dimensions"),
+    embeddingModel: text("embedding_model"),
     id: text("id").notNull(),
     kind: text("kind", {
       enum: ["source-chunk", "conversation-summary", "remembered-fact"],

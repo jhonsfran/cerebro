@@ -4,6 +4,7 @@ import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import {
   channelConversation,
   channelInbox,
+  channelItem,
   channelReply,
 } from "@cerebro/db/schema/agents";
 import { and, asc, eq, lt } from "drizzle-orm";
@@ -11,7 +12,12 @@ import { z } from "zod";
 
 import { sessionServiceFor } from "./fixture-session";
 import { projectSession } from "./projection";
-import { authorize, contextByPrincipal, unwrap } from "./security";
+import {
+  authorize,
+  authorizeContent,
+  contextByPrincipal,
+  unwrap,
+} from "./security";
 import { ChannelError, DELIVERY_TIMEOUT_MS, EFFECT_DEADLINE_MS } from "./types";
 import type { ChannelOptions, SlackConfiguration } from "./types";
 
@@ -275,6 +281,31 @@ export const drainChannelWork = async (
           "agent",
           conversation.agentId
         );
+        const content = await database
+          .select()
+          .from(channelItem)
+          .where(
+            and(
+              eq(channelItem.organizationId, options.organizationId),
+              eq(channelItem.conversationId, conversation.conversationId)
+            )
+          );
+        const outputs = content.filter(
+          (entry) =>
+            entry.item.runId === row.runId && entry.item.type === "output"
+        );
+        if (options.mode === "production" && outputs.length === 0) {
+          throw new ChannelError(
+            403,
+            "unauthorized",
+            "Reply dependencies are not available."
+          );
+        }
+        for (const entry of content) {
+          if (entry.item.runId === row.runId) {
+            await authorizeContent(database, options, context, entry.item);
+          }
+        }
       } catch (error) {
         if (error instanceof ChannelError && error.status === 403) {
           await database

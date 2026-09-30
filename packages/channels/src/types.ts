@@ -1,6 +1,9 @@
 import type {
   AuthorizationPolicy,
   BudgetAuthority,
+  ContentDependencies,
+  ExecutionContext,
+  PortResult,
   SessionService,
 } from "@cerebro/contracts";
 import type { Database } from "@cerebro/db";
@@ -14,6 +17,36 @@ export interface SlackConfiguration {
   readonly botToken?: string;
   readonly apiUrl?: string;
 }
+export interface ChannelCatalog {
+  readonly sourceChoices?: readonly {
+    readonly id: string;
+    readonly label: string;
+  }[];
+  readonly modelChoices: readonly {
+    readonly id: string;
+    readonly label: string;
+  }[];
+  readonly connectorChoices: readonly {
+    readonly connectorId?: string;
+    readonly id: string;
+    readonly label: string;
+  }[];
+}
+export interface SourceView {
+  readonly sourceId: string;
+  readonly sourceVersion: string;
+  readonly text: string;
+  readonly title: string;
+}
+export interface AuditView {
+  readonly runId: string;
+  readonly state: string;
+  readonly entries: readonly {
+    readonly at: number;
+    readonly description: string;
+    readonly type: string;
+  }[];
+}
 export interface ChannelOptions {
   readonly mode: "fixture" | "production";
   readonly organizationId: string;
@@ -21,6 +54,36 @@ export interface ChannelOptions {
     run: (database: Database) => Promise<T>
   ) => Promise<T>;
   readonly slack?: SlackConfiguration;
+  readonly bootstrapToken?: string;
+  readonly trustedOwnerUserId?: string;
+  readonly catalog?: ChannelCatalog;
+  readonly catalogFor?: (
+    database: Database,
+    context: ExecutionContext
+  ) => Promise<PortResult<ChannelCatalog>>;
+  readonly readSource?: (
+    database: Database,
+    context: ExecutionContext,
+    input: {
+      readonly conversationId: string;
+      readonly sessionId: string;
+      readonly sourceId: string;
+    }
+  ) => Promise<PortResult<SourceView>>;
+  readonly readAudit?: (
+    database: Database,
+    context: ExecutionContext,
+    input: {
+      readonly conversationId: string;
+      readonly sessionId: string;
+      readonly runId: string;
+    }
+  ) => Promise<PortResult<AuditView>>;
+  readonly checkContentDependencies?: (
+    database: Database,
+    context: ExecutionContext,
+    dependencies: ContentDependencies
+  ) => Promise<PortResult<void>>;
   readonly sessions?: (database: Database) => SessionService;
   readonly budget?: BudgetAuthority;
   readonly authorization?: (database: Database) => AuthorizationPolicy;

@@ -8,7 +8,7 @@ import type {
 } from "@cerebro/contracts";
 import type { Database } from "@cerebro/db";
 import type { IdentityRepository } from "@cerebro/db/repositories/identity";
-import type { MemoryService } from "@cerebro/memory";
+import type { MemoryService } from "@cerebro/memory/types";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 

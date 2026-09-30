@@ -10,6 +10,7 @@ import type {
   RunState,
   SessionReceipt,
   SessionStreamItem,
+  ContentDependencies,
 } from "@cerebro/contracts/session";
 import type {
   Approval,
@@ -33,6 +34,8 @@ export interface StoredRun {
   readonly output?: string;
   readonly opencodeSessionId?: string;
   readonly messageId?: string;
+  readonly dependencies?: ContentDependencies;
+  readonly modelPrompt?: string;
 }
 
 export interface StoredInvocation {
@@ -114,6 +117,7 @@ export interface LedgerValueMap {
     readonly runId: RunId;
   };
   readonly stream: SessionStreamItem;
+  readonly "tool-output": Extract<SessionStreamItem, { type: "tool" }>;
   readonly outbox: OutboxEvent;
   readonly usage: OutboxEvent;
 }

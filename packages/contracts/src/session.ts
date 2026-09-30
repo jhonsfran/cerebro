@@ -6,7 +6,9 @@ import type {
   OrganizationId,
   RunId,
   SessionId,
+  SourceId,
 } from "./identity.ts";
+import type { Provenance } from "./memory.ts";
 import type { Action, Resource } from "./policy.ts";
 import type { EffectOptions, PortResult, ReadOptions } from "./port.ts";
 
@@ -60,12 +62,34 @@ export interface SessionReceipt {
   readonly replayed: boolean;
 }
 
+export interface ContentDependencies {
+  readonly sourceIds: readonly SourceId[];
+  readonly toolIds: readonly string[];
+}
+
 export type SessionStreamItem =
   | { readonly type: "run"; readonly run: RunState; readonly cursor: string }
   | {
       readonly type: "output";
       readonly runId: RunId;
       readonly text: string;
+      readonly dependencies?: ContentDependencies;
+      readonly cursor: string;
+    }
+  | {
+      readonly type: "citation";
+      readonly runId: RunId;
+      readonly citation: Provenance;
+      readonly dependencies: ContentDependencies;
+      readonly cursor: string;
+    }
+  | {
+      readonly type: "tool";
+      readonly runId: RunId;
+      readonly operationId: OperationId;
+      readonly toolId: string;
+      readonly output: unknown;
+      readonly dependencies: ContentDependencies;
       readonly cursor: string;
     }
   | {

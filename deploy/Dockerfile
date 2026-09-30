@@ -21,6 +21,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json ./
 COPY apps ./apps
 COPY packages ./packages
 COPY deploy ./deploy
+COPY tests/integration/pilot-provider.mjs ./deploy/pilot-provider.mjs
 RUN pnpm install --frozen-lockfile
 ENV PATH="/app/node_modules/.bin:${PATH}"
 RUN node deploy/patch-dependencies.mjs

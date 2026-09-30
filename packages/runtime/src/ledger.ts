@@ -14,6 +14,7 @@ import type {
   SessionSnapshot,
   SessionStreamItem,
 } from "@cerebro/contracts/session";
+import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import type {
   Approval,
   ToolExecution,
@@ -42,6 +43,35 @@ type NewStreamItem = SessionStreamItem extends infer Item
     ? Omit<Item, "cursor">
     : never
   : never;
+
+const auditPayload = (item: NewStreamItem): unknown => {
+  if (item.type === "output") {
+    return {
+      dependencies: item.dependencies,
+      runId: item.runId,
+      type: item.type,
+    };
+  }
+  if (item.type === "tool") {
+    return {
+      dependencies: item.dependencies,
+      operationId: item.operationId,
+      runId: item.runId,
+      toolId: item.toolId,
+      type: item.type,
+    };
+  }
+  if (item.type === "citation") {
+    return {
+      dependencies: item.dependencies,
+      runId: item.runId,
+      sourceId: item.citation.sourceId,
+      sourceVersion: item.citation.sourceVersion,
+      type: item.type,
+    };
+  }
+  return item;
+};
 
 const addressMatches = (a: EventAddress, b: EventAddress): boolean =>
   a.organizationId === b.organizationId &&
@@ -136,7 +166,7 @@ export class SessionLedger {
     });
   }
 
-  private append(runId: RunId, item: NewStreamItem): string {
+  append(runId: RunId, item: NewStreamItem): string {
     const cursor = this.nextSequence();
     const sequence = Number(cursor);
     this.store.write("stream", sequence.toString().padStart(16, "0"), {
@@ -154,12 +184,45 @@ export class SessionLedger {
       name: item.type,
       occurredAt: Date.now(),
       organizationId: address.organizationId,
-      payload: structuredClone(item),
+      payload: structuredClone(auditPayload(item)),
       runId,
       sessionId: address.sessionId,
     };
     this.store.write("outbox", sequence.toString().padStart(16, "0"), outbox);
     return cursor;
+  }
+
+  recordToolOutput(item: Extract<NewStreamItem, { type: "tool" }>): string {
+    return this.storage.transactionSync(() => {
+      const previous =
+        this.store.read("tool-output", item.operationId) ??
+        this.existingToolOutput(item.operationId);
+      if (previous) {
+        const { cursor, ...recorded } = previous;
+        if (canonicalToolArguments(recorded) !== canonicalToolArguments(item)) {
+          throw new Error("Tool output operation identity changed.");
+        }
+        this.store.write("tool-output", item.operationId, previous);
+        return cursor;
+      }
+      const cursor = this.append(item.runId, item);
+      this.store.write("tool-output", item.operationId, { ...item, cursor });
+      return cursor;
+    });
+  }
+
+  private existingToolOutput(
+    operationId: OperationId
+  ): Extract<SessionStreamItem, { type: "tool" }> | undefined {
+    const [row] = this.storage.sql
+      .exec<{ result: string }>(
+        "SELECT result FROM cerebro_operation WHERE kind='stream' AND json_valid(result) AND json_extract(result,'$.type')='tool' AND json_extract(result,'$.operationId')=? ORDER BY id LIMIT 1",
+        operationId
+      )
+      .toArray();
+    return row
+      ? (JSON.parse(row.result) as Extract<SessionStreamItem, { type: "tool" }>)
+      : undefined;
   }
 
   private nextSequence(): string {
@@ -285,8 +348,8 @@ export class SessionLedger {
       this.store.write("decision", options.operationId, {
         choice: "run",
         inputDigest: event.payloadDigest,
-        modelVersion: "fixture-decision-v1",
-        usage: { unit: "fixture-credits", units: 0 },
+        modelVersion: "direct-run-v1",
+        usage: { unit: "decision-units", units: 0 },
       });
       this.store.write("run", runId, run);
       this.append(runId, { run: toRunState(run), type: "run" });
@@ -312,7 +375,12 @@ export class SessionLedger {
       this.store.write("run", runId, next);
       this.append(runId, { run: toRunState(next), type: "run" });
       if (next.output && next.output !== current.output) {
-        this.append(runId, { runId, text: next.output, type: "output" });
+        this.append(runId, {
+          dependencies: next.dependencies,
+          runId,
+          text: next.output,
+          type: "output",
+        });
       }
       return next;
     });
@@ -324,7 +392,7 @@ export class SessionLedger {
     idempotent: boolean,
     sdkCallId: string,
     modelAttemptId: string,
-    approval: StoredApprovalRequest
+    approval: StoredApprovalRequest | undefined
   ): {
     kind: "claimed" | "running" | "result" | "unknown" | "conflict";
     record?: StoredInvocation;
@@ -392,20 +460,25 @@ export class SessionLedger {
         originModelAttemptId: modelAttemptId,
         runId,
         sdkCallIds: [sdkCallId],
-        state: "waiting-for-approval",
+        state: approval ? "waiting-for-approval" : "requested",
       };
       this.store.write("invocation", invocation.operationId, record);
-      this.store.write("approval", approval.id, approval);
-      this.append(runId, {
-        approvalId: approval.id,
-        runId,
-        type: "approval",
-      });
-      this.store.write("run", runId, { ...run, state: "waiting-for-approval" });
-      this.append(runId, {
-        run: toRunState({ ...run, state: "waiting-for-approval" }),
-        type: "run",
-      });
+      if (approval) {
+        this.store.write("approval", approval.id, approval);
+        this.append(runId, {
+          approvalId: approval.id,
+          runId,
+          type: "approval",
+        });
+        this.store.write("run", runId, {
+          ...run,
+          state: "waiting-for-approval",
+        });
+        this.append(runId, {
+          run: toRunState({ ...run, state: "waiting-for-approval" }),
+          type: "run",
+        });
+      }
       this.audit(runId, "tool.requested", {
         operationId: invocation.operationId,
         toolId: invocation.tool.id,
@@ -450,12 +523,13 @@ export class SessionLedger {
         current.state !== "requested" ||
         !run ||
         (run.state !== "queued" && run.state !== "running") ||
-        !grant ||
-        grant.operationId !== operationId ||
-        grant.argumentDigest !== current.argumentDigest ||
-        grant.toolId !== current.invocation.tool.id ||
-        grant.toolVersion !== current.invocation.tool.version ||
-        grant.expiresAt <= Date.now()
+        (current.invocation.tool.effect === "write" && !grant) ||
+        (grant &&
+          (grant.operationId !== operationId ||
+            grant.argumentDigest !== current.argumentDigest ||
+            grant.toolId !== current.invocation.tool.id ||
+            grant.toolVersion !== current.invocation.tool.version ||
+            grant.expiresAt <= Date.now()))
       ) {
         return;
       }
@@ -504,7 +578,7 @@ export class SessionLedger {
       } satisfies StoredInvocation);
       const next: StoredRun = {
         ...run,
-        state: "unknown-outcome",
+        state: run.state === "cancelled" ? "cancelled" : "unknown-outcome",
       };
       this.store.write("run", run.runId, next);
       this.append(run.runId, { run: toRunState(next), type: "run" });
@@ -675,6 +749,34 @@ export class SessionLedger {
         state,
       });
       return { status: "ok", value: state };
+    });
+  }
+
+  recordFailure(
+    runId: RunId,
+    stage: string,
+    result: PortResult<unknown>
+  ): void {
+    this.storage.transactionSync(() => {
+      const run = this.run(runId);
+      if (!run || result.status === "ok") {
+        return;
+      }
+      const operationId =
+        "operationId" in result ? result.operationId : run.operationId;
+      const code = "code" in result ? result.code : undefined;
+      const key = `diagnostic:${runId}:${stage}:${operationId}:${result.status}:${code ?? ""}`;
+      if (this.row(key)) {
+        return;
+      }
+      this.setRow(key, "true");
+      this.audit(runId, "runtime.failed", {
+        code,
+        operationId,
+        runId,
+        stage,
+        status: result.status,
+      });
     });
   }
 

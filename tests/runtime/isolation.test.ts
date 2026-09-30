@@ -310,3 +310,32 @@ test("PostgreSQL projection accepts a repeated event ID once", async () => {
   ]);
   assert.equal(Number(count.trim()), 1);
 });
+
+test("production operation receipt survives SDK migration and native process restart", async () => {
+  const name = "production-journal";
+  const write = await fetch(
+    `http://127.0.0.1:${stack.apiPort}/migration/${name}/journal-write`,
+    { method: "POST" }
+  );
+  assert.equal(write.status, 200);
+  const saved = await write.json();
+  assert.equal(saved.status, "ok");
+  assert.equal(saved.value.state, "outcome-recorded");
+  assert.deepEqual(saved.value.result, { status: "ok", value: { count: 1 } });
+  assert.deepEqual(saved.value.incurred, { unit: "credits", units: 3 });
+  compose(stack, ["kill", "-s", "SIGKILL", "celld"]);
+  compose(stack, ["up", "-d", "--wait", "celld"]);
+  const recovered = await waitFor(
+    async () => {
+      const response = await fetch(
+        `http://127.0.0.1:${stack.apiPort}/migration/${name}/journal-read`,
+        { method: "POST" }
+      );
+      assert.equal(response.status, 200);
+      return await response.json();
+    },
+    (result) => result.status === "ok",
+    30_000
+  );
+  assert.deepEqual(recovered, saved);
+});

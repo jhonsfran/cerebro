@@ -10,6 +10,7 @@ import {
   productPath,
   request,
 } from "./api";
+import { agentEditorValues, agentExecutionGrants } from "./configuration";
 import { ConversationPanel } from "./conversation";
 import { operationFor } from "./intent";
 import type { OperationIntent } from "./intent";
@@ -20,7 +21,6 @@ import type {
   AgentSummary,
   Budget,
   ConversationReference,
-  Grant,
   Setup,
 } from "./types";
 import {
@@ -28,6 +28,7 @@ import {
   agentDetailSchema,
   agentListSchema,
   budgetSchema,
+  catalogSchema,
   createdConversationSchema,
   conversationReferenceSchema,
   savedAgentSchema,
@@ -74,53 +75,54 @@ const AgentEditor = ({
   onSaved: (agentId: string) => Promise<void>;
   onCancel: () => void;
 }) => {
-  const [name, setName] = useState(agent?.name ?? "");
-  const [instructions, setInstructions] = useState(
-    agent?.definition.instructions ??
-      "Answer company questions. Cite each source. Ask for approval before a controlled action."
-  );
-  const [model, setModel] = useState(
-    agent?.definition.model ?? "fixture-model"
-  );
-  const [connectors, setConnectors] = useState(
-    agent?.definition.enabledToolIds ?? ["fixture-read"]
-  );
-  const [grantReads, setGrantReads] = useState(
-    agent
-      ? agent.definition.grants.some(
-          (grant) => grant.resource.kind === "tool" && grant.action === "read"
-        )
-      : true
-  );
+  const initial = agentEditorValues(agent);
+  const [name, setName] = useState(initial.name);
+  const [instructions, setInstructions] = useState(initial.instructions);
+  const [model, setModel] = useState(initial.model);
+  const [connectors, setConnectors] = useState(initial.toolIds);
+  const [sources, setSources] = useState(initial.sourceIds);
   const [errorMessage, setErrorMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const choices = agent?.connectorChoices ?? [
-    { id: "fixture-read", label: "Company knowledge · local fixture" },
-  ];
-  const modelChoices = agent?.modelChoices ?? [
-    { id: "fixture-model", label: "Deterministic local fixture" },
-  ];
+  const [catalog, setCatalog] = useState(initial.catalog);
+  useEffect(() => {
+    if (agent) {
+      return;
+    }
+    const controller = new AbortController();
+    const load = async () => {
+      try {
+        const configured = await request(
+          productPath("catalog"),
+          catalogSchema,
+          { signal: controller.signal }
+        );
+        if (controller.signal.aborted) {
+          return;
+        }
+        setCatalog(configured);
+        setModel(configured.modelChoices[0]?.id ?? "");
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setErrorMessage(messageOf(error));
+        }
+      }
+    };
+    load();
+    return () => controller.abort();
+  }, [agent]);
+  const choices = catalog.connectorChoices;
+  const { modelChoices } = catalog;
   const saveIntent = useRef<OperationIntent | null>(null);
   const save = async () => {
     setBusy(true);
     setErrorMessage("");
-    const existingGrants =
-      agent?.definition.grants.filter(
-        (grant) => !(grant.resource.kind === "tool" && grant.action === "read")
-      ) ?? [];
-    const grants: Grant[] = grantReads
-      ? [
-          ...existingGrants,
-          ...connectors.map((connectorId): Grant => ({
-            action: "read",
-            resource: {
-              id: connectorId,
-              kind: "tool",
-              organizationId: setup.organizationId,
-            },
-          })),
-        ]
-      : existingGrants;
+    const grants = agentExecutionGrants(
+      setup.organizationId,
+      connectors,
+      sources,
+      agent?.definition.grants,
+      catalog.connectorChoices
+    );
     const input = {
       enabledToolIds: connectors,
       grants,
@@ -202,8 +204,8 @@ const AgentEditor = ({
           ))}
         </select>
         <fieldset>
-          <legend>Connectors</legend>
-          <p className="muted-text">Enable the sources this agent can use.</p>
+          <legend>Tools</legend>
+          <p className="muted-text">Select tools this agent can execute.</p>
           {choices.map((choice) => (
             <label className="checkbox-row" key={choice.id}>
               <input
@@ -222,24 +224,31 @@ const AgentEditor = ({
           ))}
         </fieldset>
         <fieldset>
-          <legend>Execution grants</legend>
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={grantReads}
-              onChange={(event) => setGrantReads(event.target.checked)}
-            />
-            <span>Permit reads through the selected connectors</span>
-          </label>
+          <legend>Company sources</legend>
           <p className="muted-text">
-            A connector selection does not replace a grant. Current user access
-            still applies to every request.
+            Select sources this agent can read and cite.
           </p>
+          {catalog.sourceChoices.map((choice) => (
+            <label className="checkbox-row" key={choice.id}>
+              <input
+                type="checkbox"
+                checked={sources.includes(choice.id)}
+                onChange={(event) =>
+                  setSources((current) =>
+                    event.target.checked
+                      ? [...current, choice.id]
+                      : current.filter((sourceId) => sourceId !== choice.id)
+                  )
+                }
+              />
+              <span>{choice.label}</span>
+            </label>
+          ))}
         </fieldset>
         <div className="button-row">
           <button
             className="primary-button"
-            disabled={busy || !name.trim() || !instructions.trim()}
+            disabled={busy || !model || !name.trim() || !instructions.trim()}
             type="submit"
           >
             {saveLabel(busy, Boolean(agent))}
@@ -363,6 +372,8 @@ interface WorkspaceBodyProps {
   setTab: (tab: Tab) => void;
   setCreating: (creating: boolean) => void;
   claimSetup: () => Promise<void>;
+  bootstrapToken: string;
+  setBootstrapToken: (token: string) => void;
   startConversation: () => Promise<void>;
   refreshAgent: () => Promise<void>;
   onSaved: (agentId: string) => Promise<void>;
@@ -419,6 +430,44 @@ const WelcomePanel = ({
     ) : null}
   </section>
 );
+const InstallationSetup = ({
+  setup,
+  busy,
+  bootstrapToken,
+  setBootstrapToken,
+  claimSetup,
+}: Pick<
+  WorkspaceBodyProps,
+  "busy" | "bootstrapToken" | "setBootstrapToken" | "claimSetup"
+> & { setup: Setup }) => (
+  <section className="welcome-panel">
+    <p className="eyebrow">Installation setup</p>
+    <h2>Set up your company assistant.</h2>
+    <p>
+      The first owner configures agents and company access. The database permits
+      one owner claim.
+    </p>
+    {setup.bootstrapTokenRequired ? (
+      <label>
+        Installation token
+        <input
+          type="password"
+          autoComplete="off"
+          value={bootstrapToken}
+          onChange={(event) => setBootstrapToken(event.target.value)}
+        />
+      </label>
+    ) : null}
+    <button
+      className="primary-button"
+      disabled={busy || (setup.bootstrapTokenRequired && !bootstrapToken)}
+      type="button"
+      onClick={claimSetup}
+    >
+      {busy ? "Setting up..." : "Set up workspace"}
+    </button>
+  </section>
+);
 const WorkspaceBody = (props: WorkspaceBodyProps) => {
   const {
     setup,
@@ -433,6 +482,8 @@ const WorkspaceBody = (props: WorkspaceBodyProps) => {
     setTab,
     setCreating,
     claimSetup,
+    bootstrapToken,
+    setBootstrapToken,
     startConversation,
     refreshAgent,
     onSaved,
@@ -446,22 +497,13 @@ const WorkspaceBody = (props: WorkspaceBodyProps) => {
   }
   if (setup.setupRequired) {
     return (
-      <section className="welcome-panel">
-        <p className="eyebrow">Local fixture setup</p>
-        <h2>Set up your company assistant.</h2>
-        <p>
-          The first owner configures agents and company access. The database
-          permits one owner claim.
-        </p>
-        <button
-          className="primary-button"
-          disabled={busy || setup.mode !== "fixture"}
-          type="button"
-          onClick={claimSetup}
-        >
-          {busy ? "Setting up..." : "Set up local workspace"}
-        </button>
-      </section>
+      <InstallationSetup
+        setup={setup}
+        busy={busy}
+        bootstrapToken={bootstrapToken}
+        setBootstrapToken={setBootstrapToken}
+        claimSetup={claimSetup}
+      />
     );
   }
   if (!setup.principalId) {
@@ -603,6 +645,7 @@ export const ProductWorkspace = ({
   onConversation: (conversationId?: string) => void;
 }) => {
   const [setup, setSetup] = useState<Setup | null>(null);
+  const [bootstrapToken, setBootstrapToken] = useState("");
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [budget, setBudget] = useState<Budget | null>(null);
   const [selectedId, setSelectedId] = useState("");
@@ -630,6 +673,9 @@ export const ProductWorkspace = ({
       setBudget(null);
       setSlackCode(null);
       setCreating(false);
+      setErrorMessage(
+        "Access changed. Refresh the workspace to check your permissions."
+      );
     };
     window.addEventListener("cerebro:access-cleared", clear);
     return () => window.removeEventListener("cerebro:access-cleared", clear);
@@ -754,10 +800,14 @@ export const ProductWorkspace = ({
     try {
       const value = await mutate(
         productPath("setup"),
-        { operationId: operationFor(setupIntent, { userId }) },
+        {
+          operationId: operationFor(setupIntent, { userId }),
+          ...(bootstrapToken ? { bootstrapToken } : {}),
+        },
         setupSchema
       );
       setSetup(value);
+      setBootstrapToken("");
       await loadAgents();
     } catch (error) {
       setErrorMessage(messageOf(error));
@@ -926,7 +976,7 @@ export const ProductWorkspace = ({
           selected={selected}
           creating={creating}
           busy={busy}
-          pending={conversationPending}
+          pending={conversationPending && !errorMessage}
           onNew={startConversation}
         />
         {errorMessage ? (
@@ -942,11 +992,13 @@ export const ProductWorkspace = ({
           tab={tab}
           busy={busy}
           conversationId={conversationId}
-          conversationPending={conversationPending}
+          conversationPending={conversationPending && !errorMessage}
           userId={userId}
           setTab={setTab}
           setCreating={setCreating}
           claimSetup={claimSetup}
+          bootstrapToken={bootstrapToken}
+          setBootstrapToken={setBootstrapToken}
           startConversation={startConversation}
           refreshAgent={refreshAgent}
           onSaved={async (agentId) => {

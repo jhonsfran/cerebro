@@ -1,6 +1,20 @@
 import { z } from "zod";
 
+export const catalogSchema = z.object({
+  connectorChoices: z.array(
+    z.object({
+      connectorId: z.string().optional(),
+      id: z.string(),
+      label: z.string(),
+    })
+  ),
+  modelChoices: z.array(z.object({ id: z.string(), label: z.string() })),
+  sourceChoices: z
+    .array(z.object({ id: z.string(), label: z.string() }))
+    .default([]),
+});
 export const setupSchema = z.object({
+  bootstrapTokenRequired: z.boolean().default(false),
   mode: z.enum(["fixture", "production"]),
   organizationId: z.string(),
   owner: z.boolean(),
@@ -35,7 +49,13 @@ export const agentDetailSchema = z.object({
     })
   ),
   agentId: z.string(),
-  connectorChoices: z.array(z.object({ id: z.string(), label: z.string() })),
+  connectorChoices: z.array(
+    z.object({
+      connectorId: z.string().optional(),
+      id: z.string(),
+      label: z.string(),
+    })
+  ),
   definition: z.object({
     agentId: z.string(),
     enabledToolIds: z.array(z.string()),
@@ -47,6 +67,9 @@ export const agentDetailSchema = z.object({
   }),
   modelChoices: z.array(z.object({ id: z.string(), label: z.string() })),
   name: z.string(),
+  sourceChoices: z
+    .array(z.object({ id: z.string(), label: z.string() }))
+    .default([]),
 });
 const runSchema = z.object({
   runId: z.string(),

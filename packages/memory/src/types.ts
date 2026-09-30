@@ -50,7 +50,7 @@ export interface MemoryService extends MemoryStore {
 export interface MemoryDependencies {
   readonly repository: MemoryRepository;
   readonly identity: Pick<IdentityRepository, "readSnapshot">;
-  readonly embeddings: EmbeddingPort;
+  readonly embeddings?: EmbeddingPort;
   readonly objects: ObjectStorage;
   readonly now?: () => number;
   readonly retrievalMode?: "full-text" | "semantic" | "hybrid";

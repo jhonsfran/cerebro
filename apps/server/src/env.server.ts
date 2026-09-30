@@ -1,3 +1,7 @@
+import type { WorkerLoader } from "@cerebro/tools/dynamic-worker";
+
+import type { SessionAgent } from "./deployed-session-agent";
+
 export interface WorkerEnv {
   DATABASE_URL: string;
   BETTER_AUTH_URL: string;
@@ -10,6 +14,14 @@ export interface WorkerEnv {
   CHANNEL_ORGANIZATION_ID?: string;
   SLACK_CHANNEL_JSON?: string;
   SESSION_FIXTURE: DurableObjectNamespace;
+  SESSION: DurableObjectNamespace<SessionAgent>;
+  GATEWAY_JOURNAL: DurableObjectNamespace;
+  TOOL_GATEWAY: Fetcher;
+  LOADER: WorkerLoader;
+  AUDIT_SINK: Fetcher;
+  RUNTIME_CONFIG_JSON: string;
+  FIXTURE_URL: string;
+  TOOL_EFFECT_MODE: "idempotent" | "non-idempotent";
 }
 
 export const assertWorkerEnv = (env: WorkerEnv): void => {

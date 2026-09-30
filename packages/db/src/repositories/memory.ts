@@ -766,9 +766,9 @@ export const createMemoryRepository = (
         kind: StoredRecord["kind"];
         content: string;
         visibility: StoredVisibility;
-        embedding: string;
-        embedding_model: string;
-        embedding_dimensions: number;
+        embedding: string | null;
+        embedding_model: string | null;
+        embedding_dimensions: number | null;
         created_at: Date;
         search: string;
       }>(sql`with authorized as materialized (
@@ -783,7 +783,10 @@ export const createMemoryRepository = (
         content: row.content,
         createdAt: new Date(row.created_at),
         dependencySourceIds: row.dependency_source_ids,
-        embedding: row.embedding.slice(1, -1).split(",").map(Number),
+        embedding:
+          row.embedding === null
+            ? null
+            : row.embedding.slice(1, -1).split(",").map(Number),
         embeddingDimensions: row.embedding_dimensions,
         embeddingModel: row.embedding_model,
         id: row.id,

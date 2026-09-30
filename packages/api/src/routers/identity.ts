@@ -1,10 +1,12 @@
 import { createAuthorizationPolicy } from "@cerebro/authorization";
 import { id } from "@cerebro/contracts";
-import type { ExecutionContext, Resource } from "@cerebro/contracts";
 import type { Database } from "@cerebro/db";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import type { IdentityRepository } from "@cerebro/db/repositories/identity";
+import { auditEvent } from "@cerebro/db/schema/audit";
+import { usageReservation } from "@cerebro/db/schema/usage";
 import { ORPCError } from "@orpc/server";
+import { and, asc, eq, gt } from "drizzle-orm";
 import { z } from "zod";
 
 import { protectedProcedure } from "../index";
@@ -64,6 +66,56 @@ const requireSessionUserId = (
   return session.user.id;
 };
 
+const exportInput = organizationInput.extend({
+  cursor: z.string().min(1).max(1024).optional(),
+  kind: z.enum(["audit", "usage"]),
+  limit: z.number().int().min(1).max(200).default(100),
+});
+const requireExport = async (
+  repository: IdentityApiRepository,
+  organizationId: string,
+  kind: "audit" | "usage",
+  userId: string,
+  now: () => number
+) => {
+  const principal = await requireCurrentPrincipal(
+    repository,
+    organizationId,
+    userId
+  );
+  const result = await createAuthorizationPolicy(repository, now).evaluate(
+    {
+      actor: {
+        id: id.principal(principal.id),
+        kind: principal.kind,
+        organizationId: id.organization(principal.organizationId),
+        state: principal.state,
+      },
+    },
+    "export",
+    {
+      id: organizationId,
+      kind: kind === "audit" ? "audit" : "budget",
+      organizationId: id.organization(organizationId),
+    },
+    { deadlineAt: now() + AUTHORIZATION_DEADLINE_MS }
+  );
+  if (result.status !== "ok") {
+    throw new ORPCError(
+      result.status === "denied" ? "FORBIDDEN" : "SERVICE_UNAVAILABLE",
+      {
+        message:
+          "reason" in result ? result.reason : "The export check failed.",
+      }
+    );
+  }
+  if (result.value.decision !== "allow") {
+    throw new ORPCError("FORBIDDEN", {
+      message: "Export is not permitted for this organization.",
+    });
+  }
+  return result.value.policyVersion;
+};
 export const createIdentityRouter = (
   repositoryFactory: RepositoryFactory = createIdentityRepository,
   now: () => number = Date.now
@@ -76,44 +128,14 @@ export const createIdentityRouter = (
     )
     .handler(async ({ context, input }) => {
       const repository = repositoryFactory(context.db);
-      const principal = await requireCurrentPrincipal(
+      const policyVersion = await requireExport(
         repository,
         input.organizationId,
-        requireSessionUserId(context.session)
+        input.kind,
+        requireSessionUserId(context.session),
+        now
       );
-      const executionContext: ExecutionContext = {
-        actor: {
-          id: id.principal(principal.id),
-          kind: principal.kind,
-          organizationId: id.organization(principal.organizationId),
-          state: principal.state,
-        },
-      };
-      const resource: Resource = {
-        id: input.organizationId,
-        kind: input.kind === "audit" ? "audit" : "budget",
-        organizationId: id.organization(input.organizationId),
-      };
-      const result = await createAuthorizationPolicy(repository, now).evaluate(
-        executionContext,
-        "export",
-        resource,
-        { deadlineAt: now() + AUTHORIZATION_DEADLINE_MS }
-      );
-      if (result.status !== "ok") {
-        throw new ORPCError("SERVICE_UNAVAILABLE", {
-          message: "The export authorization check is unavailable.",
-        });
-      }
-      if (result.value.decision !== "allow") {
-        throw new ORPCError("FORBIDDEN", {
-          message: "Export is not permitted for this organization.",
-        });
-      }
-      return {
-        authorized: true as const,
-        policyVersion: result.value.policyVersion,
-      };
+      return { authorized: true as const, policyVersion };
     }),
   beginSlackLink: protectedProcedure
     .input(organizationInput)
@@ -151,6 +173,57 @@ export const createIdentityRouter = (
         kind: principal.kind,
         organizationId: principal.organizationId,
         state: principal.state,
+      };
+    }),
+  exportData: protectedProcedure
+    .input(exportInput)
+    .handler(async ({ context, input }) => {
+      const repository = repositoryFactory(context.db);
+      const policyVersion = await requireExport(
+        repository,
+        input.organizationId,
+        input.kind,
+        requireSessionUserId(context.session),
+        now
+      );
+      if (input.kind === "audit") {
+        const rows = await context.db
+          .select()
+          .from(auditEvent)
+          .where(
+            and(
+              eq(auditEvent.organizationId, input.organizationId),
+              input.cursor ? gt(auditEvent.eventId, input.cursor) : undefined
+            )
+          )
+          .orderBy(asc(auditEvent.eventId))
+          .limit(input.limit + 1);
+        const records = rows.slice(0, input.limit);
+        return {
+          kind: "audit" as const,
+          nextCursor:
+            rows.length > input.limit ? records.at(-1)?.eventId : null,
+          policyVersion,
+          records,
+        };
+      }
+      const rows = await context.db
+        .select()
+        .from(usageReservation)
+        .where(
+          and(
+            eq(usageReservation.organizationId, input.organizationId),
+            input.cursor ? gt(usageReservation.id, input.cursor) : undefined
+          )
+        )
+        .orderBy(asc(usageReservation.id))
+        .limit(input.limit + 1);
+      const records = rows.slice(0, input.limit);
+      return {
+        kind: "usage" as const,
+        nextCursor: rows.length > input.limit ? records.at(-1)?.id : null,
+        policyVersion,
+        records,
       };
     }),
 });

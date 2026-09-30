@@ -167,6 +167,7 @@ test("Slack link initiation binds a random code digest to the current principal"
     "authorizeExport",
     "beginSlackLink",
     "currentPrincipal",
+    "exportData",
   ]);
 });
 

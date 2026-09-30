@@ -4,11 +4,12 @@ import type { Database } from "@cerebro/db";
 import {
   channelConversation,
   channelFixtureRun,
+  channelInbox,
   channelItem,
   channelReply,
 } from "@cerebro/db/schema/agents";
 import type { ChannelItemBody } from "@cerebro/db/schema/agents";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import { sessionServiceFor } from "./fixture-session";
 import { authorize, unwrap } from "./security";
@@ -30,7 +31,9 @@ export const projectSession = async (
     const complete =
       runs.length > 0 &&
       runs.every((run) =>
-        ["completed", "failed", "cancelled"].includes(run.state.state)
+        ["completed", "failed", "cancelled", "unknown-outcome"].includes(
+          run.state.state
+        )
       );
     await database
       .update(channelConversation)
@@ -73,7 +76,33 @@ export const projectSession = async (
     if (item.type === "run") {
       body = { run: item.run, runId: item.run.runId, type: "run" };
     } else if (item.type === "output") {
-      body = { runId: item.runId, text: item.text, type: "output" };
+      body = {
+        dependencies: item.dependencies,
+        runId: item.runId,
+        text: item.text,
+        type: "output",
+      };
+    } else if (item.type === "citation") {
+      body = {
+        dependencies: item.dependencies,
+        href: `/api/product/conversations/${encodeURIComponent(conversation.conversationId)}/sources/${encodeURIComponent(item.citation.sourceId)}`,
+        runId: item.runId,
+        sourceId: item.citation.sourceId,
+        sourceVersion: item.citation.sourceVersion,
+        title: item.citation.sourceUri,
+        type: "citation",
+      };
+    } else if (item.type === "tool") {
+      body = {
+        dependencies: item.dependencies,
+        name: item.toolId,
+        operationId: item.operationId,
+        output: item.output,
+        runId: item.runId,
+        state: "succeeded",
+        toolId: item.toolId,
+        type: "tool",
+      };
     } else {
       body = {
         approvalId: item.approvalId,
@@ -129,17 +158,34 @@ export const projectSession = async (
     const terminalRunIds = new Set(
       outputs.flatMap((row) =>
         row.item.type === "run" &&
-        ["completed", "failed", "cancelled"].includes(row.item.run.state)
+        ["completed", "failed", "cancelled", "unknown-outcome"].includes(
+          row.item.run.state
+        )
           ? [row.item.run.runId]
           : []
       )
     );
     const projectedCursor =
-      items.at(-1)?.itemKey.slice(prefix.length) ?? conversation.streamCursor;
+      items.at(-1)?.itemKey.slice(prefix.length) ??
+      conversation.streamCursor ??
+      "0";
+    const unprojectedAdmissions =
+      snapshot.runs.length === 0
+        ? await tx
+            .select({ eventKey: channelInbox.eventKey })
+            .from(channelInbox)
+            .where(
+              and(
+                eq(channelInbox.conversationId, conversation.conversationId),
+                inArray(channelInbox.state, ["pending", "accepted"])
+              )
+            )
+            .limit(1)
+        : [];
     const projectionComplete =
       !truncated &&
       projectedCursor === snapshot.cursor &&
-      snapshot.runs.length > 0 &&
+      unprojectedAdmissions.length === 0 &&
       snapshot.runs.every((run) => terminalRunIds.has(run.runId));
     if (projectionComplete) {
       await tx

@@ -39,7 +39,11 @@ const agentInput = z.object({
     .max(64)
     .default([]),
   instructions: z.string().min(1).max(32_000),
-  model: identifier,
+  model: z
+    .string()
+    .min(1)
+    .max(256)
+    .regex(/^[^\s/]+(?:\/[^\s/]+)?$/u),
   name: z.string().trim().min(1).max(120),
   operationId: identifier,
 });
@@ -54,6 +58,44 @@ export const parseInput = <T>(schema: z.ZodType<T>, value: unknown): T => {
   }
   return parsed.data;
 };
+const handleSetupRequest = (
+  service: ChannelService,
+  method: string,
+  path: readonly string[],
+  userId: string,
+  body: unknown
+): Promise<unknown> | undefined => {
+  if (path[0] === "setup") {
+    if (method === "GET") {
+      return service.setup(userId);
+    }
+    if (method === "POST") {
+      const input = parseInput(
+        z.object({
+          bootstrapToken: z.string().min(1).max(4096).optional(),
+          operationId: identifier,
+        }),
+        body
+      );
+      return service.install(userId, input.bootstrapToken);
+    }
+  }
+  return undefined;
+};
+const handleCompanyRequest = (
+  service: ChannelService,
+  method: string,
+  path: readonly string[],
+  userId: string
+): Promise<unknown> | undefined => {
+  if (path[0] === "catalog" && method === "GET" && path.length === 1) {
+    return service.catalog(userId);
+  }
+  if (path[0] === "budget" && method === "GET") {
+    return service.budget(userId);
+  }
+  return undefined;
+};
 export const handleAgentRequest = (
   service: ChannelService,
   method: string,
@@ -61,17 +103,13 @@ export const handleAgentRequest = (
   userId: string,
   body: unknown
 ): Promise<unknown> => {
-  if (path[0] === "setup") {
-    if (method === "GET") {
-      return service.setup(userId);
-    }
-    if (method === "POST") {
-      parseInput(z.object({ operationId: identifier }), body);
-      return service.install(userId);
-    }
+  const setup = handleSetupRequest(service, method, path, userId, body);
+  if (setup) {
+    return setup;
   }
-  if (path[0] === "budget" && method === "GET") {
-    return service.budget(userId);
+  const company = handleCompanyRequest(service, method, path, userId);
+  if (company) {
+    return company;
   }
   if (path[0] === "agents") {
     if (path.length === 1 && method === "GET") {

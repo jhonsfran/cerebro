@@ -87,6 +87,7 @@ try {
     [
       "test",
       "tests/channels/web.test.ts",
+      "tests/channels/production.test.ts",
       "tests/channels/slack.test.ts",
       "tests/channels/ui.test.ts",
     ],

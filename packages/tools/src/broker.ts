@@ -281,7 +281,11 @@ export const createToolBroker = (
         result,
         persistence
       );
-      return saved.status === "ok" ? structuredClone(result) : saved;
+      if (saved.status !== "ok") {
+        return saved;
+      }
+      const current = await prepare(call, maintenance(options, now()));
+      return current.status === "ok" ? structuredClone(result) : current;
     },
     async reconcile(
       operationId: OperationId,

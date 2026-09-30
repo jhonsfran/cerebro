@@ -15,9 +15,6 @@ export class ChannelDispatcher {
   }
 
   async fetch(): Promise<Response> {
-    if (this.env.DEPLOY_MODE !== "fixture") {
-      return Response.json({ code: "UNAVAILABLE" }, { status: 503 });
-    }
     if ((await this.state.storage.getAlarm()) === null) {
       await this.state.storage.setAlarm(Date.now() + DRAIN_INTERVAL_MS);
     }
@@ -25,9 +22,6 @@ export class ChannelDispatcher {
   }
 
   async alarm(): Promise<void> {
-    if (this.env.DEPLOY_MODE !== "fixture") {
-      return;
-    }
     await this.state.storage.setAlarm(Date.now() + DRAIN_INTERVAL_MS);
     try {
       await drainChannelWork(createChannelOptions(this.env));

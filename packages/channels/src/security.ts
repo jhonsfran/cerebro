@@ -3,6 +3,7 @@ import { id } from "@cerebro/contracts";
 import type {
   Action,
   ExecutionContext,
+  ContentDependencies,
   PortResult,
   Resource,
 } from "@cerebro/contracts";
@@ -50,7 +51,7 @@ export const unwrap = <T>(result: PortResult<T>): T => {
   };
   throw new ChannelError(
     statuses[result.status],
-    result.status,
+    "code" in result ? result.code : result.status,
     "reason" in result ? result.reason : "The resource was not found."
   );
 };
@@ -138,4 +139,91 @@ export const authorize = async (
   if (result.decision !== "allow") {
     throw new ChannelError(403, "forbidden", result.reason);
   }
+};
+
+export const authorizeContent = async (
+  database: Database,
+  options: ChannelOptions,
+  context: ExecutionContext,
+  item: { readonly type: string; readonly dependencies?: ContentDependencies }
+): Promise<void> => {
+  if (!["output", "citation", "tool", "user"].includes(item.type)) {
+    return;
+  }
+  if (!item.dependencies) {
+    if (
+      item.type !== "user" &&
+      (options.mode === "production" || options.checkContentDependencies)
+    ) {
+      throw new ChannelError(
+        403,
+        "unauthorized",
+        "Content dependencies are not available."
+      );
+    }
+    return;
+  }
+  await Promise.all([
+    ...item.dependencies.sourceIds.map((sourceId) =>
+      authorize(database, options, context, "read", "memory", sourceId)
+    ),
+    ...item.dependencies.toolIds.map((toolId) =>
+      authorize(database, options, context, "read", "tool", toolId)
+    ),
+  ]);
+  if (options.checkContentDependencies) {
+    unwrap(
+      await options.checkContentDependencies(
+        database,
+        context,
+        item.dependencies
+      )
+    );
+  } else if (
+    options.mode === "production" &&
+    item.dependencies.sourceIds.length > 0
+  ) {
+    throw new ChannelError(
+      503,
+      "provider-unavailable",
+      "Current source access is not configured."
+    );
+  }
+};
+
+export const equalToken = async (
+  provided: string,
+  configured: string
+): Promise<boolean> => {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    crypto.getRandomValues(new Uint8Array(32)),
+    { hash: "SHA-256", name: "HMAC" },
+    false,
+    ["sign", "verify"]
+  );
+  const signature = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(configured)
+  );
+  return await crypto.subtle.verify(
+    "HMAC",
+    key,
+    signature,
+    new TextEncoder().encode(provided)
+  );
+};
+export const trustedSetupCredential = async (
+  options: ChannelOptions,
+  userId: string,
+  bootstrapToken?: string
+): Promise<boolean> => {
+  if (options.trustedOwnerUserId === userId) {
+    return true;
+  }
+  if (!options.bootstrapToken || !bootstrapToken) {
+    return false;
+  }
+  return await equalToken(bootstrapToken, options.bootstrapToken);
 };

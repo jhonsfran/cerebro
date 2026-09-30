@@ -1,11 +1,75 @@
 import { DurableObject } from "cloudflare:workers";
 
+import { id } from "../../packages/contracts/src/identity.ts";
 import { SessionLedger } from "../../packages/runtime/src/ledger.ts";
+import { createOpenCodeClient } from "../../packages/runtime/src/opencode-adapter.ts";
+import {
+  DurableOperationJournal,
+  durableJournalDatabase,
+} from "../../packages/runtime/src/operation-journal.ts";
 import type { TestEnvironment } from "./environment.ts";
 
 export class LedgerMigrationProbe extends DurableObject<TestEnvironment> {
   async fetch(request: Request): Promise<Response> {
     const action = new URL(request.url).pathname.split("/").at(-1);
+    if (action === "journal-write" || action === "journal-read") {
+      const organizationId = id.organization("journal-company");
+      const operationId = id.operation("journal-operation");
+      const requestDigest = id.digest("sha256:journal-request");
+      const options = {
+        deadlineAt: Date.now() + 60_000,
+        operationId,
+        requestDigest,
+      };
+      const journal = new DurableOperationJournal<{ count: number }>(
+        durableJournalDatabase(this.ctx.storage),
+        "native-model"
+      );
+      if (action === "journal-write") {
+        const claim = await journal.claim(
+          {
+            operationId,
+            organizationId,
+            request: { model: "controlled" },
+            requestDigest,
+          },
+          options
+        );
+        if (claim.status !== "ok" || claim.value.state !== "claimed") {
+          throw new Error("Native journal claim failed.");
+        }
+        await journal.dispatch(
+          claim.value.claimToken,
+          { reservationId: "native-reservation" },
+          options
+        );
+        await journal.recordOutcome(
+          claim.value.claimToken,
+          { status: "ok", value: { count: 1 } },
+          { unit: "credits", units: 3 },
+          options
+        );
+        const client = await createOpenCodeClient(
+          this.ctx.storage,
+          this.env,
+          {
+            agentId: id.agent("probe-agent"),
+            enabledToolIds: [],
+            instructions: "Do nothing.",
+            model: "fixture/controlled",
+            organizationId,
+            version: 1,
+          },
+          () => Promise.resolve({ content: "" })
+        );
+        await client.session.create();
+        await this.ctx.storage.sync();
+        await client.close();
+      }
+      return Response.json(
+        await journal.read(organizationId, operationId, options)
+      );
+    }
     if (action === "seed") {
       this.ctx.storage.sql.exec(
         "CREATE TABLE IF NOT EXISTS cerebro_session (key TEXT PRIMARY KEY, session_id TEXT NOT NULL)"

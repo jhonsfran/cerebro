@@ -360,14 +360,19 @@ export const ConversationPanel = ({
     }
     setBusy(false);
   };
-  const openSource = async (sourceId: string) => {
+  const openSource = async (sourceId: string, sourceVersion: string) => {
     const generation = currentAccessGeneration();
+    setDetail(null);
     try {
       const value = await request(
         `${path}/sources/${encoded(sourceId)}`,
         sourceSchema
       );
       assertCurrentAccess(generation);
+      if (value.sourceVersion !== sourceVersion) {
+        setErrorMessage("The cited source version is no longer available.");
+        return;
+      }
       setDetail({ type: "source", value });
     } catch (error) {
       setErrorMessage(messageOf(error));
@@ -454,7 +459,7 @@ export const ConversationPanel = ({
                   className="citation-button"
                   key={item.cursor}
                   type="button"
-                  onClick={() => openSource(item.sourceId)}
+                  onClick={() => openSource(item.sourceId, item.sourceVersion)}
                 >
                   <span aria-hidden="true">↗</span> {item.title}
                   <small>Source version {item.sourceVersion}</small>

@@ -59,21 +59,32 @@ export const ingest = async (
       if (allowed.status !== "ok") {
         return allowed;
       }
-      const vectors = await dependencies.embeddings.embed(
-        input.chunks.map((chunk) => chunk.text),
-        options
-      );
-      if (vectors.status !== "ok") {
-        return vectors;
-      }
-      if (
-        vectors.value.length !== input.chunks.length ||
-        vectors.value.some(
-          (vector) =>
-            !validEmbedding(vector, dependencies.embeddings.dimensions)
-        )
-      ) {
-        return invalid("The embedding provider returned invalid vectors.");
+      let vectors: readonly (readonly number[])[] | undefined;
+      if (dependencies.retrievalMode !== "full-text") {
+        const { embeddings } = dependencies;
+        if (!embeddings) {
+          return {
+            code: "provider-unavailable",
+            reason: "Semantic memory requires a configured embedding provider.",
+            status: "unavailable",
+          };
+        }
+        const embedded = await embeddings.embed(
+          input.chunks.map((chunk) => chunk.text),
+          options
+        );
+        if (embedded.status !== "ok") {
+          return embedded;
+        }
+        if (
+          embedded.value.length !== input.chunks.length ||
+          embedded.value.some(
+            (vector) => !validEmbedding(vector, embeddings.dimensions)
+          )
+        ) {
+          return invalid("The embedding provider returned invalid vectors.");
+        }
+        vectors = embedded.value;
       }
       const fresh = await authorizeNewSource(
         dependencies,
@@ -123,9 +134,13 @@ export const ingest = async (
               originalArtifact,
               records: input.chunks.map((chunk, index) => ({
                 content: chunk.text,
-                embedding: [...(vectors.value[index] ?? [])],
-                embeddingDimensions: dependencies.embeddings.dimensions,
-                embeddingModel: dependencies.embeddings.model,
+                embedding: vectors ? [...(vectors[index] ?? [])] : null,
+                embeddingDimensions: vectors
+                  ? (dependencies.embeddings?.dimensions ?? null)
+                  : null,
+                embeddingModel: vectors
+                  ? (dependencies.embeddings?.model ?? null)
+                  : null,
                 id: chunk.id,
                 kind: "source-chunk",
                 observedAt: new Date(input.observedAt),

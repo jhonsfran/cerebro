@@ -8,11 +8,13 @@ export interface PinnedAgentConfig {
   readonly instructions: string;
   readonly model: string;
   readonly enabledToolIds: readonly string[];
+  readonly grants?: AgentDefinition["grants"];
 }
 
 export const pinAgent = (definition: AgentDefinition): PinnedAgentConfig => ({
   agentId: definition.agentId,
   enabledToolIds: [...definition.enabledToolIds],
+  grants: structuredClone(definition.grants),
   instructions: definition.instructions,
   model: definition.model,
   organizationId: definition.organizationId,

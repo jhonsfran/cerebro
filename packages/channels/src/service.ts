@@ -35,8 +35,10 @@ import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { sessionServiceFor } from "./fixture-session";
 import {
   authorize,
+  authorizeContent,
   contextByPrincipal,
   digest,
+  trustedSetupCredential,
   principalContext,
   unwrap,
 } from "./security";
@@ -114,17 +116,16 @@ export const createChannelService = (
       database
     ).findPrincipalByUser(options.organizationId, userId);
     return {
+      bootstrapTokenRequired:
+        options.mode === "production" && Boolean(options.bootstrapToken),
       mode: options.mode,
       organizationId: options.organizationId,
       owner: record?.ownerUserId === userId,
       principalId: principal?.id ?? null,
-      setupRequired: !record && options.mode === "fixture",
+      setupRequired: !record,
     };
   };
-  const install = async (userId: string) => {
-    if (options.mode !== "fixture") {
-      throw new ChannelError(404, "not-found", "Fixture setup is disabled.");
-    }
+  const install = async (userId: string, bootstrapToken?: string) => {
     await database.transaction(async (tx) => {
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtext('cerebro-installation-setup'))`
@@ -145,6 +146,16 @@ export const createChannelService = (
           );
         }
         return;
+      }
+      if (
+        options.mode === "production" &&
+        !(await trustedSetupCredential(options, userId, bootstrapToken))
+      ) {
+        throw new ChannelError(
+          403,
+          "unauthorized",
+          "Trusted installation setup is required."
+        );
       }
       await tx
         .insert(organization)
@@ -168,7 +179,7 @@ export const createChannelService = (
         throw new ChannelError(
           403,
           "forbidden",
-          "An active local human principal is required for fixture setup."
+          "An active local human principal is required for installation setup."
         );
       }
       const principalId = existingPrincipal?.id ?? crypto.randomUUID();
@@ -188,7 +199,8 @@ export const createChannelService = (
           principalId,
           resourceId: `${INSTALLATION_AGENT_PREFIX}${options.organizationId}`,
           resourceKind: "agent",
-          source: "fixture-owner",
+          source:
+            options.mode === "fixture" ? "fixture-owner" : "installation-owner",
         },
         {
           action: "read",
@@ -196,7 +208,8 @@ export const createChannelService = (
           principalId,
           resourceId: options.organizationId,
           resourceKind: "budget",
-          source: "fixture-owner",
+          source:
+            options.mode === "fixture" ? "fixture-owner" : "installation-owner",
         },
         {
           action: "read",
@@ -204,16 +217,45 @@ export const createChannelService = (
           principalId,
           resourceId: options.organizationId,
           resourceKind: "audit",
-          source: "fixture-owner",
+          source:
+            options.mode === "fixture" ? "fixture-owner" : "installation-owner",
         },
-        {
-          action: "read",
-          organizationId: options.organizationId,
-          principalId,
-          resourceId: FIXTURE_TOOL_ID,
-          resourceKind: "tool",
-          source: "fixture-owner",
-        },
+        ...(options.mode === "fixture"
+          ? [
+              {
+                action: "read" as const,
+                organizationId: options.organizationId,
+                principalId,
+                resourceId: FIXTURE_TOOL_ID,
+                resourceKind: "tool" as const,
+                source: "fixture-owner",
+              },
+              {
+                action: "execute" as const,
+                organizationId: options.organizationId,
+                principalId,
+                resourceId: FIXTURE_TOOL_ID,
+                resourceKind: "tool" as const,
+                source: "fixture-owner",
+              },
+              {
+                action: "execute" as const,
+                organizationId: options.organizationId,
+                principalId,
+                resourceId: "fixture-connector",
+                resourceKind: "tool" as const,
+                source: "fixture-owner",
+              },
+              {
+                action: "read" as const,
+                organizationId: options.organizationId,
+                principalId,
+                resourceId: FIXTURE_SOURCE_ID,
+                resourceKind: "memory" as const,
+                source: "fixture-owner",
+              },
+            ]
+          : []),
       ]);
       await tx.insert(installationSetup).values({
         id: "installation",
@@ -223,6 +265,34 @@ export const createChannelService = (
       });
     });
     return setup(userId);
+  };
+  const catalog = async (userId: string) => {
+    const context = await current(userId);
+    if (options.catalogFor) {
+      const configured = unwrap(await options.catalogFor(database, context));
+      return { ...configured, sourceChoices: configured.sourceChoices ?? [] };
+    }
+    if (options.catalog) {
+      return {
+        ...options.catalog,
+        sourceChoices: options.catalog.sourceChoices ?? [],
+      };
+    }
+    if (options.mode === "fixture" && !options.sessions) {
+      return {
+        connectorChoices: [
+          { id: FIXTURE_TOOL_ID, label: "Local pilot source" },
+        ],
+        modelChoices: [
+          { id: FIXTURE_MODEL_ID, label: "Deterministic local fixture" },
+        ],
+      };
+    }
+    throw new ChannelError(
+      503,
+      "provider-unavailable",
+      "The agent catalog is not configured."
+    );
   };
   const publishAgent = async (
     userId: string,
@@ -238,23 +308,22 @@ export const createChannelService = (
       "agent",
       agentId ?? `${INSTALLATION_AGENT_PREFIX}${options.organizationId}`
     );
+    const configured = await catalog(userId);
     if (
-      options.mode === "fixture" &&
-      (input.model !== FIXTURE_MODEL_ID ||
-        input.enabledToolIds.some((tool) => tool !== FIXTURE_TOOL_ID))
+      !configured.modelChoices.some((choice) => choice.id === input.model) ||
+      input.enabledToolIds.some(
+        (tool) =>
+          !configured.connectorChoices.some((choice) => choice.id === tool)
+      )
     ) {
       throw new ChannelError(
         422,
         "invalid-input",
-        "Select the configured fixture model and connectors."
+        "Select configured models and connectors."
       );
     }
-    if (options.mode !== "fixture") {
-      throw new ChannelError(
-        503,
-        "unavailable",
-        "The production agent catalog is not configured."
-      );
+    for (const toolId of input.enabledToolIds) {
+      await authorize(database, options, context, "read", "tool", toolId);
     }
     for (const grant of input.grants) {
       if (
@@ -455,15 +524,8 @@ export const createChannelService = (
       access,
       agentId,
       canManage,
-      connectorChoices:
-        options.mode === "fixture"
-          ? [{ id: FIXTURE_TOOL_ID, label: "Local pilot source" }]
-          : [],
+      ...(await catalog(userId)),
       definition,
-      modelChoices:
-        options.mode === "fixture"
-          ? [{ id: FIXTURE_MODEL_ID, label: "Deterministic local fixture" }]
-          : [],
       name: metadata.name,
     };
   };
@@ -740,6 +802,7 @@ export const createChannelService = (
     const items: ChannelPresentationItem[] = [];
     for (const record of records) {
       await authorize(database, options, context, "read", "agent", row.agentId);
+      await authorizeContent(database, options, context, record.item);
       items.push({ ...record.item, cursor: String(record.cursor) });
     }
     return {
@@ -854,8 +917,32 @@ export const createChannelService = (
     sourceId: string
   ) => {
     const context = await current(userId);
-    await requireConversation(conversationId, context, "read");
-    if (options.mode !== "fixture" || sourceId !== FIXTURE_SOURCE_ID) {
+    const conversation = await requireConversation(
+      conversationId,
+      context,
+      "read"
+    );
+    if (options.readSource) {
+      await authorize(database, options, context, "read", "memory", sourceId);
+      return {
+        ...unwrap(
+          await options.readSource(database, context, {
+            conversationId,
+            sessionId: conversation.sessionId,
+            sourceId,
+          })
+        ),
+        mode: options.mode,
+      };
+    }
+    if (options.mode !== "fixture" || options.sessions) {
+      throw new ChannelError(
+        503,
+        "provider-unavailable",
+        "The source adapter is not configured."
+      );
+    }
+    if (sourceId !== FIXTURE_SOURCE_ID) {
       throw new ChannelError(404, "not-found", "The source was not found.");
     }
     return {
@@ -872,7 +959,11 @@ export const createChannelService = (
     runId: string
   ) => {
     const context = await current(userId);
-    await requireConversation(conversationId, context, "read");
+    const conversation = await requireConversation(
+      conversationId,
+      context,
+      "read"
+    );
     await authorize(
       database,
       options,
@@ -881,11 +972,23 @@ export const createChannelService = (
       "audit",
       options.organizationId
     );
-    if (options.mode !== "fixture") {
+    if (options.readAudit) {
+      return {
+        ...unwrap(
+          await options.readAudit(database, context, {
+            conversationId,
+            runId,
+            sessionId: conversation.sessionId,
+          })
+        ),
+        mode: options.mode,
+      };
+    }
+    if (options.mode !== "fixture" || options.sessions) {
       throw new ChannelError(
         503,
-        "unavailable",
-        "The production audit adapter is not configured."
+        "provider-unavailable",
+        "The audit adapter is not configured."
       );
     }
     const [record] = await database
@@ -950,10 +1053,10 @@ export const createChannelService = (
         ),
       };
     }
-    if (options.mode !== "fixture") {
+    if (options.mode !== "fixture" || options.sessions) {
       throw new ChannelError(
         503,
-        "unavailable",
+        "provider-unavailable",
         "The budget adapter is not configured."
       );
     }
@@ -965,6 +1068,7 @@ export const createChannelService = (
     audit,
     budget,
     cancel,
+    catalog,
     createConversation,
     getAgent,
     history,

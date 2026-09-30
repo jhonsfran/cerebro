@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { createRequire } from "node:module";
 
-import { createMemoryRouter } from "../../packages/api/src/routers/memory.ts";
+import { createAppRouter } from "../../packages/api/src/routers/index.ts";
 import { effectOptions, fixture } from "./fixture.ts";
 
 const requireFromApi = createRequire(
@@ -13,11 +13,11 @@ test("memory API derives actor from authenticated session and uses real services
   const f = await fixture({ retrievalMode: "full-text" });
   try {
     await f.grant("api-source");
-    const router = createMemoryRouter(() => ({
+    const router = createAppRouter(() => ({
       artifacts: f.artifacts,
       identity: f.identity,
       memory: f.memory,
-    }));
+    })).memory;
     const context = { db: f.database, session: { user: { id: f.authUserId } } };
     const request = effectOptions();
     expect(
@@ -112,7 +112,7 @@ test("memory API derives actor from authenticated session and uses real services
 test("unconfigured production memory API fails without selecting a fake embedding provider", async () => {
   const f = await fixture();
   try {
-    const router = createMemoryRouter();
+    const router = createAppRouter().memory;
     await expect(
       call(
         router.retrieve,

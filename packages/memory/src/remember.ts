@@ -47,10 +47,10 @@ const readRemembered = async (
     return denied("The remembered record is no longer accessible.");
   }
   const [stored] = await dependencies.repository.search({
-    dimensions: dependencies.embeddings.dimensions,
+    dimensions: dependencies.embeddings?.dimensions ?? 0,
     limit: 1,
     mode: "record",
-    model: dependencies.embeddings.model,
+    model: dependencies.embeddings?.model ?? "",
     now: new Date((dependencies.now ?? Date.now)()),
     organizationId: scope.organizationId,
     records: [metadata],
@@ -83,6 +83,81 @@ const readRemembered = async (
   return { status: "ok", value: publicRecord(stored) };
 };
 
+const embeddingMetadata = (
+  dependencies: MemoryDependencies,
+  vector: readonly number[] | null
+) => ({
+  dimensions: vector ? (dependencies.embeddings?.dimensions ?? null) : null,
+  model: vector ? (dependencies.embeddings?.model ?? null) : null,
+  vector: vector ? [...vector] : null,
+});
+
+const embeddingForRecord = async (
+  dependencies: MemoryDependencies,
+  text: string,
+  options: EffectOptions
+): Promise<PortResult<readonly number[] | null>> => {
+  if (dependencies.retrievalMode === "full-text") {
+    return { status: "ok", value: null };
+  }
+  const { embeddings } = dependencies;
+  if (!embeddings) {
+    return {
+      code: "provider-unavailable",
+      reason: "Semantic memory requires a configured embedding provider.",
+      status: "unavailable",
+    };
+  }
+  const vectors = await embeddings.embed([text], options);
+  if (vectors.status !== "ok") {
+    return vectors;
+  }
+  const [embedded] = vectors.value;
+  if (
+    vectors.value.length !== 1 ||
+    !validEmbedding(embedded, embeddings.dimensions)
+  ) {
+    return invalid("The embedding provider returned an invalid vector.");
+  }
+  return { status: "ok", value: embedded };
+};
+
+const summaryDependencies = (
+  record: MemoryRecord,
+  sources: readonly SourceMetadata[],
+  source: SourceMetadata,
+  organizationId: MemoryScope["organizationId"]
+): PortResult<{
+  ids: readonly SourceMetadata["id"][];
+  current: readonly SourceDependency[];
+}> => {
+  const dependenciesInput =
+    record.kind === "conversation-summary" ? record.dependentSourceIds : [];
+  const sourceDependencies = dependenciesInput.map(
+    (sourceId): SourceDependency | undefined => {
+      const parent = sources.find((entry) => entry.id === sourceId);
+      return parent
+        ? {
+            derivedSourceId: source.id,
+            organizationId,
+            sourceId: parent.id,
+            sourceVersion: parent.version,
+          }
+        : undefined;
+    }
+  );
+  if (sourceDependencies.some((dependency) => !dependency)) {
+    return denied("Every summary dependency needs current read access.");
+  }
+  const currentDependencies = sourceDependencies.filter(
+    (dependency): dependency is SourceDependency => dependency !== undefined
+  );
+  return {
+    status: "ok",
+    value: { current: currentDependencies, ids: dependenciesInput },
+  };
+};
+
 export const remember = async (
   dependencies: MemoryDependencies,
   scope: MemoryScope,
@@ -111,20 +186,15 @@ export const remember = async (
       ) {
         return denied("The record needs current source read and write access.");
       }
-      const vectors = await dependencies.embeddings.embed(
-        [record.text],
+      const embedded = await embeddingForRecord(
+        dependencies,
+        record.text,
         options
       );
-      if (vectors.status !== "ok") {
-        return vectors;
+      if (embedded.status !== "ok") {
+        return embedded;
       }
-      const [vector] = vectors.value;
-      if (
-        vectors.value.length !== 1 ||
-        !validEmbedding(vector, dependencies.embeddings.dimensions)
-      ) {
-        return invalid("The embedding provider returned an invalid vector.");
-      }
+      const vector = embedded.value;
       const access = await accessView(dependencies, scope, options);
       if (access.status !== "ok") {
         return access;
@@ -140,35 +210,23 @@ export const remember = async (
       if (!(await access.value.allows(source.id, "write", record.visibility))) {
         return denied("The current write policy denies this memory record.");
       }
-      const dependenciesInput =
-        record.kind === "conversation-summary" ? record.dependentSourceIds : [];
-      const sourceDependencies = dependenciesInput.map(
-        (sourceId): SourceDependency | undefined => {
-          const parent = access.value.sources.find(
-            (entry) => entry.id === sourceId
-          );
-          return parent
-            ? {
-                derivedSourceId: source.id,
-                organizationId: scope.organizationId,
-                sourceId: parent.id,
-                sourceVersion: parent.version,
-              }
-            : undefined;
-        }
+      const parents = summaryDependencies(
+        record,
+        access.value.sources,
+        source,
+        scope.organizationId
       );
-      if (sourceDependencies.some((dependency) => !dependency)) {
-        return denied("Every summary dependency needs current read access.");
+      if (parents.status !== "ok") {
+        return parents;
       }
-      const currentDependencies = sourceDependencies.filter(
-        (dependency): dependency is SourceDependency => dependency !== undefined
-      );
+      const { ids: dependenciesInput, current: currentDependencies } =
+        parents.value;
       if (record.kind === "remembered-fact") {
         const chunks = await dependencies.repository.search({
-          dimensions: dependencies.embeddings.dimensions,
+          dimensions: dependencies.embeddings?.dimensions ?? 0,
           limit: 100,
-          mode: "hybrid",
-          model: dependencies.embeddings.model,
+          mode: dependencies.retrievalMode ?? "hybrid",
+          model: dependencies.embeddings?.model ?? "",
           now: new Date(now()),
           organizationId: scope.organizationId,
           records: access.value.metadata.records.filter((metadataRecord) =>
@@ -176,7 +234,7 @@ export const remember = async (
           ),
           sources: [source],
           text: record.text,
-          vector,
+          vector: vector ?? [],
         });
         if (
           !chunks.some(
@@ -204,9 +262,10 @@ export const remember = async (
             {
               content: record.text,
               dependencySourceIds: dependenciesInput,
-              embedding: vector,
-              embeddingDimensions: dependencies.embeddings.dimensions,
-              embeddingModel: dependencies.embeddings.model,
+              embedding: embeddingMetadata(dependencies, vector).vector,
+              embeddingDimensions: embeddingMetadata(dependencies, vector)
+                .dimensions,
+              embeddingModel: embeddingMetadata(dependencies, vector).model,
               id: record.id,
               kind: record.kind,
               observedAt: source.observedAt,

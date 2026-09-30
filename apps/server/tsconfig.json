@@ -1,6 +1,10 @@
 {
   "extends": "@cerebro/config/tsconfig.base.json",
-  "references": [{ "path": "../../packages/api" }],
+  "references": [
+    {
+      "path": "../../packages/api"
+    }
+  ],
   "compilerOptions": {
     "noEmit": true,
     "paths": {
@@ -8,6 +12,7 @@
     },
     "jsx": "react-jsx",
     "jsxImportSource": "hono/jsx",
-    "strictNullChecks": true
+    "strictNullChecks": true,
+    "allowImportingTsExtensions": true
   }
 }

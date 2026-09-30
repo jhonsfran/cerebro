@@ -1,5 +1,6 @@
 import type {
   AgentDefinition,
+  ContentDependencies,
   EventEnvelope,
   RunState,
   SessionReceipt,
@@ -14,7 +15,9 @@ import {
   timestamp,
 } from "drizzle-orm/pg-core";
 
-export type ChannelItemBody =
+export type ChannelItemBody = {
+  readonly dependencies?: ContentDependencies;
+} & (
   | {
       readonly type: "user";
       readonly eventId: string;
@@ -34,6 +37,8 @@ export type ChannelItemBody =
       readonly type: "tool";
       readonly runId: string;
       readonly toolId: string;
+      readonly operationId?: string;
+      readonly output?: unknown;
       readonly name: string;
       readonly state: "running" | "succeeded" | "failed";
     }
@@ -42,7 +47,8 @@ export type ChannelItemBody =
       readonly runId: string;
       readonly approvalId: string;
     }
-  | { readonly type: "run"; readonly runId: string; readonly run: RunState };
+  | { readonly type: "run"; readonly runId: string; readonly run: RunState }
+);
 
 export interface AccessChangeReceipt {
   readonly principalId: string;

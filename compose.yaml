@@ -32,6 +32,27 @@ x-minio: &minio
     retries: 30
 
 services:
+  fixture:
+    <<: *app
+    command: [node, deploy/pilot-provider.mjs]
+    ports:
+      - "127.0.0.1:${CEREBRO_FIXTURE_PORT:-18090}:8090"
+    environment:
+      DEPLOY_MODE: fixture
+      FIXTURE_DATA_DIR: /data/pilot-provider
+    volumes:
+      - celld:/data
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:8090/observations').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
   secrets-init:
     <<: *app
     command: [node, deploy/secrets.mjs]

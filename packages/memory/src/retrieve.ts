@@ -70,17 +70,22 @@ export const retrieve = async (
       }
       let vector: readonly number[] = [];
       if (dependencies.retrievalMode !== "full-text") {
-        const vectors = await dependencies.embeddings.embed(
-          [query.text],
-          options
-        );
+        const { embeddings } = dependencies;
+        if (!embeddings) {
+          return {
+            code: "provider-unavailable",
+            reason: "Semantic memory requires a configured embedding provider.",
+            status: "unavailable",
+          };
+        }
+        const vectors = await embeddings.embed([query.text], options);
         if (vectors.status !== "ok") {
           return vectors;
         }
         const [queryVector] = vectors.value;
         if (
           vectors.value.length !== 1 ||
-          !validEmbedding(queryVector, dependencies.embeddings.dimensions)
+          !validEmbedding(queryVector, embeddings.dimensions)
         ) {
           return invalid(
             "The embedding provider returned an invalid query vector."
@@ -93,10 +98,10 @@ export const retrieve = async (
         return access;
       }
       const records = await dependencies.repository.search({
-        dimensions: dependencies.embeddings.dimensions,
+        dimensions: dependencies.embeddings?.dimensions ?? 0,
         limit: query.limit,
         mode: dependencies.retrievalMode ?? "hybrid",
-        model: dependencies.embeddings.model,
+        model: dependencies.embeddings?.model ?? "",
         now: new Date(now()),
         organizationId: query.organizationId,
         records: access.value.metadata.records.filter((record) =>

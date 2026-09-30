@@ -361,7 +361,11 @@ export const createMcpGateway = (
               result,
               persistedOptions(options)
             );
-      return Response.json(saved.status === "ok" ? result : saved);
+      if (saved.status !== "ok") {
+        return Response.json(saved);
+      }
+      const current = await permitted(call, persistedOptions(options));
+      return Response.json(current.status === "ok" ? result : current);
     },
     async reconcile(operationId, context, options) {
       const record = await dependencies.journal.read(
