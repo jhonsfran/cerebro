@@ -39,36 +39,6 @@
       "computedHash": "75c77d6bdff8cd68403f95abdc7091e2cf830730baeecf66ec7ffabe0b1f1267",
       "wellKnownDigest": "sha256:a2438cf1347035a28771abbeb960988eb75029fefb3af3db7f8a9329e5595e5d"
     },
-    "rivet-actors": {
-      "source": "rivet-dev/skills",
-      "sourceType": "github",
-      "skillPath": "rivet-actors/SKILL.md",
-      "computedHash": "9c204da9bb70b28eee4c6dc1f01173aa1067f48c33131de978bbd4014b6843e7"
-    },
-    "rivet-agentos": {
-      "source": "rivet-dev/skills",
-      "sourceType": "github",
-      "skillPath": "rivet-agentos/SKILL.md",
-      "computedHash": "fb299e37d24773f7a7b852c2b940ca81c723d6faa09594822e9f0582628303fc"
-    },
-    "rivet-dynamic-apps": {
-      "source": "rivet-dev/skills",
-      "sourceType": "github",
-      "skillPath": "rivet-dynamic-apps/SKILL.md",
-      "computedHash": "58cc9f886e4d885de841661a321b73a0dcf4c17aecbe9c78275aca9e4a458fcb"
-    },
-    "rivet-secure-exec": {
-      "source": "rivet-dev/skills",
-      "sourceType": "github",
-      "skillPath": "rivet-secure-exec/SKILL.md",
-      "computedHash": "c3fcca43b43a96c25d047ea98fe97f32ff72d025678c652a272e43186b8b51b1"
-    },
-    "rivet-workflows": {
-      "source": "rivet-dev/skills",
-      "sourceType": "github",
-      "skillPath": "rivet-workflows/SKILL.md",
-      "computedHash": "9476fe7ac2abd384e5ea6b685cafde3e7668b20a809c3ba1ba947cad474dad3c"
-    },
     "shadcn": {
       "source": "shadcn/ui",
       "sourceType": "github",

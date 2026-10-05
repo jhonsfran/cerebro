@@ -1,24 +1,24 @@
 # ADR 0001 keeps application behavior independent of replaceable components
 
-Status is proposed. Date is 2026-10-02. This record does not describe a completed migration.
+Status is proposed. Revised on 2026-10-05. This record does not describe a completed migration.
 
 ## Context
 
 Cerebro needs company policy, durable work, controlled tools, and usable chat. The prototype couples those behaviors to celld, OpenCode, and Cloudflare chat libraries.
 
-The user selected a single replacement change for celld and OpenCode. The proposed target is self-hosted Rivet with Pi and AI SDK v7. Future component changes must not require another company-policy implementation.
+The current delivery plan retains celld and replaces OpenCode and AI SDK with Pi Durable and TanStack AI. New Cerebro orchestration uses Effect TS. Future component changes must not require another company-policy implementation.
 
 ## Decision
 
 Organize code around company behavior and a few explicit integration boundaries. Add an interface where a component has an independent lifecycle or a high replacement cost.
 
-Reuse `SessionService`, `OperationJournal`, `AuthorizationPolicy`, `BudgetAuthority`, and `ToolExecutor`. Keep each contract in Cerebro terms. Vendor configuration, SDK contexts, clients, connections, and storage handles stay in implementations.
+Reuse the meanings of `SessionService`, `AuthorizationPolicy`, and `ToolExecutor` through Effect service contracts. Separate durable tool receipts from historical budget journal states. Define an external metering port without implementing a local budget authority. Keep contracts in Cerebro terms. Vendor configuration, SDK contexts, clients, connections, and storage handles stay in implementations.
 
-Keep one application operation for each business action. HTTP, web chat, Slack, and agent tools call that operation. The application verifies current company access and coordinates approvals, budget admission, and receipts.
+Keep one application operation for each business action. HTTP, web chat, Slack, and agent tools call that operation. The application verifies current company access and coordinates approvals and tool receipts. External metering remains unbound in the first slice.
 
-Pi owns its private session and model loop. The conversation coordinator owns admission, durable run state, stop, and recovery. Cerebro owns action-approval decisions and operation identities. SDK permission prompts must not create another independent approval authority.
+Pi owns its private session, model loop, and engine recovery. The conversation coordinator owns admission, durable product state, stop, and recovery of its handoff to Pi. Cerebro owns action-approval decisions and operation identities. SDK permission prompts must not create another independent approval authority.
 
-Each fact has one authority. Product history and operation records use actor SQLite in the proposed target. PostgreSQL owns company records and shared budgets. Browser and channel history are projections. Pi checkpoints are private engine state.
+Each fact has one authority. Product history and tool receipts use Cerebro tables in the session's SQLite store. PostgreSQL owns company records. Browser and channel history are projections. Pi checkpoints are private engine state. A future external meter owns pricing, balances, and reservations. Historical budget records remain preserved.
 
 Preserve intent before external dispatch. Record confirmed results afterward. An uncertain non-idempotent effect stops for reconciliation. Neither actors nor database transactions guarantee exactly-once execution in a remote system.
 
@@ -26,9 +26,10 @@ Preserve intent before external dispatch. Record confirmed results afterward. An
 
 | Area | Permitted dependencies |
 | --- | --- |
-| `packages/contracts` | Cerebro types and boundary schemas. No runtime, transport, authentication, or ORM SDK types. |
+| `packages/contracts` | Cerebro data, boundary schemas, Effect service types, and typed failures. No host, engine, UI protocol, authentication, or ORM SDK types. |
 | Company application behavior | Contracts, current policy, repositories, and explicit effect ports. No browser or actor context. |
-| Rivet and Pi integration | Application behavior and contracts. Owns engine setup, persistence adapter, lifecycle, and event translation. |
+| celld and Pi adapters | Application behavior and contracts. Own engine setup, persistence integration, host lifecycle, and vendor event translation. |
+| TanStack and AG-UI adapters | Authorized domain observations and command receipts. Own protocol translation and browser state. No model or tool execution loop. |
 | Authentication and transport adapters | Verified credentials, boundary parsing, application calls, and presentation. No separate business rules. |
 | `apps/server` composition | Concrete implementations and configuration. Connects the selected components. |
 
@@ -48,13 +49,13 @@ Keep one supported implementation per boundary until a real requirement needs an
 
 The benefit is a smaller change area when an expensive component changes. Humans and agents use the same company rules. New engineers can locate behavior without tracing through vendor adapters.
 
-The cost is explicit ownership at the boundaries. The actor SQLite API requires asynchronous persistence changes. Pi interception, recovery, and AI SDK integration need runtime proof.
+The cost is explicit ownership at the boundaries. The Cerebro-to-Pi handoff, approval wait, host wake-up, cancellation, and TanStack observation need runtime proof. Effect scopes do not provide durable execution by themselves.
 
-This proposal rejects a full Clean Architecture framework, a broad Effect rewrite, and a second policy or approval engine. It keeps the useful dependency rule without adding layers that have no independent responsibility.
+This proposal rejects a generic plugin framework, a broad rewrite of existing company services, and a second policy or approval engine. It uses Effect Layers for the selected adapters and preserves one company authority.
 
 ## Acceptance and maintenance
 
-The [migration plan](/Users/jhonsfran/repos/cerebro/docs/architecture/2026-10-02-rivet-migration-plan.md) defines the runtime checks and later stages.
+The [first-slice plan](2026-10-05-cerebro-slice-1-plan.md) defines the runtime checks and later stages.
 
 Accept this record after the implementation follows these rules and the replacement passes its gate. Record measured limits and remaining gaps in the current architecture overview.
 
