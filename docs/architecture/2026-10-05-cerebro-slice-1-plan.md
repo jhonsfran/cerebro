@@ -1,12 +1,6 @@
 # Deliver the first Cerebro runtime slice
 
-Plan dated 2026-10-05. The target remains proposed until qualification passes.
-**Goal.** Replace OpenCode and AI SDK with Pi Durable and TanStack AI on retained celld.
-**Architecture.** Cerebro owns company permissions, approvals, tool receipts, and product history through Effect services. Adapters isolate the engine, host, and UI protocol.
-**Tech stack.** Effect TS, Pi Durable, TanStack AI, AG-UI, celld, Hono, Better Auth, oRPC, PostgreSQL, and existing object storage.
-**Execution.** One qualification and contract step, four remote branch packets, then local merge, wiring, and acceptance in S1-F.
-**Planning assumption.** Native Python execution is outside this slice. The Python wording needs clarification before adding a Python worker.
-No runtime has passed this plan's qualification yet.
+Plan dated 2026-10-05. The target remains proposed until qualification passes. **Goal.** Replace OpenCode and AI SDK with Pi Durable and TanStack AI on retained celld. **Architecture.** Cerebro owns company permissions, approvals, tool receipts, and product history through Effect services. Adapters isolate the engine, host, and UI protocol. **Tech stack.** Effect TS, Pi Durable, TanStack AI, AG-UI, celld, Hono, Better Auth, oRPC, PostgreSQL, and existing object storage. **Execution.** One qualification and contract step, four remote branch packets, then local merge, wiring, and acceptance in S1-F. **Planning assumption.** Native Python execution is outside this slice. The Python wording needs clarification before adding a Python worker. No runtime has passed this plan's qualification yet.
 
 ## How to read this
 

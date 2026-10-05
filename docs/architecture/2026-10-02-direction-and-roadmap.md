@@ -1,9 +1,6 @@
 # Cerebro direction, decisions, and roadmap
 
-Revised on 2026-10-05. This document records the agreed direction.
-The [first-slice execution plan](2026-10-05-cerebro-slice-1-plan.md) defines the remote-agent packets and acceptance gates.
-The [proposed architecture record](adr-0001-replaceable-application-boundaries.md) defines the dependency rules.
-The runtime integration remains unqualified. These documents do not describe a completed migration.
+Revised on 2026-10-05. This document records the agreed direction. The [first-slice execution plan](2026-10-05-cerebro-slice-1-plan.md) defines the remote-agent packets and acceptance gates. The [proposed architecture record](adr-0001-replaceable-application-boundaries.md) defines the dependency rules. The runtime integration remains unqualified. These documents do not describe a completed migration.
 
 ## Product goal
 
