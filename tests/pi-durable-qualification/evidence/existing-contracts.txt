@@ -1,0 +1,44 @@
+$ node --test tests/contracts/contracts.test.ts
+✔ a disabled principal and an expired delegation cannot enter a session (1.481057ms)
+✔ the inbox detects duplicate delivery and rejects changed payloads (0.373164ms)
+✔ one operation ID cannot be reused with different arguments (0.20535ms)
+✔ a past deadline and a cancelled signal stop a new effect (0.883124ms)
+✔ approval binds the exact tool, arguments, principal, policy, and expiry (11.115319ms)
+✔ approval rejects changed arguments when the stored digest is reused (2.031799ms)
+✔ approval binds the delegated actor and delegation ID (0.699647ms)
+✔ a capability cannot authorize a different tool invocation (0.786588ms)
+✔ fixture policy denies an active principal without a grant (1.164659ms)
+✔ fixture budget denies depleted capacity and preserves retry outcome (0.689151ms)
+✔ fixture session accepts one event and replays duplicate delivery (0.762151ms)
+✔ fixture tool reports an unknown outcome without a second effect (1.731475ms)
+✔ fixture adapters reject production mode (0.604062ms)
+✔ agent repository reads a pinned version after a new version is published (0.590102ms)
+✔ fixture approval replays and a final run cannot be cancelled (0.942153ms)
+✔ fixture session inspection excludes another session's run (0.851967ms)
+✔ fixture tool rejects changed arguments even when the caller reuses a digest (2.414037ms)
+✔ a delegated capability binds the actor as well as the represented user (0.601087ms)
+✔ grant-scoped memory follows current fixture grants (0.805397ms)
+✔ tool argument digests ignore object key order and reject non-JSON values (2.083708ms)
+✔ artifact fixture checks current grants and copies stored bytes (0.772637ms)
+✔ decision fixture chooses only a supplied action and replays it (0.404782ms)
+✔ budget fixture binds reservation requests and finalization targets (0.761229ms)
+✔ agent publish replay checks the definition and expected version (0.365732ms)
+✔ memory fixture binds record, source, and scope on replay (0.515519ms)
+✔ artifact delete replay binds artifact and actor (0.605084ms)
+✔ session fixture rejects one operation ID across command types (0.343549ms)
+✔ tool fixture replay checks the authorized call identity (2.326504ms)
+✔ session cancel replay binds the run and caller (0.519104ms)
+✔ session fixture returns typed invalid-input for non-JSON event data (0.246763ms)
+✔ budget reservation ignores mutations to input and returned amounts (0.29123ms)
+✔ agent definitions cannot change through input or read aliases (0.416769ms)
+✔ memory and artifact visibility ignore caller mutation (0.440014ms)
+✔ session state ignores mutations to submitted and inspected objects (0.453615ms)
+✔ tool output and decision replay ignore returned object mutation (2.33042ms)
+ℹ tests 35
+ℹ suites 0
+ℹ pass 35
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 179.599435

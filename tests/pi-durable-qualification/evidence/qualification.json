@@ -1,0 +1,168 @@
+{
+  "contractStatus": "proposed; freeze blocked",
+  "hostImage": "ghcr.io/denoland/celld:0.6.0@sha256:e188a7f2bb0b8cec9fb04ee4c3d1ed7cca0ea0419519ae2a9ba36e5b6fe5161b",
+  "lockSha256": "0ac9a7fa2fa226f88dda36f1125bf148aab41f2d9beea360b8d9ef8ef8ddac4f",
+  "mode": "celld dev with persistent local storage; not production bucket",
+  "results": [
+    {
+      "details": {
+        "forbidden": []
+      },
+      "name": "isolated resolved graph",
+      "status": "PASS"
+    },
+    {
+      "details": "Ten focused tests on Effect 4; no durability inference",
+      "name": "proposed Effect contract fakes",
+      "status": "PASS"
+    },
+    {
+      "details": "Isolated pinned Effect install; application dependency integration is coordinator-owned",
+      "name": "proposed contract types",
+      "status": "PASS"
+    },
+    {
+      "details": "hydrate/joinRun and ChatClient.attach/detach; zero submit; headless only",
+      "name": "TanStack public lifecycle",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "evidence": "wrapper-strict-browser-bundle.txt",
+        "exitCode": 1,
+        "note": "The following celld wrapper probe enables nodejs_compat to diagnose cancellation independently."
+      },
+      "name": "wrapper worker path without Node imports",
+      "status": "FAIL"
+    },
+    {
+      "details": "Same request id returns accepted:false",
+      "name": "wrapper durable duplicate submission",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "after": [],
+        "before": [
+          {
+            "operationId": "run-A",
+            "session": "1",
+            "status": "running"
+          },
+          {
+            "operationId": "run-B",
+            "session": "1",
+            "status": "queued"
+          }
+        ]
+      },
+      "name": "wrapper cancel A preserves queued B",
+      "status": "FAIL"
+    },
+    {
+      "details": {
+        "cases": 23,
+        "transaction": {
+          "rollback": true,
+          "serialization": true
+        }
+      },
+      "name": "direct storage conformance and transaction ordering",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "conversationId": 1,
+        "requestId": "run-B",
+        "type": "input",
+        "status": "queued",
+        "id": 10
+      },
+      "name": "direct cancel A allows queued B progress",
+      "status": "FAIL"
+    },
+    {
+      "details": {
+        "conversationId": 1,
+        "requestId": "run-B",
+        "type": "input",
+        "status": "queued",
+        "id": 10
+      },
+      "name": "direct process restart recovers queued B",
+      "status": "FAIL"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "changed-input admission conflict",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "idle eviction mid-turn",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "alarm-only completion",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "snapshot attachment race",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "observer overflow",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "five handoff crash boundaries",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "controlled provider retries and compaction",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "current model permission at physical dispatch",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "approval across eviction",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "denied or revoked approval zero physical tool dispatches",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "uncertain write reconciliation",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "Effect interruption reaches provider and tool",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "real browser page load / approval / reconnect",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes",
+      "name": "production bucket durability / flush before acknowledgment",
+      "status": "NOT_RUN"
+    }
+  ],
+  "selectedImplementation": null,
+  "sourceSha": "d556ed3984a9923534d2510b9b694168b1123ad8"
+}

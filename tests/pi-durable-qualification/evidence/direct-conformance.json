@@ -1,0 +1,100 @@
+{
+  "cases": [
+    {
+      "name": "reserves ID 1 for the immutable root conversation",
+      "status": "PASS"
+    },
+    {
+      "name": "commits mixed table writes atomically and rolls all of them back on failure",
+      "status": "PASS"
+    },
+    {
+      "name": "detaches retained writes and every returned record",
+      "status": "PASS"
+    },
+    {
+      "name": "detaches prototype-like JSON keys without changing object prototypes",
+      "status": "PASS"
+    },
+    {
+      "name": "indexes entries committed out of ID order",
+      "status": "PASS"
+    },
+    {
+      "name": "continues an entry cursor below its last item after a newer commit",
+      "status": "PASS"
+    },
+    {
+      "name": "paginates conversations by opaque cursor in ascending ID order",
+      "status": "PASS"
+    },
+    {
+      "name": "filters and pages conversations by durable owner edges",
+      "status": "PASS"
+    },
+    {
+      "name": "scans deep fork history newest-first through every ancestor cap",
+      "status": "PASS"
+    },
+    {
+      "name": "replaces complete task records and pages filtered task scans",
+      "status": "PASS"
+    },
+    {
+      "name": "stores owners and scans waiting and completing tasks by status",
+      "status": "PASS"
+    },
+    {
+      "name": "indexes request IDs per conversation and replaces complete submission records",
+      "status": "PASS"
+    },
+    {
+      "name": "stores passive write submissions without input-only lifecycle states",
+      "status": "PASS"
+    },
+    {
+      "name": "reconstructs rewindable documents and preserves half-open incarnations",
+      "status": "PASS"
+    },
+    {
+      "name": "streams long document tails across root replacement deltas",
+      "status": "PASS"
+    },
+    {
+      "name": "copies stored document bases independently and rejects ambiguous sources",
+      "status": "PASS"
+    },
+    {
+      "name": "uses bases for version transitions and rejects historical reads of current-only documents",
+      "status": "PASS"
+    },
+    {
+      "name": "indexes logical addresses and exact-scope scans independently",
+      "status": "PASS"
+    },
+    {
+      "name": "keeps document lifecycle failures atomic and gives create-plus-retire an empty lifetime",
+      "status": "PASS"
+    },
+    {
+      "name": "rolls back record tables and secondary indexes when a document command fails",
+      "status": "PASS"
+    },
+    {
+      "name": "keeps indexed string identities lossless",
+      "status": "PASS"
+    },
+    {
+      "name": "keeps one global record ID namespace and rejects exhausted ID minting",
+      "status": "PASS"
+    },
+    {
+      "name": "rejects every operation after close",
+      "status": "PASS"
+    }
+  ],
+  "transaction": {
+    "rollback": true,
+    "serialization": true
+  }
+}

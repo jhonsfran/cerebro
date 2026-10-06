@@ -1,0 +1,90 @@
+
+   • turbo 2.11.4
+   • Packages in scope: @cerebro/api, @cerebro/auth, @cerebro/authorization, @cerebro/channels, @cerebro/config, @cerebro/contracts, @cerebro/db, @cerebro/memory, @cerebro/policy, @cerebro/runtime, @cerebro/tools, @cerebro/ui, server, web
+   • Running check-types in 14 packages
+   • Remote caching disabled
+
+@cerebro/contracts:check-types: cache bypass, force executing 797b410dcf5298cb
+@cerebro/ui:check-types: cache bypass, force executing 951a786bf82e35fc
+@cerebro/ui:check-types: $ tsc --noEmit
+@cerebro/contracts:check-types: $ tsc -b
+@cerebro/contracts:check-types: src/authority-service.ts(2,33): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/authority-service.ts(46,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/execution.ts(2,25): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/execution.ts(3,44): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/failures.ts(2,22): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/failures.ts(49,22): error TS2339: Property '_tag' does not exist on type 'ContractFailure'.
+@cerebro/contracts:check-types:   Property '_tag' does not exist on type 'Denied'.
+@cerebro/contracts:check-types: src/failures.ts(50,63): error TS2339: Property 'resource' does not exist on type 'ContractFailure'.
+@cerebro/contracts:check-types:   Property 'resource' does not exist on type 'Denied'.
+@cerebro/contracts:check-types: src/failures.ts(52,13): error TS7053: Element implicitly has an 'any' type because expression of type 'any' can't be used to index type '{ readonly Conflict: 409; readonly Denied: 403; readonly InvalidInput: 400; readonly NotFound: 404; readonly Unavailable: 503; readonly UnknownOutcome: 409; }'.
+@cerebro/contracts:check-types: src/failures.ts(52,30): error TS2339: Property '_tag' does not exist on type 'ContractFailure'.
+@cerebro/contracts:check-types:   Property '_tag' does not exist on type 'Denied'.
+@cerebro/contracts:check-types: src/metering.ts(2,25): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/metering.ts(3,29): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/receipt-service.ts(2,25): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/receipt-service.ts(3,29): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/session-service.ts(2,33): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/session-service.ts(3,44): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/session-service.ts(14,6): error TS7006: Parameter 'value' implicitly has an 'any' type.
+@cerebro/contracts:check-types: src/session-service.ts(57,22): error TS7006: Parameter 'value' implicitly has an 'any' type.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(1,39): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(28,13): error TS7006: Parameter 'cause' implicitly has an 'any' type.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(36,28): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(45,27): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(57,38): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(80,59): error TS7006: Parameter 'result' implicitly has an 'any' type.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(128,24): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(137,26): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(144,26): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(164,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(179,36): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(187,32): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(211,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(227,32): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(246,40): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(251,26): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(265,32): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(286,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(298,32): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(306,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(325,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(359,24): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(366,41): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(372,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/effect-fakes.ts(388,34): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(1,39): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(22,13): error TS7006: Parameter 'cause' implicitly has an 'any' type.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(28,27): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(37,27): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(50,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(58,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(86,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(143,24): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(159,32): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(212,28): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(218,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(227,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(233,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(271,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(274,33): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(327,24): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(335,12): error TS7006: Parameter 'value' implicitly has an 'any' type.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(338,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(345,34): error TS7006: Parameter 'value' implicitly has an 'any' type.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(346,30): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(356,36): error TS7006: Parameter 'value' implicitly has an 'any' type.
+@cerebro/contracts:check-types: src/testing/session-fakes.ts(394,32): error TS2554: Expected 0 arguments, but got 1.
+@cerebro/contracts:check-types: src/tool-service.ts(2,33): error TS2307: Cannot find module 'effect' or its corresponding type declarations.
+@cerebro/contracts:check-types: src/tool-service.ts(31,13): error TS7006: Parameter 'cause' implicitly has an 'any' type.
+@cerebro/contracts:check-types: src/tool-service.ts(68,13): error TS7006: Parameter 'cause' implicitly has an 'any' type.
+@cerebro/contracts:check-types: [ELIFECYCLE] Command failed with exit code 1.
+@cerebro/ui:check-types: [ELIFECYCLE] Command failed.
+@cerebro/contracts#check-types:  ERROR  command (/workspace/cerebro/packages/contracts) /opt/codex/runtimes/codex-primary-runtime/dependencies/bin/fallback/pnpm run check-types exited (1)
+
+ Tasks:    0 successful, 2 total
+Cached:    0 cached, 2 total
+  Time:    2.121s
+Failed:    @cerebro/contracts#check-types
+
+ ERROR  run failed: command  exited (1)
