@@ -55,9 +55,13 @@ This proposal rejects a generic plugin framework, a broad rewrite of existing co
 
 ## S1-0 qualification status
 
-The [S1-0 contract proposal](2026-10-05-cerebro-slice-1-contracts.md) records candidate failures on retained celld 0.6.0. The official PiHarness active-operation abort also withdraws queued inputs. The tested portable-storage fallback preserves the queued receipt but fails to progress it after cancellation and restart. No implementation or contracts are frozen; S1-A through S1-D remain blocked. Published TanStack hydrate/joinRun and ChatClient attach/detach passed a headless probe; browser, permission-stream and recovery acceptance remain unverified.
+The [S1-0 contract proposal](2026-10-05-cerebro-slice-1-contracts.md) selects official PiHarness + Lifecycle on retained celld 0.6.0 with `nodejs_compat`, following the operator's 2026-10-06 instruction to proceed with inexpensive fixes and recorded TODOs. This overrides the preparation stop gate; qualification remains partial and ADR status remains proposed. The coordinator can review and publish the contracts for later implementation packets.
 
-Proposed ports distinguish durable domain revision, ephemeral observation epoch and client access generation. Acknowledgement requires admission, engine acceptance and persisted wake. Approval proposals bind the run and connector-registration fingerprint in addition to existing fields. Effect typed failures and receipt state do not imply host durability. External metering stays unbound, spend control through it is inactive, and native Python remains outside this slice. Manifests and locks remain coordinator-owned requests.
+Cerebro keeps later human runs in durable host admission and hands Pi at most one run at a time. A host-queued cancellation never invokes Pi; active cancellation finishes before the next handoff. This avoids the official wrapper's conversation-wide abort withdrawing later Pi-queued inputs. Lifecycle owns physical alarms and Pi recovery, with a host job for admitted work. The direct storage/wake prototype is retired from the default qualification path.
+
+Proposed ports distinguish durable domain revision, ephemeral observation epoch and client access generation. A queued acknowledgement requires durable host admission and persisted wake; active engine execution also requires engine acceptance. Approvals bind run identity and connector-registration fingerprint. Effect typed failures and the local fixture do not establish production bucket durability, tool interruption or crash-handoff guarantees. Deferred cases remain explicit in `tests/pi-durable-qualification/todos.json`.
+
+External metering stays unbound, spend control through it is inactive, and native Python remains outside this slice. Manifests and locks remain coordinator-owned requests. This branch prepares S1-0 only; no S1-A through S1-D work, merge or deployment is included.
 
 ## Acceptance and maintenance
 

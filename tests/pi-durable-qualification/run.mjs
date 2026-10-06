@@ -19,9 +19,7 @@ await mkdir(evidence, { recursive: true });
 const containers = [];
 const results = [];
 const pendingCases = [
-  "changed-input admission conflict",
   "idle eviction mid-turn",
-  "alarm-only completion",
   "snapshot attachment race",
   "observer overflow",
   "five handoff crash boundaries",
@@ -34,12 +32,27 @@ const pendingCases = [
   "real browser page load / approval / reconnect",
   "production bucket durability / flush before acknowledgment",
 ];
+const plannedChecks = [
+  "isolated resolved graph",
+  "proposed Effect contract fakes",
+  "proposed contract types",
+  "TanStack public lifecycle",
+  "wrapper worker path without Node imports",
+  "raw PiHarness cancel A preserves Pi-queued B",
+  "wrapper durable duplicate admission",
+  "changed-input admission conflict",
+  "wrapper cancel A preserves and completes host-queued B",
+  "wrapper cancel queued B preserves active A",
+  "wrapper process restart recovers host-queued B",
+  "alarm-only completion",
+  ...pendingCases,
+];
 const sourceSha = spawnSync("git", ["rev-parse", "HEAD"], {
   cwd: repo,
   encoding: "utf-8",
 }).stdout.trim();
-const record = (name, status, details) => {
-  results.push({ details, name, status });
+const record = (name, status, details, disposition) => {
+  results.push({ details, disposition, name, status });
   process.stdout.write(`${status} ${name}\n`);
 };
 const command = async (name, args, cwd = work) => {
@@ -82,15 +95,15 @@ const start = async (kind, entry) => {
     "--format=esm",
     "--platform=browser",
     "--external:cloudflare:workers",
-    ...(kind === "wrapper" ? ["--external:node:*"] : []),
+    "--external:node:*",
     `--outfile=${project}/bundle.mjs`,
     `--metafile=${evidence}/${kind}-bundle-meta.json`,
   ]);
   await writeFile(
     join(project, "wrangler.json"),
     JSON.stringify({
-      ...(kind === "wrapper" ? { compatibility_flags: ["nodejs_compat"] } : {}),
       compatibility_date: "2026-10-05",
+      compatibility_flags: ["nodejs_compat"],
       durable_objects: {
         bindings: [{ class_name: "Qualification", name: "QUALIFICATION" }],
       },
@@ -141,7 +154,7 @@ const start = async (kind, entry) => {
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 100; i += 1) {
     try {
-      await http(base, kind === "conformance" ? "/cases" : "/");
+      await http(base, "/");
       return { base, name };
     } catch {
       await delay(100);
@@ -168,7 +181,7 @@ try {
     "--ignore-scripts",
     "--workspaces=false",
     "--cache",
-    join(work, "npm-cache"),
+    process.env.S1_0_NPM_CACHE ?? join(work, "npm-cache"),
   ]);
   const lock = JSON.parse(
     await readFile(join(work, "package-lock.json"), "utf-8")
@@ -216,13 +229,7 @@ try {
     join(evidence, "installed-packages.json"),
     `${JSON.stringify(inventory, null, 2)}\n`
   );
-  for (const file of [
-    "wrapper-worker.mjs",
-    "direct-worker.mjs",
-    "conformance-worker.mjs",
-    "sqlite.mjs",
-    "tanstack.test.mjs",
-  ]) {
+  for (const file of ["wrapper-worker.mjs", "tanstack.test.mjs"]) {
     await cp(join(source, file), join(work, file));
   }
   await cp(
@@ -307,122 +314,168 @@ try {
     {
       evidence: "wrapper-strict-browser-bundle.txt",
       exitCode: strictBundle.status,
-      note: "The following celld wrapper probe enables nodejs_compat to diagnose cancellation independently.",
-    }
+      note: "Operator selected the official wrapper with nodejs_compat; the strict Node-free constraint is an accepted deviation, not a passed check.",
+    },
+    "accepted-deviation"
   );
   const wrapper = await start("wrapper", "wrapper-worker.mjs");
   const timeline = [];
-  const probe = async (path, body) => {
-    const value = await http(wrapper.base, path, body);
-    timeline.push({ at: new Date().toISOString(), path, value });
+  const probe = async (conversation, path, body) => {
+    const separator = path.includes("?") ? "&" : "?";
+    const value = await http(
+      wrapper.base,
+      `${path}${separator}conversation=${conversation}`,
+      body
+    );
+    timeline.push({ at: new Date().toISOString(), conversation, path, value });
     return value;
   };
-  const first = await probe("/submit", { requestId: "run-A", text: "first" });
-  const duplicate = await probe("/submit", {
+  // Keep the vendor limitation reproducible; do not relabel it as a pass.
+  await probe("raw", "/raw/submit", { requestId: "run-A", text: "first" });
+  await probe("raw", "/raw/submit", { requestId: "run-B", text: "second" });
+  const rawBefore = await probe("raw", "/pending");
+  assert.ok(rawBefore.some((r) => r.operationId === "run-B"));
+  await probe("raw", "/raw/cancel", { requestId: "run-A" });
+  const rawAfter = await probe("raw", "/pending");
+  record(
+    "raw PiHarness cancel A preserves Pi-queued B",
+    rawAfter.some((r) => r.operationId === "run-B") ? "PASS" : "FAIL",
+    { after: rawAfter, before: rawBefore },
+    "documented-vendor-limitation"
+  );
+  const first = await probe("serial", "/submit", {
+    requestId: "run-A",
+    text: "first",
+  });
+  const duplicate = await probe("serial", "/submit", {
     requestId: "run-A",
     text: "first",
   });
   assert.equal(first.accepted, true);
   assert.equal(duplicate.accepted, false);
-  record(
-    "wrapper durable duplicate submission",
-    "PASS",
-    "Same request id returns accepted:false"
+  record("wrapper durable duplicate admission", "PASS", { duplicate, first });
+  const changed = await fetch(`${wrapper.base}/submit?conversation=serial`, {
+    body: JSON.stringify({ requestId: "run-A", text: "changed" }),
+    method: "POST",
+    signal: AbortSignal.timeout(20_000),
+  });
+  assert.equal(changed.status, 409);
+  record("changed-input admission conflict", "PASS", {
+    body: await changed.json(),
+    status: changed.status,
+  });
+  await probe("serial", "/submit", { requestId: "run-B", text: "second" });
+  const before = await probe("serial", "/admissions");
+  const piBefore = await probe("serial", "/pending");
+  assert.equal(before.find((r) => r.request_id === "run-B").state, "queued");
+  assert.equal(before.find((r) => r.request_id === "run-B").engine_accepted, 0);
+  assert.ok(piBefore.every((r) => r.operationId === "run-A"));
+  await probe("serial", "/cancel", { requestId: "run-A" });
+  const after = await probe("serial", "/admissions");
+  assert.equal(after.find((r) => r.request_id === "run-A").state, "cancelled");
+  assert.equal(after.find((r) => r.request_id === "run-B").state, "running");
+  await delay(8000);
+  const completed = await probe("serial", "/receipt?requestId=run-B");
+  const serialRoot = await probe("serial", "/");
+  assert.equal(completed.state, "completed");
+  assert.equal(JSON.parse(completed.result).status, "done");
+  assert.equal(
+    serialRoot.counters.find((r) => r.name === "model_calls").value,
+    2
   );
-  await probe("/submit", { requestId: "run-B", text: "second" });
-  await delay(100);
-  const before = await probe("/pending");
-  assert.ok(
-    before.some((r) => r.operationId === "run-A" && r.status === "running")
+  record("wrapper cancel A preserves and completes host-queued B", "PASS", {
+    after,
+    before,
+    completed,
+    counters: serialRoot.counters,
+    piBefore,
+  });
+  // Cancelling a host-queued run never reaches Pi and cannot stop active A.
+  await probe("queued-cancel", "/submit", {
+    requestId: "run-A",
+    text: "first",
+  });
+  await probe("queued-cancel", "/submit", {
+    requestId: "run-B",
+    text: "second",
+  });
+  const cancelled = await probe("queued-cancel", "/cancel", {
+    requestId: "run-B",
+  });
+  assert.equal(cancelled.state, "cancelled");
+  assert.equal(cancelled.engine_accepted, 0);
+  await delay(8000);
+  const surviving = await probe("queued-cancel", "/receipt?requestId=run-A");
+  const queuedRoot = await probe("queued-cancel", "/");
+  assert.equal(surviving.state, "completed");
+  assert.equal(
+    queuedRoot.counters.find((r) => r.name === "model_calls").value,
+    1
   );
-  assert.ok(
-    before.some((r) => r.operationId === "run-B" && r.status === "queued")
+  record("wrapper cancel queued B preserves active A", "PASS", {
+    cancelled,
+    counters: queuedRoot.counters,
+    surviving,
+  });
+  await probe("restart", "/submit", { requestId: "run-A", text: "first" });
+  await probe("restart", "/submit", { requestId: "run-B", text: "second" });
+  const restartBefore = await probe("restart", "/admissions");
+  const wakeBefore = await probe("restart", "/");
+  assert.equal(
+    restartBefore.find((r) => r.request_id === "run-B").state,
+    "queued"
   );
-  await probe("/cancel", { requestId: "run-A" });
-  await probe("/");
-  const after = await probe("/pending");
-  await writeFile(
-    join(evidence, "wrapper-cancel.json"),
-    `${JSON.stringify(timeline, null, 2)}\n`
-  );
-  record(
-    "wrapper cancel A preserves queued B",
-    after.some((r) => r.operationId === "run-B") ? "PASS" : "FAIL",
-    { after, before }
-  );
-  // The concrete wrapper failure permits only a qualification fallback, not application wiring.
-  const conformance = await start("conformance", "conformance-worker.mjs");
-  const cases = await http(conformance.base, "/cases");
-  const storageResults = [];
-  for (let index = 0; index < cases.length; index += 1) {
-    const response = await fetch(`${conformance.base}/?index=${index}`, {
-      signal: AbortSignal.timeout(20_000),
-    });
-    storageResults.push(await response.json());
-  }
-  const transaction = await http(conformance.base, "/transaction");
-  await writeFile(
-    join(evidence, "direct-conformance.json"),
-    `${JSON.stringify({ cases: storageResults, transaction }, null, 2)}\n`
-  );
-  record(
-    "direct storage conformance and transaction ordering",
-    storageResults.every((r) => r.status === "PASS") ? "PASS" : "FAIL",
-    { cases: cases.length, transaction }
-  );
-  const direct = await start("direct", "direct-worker.mjs");
-  const directTimeline = [];
-  const dprobe = async (path, body) => {
-    const value = await http(direct.base, path, body);
-    directTimeline.push({ at: new Date().toISOString(), path, value });
-    return value;
-  };
-  const dfirst = await dprobe("/submit", { requestId: "run-A", text: "first" });
-  const ddup = await dprobe("/submit", { requestId: "run-A", text: "first" });
-  assert.equal(dfirst.id, ddup.id);
-  await dprobe("/submit", { requestId: "run-B", text: "second" });
-  await delay(100);
-  await dprobe("/inspect");
-  await dprobe("/cancel", { requestId: "run-A" });
-  await delay(12_000);
-  const stalled = await dprobe("/receipt?requestId=run-B");
-  await dprobe("/");
-  record(
-    "direct cancel A allows queued B progress",
-    stalled.status === "done" ? "PASS" : "FAIL",
-    stalled
-  );
-  await command("direct-kill", ["docker", "kill", direct.name]);
-  await command("direct-restart", ["docker", "start", direct.name]);
-  // No worker request while testing alarm recovery.
-  const restartedPortOutput = await command("direct-restart-port", [
+  assert.ok(wakeBefore.alarm);
+  await command("wrapper-kill", ["docker", "kill", wrapper.name]);
+  await command("wrapper-restart", ["docker", "start", wrapper.name]);
+  const restartedPort = await command("wrapper-restart-port", [
     "docker",
     "port",
-    direct.name,
+    wrapper.name,
     "9876",
   ]);
-  direct.base = `http://127.0.0.1:${restartedPortOutput.trim().split(":").at(-1)}`;
-  await delay(15_000);
-  await command("direct-alarm-only-timeline", ["docker", "logs", direct.name]);
-  const recovered = await dprobe("/receipt?requestId=run-B");
-  await dprobe("/");
-  record(
-    "direct process restart recovers queued B",
-    recovered.status === "done" ? "PASS" : "FAIL",
-    recovered
+  wrapper.base = `http://127.0.0.1:${restartedPort.trim().split(":").at(-1)}`;
+  // Do not send a worker request while proving an alarm completes admitted work.
+  await delay(20_000);
+  await command("wrapper-alarm-only-timeline", [
+    "docker",
+    "logs",
+    wrapper.name,
+  ]);
+  const recovered = await probe("restart", "/admissions");
+  const recoveredRoot = await probe("restart", "/");
+  assert.equal(recovered.length, 2);
+  assert.ok(recovered.every((r) => r.state === "completed"));
+  assert.equal(
+    recovered.find((r) => r.request_id === "run-B").position,
+    restartBefore.find((r) => r.request_id === "run-B").position
   );
+  record("wrapper process restart recovers host-queued B", "PASS", {
+    before: restartBefore,
+    counters: recoveredRoot.counters,
+    recovered,
+    wakeBefore: wakeBefore.alarm,
+  });
+  record("alarm-only completion", "PASS", {
+    mode: "celld dev local storage; no HTTP request for twenty seconds after process restart",
+    recovered,
+    timeline: "wrapper-alarm-only-timeline.txt",
+  });
   await writeFile(
-    join(evidence, "direct-timeline.json"),
-    `${JSON.stringify(directTimeline, null, 2)}\n`
+    join(evidence, "wrapper-timeline.json"),
+    `${JSON.stringify(timeline, null, 2)}\n`
   );
 } catch (error) {
   record("qualification runner", "FAIL", String(error));
 } finally {
-  for (const name of pendingCases) {
+  for (const name of plannedChecks) {
+    if (results.some((result) => result.name === name)) {
+      continue;
+    }
     record(
       name,
       "NOT_RUN",
-      "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes"
+      "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed"
     );
   }
   for (const name of containers) {
@@ -441,7 +494,7 @@ try {
     .digest("hex");
   await writeFile(
     join(evidence, "qualification.json"),
-    `${JSON.stringify({ contractStatus: "proposed; freeze blocked", hostImage: request.hostImage, lockSha256: lockHash, mode: "celld dev with persistent local storage; not production bucket", results, selectedImplementation: null, sourceSha }, null, 2)}\n`
+    `${JSON.stringify({ contractStatus: "ready for coordinator review; qualification incomplete", hostImage: request.hostImage, lockSha256: lockHash, mode: "celld dev with persistent local storage and nodejs_compat; not production bucket", results, selectedImplementation: "official PiHarness + Lifecycle with serialized Cerebro admission", sourceSha }, null, 2)}\n`
   );
   process.stdout.write(`Evidence: ${evidence}\n`);
   process.exitCode = results.some(

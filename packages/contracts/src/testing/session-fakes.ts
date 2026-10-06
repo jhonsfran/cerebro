@@ -228,11 +228,13 @@ export const createStoreFake = (initial: DomainSnapshot) => {
         }
         if (
           transition.type === "acknowledged" &&
-          (!prior.engineAccepted || !prior.wakeRegistered)
+          (!prior.wakeRegistered ||
+            (prior.run.state !== "queued" && !prior.engineAccepted))
         ) {
           throw new Conflict({
             code: "version-mismatch",
-            reason: "Engine acceptance and durable wake required",
+            reason:
+              "Durable wake required; active runs also need engine acceptance",
           });
         }
         const next = {

@@ -485,7 +485,7 @@ test("Effect scope closes engine resources and cancel A preserves queued B in th
   );
   assert.equal(fake.counts.release, 1);
 });
-test("host fake refuses acknowledgement until engine acceptance and persisted wake; observer close submits nothing", async () => {
+test("host fake acknowledges queued admission after durable wake; active runs require engine acceptance; observer close submits nothing", async () => {
   const { createStoreFake, createSessionFake } =
     await import("../../packages/contracts/src/testing/session-fakes.ts");
   const { Stream } = await import("effect");
@@ -517,14 +517,6 @@ test("host fake refuses acknowledgement until engine acceptance and persisted wa
     fake.service.commit(
       userEvent,
       fake.getRevision(),
-      { runId: handoff.submission.runId, type: "engine-accepted" },
-      future
-    )
-  );
-  await Effect.runPromise(
-    fake.service.commit(
-      userEvent,
-      fake.getRevision(),
       {
         runId: handoff.submission.runId,
         type: "wake-registered",
@@ -539,6 +531,47 @@ test("host fake refuses acknowledgement until engine acceptance and persisted wa
         fake.service.commit(userEvent, fake.getRevision(), acknowledge, future)
       )
     ).acknowledged,
+    true
+  );
+  const recovered = await Effect.runPromise(
+    fake.service.recover(userEvent, future)
+  );
+  assert.equal(recovered[0].engineAccepted, false);
+  assert.equal(recovered[0].run.state, "queued");
+  await Effect.runPromise(
+    fake.service.commit(
+      userEvent,
+      fake.getRevision(),
+      {
+        run: { runId: handoff.submission.runId, state: "running" },
+        runId: handoff.submission.runId,
+        type: "run-state",
+      },
+      future
+    )
+  );
+  assert.equal(
+    (
+      await failureTag(
+        fake.service.commit(userEvent, fake.getRevision(), acknowledge, future)
+      )
+    )._tag,
+    "Conflict"
+  );
+  await Effect.runPromise(
+    fake.service.commit(
+      userEvent,
+      fake.getRevision(),
+      { runId: handoff.submission.runId, type: "engine-accepted" },
+      future
+    )
+  );
+  assert.equal(
+    (
+      await Effect.runPromise(
+        fake.service.commit(userEvent, fake.getRevision(), acknowledge, future)
+      )
+    ).engineAccepted,
     true
   );
   const session = createSessionFake(snapshot);

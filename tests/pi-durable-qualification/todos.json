@@ -1,0 +1,76 @@
+{
+  "status": "open; operator authorized development to proceed with official PiHarness",
+  "operatorDecision": {
+    "date": "2026-10-06",
+    "choice": "official PiHarness first; inexpensive fixes; defer unresolved checks",
+    "scope": "S1-0 preparation only; no S1-A through S1-D execution, merge or deployment"
+  },
+  "selectedImplementation": "PiHarness + Lifecycle; retained celld 0.6.0; nodejs_compat; one handed-off run per conversation",
+  "items": [
+    {
+      "id": "S1-0-T01",
+      "owner": "coordinator",
+      "status": "accepted-deviation",
+      "issue": "Node-free worker bundle fails on node:async_hooks and node:diagnostics_channel",
+      "approach": "Use celld nodejs_compat and carry compatibility flags into the later host fixture",
+      "evidence": "evidence/qualification.json; wrapper-strict-browser-bundle.txt"
+    },
+    {
+      "id": "S1-0-T02",
+      "owner": "runtime packet",
+      "status": "open",
+      "issue": "Raw active PiHarness abort withdraws Pi-queued follow-ups",
+      "approach": "Keep later runs in durable Cerebro admission; hand off one run at a time. Preserve stable request/run identity; serialize cancellation and handoff. Qualification workaround must become an Effect adapter in the later runtime packet.",
+      "evidence": "evidence/wrapper-timeline.json; raw vendor limitation remains FAIL"
+    },
+    {
+      "id": "S1-0-T03",
+      "owner": "runtime/host packets",
+      "status": "deferred",
+      "issue": "Idle eviction and five individual admission/wake/cancel/projection crash boundaries",
+      "approach": "Inject each crash on retained host; queued acknowledgment accepts durable admission plus wake, not engine execution"
+    },
+    {
+      "id": "S1-0-T04",
+      "owner": "host packet",
+      "status": "deferred",
+      "issue": "Production bucket durability and flush before queued acknowledgment",
+      "approach": "Repeat with production-equivalent storage configuration; local celld-dev restart cannot prove remote durability"
+    },
+    {
+      "id": "S1-0-T05",
+      "owner": "runtime/permissions packets",
+      "status": "deferred",
+      "issue": "Provider retries, compaction, current model authority and Effect interruption reaching provider/tool",
+      "approach": "Use controlled physical counters and cancellable provider/tool signals; bound cancellation work so a Lifecycle job cannot stall unrelated jobs"
+    },
+    {
+      "id": "S1-0-T06",
+      "owner": "permissions/runtime packets",
+      "status": "deferred",
+      "issue": "Approval across eviction, denied/revoked approval zero physical dispatch and uncertain-write reconciliation",
+      "approach": "Keep authority, approval binding and unknown-outcome receipts enforced; verify with real host and controlled tool counters"
+    },
+    {
+      "id": "S1-0-T07",
+      "owner": "runtime/UI packets",
+      "status": "deferred",
+      "issue": "Snapshot attachment race, observer overflow and real browser approval/reconnect/access generations",
+      "approach": "Implement the proposed public hydrate/joinRun lifecycle and canonical resnapshot; complete browser cases"
+    },
+    {
+      "id": "S1-0-T08",
+      "owner": "coordinator",
+      "status": "open",
+      "issue": "Application manifests, catalogs, lockfile, root test aliases and AG-UI package metadata remain unapplied",
+      "approach": "Apply dependency-requests.json in one owner commit and run fresh application checks"
+    },
+    {
+      "id": "S1-0-T09",
+      "owner": "coordinator",
+      "status": "open",
+      "issue": "No codex/cerebro-slice-1 integration branch for a packet PR",
+      "approach": "Create the reviewed integration baseline when starting later packets; use this branch SHA for review now"
+    }
+  ]
+}

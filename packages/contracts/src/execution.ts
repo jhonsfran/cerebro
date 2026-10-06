@@ -67,6 +67,7 @@ export interface DurableHandoff {
   readonly wakeAt?: number;
   readonly engineAccepted: boolean;
   readonly wakeRegistered: boolean;
+  // A queued receipt acknowledges host admission and wake, before Pi handoff.
   readonly acknowledged: boolean;
   readonly projectedRevision: number;
 }
