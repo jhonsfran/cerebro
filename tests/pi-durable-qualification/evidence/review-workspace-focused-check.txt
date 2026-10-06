@@ -1,0 +1,24 @@
+Checking formatting...
+
+All matched files use the correct format.
+Finished in 35ms on 16 files using 4 threads.
+packages/contracts/src/authority-service.ts:37:41: error import(namespace): "GenericTag" not found in imported namespace "./Context.js".
+tests/pi-durable-qualification/contracts.test.ts:91:49: error import(namespace): "either" not found in imported namespace "./Effect.js".
+packages/contracts/src/metering.ts:46:38: error import(namespace): "GenericTag" not found in imported namespace "./Context.js".
+packages/contracts/src/execution.ts:55:40: error import(namespace): "GenericTag" not found in imported namespace "./Context.js".
+packages/contracts/src/execution.ts:131:37: error import(namespace): "GenericTag" not found in imported namespace "./Context.js".
+packages/contracts/src/session-service.ts:182:39: error import(namespace): "GenericTag" not found in imported namespace "./Context.js".
+packages/contracts/src/session-service.ts:57:10: error import(namespace): "filter" not found in imported namespace "./Schema.js".
+packages/contracts/src/session-service.ts:74:43: error import(namespace): "int" not found in imported namespace "./Schema.js".
+packages/contracts/src/session-service.ts:74:57: error import(namespace): "positive" not found in imported namespace "./Schema.js".
+packages/contracts/src/session-service.ts:76:39: error import(namespace): "int" not found in imported namespace "./Schema.js".
+packages/contracts/src/session-service.ts:76:53: error import(namespace): "nonNegative" not found in imported namespace "./Schema.js".
+packages/contracts/src/session-service.ts:123:47: error import(namespace): "int" not found in imported namespace "./Schema.js".
+packages/contracts/src/session-service.ts:123:61: error import(namespace): "nonNegative" not found in imported namespace "./Schema.js".
+packages/contracts/src/session-service.ts:125:36: error import(namespace): "nonEmptyString" not found in imported namespace "./Schema.js".
+packages/contracts/src/session-service.ts:127:39: error import(namespace): "int" not found in imported namespace "./Schema.js".
+packages/contracts/src/session-service.ts:127:53: error import(namespace): "nonNegative" not found in imported namespace "./Schema.js".
+packages/contracts/src/session-service.ts:138:41: error import(namespace): "int" not found in imported namespace "./Schema.js".
+packages/contracts/src/session-service.ts:138:55: error import(namespace): "nonNegative" not found in imported namespace "./Schema.js".
+packages/contracts/src/receipt-service.ts:87:41: error import(namespace): "GenericTag" not found in imported namespace "./Context.js".
+packages/contracts/src/tool-service.ts:85:37: error import(namespace): "GenericTag" not found in imported namespace "./Context.js".
