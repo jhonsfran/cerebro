@@ -1,11 +1,19 @@
 {
-  "testedSourceSha": "d556ed3984a9923534d2510b9b694168b1123ad8",
+  "testedSourceSha": "07d7e69e2d78e8a2a84f7bda894d85b311f01ec4",
   "baselineSha": "1855fed13aafee0e7a3369f3e684564f35715086",
   "branch": "codex/cerebro-slice-1-contracts",
-  "recordedAt": "2026-10-06T13:59:33.272617+00:00",
-  "status": "STOPPED; latest pins tested; neither Pi candidate qualified; proposed contracts only",
+  "recordedAt": "2026-10-06T21:45:59.692009+00:00",
+  "status": "READY FOR COORDINATOR REVIEW; official wrapper selected; remaining qualification deferred by operator",
+  "operatorDecision": {
+    "date": "2026-10-06",
+    "instruction": "Proceed with official PiHarness, attempt inexpensive fixes, keep unresolved checks as TODOs",
+    "effect": "Preparation no longer stops at the original S1-0 candidate gate; FAIL and NOT_RUN retain their meanings",
+    "scope": "This task does not execute S1-A through S1-D, merge or deploy"
+  },
+  "selectedImplementation": "official PiHarness + Lifecycle with serialized Cerebro admission",
+  "contractStatus": "ready for coordinator review; qualification incomplete",
   "hostImage": "ghcr.io/denoland/celld:0.6.0@sha256:e188a7f2bb0b8cec9fb04ee4c3d1ed7cca0ea0419519ae2a9ba36e5b6fe5161b",
-  "selectionPolicy": "Latest published npm dist-tags.latest for every S1-0 direct dependency; exact versions captured on 2026-10-06. Transitive dependencies use publisher-compatible ranges; retained celld image is fixed by the plan.",
+  "compatibilityFlags": ["nodejs_compat"],
   "pins": {
     "agents": "0.26.0",
     "@earendil-works/pi-durable": "1.0.4",
@@ -23,79 +31,105 @@
     "@types/react-dom": "19.3.0",
     "@types/node": "26.6.4"
   },
-  "registryEvidence": "registry-latest.json",
+  "registryEvidence": ["registry-latest.json", "latest-tag-recheck.json"],
   "qualificationCounts": {
-    "PASS": 6,
-    "FAIL": 4,
-    "NOT_RUN": 14
+    "PASS": 10,
+    "FAIL": 2,
+    "NOT_RUN": 12
   },
   "commands": [
     {
-      "command": "S1_0_EVIDENCE_DIR=/tmp/cerebro-s1-0-latest/qualification node tests/pi-durable-qualification/run.mjs",
-      "sha": "d556ed3984a9923534d2510b9b694168b1123ad8",
+      "command": "S1_0_NPM_CACHE=/tmp/cerebro-s1-0-latest/npm-cache S1_0_EVIDENCE_DIR=/tmp/cerebro-s1-0-official/review node tests/pi-durable-qualification/run.mjs",
+      "sha": "07d7e69e2d78e8a2a84f7bda894d85b311f01ec4",
       "exitCode": 1,
       "evidence": "qualification.json",
-      "result": "6 executed checks PASS, 4 executed checks FAIL, 14 required cases NOT_RUN; no candidate selected. Fresh npm ci, ten Effect 4 tests, TypeScript 7 signatures and headless TanStack API ran inside the isolated latest-pinned install."
+      "result": "10 executed checks PASS; 2 executed known limitations FAIL; 12 deferred checks NOT_RUN. Exit remains nonzero because qualification is partial. Operator-authorized coordinator preparation proceeds."
     },
     {
       "command": "pnpm test:contracts",
-      "sha": "d556ed3984a9923534d2510b9b694168b1123ad8",
+      "sha": "07d7e69e2d78e8a2a84f7bda894d85b311f01ec4",
       "exitCode": 0,
       "evidence": "existing-contracts.txt",
-      "result": "35 existing tests passed; root test script still does not include the proposed suite until the coordinator changes it."
+      "result": "35 existing tests passed. The isolated runner also ran all ten proposed Effect tests and the TypeScript 7 signature check."
     },
     {
-      "command": "pnpm exec turbo run check-types --force (after removing the temporary Effect link)",
-      "sha": "d556ed3984a9923534d2510b9b694168b1123ad8",
-      "exitCode": 1,
-      "evidence": "review-workspace-check-types.txt",
-      "result": "Missing Effect application dependency and cascading new errors. Coordinator manifest/lock changes are required. These are not labelled pre-existing failures."
-    },
-    {
-      "command": "pnpm exec ultracite check packages/contracts/src/authority-service.ts packages/contracts/src/execution.ts packages/contracts/src/failures.ts packages/contracts/src/metering.ts packages/contracts/src/receipt-service.ts packages/contracts/src/session-service.ts packages/contracts/src/testing/effect-fakes.ts packages/contracts/src/testing/session-fakes.ts packages/contracts/src/tool-service.ts tests/pi-durable-qualification/contracts.test.ts tests/pi-durable-qualification/run.mjs tests/pi-durable-qualification/tanstack.test.mjs tests/pi-durable-qualification/wrapper-worker.mjs tests/pi-durable-qualification/direct-worker.mjs tests/pi-durable-qualification/conformance-worker.mjs tests/pi-durable-qualification/sqlite.mjs",
-      "sha": "d556ed3984a9923534d2510b9b694168b1123ad8",
+      "command": "pnpm exec ultracite check packages/contracts/src/authority-service.ts packages/contracts/src/execution.ts packages/contracts/src/failures.ts packages/contracts/src/metering.ts packages/contracts/src/receipt-service.ts packages/contracts/src/session-service.ts packages/contracts/src/testing/effect-fakes.ts packages/contracts/src/testing/session-fakes.ts packages/contracts/src/tool-service.ts tests/pi-durable-qualification/contracts.test.ts tests/pi-durable-qualification/run.mjs tests/pi-durable-qualification/tanstack.test.mjs tests/pi-durable-qualification/wrapper-worker.mjs",
+      "sha": "07d7e69e2d78e8a2a84f7bda894d85b311f01ec4",
       "exitCode": 0,
       "evidence": "focused-check.txt",
-      "result": "All sixteen proposed code files lint/format passed with the temporary isolated Effect 4.0.1 link."
+      "result": "All thirteen current proposed source files lint/format passed with the temporary isolated Effect 4.0.1 link. Historical direct source is retired from the active fixture."
     },
     {
-      "command": "pnpm exec ultracite check packages/contracts/src/authority-service.ts packages/contracts/src/execution.ts packages/contracts/src/failures.ts packages/contracts/src/metering.ts packages/contracts/src/receipt-service.ts packages/contracts/src/session-service.ts packages/contracts/src/testing/effect-fakes.ts packages/contracts/src/testing/session-fakes.ts packages/contracts/src/tool-service.ts tests/pi-durable-qualification/contracts.test.ts tests/pi-durable-qualification/run.mjs tests/pi-durable-qualification/tanstack.test.mjs tests/pi-durable-qualification/wrapper-worker.mjs tests/pi-durable-qualification/direct-worker.mjs tests/pi-durable-qualification/conformance-worker.mjs tests/pi-durable-qualification/sqlite.mjs (after removing the temporary Effect link)",
-      "sha": "d556ed3984a9923534d2510b9b694168b1123ad8",
-      "exitCode": 0,
-      "evidence": "review-workspace-focused-check.txt",
-      "result": "All sixteen proposed files lint/format passed without the temporary link. This is not an application type check."
+      "command": "pnpm exec turbo run check-types --force (after removing temporary Effect link)",
+      "sha": "07d7e69e2d78e8a2a84f7bda894d85b311f01ec4",
+      "exitCode": 1,
+      "evidence": "review-workspace-check-types.txt",
+      "result": "Application Effect dependency is still a coordinator-owned request. Missing module and cascading errors are retained; not labelled pre-existing. Isolated Effect 4/TypeScript 7 contracts did pass."
     },
     {
-      "command": "pnpm --config.cache-dir=/tmp/cerebro-s1-0/pnpm-cache --config.store-dir=/tmp/cerebro-s1-0/pnpm-store dlx ultracite@7.11.0 fix <all sixteen proposed code files>",
-      "sha": "d556ed3984a9923534d2510b9b694168b1123ad8",
+      "command": "pnpm --config.cache-dir=/tmp/cerebro-s1-0/pnpm-cache --config.store-dir=/tmp/cerebro-s1-0/pnpm-store dlx ultracite@7.11.0 fix <five changed source files>",
+      "sha": "07d7e69e2d78e8a2a84f7bda894d85b311f01ec4",
       "exitCode": 0,
       "evidence": "preparation-format.txt",
-      "result": "Preparation formatter ran before the tested source commit with the temporary Effect 4.0.1 link; enabled commit hook also ran. This records preparation of the source SHA, not a post-commit test invocation."
+      "result": "Required preparation formatter ran before this source commit; commit hooks remained enabled."
     },
     {
       "command": "pnpm build",
-      "sha": "d556ed3984a9923534d2510b9b694168b1123ad8",
+      "sha": "07d7e69e2d78e8a2a84f7bda894d85b311f01ec4",
       "status": "NOT_RUN",
-      "reason": "Full application build remains blocked by uninstalled coordinator-owned Effect dependency; isolated proposed contract types did run."
+      "reason": "Full workspace build awaits coordinator manifest/lock changes; no build pass claimed."
     }
   ],
+  "verifiedBehavior": [
+    "At most one admitted human run is handed to Pi; later runs remain in Cerebro-owned admission",
+    "Duplicate admission reuses identity; changed input under the same request ID returns 409",
+    "Cancelling active A preserves host-queued B, which completes; physical faux-model counter is two",
+    "Cancelling queued B never hands B to Pi; A completes with one faux-model dispatch",
+    "Two stable admissions complete after process kill/restart with no HTTP requests during the twenty-second alarm recovery window",
+    "Ten Effect 4 fake tests, TypeScript 7 signatures and headless public TanStack lifecycle passed",
+    "Isolated npm graph contains zero ai or @ai-sdk/* packages"
+  ],
+  "receiptChange": "Queued acceptance means durable Cerebro admission plus persisted Lifecycle wake; engineAccepted can remain false. Active engine acceptance is recorded only at later handoff. Five individual crash boundaries and production flush are deferred.",
   "inventorySummary": {
     "installed": 274,
     "optionalNotInstalled": 57,
     "installedWithoutLicense": [],
-    "forbiddenAiSdkPackages": [],
-    "agUiCopies": ["1.0.2", "1.0.0"]
+    "forbiddenAiSdkPackages": []
   },
-  "failedCases": [
-    "wrapper worker path without Node imports",
-    "wrapper cancel A preserves queued B",
-    "direct cancel A allows queued B progress",
-    "direct process restart recovers queued B"
+  "knownFailedChecks": [
+    {
+      "details": {
+        "evidence": "wrapper-strict-browser-bundle.txt",
+        "exitCode": 1,
+        "note": "Operator selected the official wrapper with nodejs_compat; the strict Node-free constraint is an accepted deviation, not a passed check."
+      },
+      "disposition": "accepted-deviation",
+      "name": "wrapper worker path without Node imports",
+      "status": "FAIL"
+    },
+    {
+      "details": {
+        "after": [],
+        "before": [
+          {
+            "operationId": "run-A",
+            "session": "1",
+            "status": "running"
+          },
+          {
+            "operationId": "run-B",
+            "session": "1",
+            "status": "queued"
+          }
+        ]
+      },
+      "disposition": "documented-vendor-limitation",
+      "name": "raw PiHarness cancel A preserves Pi-queued B",
+      "status": "FAIL"
+    }
   ],
   "notRunCases": [
-    "changed-input admission conflict",
     "idle eviction mid-turn",
-    "alarm-only completion",
     "snapshot attachment race",
     "observer overflow",
     "five handoff crash boundaries",
@@ -108,36 +142,26 @@
     "real browser page load / approval / reconnect",
     "production bucket durability / flush before acknowledgment"
   ],
-  "remainingBlockers": [
-    "Pi cancellation isolation and queued-turn liveness/recovery",
-    "Official wrapper Node-free worker path; compatibility mode ran only as an independent diagnostic",
-    "Real production-bucket durability, wake and flush tests",
-    "Five durable handoff crash boundaries",
-    "Approval, denial and uncertainty with physical tool counters",
-    "Provider retries, compaction, per-dispatch authority and Effect interruption",
-    "Race-free snapshot attachment, observer overflow and real browser reconnect/access generations",
-    "Coordinator dependency manifests, shared React/TypeScript catalog, pnpm lockfile, root test aliases and AG-UI package metadata",
-    "No remote codex/cerebro-slice-1 integration branch: no packet PR opened"
-  ],
+  "todoFile": "../todos.json",
+  "coordinatorNextStep": "Review this contract/selection commit, apply dependency-requests.json in one manifest/catalog/lock commit, and publish the shared contract baseline for later packets. Carry the recorded qualification TODOs forward.",
+  "prStatus": "No remote codex/cerebro-slice-1 integration branch; no packet PR opened",
   "metering": "Unbound external port; spend control through it inactive",
   "nativePython": "Outside this slice; no native worker added",
   "sourceFileSha256": {
     "packages/contracts/src/authority-service.ts": "d8f3356a5e29dd575706d068bf7f74270e41f212a5ee81a9a64c38031b752dd2",
-    "packages/contracts/src/execution.ts": "e5b7cc43273a88fb95cde1d59e03157af5ced78c28ed089ab7903c46c27e3a74",
+    "packages/contracts/src/execution.ts": "da440dec93f9ba3d4adf3a8920b6a1dfaf00091d47aef15d5d1641154e930c42",
     "packages/contracts/src/failures.ts": "2976323c92788ef0efc65c88a91914f8fa9909c4bc2f8fd7903c91c9f60d7635",
     "packages/contracts/src/metering.ts": "5a1fb07d09600342ec913334354f8227af1460aa24dca0bacb94d656d1b13ec9",
     "packages/contracts/src/receipt-service.ts": "e15b589a6eb09fba4585c88942d4fe76c0d82e9009f34fa5612ef549d603edd0",
     "packages/contracts/src/session-service.ts": "9979fdaaceb6c5a9293355efdafbc694ddcff6206102ddbdfe82eaf377221b54",
     "packages/contracts/src/testing/effect-fakes.ts": "9a50d0508a4b843e6531f3eed6f1ec59d01d33279f18595acb2cbe662cbcd2ef",
-    "packages/contracts/src/testing/session-fakes.ts": "26ef8903e0c4d41856ebe5f00709ae96cde2dcfe3b82ca64287539bc8576901c",
+    "packages/contracts/src/testing/session-fakes.ts": "328ea81fccface844acbca9a500cfb273c0d1d993404a7301230a0e45e4e69e5",
     "packages/contracts/src/tool-service.ts": "827d2e392176e5444e493f60181c8c76eff36a041851b9ecdc3131115d6aec5b",
-    "tests/pi-durable-qualification/contracts.test.ts": "6388e42f07fe412a0135eebb65fae6f95a80bf76d85e978b433e04aaf560dbec",
-    "tests/pi-durable-qualification/run.mjs": "530cb61355657846427ff060e54f2aff33958fe6876636f126c9fc731db56951",
+    "tests/pi-durable-qualification/contracts.test.ts": "9eb56df747889f32af5fae5d98632fd81a11711f09c0c91ef8b20516487f4feb",
+    "tests/pi-durable-qualification/run.mjs": "84e5cfb15ce9b0493dd41bd2b18a03b878fa931a39698539ae19a08625f7859a",
     "tests/pi-durable-qualification/tanstack.test.mjs": "10f958d09796e094256a4c9d7d5f5ace49ac21ca6a2e90d1fa65055640b85762",
-    "tests/pi-durable-qualification/wrapper-worker.mjs": "f9cf8514b465ff4bf6769f465bcfaf5cbb2e2a166609c61e841c251a88f41c60",
-    "tests/pi-durable-qualification/direct-worker.mjs": "da639456367bc765fedb092e6d638812d588b09863f9e72949dea3e4327292da",
-    "tests/pi-durable-qualification/conformance-worker.mjs": "b007be1c3d35c8214d475eabf08bf2f04db8a1c4809c927bf36477b43e657482",
-    "tests/pi-durable-qualification/sqlite.mjs": "05290685eb158ae779ea2f83e752525f7a1b2a38765f45a142f007a12608c3f0"
+    "tests/pi-durable-qualification/wrapper-worker.mjs": "0eb607ab8e52469bdce3c9e62be50405cf160edf5ac5f05f9c3c0761f48d9e72"
   },
-  "note": "The handoff head adds evidence only after this tested source commit. Verify that diff before reusing source results. No tests at an evidence-only successor are implicitly claimed. Previous Effect 3 evidence is archived under previous-effect3/ with its original SHA."
+  "preExistingLocalEdit": "The handoff.json edit present at task start is preserved verbatim as previous-effect4/local-handoff-at-start.json; the prior committed handoff is also archived.",
+  "note": "The final handoff commit adds evidence only after this tested source SHA. Verify source invariance before reusing these results. Historical direct and earlier graph results are not treated as current passes."
 }

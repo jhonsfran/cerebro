@@ -1,0 +1,327 @@
+{
+  "contractStatus": "ready for coordinator review; qualification incomplete",
+  "hostImage": "ghcr.io/denoland/celld:0.6.0@sha256:e188a7f2bb0b8cec9fb04ee4c3d1ed7cca0ea0419519ae2a9ba36e5b6fe5161b",
+  "lockSha256": "0ac9a7fa2fa226f88dda36f1125bf148aab41f2d9beea360b8d9ef8ef8ddac4f",
+  "mode": "celld dev with persistent local storage and nodejs_compat; not production bucket",
+  "results": [
+    {
+      "details": {
+        "forbidden": []
+      },
+      "name": "isolated resolved graph",
+      "status": "PASS"
+    },
+    {
+      "details": "Ten focused tests on Effect 4; no durability inference",
+      "name": "proposed Effect contract fakes",
+      "status": "PASS"
+    },
+    {
+      "details": "Isolated pinned Effect install; application dependency integration is coordinator-owned",
+      "name": "proposed contract types",
+      "status": "PASS"
+    },
+    {
+      "details": "hydrate/joinRun and ChatClient.attach/detach; zero submit; headless only",
+      "name": "TanStack public lifecycle",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "evidence": "wrapper-strict-browser-bundle.txt",
+        "exitCode": 1,
+        "note": "Operator selected the official wrapper with nodejs_compat; the strict Node-free constraint is an accepted deviation, not a passed check."
+      },
+      "disposition": "accepted-deviation",
+      "name": "wrapper worker path without Node imports",
+      "status": "FAIL"
+    },
+    {
+      "details": {
+        "after": [],
+        "before": [
+          {
+            "operationId": "run-A",
+            "session": "1",
+            "status": "running"
+          },
+          {
+            "operationId": "run-B",
+            "session": "1",
+            "status": "queued"
+          }
+        ]
+      },
+      "disposition": "documented-vendor-limitation",
+      "name": "raw PiHarness cancel A preserves Pi-queued B",
+      "status": "FAIL"
+    },
+    {
+      "details": {
+        "duplicate": {
+          "accepted": false,
+          "operationId": "run-A",
+          "state": "running"
+        },
+        "first": {
+          "accepted": true,
+          "operationId": "run-A",
+          "state": "running"
+        }
+      },
+      "name": "wrapper durable duplicate admission",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "body": {
+          "error": "Conflict"
+        },
+        "status": 409
+      },
+      "name": "changed-input admission conflict",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "after": [
+          {
+            "position": 1,
+            "request_id": "run-A",
+            "input": "first",
+            "input_digest": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+            "state": "cancelled",
+            "engine_accepted": 1,
+            "result": "{\"operationId\":\"run-A\",\"session\":\"1\",\"status\":\"unanswered\",\"reason\":\"aborted\"}"
+          },
+          {
+            "position": 3,
+            "request_id": "run-B",
+            "input": "second",
+            "input_digest": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4",
+            "state": "running",
+            "engine_accepted": 1,
+            "result": null
+          }
+        ],
+        "before": [
+          {
+            "position": 1,
+            "request_id": "run-A",
+            "input": "first",
+            "input_digest": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+            "state": "running",
+            "engine_accepted": 1,
+            "result": null
+          },
+          {
+            "position": 3,
+            "request_id": "run-B",
+            "input": "second",
+            "input_digest": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4",
+            "state": "queued",
+            "engine_accepted": 0,
+            "result": null
+          }
+        ],
+        "completed": {
+          "position": 3,
+          "request_id": "run-B",
+          "input": "second",
+          "input_digest": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4",
+          "state": "completed",
+          "engine_accepted": 1,
+          "result": "{\"operationId\":\"run-B\",\"session\":\"1\",\"status\":\"done\",\"text\":\"qualified answer\"}"
+        },
+        "counters": [
+          {
+            "name": "model_calls",
+            "value": 2
+          }
+        ],
+        "piBefore": [
+          {
+            "operationId": "run-A",
+            "session": "1",
+            "status": "running"
+          }
+        ]
+      },
+      "name": "wrapper cancel A preserves and completes host-queued B",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "cancelled": {
+          "position": 2,
+          "request_id": "run-B",
+          "input": "second",
+          "input_digest": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4",
+          "state": "cancelled",
+          "engine_accepted": 0,
+          "result": null
+        },
+        "counters": [
+          {
+            "name": "model_calls",
+            "value": 1
+          }
+        ],
+        "surviving": {
+          "position": 1,
+          "request_id": "run-A",
+          "input": "first",
+          "input_digest": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+          "state": "completed",
+          "engine_accepted": 1,
+          "result": "{\"operationId\":\"run-A\",\"session\":\"1\",\"status\":\"done\",\"text\":\"qualified answer\"}"
+        }
+      },
+      "name": "wrapper cancel queued B preserves active A",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "before": [
+          {
+            "position": 1,
+            "request_id": "run-A",
+            "input": "first",
+            "input_digest": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+            "state": "running",
+            "engine_accepted": 1,
+            "result": null
+          },
+          {
+            "position": 2,
+            "request_id": "run-B",
+            "input": "second",
+            "input_digest": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4",
+            "state": "queued",
+            "engine_accepted": 0,
+            "result": null
+          }
+        ],
+        "counters": [
+          {
+            "name": "model_calls",
+            "value": 3
+          }
+        ],
+        "recovered": [
+          {
+            "position": 1,
+            "request_id": "run-A",
+            "input": "first",
+            "input_digest": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+            "state": "completed",
+            "engine_accepted": 1,
+            "result": "{\"operationId\":\"run-A\",\"session\":\"1\",\"status\":\"done\",\"text\":\"qualified answer\"}"
+          },
+          {
+            "position": 2,
+            "request_id": "run-B",
+            "input": "second",
+            "input_digest": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4",
+            "state": "completed",
+            "engine_accepted": 1,
+            "result": "{\"operationId\":\"run-B\",\"session\":\"1\",\"status\":\"done\",\"text\":\"qualified answer\"}"
+          }
+        ],
+        "wakeBefore": 1791323076732
+      },
+      "name": "wrapper process restart recovers host-queued B",
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "mode": "celld dev local storage; no HTTP request for twenty seconds after process restart",
+        "recovered": [
+          {
+            "position": 1,
+            "request_id": "run-A",
+            "input": "first",
+            "input_digest": "a7937b64b8caa58f03721bb6bacf5c78cb235febe0e70b1b84cd99541461a08e",
+            "state": "completed",
+            "engine_accepted": 1,
+            "result": "{\"operationId\":\"run-A\",\"session\":\"1\",\"status\":\"done\",\"text\":\"qualified answer\"}"
+          },
+          {
+            "position": 2,
+            "request_id": "run-B",
+            "input": "second",
+            "input_digest": "16367aacb67a4a017c8da8ab95682ccb390863780f7114dda0a0e0c55644c7c4",
+            "state": "completed",
+            "engine_accepted": 1,
+            "result": "{\"operationId\":\"run-B\",\"session\":\"1\",\"status\":\"done\",\"text\":\"qualified answer\"}"
+          }
+        ],
+        "timeline": "wrapper-alarm-only-timeline.txt"
+      },
+      "name": "alarm-only completion",
+      "status": "PASS"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "idle eviction mid-turn",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "snapshot attachment race",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "observer overflow",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "five handoff crash boundaries",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "controlled provider retries and compaction",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "current model permission at physical dispatch",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "approval across eviction",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "denied or revoked approval zero physical tool dispatches",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "uncertain write reconciliation",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "Effect interruption reaches provider and tool",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "real browser page load / approval / reconnect",
+      "status": "NOT_RUN"
+    },
+    {
+      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
+      "name": "production bucket durability / flush before acknowledgment",
+      "status": "NOT_RUN"
+    }
+  ],
+  "selectedImplementation": "official PiHarness + Lifecycle with serialized Cerebro admission",
+  "sourceSha": "07d7e69e2d78e8a2a84f7bda894d85b311f01ec4"
+}
