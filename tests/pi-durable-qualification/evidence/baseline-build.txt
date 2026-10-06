@@ -1,0 +1,582 @@
+
+   • turbo 2.11.4
+   • Packages in scope: @cerebro/api, @cerebro/auth, @cerebro/authorization, @cerebro/channels, @cerebro/config, @cerebro/contracts, @cerebro/db, @cerebro/memory, @cerebro/policy, @cerebro/runtime, @cerebro/tools, @cerebro/ui, server, web
+   • Running build in 14 packages
+   • Remote caching disabled
+
+@cerebro/contracts:build: cache bypass, force executing 5f1078b1a56e2a03
+@cerebro/contracts:build: $ tsc -b
+@cerebro/db:build: cache bypass, force executing 9a80e99da3cd5890
+@cerebro/tools:build: cache bypass, force executing 3e1a2e10341a9d26
+@cerebro/db:build: $ tsc -b
+@cerebro/tools:build: $ tsc -b
+@cerebro/authorization:build: cache bypass, force executing 869468743830c7d7
+@cerebro/policy:build: cache bypass, force executing d75ee0823790d930
+@cerebro/auth:build: cache bypass, force executing 0472f784e62290b6
+@cerebro/auth:build: $ tsc -b
+@cerebro/authorization:build: $ tsc -b
+@cerebro/policy:build: $ tsc --noEmit
+@cerebro/memory:build: cache bypass, force executing 6da6ca6b8bd3c8f4
+@cerebro/channels:build: cache bypass, force executing 7ab8e08edaabdaf1
+@cerebro/memory:build: $ tsc -b
+@cerebro/channels:build: $ tsc -b
+@cerebro/api:build: cache bypass, force executing 8e9eb41cb0a8fe7d
+@cerebro/api:build: $ tsc -b
+web:build: cache bypass, force executing 88153ba2da4734f4
+web:build: $ tsc -b ../../packages/api && vite build
+server:build: cache bypass, force executing 93a29c61b73eb296
+server:build: $ tsc -b ../../packages/api && tsdown
+server:build: ℹ tsdown v0.23.0 powered by rolldown v1.2.11
+web:build: vite v8.3.1 building client environment for production...
+web:build: transforming...
+server:build: ℹ config file: /workspace/cerebro/apps/server/tsdown.config.ts
+server:build: ℹ entry: ./src/index.ts
+server:build: ℹ tsconfig: tsconfig.json
+server:build: ℹ Build start
+server:build: ℹ Cleaning 182 files
+web:build: ✓ 2607 modules transformed.
+web:build: rendering chunks...
+web:build: computing gzip size...
+web:build: dist/client/assets/index-D9s_vNdP.css        86.67 kB │ gzip:  15.21 kB
+web:build: dist/client/assets/route-Cegms2ch.js          0.15 kB │ gzip:   0.14 kB
+web:build: dist/client/assets/routes-CEdDEgJL.js         1.31 kB │ gzip:   0.71 kB
+web:build: dist/client/assets/useSelector-l9-UeEiu.js   10.68 kB │ gzip:   3.98 kB
+web:build: dist/client/assets/env.public-BAzpwubo.js    37.48 kB │ gzip:  10.64 kB
+web:build: dist/client/assets/login-CovZJ5w_.js         69.01 kB │ gzip:  17.06 kB
+web:build: dist/client/assets/schemas-IGXj7Dwt.js       96.92 kB │ gzip:  27.19 kB
+web:build: dist/client/assets/dashboard-CTbkirf1.js    294.08 kB │ gzip:  75.05 kB
+web:build: dist/client/assets/index-RSqnK4nQ.js        576.56 kB │ gzip: 191.38 kB
+web:build:
+web:build: [plugin builtin:vite-reporter]
+web:build: (!) Some chunks are larger than 500 kB after minification. Consider:
+web:build: - Using dynamic import() to code-split the application
+web:build: - Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+web:build: - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+web:build: ✓ built in 1.18s
+web:build: vite v8.3.1 building ssr environment for production...
+web:build: transforming...
+web:build: ✓ 440 modules transformed.
+web:build: rendering chunks...
+web:build: computing gzip size...
+web:build: dist/server/assets/env.public-BBL2CnaE.js                    0.11 kB │ gzip:   0.13 kB
+web:build: dist/server/assets/route-04_Rhovd.js                         0.26 kB │ gzip:   0.20 kB
+web:build: dist/server/assets/start-DLlP49yE.js                         0.29 kB │ gzip:   0.22 kB
+web:build: dist/server/assets/empty-plugin-adapters-DSgy9uwE.js         0.31 kB │ gzip:   0.21 kB
+web:build: dist/server/assets/_tanstack-start-manifest_v-DjBZnSgh.js    1.15 kB │ gzip:   0.46 kB
+web:build: dist/server/assets/routes-DfJfweTP.js                        1.71 kB │ gzip:   0.82 kB
+web:build: dist/server/assets/login-CUVVGRBQ.js                        21.99 kB │ gzip:   5.01 kB
+web:build: dist/server/assets/dashboard-B2fzV8qs.js                    56.91 kB │ gzip:  12.71 kB
+web:build: dist/server/server.js                                      238.80 kB │ gzip:  55.38 kB
+web:build: dist/server/assets/router-Dt5krTUk.js                      508.93 kB │ gzip: 122.89 kB
+web:build:
+web:build: ✓ built in 614ms
+server:build: ℹ Hint: consider adding deps.onlyBundle option to avoid unintended bundling of dependencies, or set deps.onlyBundle: false to disable this hint.
+server:build: See more at https://tsdown.dev/options/dependencies#deps-onlybundle
+server:build: Detected dependencies in bundle:
+server:build: - better-call
+server:build: - @better-auth/utils
+server:build: - @better-auth/core
+server:build: - @noble/hashes
+server:build: - @better-auth/scim
+server:build: - @better-auth/sso
+server:build: - fast-xml-parser
+server:build: - @nodable/entities
+server:build: - xml-naming
+server:build: - anynum
+server:build: - strnum
+server:build: - path-expression-matcher
+server:build: - is-unsafe
+server:build: - tldts
+server:build: - @better-fetch/fetch
+server:build: - jose
+server:build: - @xmldom/xmldom
+server:build: - samlify
+server:build: - xpath
+server:build: - node-rsa
+server:build: - asn1
+server:build: - @xmldom/is-dom-node
+server:build: - xml-crypto
+server:build: - escape-html
+server:build: - @authenio/xml-encryption
+server:build: - xml-escape
+server:build: - xml
+server:build: - postgres
+server:build: - effect
+server:build: - @opencode-ai/core
+server:build: - braces
+server:build: - is-number
+server:build: - to-regex-range
+server:build: - fill-range
+server:build: - picomatch
+server:build: - micromatch
+server:build: - is-extglob
+server:build: - is-glob
+server:build: - @parcel/watcher
+server:build: - diff
+server:build: - @opencode-ai/ai
+server:build: - immer
+server:build: - ws
+server:build: - @opencode-ai/server
+server:build: - kind-of
+server:build: - is-extendable
+server:build: - extend-shallow
+server:build: - section-matter
+server:build: - js-yaml
+server:build: - esprima
+server:build: - gray-matter
+server:build: - strip-bom-string
+server:build: - @opencode-ai/util
+server:build: - @opencode-ai/schema
+server:build: - entities
+server:build: - htmlparser2
+server:build: - @opencode-ai/sdk
+server:build: - @opencode-ai/client
+server:build: - @opentelemetry/sdk-trace-node
+server:build: - @effect/opentelemetry
+server:build: - @opentelemetry/api-logs
+server:build: - @opentelemetry/sdk-logs
+server:build: - @opencode-ai/plugin
+server:build: - tslib
+server:build: - @smithy/is-array-buffer
+server:build: - @smithy/util-buffer-from
+server:build: - @smithy/util-utf8
+server:build: - @aws-crypto/util
+server:build: - @aws-crypto/crc32
+server:build: - @smithy/util-hex-encoding
+server:build: - @smithy/eventstream-codec
+server:build: - @ai-sdk/anthropic
+server:build: - @ai-sdk/google-vertex
+server:build: - @opencode-ai/protocol
+server:build: - @modelcontextprotocol/sdk
+server:build: - pkce-challenge
+server:build: - aws4fetch
+server:build: - @opencode-ai/simulation
+server:build: - @smithy/core
+server:build: - zod-to-json-schema
+server:build: - ajv
+server:build: - fast-deep-equal
+server:build: - json-schema-traverse
+server:build: - fast-uri
+server:build: - ajv-formats
+server:build: - @npmcli/name-from-folder
+server:build: - balanced-match
+server:build: - brace-expansion
+server:build: - minimatch
+server:build: - json-parse-even-better-errors
+server:build: - @npmcli/package-json
+server:build: - glob
+server:build: - spdx-license-ids
+server:build: - spdx-exceptions
+server:build: - spdx-expression-parse
+server:build: - @npmcli/promise-spawn
+server:build: - @gar/promise-retry
+server:build: - @npmcli/git
+server:build: - ini
+server:build: - npm-install-checks
+server:build: - npm-normalize-package-bin
+server:build: - npm-pick-manifest
+server:build: - @npmcli/map-workspaces
+server:build: - walk-up-path
+server:build: - @npmcli/config
+server:build: - ci-info
+server:build: - @ai-sdk/provider-utils
+server:build: - @ai-sdk/mistral
+server:build: - ms
+server:build: - debug
+server:build: - agent-base
+server:build: - https-proxy-agent
+server:build: - @ai-sdk/amazon-bedrock
+server:build: - @anthropic-ai/sdk
+server:build: - openai
+server:build: - isomorphic-ws
+server:build: - gitlab-ai-provider
+server:build: - @ai-sdk/provider
+server:build: - @ai-sdk/openai-compatible
+server:build: - venice-ai-sdk-provider
+server:build: - ffi-rs
+server:build: - @ff-labs/fff-node
+server:build: - @ai-sdk/cohere
+server:build: - @ai-sdk/perplexity
+server:build: - @vercel/oidc
+server:build: - @ai-sdk/gateway
+server:build: - ai-gateway-provider
+server:build: - acorn
+server:build: - source-map
+server:build: - buffer-from
+server:build: - source-map-support
+server:build: - typescript
+server:build: - @opencode-ai/codemode
+server:build: - safer-buffer
+server:build: - http-proxy-agent
+server:build: - @ai-sdk/vercel
+server:build: - @ai-sdk/google
+server:build: - @ai-sdk/alibaba
+server:build: - @ai-sdk/openai
+server:build: - @ai-sdk/deepseek
+server:build: - @ai-sdk/azure
+server:build: - @aws-sdk/credential-providers
+server:build: - @aws-sdk/nested-clients
+server:build: - @aws-sdk/credential-provider-cognito-identity
+server:build: - @smithy/credential-provider-imds
+server:build: - @aws-sdk/credential-provider-env
+server:build: - @aws-sdk/credential-provider-http
+server:build: - @aws-sdk/credential-provider-login
+server:build: - @aws-sdk/credential-provider-process
+server:build: - @aws-sdk/token-providers
+server:build: - @aws-sdk/credential-provider-sso
+server:build: - @aws-sdk/credential-provider-web-identity
+server:build: - @aws-sdk/credential-provider-ini
+server:build: - @aws-sdk/credential-provider-node
+server:build: - bowser
+server:build: - @opentelemetry/api
+server:build: - @opentelemetry/resources
+server:build: - web-streams-polyfill
+server:build: - fetch-blob
+server:build: - formdata-polyfill
+server:build: - node-domexception
+server:build: - fuzzysort
+server:build: - isexe
+server:build: - which
+server:build: - treeverse
+server:build: - @isaacs/string-locale-compare
+server:build: - @npmcli/arborist
+server:build: - minipass
+server:build: - minipass-collect
+server:build: - minipass-pipeline
+server:build: - ssri
+server:build: - @npmcli/fs
+server:build: - cacache
+server:build: - fs-minipass
+server:build: - minipass-flush
+server:build: - npm-bundled
+server:build: - @npmcli/installed-package-contents
+server:build: - tar
+server:build: - pacote
+server:build: - ignore-walk
+server:build: - npm-packlist
+server:build: - @npmcli/run-script
+server:build: - @npmcli/node-gyp
+server:build: - npm-registry-fetch
+server:build: - minizlib
+server:build: - minipass-sized
+server:build: - minipass-fetch
+server:build: - iconv-lite
+server:build: - @npmcli/redact
+server:build: - make-fetch-happen
+server:build: - http-cache-semantics
+server:build: - content-type
+server:build: - negotiator
+server:build: - @npmcli/agent
+server:build: - smart-buffer
+server:build: - socks
+server:build: - ip-address
+server:build: - socks-proxy-agent
+server:build: - jsonparse
+server:build: - @sigstore/protobuf-specs
+server:build: - @sigstore/bundle
+server:build: - @sigstore/core
+server:build: - @sigstore/sign
+server:build: - @sigstore/tuf
+server:build: - @tufjs/models
+server:build: - @tufjs/canonical-json
+server:build: - tuf-js
+server:build: - @sigstore/verify
+server:build: - sigstore
+server:build: - @npmcli/metavuln-calculator
+server:build: - proggy
+server:build: - promise-call-limit
+server:build: - bin-links
+server:build: - cmd-shim
+server:build: - read-cmd-shim
+server:build: - signal-exit
+server:build: - write-file-atomic
+server:build: - postcss-selector-parser
+server:build: - cssesc
+server:build: - util-deprecate
+server:build: - @npmcli/query
+server:build: - just-diff
+server:build: - just-diff-apply
+server:build: - parse-conflict-json
+server:build: - json-stringify-nice
+server:build: - common-ancestor-path
+server:build: - promise-all-reject-late
+server:build: - node-fetch
+server:build: - semver
+server:build: - proc-log
+server:build: - lru-cache
+server:build: - hosted-git-info
+server:build: - validate-npm-package-name
+server:build: - npm-package-arg
+server:build: - p-map
+server:build: - @silvia-odwyer/photon-node
+server:build: - resolve.exports
+server:build: - mime-db
+server:build: - mime-types
+server:build: - @effect/platform-node-shared
+server:build: - @effect/platform-node
+server:build: - jsonc-parser
+server:build: - path-key
+server:build: - cross-spawn
+server:build: - shebang-regex
+server:build: - shebang-command
+server:build: - @smithy/types
+server:build: - extend
+server:build: - gaxios
+server:build: - bignumber.js
+server:build: - json-bigint
+server:build: - gcp-metadata
+server:build: - google-logging-utils
+server:build: - base64-js
+server:build: - google-auth-library
+server:build: - safe-buffer
+server:build: - ecdsa-sig-formatter
+server:build: - jws
+server:build: - buffer-equal-constant-time
+server:build: - jwa
+server:build: - gtoken
+server:build: - @opentelemetry/core
+server:build: - @opentelemetry/semantic-conventions
+server:build: - data-uri-to-buffer
+server:build: - @opentelemetry/sdk-trace-base
+server:build: - @opentelemetry/otlp-exporter-base
+server:build: - @protobufjs/aspromise
+server:build: - @protobufjs/base64
+server:build: - @protobufjs/eventemitter
+server:build: - @protobufjs/float
+server:build: - @protobufjs/utf8
+server:build: - @protobufjs/pool
+server:build: - protobufjs
+server:build: - long
+server:build: - @opentelemetry/otlp-transformer
+server:build: - @opentelemetry/exporter-trace-otlp-http
+server:build: - @opentelemetry/sdk-metrics
+server:build: - @opentelemetry/context-async-hooks
+server:build: - eventsource-parser
+server:build: - @aws-sdk/core
+server:build: - @aws/lambda-invoke-store
+server:build: - @smithy/signature-v4
+server:build: - @smithy/node-http-handler
+server:build: - @aws-sdk/xml-builder
+server:build: - @aws-sdk/signature-v4-multi-region
+server:build: - web-tree-sitter
+server:build: - abbrev
+server:build: - nopt
+server:build: ℹ dist/index.mjs                                    8.72 MB
+server:build: ℹ dist/dist-ChDL9Q9g.mjs                            8.34 MB
+server:build: ℹ dist/lib-Bi0sKq0l.mjs                             1.82 MB
+server:build: ℹ dist/Schema-T0pT9pzm.mjs                        949.26 kB │ gzip: 208.56 kB
+server:build: ℹ dist/src-DMOqw-IM.mjs                           778.61 kB │ gzip:  81.33 kB
+server:build: ℹ dist/assets/ffi-rs.linux-x64-gnu-DF-i1ERi.node  762.98 kB │ gzip: 358.50 kB
+server:build: ℹ dist/dist-BHV8qCvL.mjs                          701.98 kB │ gzip: 137.89 kB
+server:build: ℹ dist/process-yneZEeiL.mjs                       566.52 kB │ gzip: 121.47 kB
+server:build: ℹ dist/dist-BV7icNeh.mjs                          486.33 kB │ gzip:  99.21 kB
+server:build: ℹ dist/src-B7r7gRMT.mjs                           430.13 kB │ gzip: 103.08 kB
+server:build: ℹ dist/client-y3SV2QpV.mjs                        345.23 kB │ gzip:  75.11 kB
+server:build: ℹ dist/sts-CdtV8iRh.mjs                           303.72 kB │ gzip:  63.73 kB
+server:build: ℹ dist/commonjs-DxYjX_Ot.mjs                      287.21 kB │ gzip:  73.18 kB
+server:build: ℹ dist/dist-IIUyCu7c.mjs                          283.89 kB │ gzip:  55.95 kB
+server:build: ℹ dist/src-BEHg8E5v.mjs                           246.50 kB │ gzip:  44.89 kB
+server:build: ℹ dist/Stream-DFe-vRqN.mjs                        234.05 kB │ gzip:  48.42 kB
+server:build: ℹ dist/serde-DEEbXB7g.mjs                         216.54 kB │ gzip:  46.20 kB
+server:build: ℹ dist/dist-cjs-C5fphwOa.mjs                      211.69 kB │ gzip:  40.68 kB
+server:build: ℹ dist/event-o5zdSRYC.mjs                         192.91 kB │ gzip:  46.54 kB
+server:build: ℹ dist/file-mutation-gd2xppx8-BUkLB6vm.mjs        186.61 kB │ gzip:  35.38 kB
+server:build: ℹ dist/file-mutation-gd2xppx8-CFWhqHw7.mjs        186.51 kB │ gzip:  35.36 kB
+server:build: ℹ dist/from-DHLYIt9U.mjs                          171.55 kB │ gzip:  29.96 kB
+server:build: ℹ dist/mantle-BBjc3INi.mjs                        167.84 kB │ gzip:  31.00 kB
+server:build: ℹ dist/anthropic-QBy6Lnls.mjs                     166.45 kB │ gzip:  28.03 kB
+server:build: ℹ dist/dist-Di6bvwiN.mjs                          165.63 kB │ gzip:  28.61 kB
+server:build: ℹ dist/backend-Bec49pOp.mjs                       140.92 kB │ gzip:  34.18 kB
+server:build: ℹ dist/src-DuL4XHmP.mjs                           139.55 kB │ gzip:  25.48 kB
+server:build: ℹ dist/dist-B48ka-og.mjs                          138.95 kB │ gzip:  26.20 kB
+server:build: ℹ dist/tree-sitter-CiB_qb5S.mjs                   136.06 kB │ gzip:  29.20 kB
+server:build: ℹ dist/photon_rs-Fjlpq-QC.mjs                     134.59 kB │ gzip:  17.81 kB
+server:build: ℹ dist/wrapper-Cb1F3sct.mjs                       116.09 kB │ gzip:  24.07 kB
+server:build: ℹ dist/websocket-server-BBJYHUmK.mjs              115.33 kB │ gzip:  24.05 kB
+server:build: ℹ dist/auth-BBCYQj8t.mjs                          112.11 kB │ gzip:  25.11 kB
+server:build: ℹ dist/client-bQv1vvvl.mjs                        109.01 kB │ gzip:  27.47 kB
+server:build: ℹ dist/npa-CjxIlRmq.mjs                           101.54 kB │ gzip:  23.20 kB
+server:build: ℹ dist/dist-CvTm5LSW.mjs                           97.99 kB │ gzip:  21.44 kB
+server:build: ℹ dist/dist-DCcJf0Ix.mjs                           93.07 kB │ gzip:  20.94 kB
+server:build: ℹ dist/definitions-BEN30j8o.mjs                    89.93 kB │ gzip:  23.00 kB
+server:build: ℹ dist/NodeSdk-DRq_CjGx.mjs                        87.17 kB │ gzip:  18.79 kB
+server:build: ℹ dist/copilot-provider-BIarAYaz.mjs               85.61 kB │ gzip:  16.06 kB
+server:build: ℹ dist/api-BBoAh_Q0.mjs                            82.01 kB │ gzip:  14.86 kB
+server:build: ℹ dist/dist-0aQsZjvX.mjs                           74.48 kB │ gzip:  18.35 kB
+server:build: ℹ dist/amazon-bedrock-DFPuT9tN.mjs                 73.67 kB │ gzip:  19.23 kB
+server:build: ℹ dist/durable-event-manifest-Dl_T3fAV.mjs         66.84 kB │ gzip:  15.46 kB
+server:build: ℹ dist/dist-BXi--4Q9.mjs                           64.60 kB │ gzip:  12.18 kB
+server:build: ℹ dist/file-mutation-eryv6n99-bG-6XNC3.mjs         60.64 kB │ gzip:  15.99 kB
+server:build: ℹ dist/dist-Cx1WOJ7M.mjs                           60.57 kB │ gzip:  14.81 kB
+server:build: ℹ dist/esm-DD8kjsg3.mjs                            60.23 kB │ gzip:  12.29 kB
+server:build: ℹ dist/src-D-vzNlR_.mjs                            58.50 kB │ gzip:  11.73 kB
+server:build: ℹ dist/dist-BsRybU2V.mjs                           53.07 kB │ gzip:  11.23 kB
+server:build: ℹ dist/es5-BW1OTJLD.mjs                            52.90 kB │ gzip:   8.48 kB
+server:build: ℹ dist/dist-_llQokbK.mjs                           50.08 kB │ gzip:  12.60 kB
+server:build: ℹ dist/dist-D1Wckbz5.mjs                           46.99 kB │ gzip:  11.77 kB
+server:build: ℹ dist/scan-CfkBZX76.mjs                           46.73 kB │ gzip:   9.03 kB
+server:build: ℹ dist/llm-Cl4DNwxF.mjs                            44.36 kB │ gzip:  11.54 kB
+server:build: ℹ dist/anthropic-messages-D6JvFArD.mjs             43.59 kB │ gzip:   9.57 kB
+server:build: ℹ dist/src-BwQjiTs4.mjs                            42.98 kB │ gzip:  11.36 kB
+server:build: ℹ dist/open-responses-ZQI9yzfH.mjs                 41.69 kB │ gzip:   9.40 kB
+server:build: ℹ dist/openai-chat-BPOkfgxF.mjs                    35.92 kB │ gzip:   8.63 kB
+server:build: ℹ dist/event-streams-ByIshmeE.mjs                  34.56 kB │ gzip:   7.45 kB
+server:build: ℹ dist/dist-4CD264X7.mjs                           34.52 kB │ gzip:   9.56 kB
+server:build: ℹ dist/file-mutation-dmnb0hdt-CYUg5_X3.mjs         32.19 kB │ gzip:   9.23 kB
+server:build: ℹ dist/dist-DuR8gBD-.mjs                           31.33 kB │ gzip:   7.64 kB
+server:build: ℹ dist/dist-D3HLZvaG.mjs                           30.23 kB │ gzip:   7.03 kB
+server:build: ℹ dist/lib-B0NHNv6P.mjs                            30.16 kB │ gzip:   8.24 kB
+server:build: ℹ dist/file-mutation-781t60dm-CJKzY7UI.mjs         29.58 kB │ gzip:   7.87 kB
+server:build: ℹ dist/Config-BUDni2rj.mjs                         29.29 kB │ gzip:   8.88 kB
+server:build: ℹ dist/FetchHttpClient-Bhn0P7_6.mjs                25.99 kB │ gzip:   7.23 kB
+server:build: ℹ dist/dist-BbxgS_Xp.mjs                           24.74 kB │ gzip:   6.30 kB
+server:build: ℹ dist/mistral-D-j8jLWU.mjs                        24.59 kB │ gzip:   6.69 kB
+server:build: ℹ dist/FileSystem-B1i7kqtC.mjs                     23.09 kB │ gzip:   6.30 kB
+server:build: ℹ dist/fuzzysort-C85Avo3u.mjs                      22.61 kB │ gzip:   5.16 kB
+server:build: ℹ dist/gemini-ljtizI4o.mjs                         20.23 kB │ gzip:   5.45 kB
+server:build: ℹ dist/token-util-CELXYfli.mjs                     19.49 kB │ gzip:   4.04 kB
+server:build: ℹ dist/type-defs-Dexf7CaP.mjs                      17.85 kB │ gzip:   4.87 kB
+server:build: ℹ dist/adapter-DcsgRbHi.mjs                        15.44 kB │ gzip:   3.80 kB
+server:build: ℹ dist/valid-CX1eFeyN.mjs                          15.33 kB │ gzip:   3.63 kB
+server:build: ℹ dist/Metric-CjwiJUaR.mjs                         13.93 kB │ gzip:   4.06 kB
+server:build: ℹ dist/dist-BkR3BgDc.mjs                           13.49 kB │ gzip:   3.69 kB
+server:build: ℹ dist/persistent-pty-BA9CPGAj.mjs                 12.62 kB │ gzip:   3.39 kB
+server:build: ℹ dist/tool-stream-pARPE9jL.mjs                    12.35 kB │ gzip:   3.79 kB
+server:build: ℹ dist/Logger-CnYrjTL3.mjs                         12.07 kB │ gzip:   3.60 kB
+server:build: ℹ dist/open-responses-channel-Bw_6rZ0v.mjs         12.05 kB │ gzip:   3.48 kB
+server:build: ℹ dist/credential-BiERXvyW.mjs                     11.75 kB │ gzip:   3.32 kB
+server:build: ℹ dist/file-mutation-7mrpdsq5-DsbNBWY-.mjs         11.27 kB │ gzip:   3.85 kB
+server:build: ℹ dist/openai-BbS5-O5O.mjs                         11.24 kB │ gzip:   3.52 kB
+server:build: ℹ dist/src-sWCc4W2u.mjs                            10.87 kB │ gzip:   2.77 kB
+server:build: ℹ dist/aws4fetch.esm-BgsLvm6P.mjs                  10.69 kB │ gzip:   3.58 kB
+server:build: ℹ dist/openai-options-DWriufFq.mjs                 10.46 kB │ gzip:   3.48 kB
+server:build: ℹ dist/xai-C26H5ZHC.mjs                            10.25 kB │ gzip:   3.33 kB
+server:build: ℹ dist/google-1X-ObXgg.mjs                          9.76 kB │ gzip:   3.15 kB
+server:build: ℹ dist/dist-DYlTkGOa.mjs                            9.74 kB │ gzip:   2.49 kB
+server:build: ℹ dist/HttpApiSchema-9Xl3i47T.mjs                   9.67 kB │ gzip:   3.08 kB
+server:build: ℹ dist/checksum-CeQJSwu2.mjs                        9.57 kB │ gzip:   3.04 kB
+server:build: ℹ dist/dist-D54dTXTk.mjs                            9.33 kB │ gzip:   2.43 kB
+server:build: ℹ dist/dist-Bzkoe79u.mjs                            9.23 kB │ gzip:   2.73 kB
+server:build: ℹ dist/multipart-parser-RI9vFxqc.mjs                8.85 kB │ gzip:   2.60 kB
+server:build: ℹ dist/Ref-BjnYLQ7h.mjs                             8.60 kB │ gzip:   2.07 kB
+server:build: ℹ dist/stream-DiPC5pp0.mjs                          8.11 kB │ gzip:   2.24 kB
+server:build: ℹ dist/oauth-DOqRWV7d.mjs                           7.16 kB │ gzip:   2.52 kB
+server:build: ℹ dist/lib-B4hFNMqr.mjs                             6.96 kB │ gzip:   2.34 kB
+server:build: ℹ dist/dist-CsFy8znb.mjs                            6.88 kB │ gzip:   2.48 kB
+server:build: ℹ dist/tool-schema-C4PHkKVc.mjs                     5.45 kB │ gzip:   1.62 kB
+server:build: ℹ dist/sql-AHjC3q9b.mjs                             5.28 kB │ gzip:   1.32 kB
+server:build: ℹ dist/file-mutation-q606pcse-DN2B9Bev.mjs          5.23 kB │ gzip:   1.30 kB
+server:build: ℹ dist/file-mutation-c8ya26sa-DpJyyZ9S.mjs          4.83 kB │ gzip:   1.60 kB
+server:build: ℹ dist/Record-BXRX3NAj.mjs                          4.75 kB │ gzip:   1.63 kB
+server:build: ℹ dist/azure-ZgaaqFwc.mjs                           4.43 kB │ gzip:   1.57 kB
+server:build: ℹ dist/photon-W8hma0q1.mjs                          4.13 kB │ gzip:   1.62 kB
+server:build: ℹ dist/photon-CF2h1m6n.mjs                          3.99 kB │ gzip:   1.57 kB
+server:build: ℹ dist/openrouter-BvY-oYLJ.mjs                      3.96 kB │ gzip:   1.55 kB
+server:build: ℹ dist/file-mutation-c8ya26sa-BR0CpmNu.mjs          3.96 kB │ gzip:   1.34 kB
+server:build: ℹ dist/lifecycle-DNDh2UsZ.mjs                       3.83 kB │ gzip:   1.09 kB
+server:build: ℹ dist/google-vertex-BC2d2B5Y.mjs                   3.59 kB │ gzip:   1.46 kB
+server:build: ℹ dist/p-map-D1ko9wim.mjs                           3.43 kB │ gzip:   1.24 kB
+server:build: ℹ dist/groq-DOFqzYyq.mjs                            3.15 kB │ gzip:   1.31 kB
+server:build: ℹ dist/open-responses-options-B9o2U2G5.mjs          3.06 kB │ gzip:   1.14 kB
+server:build: ℹ dist/amazon-bedrock-mantle-DKeBNGdD.mjs           3.01 kB │ gzip:   1.04 kB
+server:build: ℹ dist/image-Bq5MsPEc.mjs                           2.75 kB │ gzip:   1.06 kB
+server:build: ℹ dist/token-_L_a4AIu.mjs                           2.75 kB │ gzip:   1.04 kB
+server:build: ℹ dist/messages-CI-dXqWb.mjs                        2.65 kB │ gzip:   1.13 kB
+server:build: ℹ dist/google-vertex-shared-WaWgm1eu.mjs            2.54 kB │ gzip:   1.04 kB
+server:build: ℹ dist/responses-BI31_nDy.mjs                       2.43 kB │ gzip:   1.04 kB
+server:build: ℹ dist/anthropic-DobsiDoc.mjs                       2.29 kB │ gzip:   0.88 kB
+server:build: ℹ dist/tool-JlTYhQH3.mjs                            2.25 kB │ gzip:   1.04 kB
+server:build: ℹ dist/openai-compatible-b9OkZG1s.mjs               2.07 kB │ gzip:   0.80 kB
+server:build: ℹ dist/esm-xB9HPAKY.mjs                             2.01 kB │ gzip:   0.72 kB
+server:build: ℹ dist/client-DkZU-5xw.mjs                          1.97 kB │ gzip:   0.73 kB
+server:build: ℹ dist/rolldown-runtime-BMI-E3GI.mjs                1.93 kB │ gzip:   0.87 kB
+server:build: ℹ dist/bedrock-auth-C4bbSkR7.mjs                    1.90 kB │ gzip:   0.89 kB
+server:build: ℹ dist/chat-DvcNC0Et.mjs                            1.82 kB │ gzip:   0.79 kB
+server:build: ℹ dist/permission-saved--K0-D0NO.mjs                1.65 kB │ gzip:   0.69 kB
+server:build: ℹ dist/deepinfra-CW8b_VnE.mjs                       1.58 kB │ gzip:   0.75 kB
+server:build: ℹ dist/togetherai-wqbR8ptm.mjs                      1.50 kB │ gzip:   0.70 kB
+server:build: ℹ dist/cerebras-B42Tv588.mjs                        1.46 kB │ gzip:   0.69 kB
+server:build: ℹ dist/getMachineId-win-QErlBrfk.mjs                1.39 kB │ gzip:   0.79 kB
+server:build: ℹ dist/filesystem-BzNnHYk6.mjs                      1.35 kB │ gzip:   0.63 kB
+server:build: ℹ dist/schema-B2a9pcVZ.mjs                          1.29 kB │ gzip:   0.60 kB
+server:build: ℹ dist/getMachineId-bsd-DpJ43LA6.mjs                1.23 kB │ gzip:   0.61 kB
+server:build: ℹ dist/getMachineId-darwin-Dj_0XlDY.mjs             1.22 kB │ gzip:   0.66 kB
+server:build: ℹ dist/image-input-Doe63Khr.mjs                     1.09 kB │ gzip:   0.60 kB
+server:build: ℹ dist/openai-compatible-profile-C3sFGwCK.mjs       1.04 kB │ gzip:   0.41 kB
+server:build: ℹ dist/getMachineId-linux-2biOff7i.mjs              1.01 kB │ gzip:   0.57 kB
+server:build: ℹ dist/event-streams-BSk_WA7k.mjs                   1.00 kB │ gzip:   0.32 kB
+server:build: ℹ dist/pty.node-CWN_6iOT.mjs                        0.93 kB │ gzip:   0.55 kB
+server:build: ℹ dist/file-mutation-rvfvac9x-xTtCMBYl.mjs          0.89 kB │ gzip:   0.49 kB
+server:build: ℹ dist/workspace-event-Czgz9CdX.mjs                 0.87 kB │ gzip:   0.44 kB
+server:build: ℹ dist/loadSts-BkKnhUPe.mjs                         0.87 kB │ gzip:   0.45 kB
+server:build: ℹ dist/getMachineId-unsupported-C1JoAQ-Y.mjs        0.82 kB │ gzip:   0.46 kB
+server:build: ℹ dist/auth-options-BO77iIuq.mjs                    0.69 kB │ gzip:   0.43 kB
+server:build: ℹ dist/openai-compatible-chat-CdO6k9OF.mjs          0.66 kB │ gzip:   0.40 kB
+server:build: ℹ dist/workspace-fU44uyX2.mjs                       0.66 kB │ gzip:   0.38 kB
+server:build: ℹ dist/execAsync-B2NPsxf0.mjs                       0.61 kB │ gzip:   0.37 kB
+server:build: ℹ dist/file-mutation-5vcssjzn-CkBsfGzm.mjs          0.53 kB │ gzip:   0.34 kB
+server:build: ℹ dist/unified-BNpqImq9.mjs                         0.53 kB │ gzip:   0.35 kB
+server:build: ℹ dist/sql-FGBv4ujd.mjs                             0.44 kB │ gzip:   0.21 kB
+server:build: ℹ dist/dist-BuYPC1Sx.mjs                            0.42 kB │ gzip:   0.18 kB
+server:build: ℹ dist/sql-DlZf3hNV.mjs                             0.37 kB │ gzip:   0.17 kB
+server:build: ℹ dist/cache-B0Y3G_2k.mjs                           0.35 kB │ gzip:   0.25 kB
+server:build: ℹ dist/location-CN8N2pec.mjs                        0.34 kB │ gzip:   0.22 kB
+server:build: ℹ dist/location-CiWouDsW.mjs                        0.32 kB │ gzip:   0.21 kB
+server:build: ℹ dist/openai-BHKVt-pk.mjs                          0.28 kB │ gzip:   0.18 kB
+server:build: ℹ dist/azure-DFGfobQ4.mjs                           0.22 kB │ gzip:   0.15 kB
+server:build: ℹ dist/promise-D-L_wI44.mjs                         0.20 kB │ gzip:   0.16 kB
+server:build: ℹ dist/location-D0_fIQLS.mjs                        0.20 kB │ gzip:   0.14 kB
+server:build: ℹ dist/event-B9ptseD2.mjs                           0.19 kB │ gzip:   0.12 kB
+server:build: ℹ dist/google-vertex-DLnXzaJ-.mjs                   0.16 kB │ gzip:   0.14 kB
+server:build: ℹ dist/token-util-BzZPP_yk.mjs                      0.12 kB │ gzip:   0.10 kB
+server:build: ℹ dist/mantle-C23629Bn.mjs                          0.11 kB │ gzip:   0.11 kB
+server:build: ℹ dist/responses-C23629Bn.mjs                       0.11 kB │ gzip:   0.11 kB
+server:build: ℹ dist/chat-BtS-jx8r.mjs                            0.10 kB │ gzip:   0.10 kB
+server:build: ℹ dist/dist-DCuXhhAd.mjs                            0.10 kB │ gzip:   0.10 kB
+server:build: ℹ dist/npa-DhytSEWu.mjs                             0.10 kB │ gzip:   0.10 kB
+server:build: ℹ dist/responses-DWNtci_C.mjs                       0.10 kB │ gzip:   0.09 kB
+server:build: ℹ dist/src-BztQuxaT.mjs                             0.10 kB │ gzip:   0.10 kB
+server:build: ℹ dist/src-CDtlf-n_.mjs                             0.10 kB │ gzip:   0.10 kB
+server:build: ℹ dist/src-DPnIp16X.mjs                             0.10 kB │ gzip:   0.10 kB
+server:build: ℹ dist/chat-BnRkiCZz.mjs                            0.09 kB │ gzip:   0.09 kB
+server:build: ℹ dist/chat-BFSuvoMj.mjs                            0.09 kB │ gzip:   0.09 kB
+server:build: ℹ dist/gemini-CX6yDKvF.mjs                          0.08 kB │ gzip:   0.09 kB
+server:build: ℹ dist/responses-DN0IG6Ea.mjs                       0.07 kB │ gzip:   0.08 kB
+server:build: ℹ 181 files, total: 30.53 MB
+server:build: ../../node_modules/.pnpm/web-tree-sitter@0.25.10/node_modules/web-tree-sitter/tree-sitter.js (2978:32) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+server:build:       ╭─[ ../../node_modules/.pnpm/web-tree-sitter@0.25.10/node_modules/web-tree-sitter/tree-sitter.js:2978:33 ]
+server:build:       │
+server:build:  2978 │             ASM_CONSTS[start] = eval(func);
+server:build:       │                                 ──┬─
+server:build:       │                                   ╰─── Use of direct `eval` here.
+server:build:       │
+server:build:       │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+server:build: ──────╯
+server:build:
+server:build: ../../node_modules/.pnpm/web-tree-sitter@0.25.10/node_modules/web-tree-sitter/tree-sitter.js (3001:34) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+server:build:       ╭─[ ../../node_modules/.pnpm/web-tree-sitter@0.25.10/node_modules/web-tree-sitter/tree-sitter.js:3001:35 ]
+server:build:       │
+server:build:  3001 │             moduleExports[name] = eval(func);
+server:build:       │                                   ──┬─
+server:build:       │                                     ╰─── Use of direct `eval` here.
+server:build:       │
+server:build:       │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+server:build: ──────╯
+server:build:
+server:build: ../../node_modules/.pnpm/gray-matter@4.0.3/node_modules/gray-matter/lib/engines.js (43:13) [EVAL] Use of direct `eval` function is strongly discouraged as it poses security risks and may cause issues with minification.
+server:build:     ╭─[ ../../node_modules/.pnpm/gray-matter@4.0.3/node_modules/gray-matter/lib/engines.js:43:14 ]
+server:build:     │
+server:build:  43 │       return eval(str) || {};
+server:build:     │              ──┬─
+server:build:     │                ╰─── Use of direct `eval` here.
+server:build:     │
+server:build:     │ Help: Consider using indirect eval. For more information, check the documentation: https://rolldown.rs/guide/troubleshooting#avoiding-direct-eval
+server:build: ────╯
+server:build:
+server:build: ✔ Build complete in 3021ms
+
+ Tasks:    11 successful, 11 total
+Cached:    0 cached, 11 total
+  Time:    7.384s
+
+ WARNING  no output files found for task @cerebro/policy#build. Please check your `outputs` key in `turbo.json`

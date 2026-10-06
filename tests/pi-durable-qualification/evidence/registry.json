@@ -1,0 +1,1892 @@
+{
+  "agents": {
+    "name": "agents",
+    "version": "0.26.0",
+    "license": "MIT",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "require": "./dist/index.js"
+      },
+      "./mcp": {
+        "types": "./dist/mcp/index.d.ts",
+        "import": "./dist/mcp/index.js",
+        "require": "./dist/mcp/index.js"
+      },
+      "./chat": {
+        "types": "./dist/chat/index.d.ts",
+        "import": "./dist/chat/index.js",
+        "require": "./dist/chat/index.js"
+      },
+      "./vite": {
+        "types": "./dist/vite.d.ts",
+        "import": "./dist/vite.js",
+        "require": "./dist/vite.js"
+      },
+      "./x402": {
+        "types": "./dist/mcp/client/x402.d.ts",
+        "import": "./dist/mcp/client/x402.js",
+        "require": "./dist/mcp/client/x402.js"
+      },
+      "./email": {
+        "types": "./dist/email.d.ts",
+        "import": "./dist/email.js",
+        "require": "./dist/email.js"
+      },
+      "./queue": {
+        "types": "./dist/queue/index.d.ts",
+        "import": "./dist/queue/index.js",
+        "require": "./dist/queue/index.js"
+      },
+      "./react": {
+        "types": "./dist/react.d.ts",
+        "import": "./dist/react.js",
+        "require": "./dist/react.js"
+      },
+      "./state": {
+        "types": "./dist/state/index.d.ts",
+        "import": "./dist/state/index.js",
+        "require": "./dist/state/index.js"
+      },
+      "./tasks": {
+        "types": "./dist/tasks/index.d.ts",
+        "import": "./dist/tasks/index.js",
+        "require": "./dist/tasks/index.js"
+      },
+      "./types": {
+        "types": "./dist/types.d.ts",
+        "import": "./dist/types.js",
+        "require": "./dist/types.js"
+      },
+      "./voice": {
+        "types": "./dist/voice/index.d.ts",
+        "import": "./dist/voice/index.js",
+        "require": "./dist/voice/index.js"
+      },
+      "./client": {
+        "types": "./dist/client.d.ts",
+        "import": "./dist/client.js",
+        "require": "./dist/client.js"
+      },
+      "./skills": {
+        "types": "./dist/skills/index.d.ts",
+        "import": "./dist/skills/index.js",
+        "require": "./dist/skills/index.js"
+      },
+      "./browser": {
+        "types": "./dist/browser/index.d.ts",
+        "import": "./dist/browser/index.js",
+        "require": "./dist/browser/index.js"
+      },
+      "./context": {
+        "types": "./dist/context/index.d.ts",
+        "import": "./dist/context/index.js",
+        "require": "./dist/context/index.js"
+      },
+      "./routing": {
+        "types": "./dist/routing/index.d.ts",
+        "import": "./dist/routing/index.js",
+        "require": "./dist/routing/index.js"
+      },
+      "./streams": {
+        "types": "./dist/streams/index.d.ts",
+        "import": "./dist/streams/index.js",
+        "require": "./dist/streams/index.js"
+      },
+      "./ai-react": {
+        "types": "./dist/ai-react.d.ts",
+        "import": "./dist/ai-react.js",
+        "require": "./dist/ai-react.js"
+      },
+      "./ai-types": {
+        "types": "./dist/ai-types.d.ts",
+        "import": "./dist/ai-types.js",
+        "require": "./dist/ai-types.js"
+      },
+      "./channels": {
+        "types": "./dist/channels/index.d.ts",
+        "import": "./dist/channels/index.js",
+        "require": "./dist/channels/index.js"
+      },
+      "./chat-sdk": {
+        "types": "./dist/chat-sdk/index.d.ts",
+        "import": "./dist/chat-sdk/index.js",
+        "require": "./dist/chat-sdk/index.js"
+      },
+      "./schedule": {
+        "types": "./dist/schedule.d.ts",
+        "import": "./dist/schedule.js",
+        "require": "./dist/schedule.js"
+      },
+      "./sessions": {
+        "types": "./dist/sessions/index.d.ts",
+        "import": "./dist/sessions/index.js",
+        "require": "./dist/sessions/index.js"
+      },
+      "./tsconfig": "./agents.tsconfig.json",
+      "./lifecycle": {
+        "types": "./dist/lifecycle/index.d.ts",
+        "import": "./dist/lifecycle/index.js",
+        "require": "./dist/lifecycle/index.js"
+      },
+      "./schedules": {
+        "types": "./dist/schedules/index.d.ts",
+        "import": "./dist/schedules/index.js",
+        "require": "./dist/schedules/index.js"
+      },
+      "./voice/sfu": {
+        "types": "./dist/voice/sfu.d.ts",
+        "import": "./dist/voice/sfu.js",
+        "require": "./dist/voice/sfu.js"
+      },
+      "./workflows": {
+        "types": "./dist/workflows.d.ts",
+        "import": "./dist/workflows.js",
+        "require": "./dist/workflows.js"
+      },
+      "./browser/ai": {
+        "types": "./dist/browser/ai.d.ts",
+        "import": "./dist/browser/ai.js",
+        "require": "./dist/browser/ai.js"
+      },
+      "./chat/react": {
+        "types": "./dist/chat/react.d.ts",
+        "import": "./dist/chat/react.js",
+        "require": "./dist/chat/react.js"
+      },
+      "./harness/pi": {
+        "types": "./dist/harness/pi/index.d.ts",
+        "import": "./dist/harness/pi/index.js",
+        "require": "./dist/harness/pi/index.js"
+      },
+      "./mcp/client": {
+        "types": "./dist/mcp/client/index.d.ts",
+        "import": "./dist/mcp/client/index.js",
+        "require": "./dist/mcp/client/index.js"
+      },
+      "./mcp/server": {
+        "types": "./dist/mcp/server/index.d.ts",
+        "import": "./dist/mcp/server/index.js",
+        "require": "./dist/mcp/server/index.js"
+      },
+      "./voice/text": {
+        "types": "./dist/voice/text.d.ts",
+        "import": "./dist/voice/text.js",
+        "require": "./dist/voice/text.js"
+      },
+      "./websockets": {
+        "types": "./dist/websockets/index.d.ts",
+        "import": "./dist/websockets/index.js",
+        "require": "./dist/websockets/index.js"
+      },
+      "./agent-tools": {
+        "types": "./dist/agent-tools.d.ts",
+        "import": "./dist/agent-tools.js",
+        "require": "./dist/agent-tools.js"
+      },
+      "./codemode/ai": {
+        "types": "./dist/codemode/ai.d.ts",
+        "import": "./dist/codemode/ai.js",
+        "require": "./dist/codemode/ai.js"
+      },
+      "./voice/react": {
+        "types": "./dist/voice/react.d.ts",
+        "import": "./dist/voice/react.js",
+        "require": "./dist/voice/react.js"
+      },
+      "./voice/types": {
+        "types": "./dist/voice/types.d.ts",
+        "import": "./dist/voice/types.js",
+        "require": "./dist/voice/types.js"
+      },
+      "./models/pi-ai": {
+        "types": "./dist/models/pi-ai/index.d.ts",
+        "import": "./dist/models/pi-ai/index.js",
+        "require": "./dist/models/pi-ai/index.js"
+      },
+      "./voice/client": {
+        "types": "./dist/voice/client.d.ts",
+        "import": "./dist/voice/client.js",
+        "require": "./dist/voice/client.js"
+      },
+      "./voice/errors": {
+        "types": "./dist/voice/errors.d.ts",
+        "import": "./dist/voice/errors.js",
+        "require": "./dist/voice/errors.js"
+      },
+      "./ai-chat-agent": {
+        "types": "./dist/ai-chat-agent.d.ts",
+        "import": "./dist/ai-chat-agent.js",
+        "require": "./dist/ai-chat-agent.js"
+      },
+      "./models/ai-sdk": {
+        "types": "./dist/models/ai-sdk/index.d.ts",
+        "import": "./dist/models/ai-sdk/index.js",
+        "require": "./dist/models/ai-sdk/index.js"
+      },
+      "./observability": {
+        "types": "./dist/observability/index.d.ts",
+        "import": "./dist/observability/index.js",
+        "require": "./dist/observability/index.js"
+      },
+      "./browser/ai-sdk": {
+        "types": "./dist/browser/ai-sdk.d.ts",
+        "import": "./dist/browser/ai-sdk.js",
+        "require": "./dist/browser/ai-sdk.js"
+      },
+      "./channels/email": {
+        "types": "./dist/channels/email.d.ts",
+        "import": "./dist/channels/email.js",
+        "require": "./dist/channels/email.js"
+      },
+      "./channels/slack": {
+        "types": "./dist/channels/slack.d.ts",
+        "import": "./dist/channels/slack.js",
+        "require": "./dist/channels/slack.js"
+      },
+      "./channels/voice": {
+        "types": "./dist/channels/voice.d.ts",
+        "import": "./dist/channels/voice.js",
+        "require": "./dist/channels/voice.js"
+      },
+      "./chat/transport": {
+        "types": "./dist/chat/transport.d.ts",
+        "import": "./dist/chat/transport.js",
+        "require": "./dist/chat/transport.js"
+      },
+      "./skills/compile": {
+        "types": "./dist/skills/compile.d.ts",
+        "import": "./dist/skills/compile.js",
+        "require": "./dist/skills/compile.js"
+      },
+      "./channels/ai-sdk": {
+        "types": "./dist/channels/ai-sdk.d.ts",
+        "import": "./dist/channels/ai-sdk.js",
+        "require": "./dist/channels/ai-sdk.js"
+      },
+      "./observability/ai": {
+        "types": "./dist/observability/ai/index.d.ts",
+        "import": "./dist/observability/ai/index.js",
+        "require": "./dist/observability/ai/index.js"
+      },
+      "./schedules/parser": {
+        "types": "./dist/schedules/parser.d.ts",
+        "import": "./dist/schedules/parser.js",
+        "require": "./dist/schedules/parser.js"
+      },
+      "./voice/workers-ai": {
+        "types": "./dist/voice/workers-ai.d.ts",
+        "import": "./dist/voice/workers-ai.js",
+        "require": "./dist/voice/workers-ai.js"
+      },
+      "./channels/telegram": {
+        "types": "./dist/channels/telegram.d.ts",
+        "import": "./dist/channels/telegram.js",
+        "require": "./dist/channels/telegram.js"
+      },
+      "./browser/tanstack-ai": {
+        "types": "./dist/browser/tanstack-ai.d.ts",
+        "import": "./dist/browser/tanstack-ai.js",
+        "require": "./dist/browser/tanstack-ai.js"
+      },
+      "./experimental/webmcp": {
+        "types": "./dist/experimental/webmcp.d.ts",
+        "import": "./dist/experimental/webmcp.js",
+        "require": "./dist/experimental/webmcp.js"
+      },
+      "./ai-chat-v5-migration": {
+        "types": "./dist/ai-chat-v5-migration.d.ts",
+        "import": "./dist/ai-chat-v5-migration.js",
+        "require": "./dist/ai-chat-v5-migration.js"
+      },
+      "./channels/tanstack-ai": {
+        "types": "./dist/channels/tanstack-ai.d.ts",
+        "import": "./dist/channels/tanstack-ai.js",
+        "require": "./dist/channels/tanstack-ai.js"
+      },
+      "./mcp/do-oauth-client-provider": {
+        "types": "./dist/mcp/client/do-oauth-client-provider.d.ts",
+        "import": "./dist/mcp/client/do-oauth-client-provider.js",
+        "require": "./dist/mcp/client/do-oauth-client-provider.js"
+      }
+    },
+    "dependencies": {
+      "yaml": "^2.9.0",
+      "nanoid": "^5.1.16",
+      "capnweb": "^0.12.0",
+      "esbuild": "^0.28.1",
+      "mimetext": "^3.0.28",
+      "partysocket": "1.3.0",
+      "postal-mime": "^2.7.5",
+      "cron-schedule": "^6.0.0",
+      "@cfworker/json-schema": "^4.1.1",
+      "@rolldown/plugin-babel": "^0.2.3",
+      "@babel/plugin-proposal-decorators": "^8.0.2"
+    },
+    "peerDependencies": {
+      "ai": "^6.0.0 || ^7.0.0",
+      "zod": "^4.0.0",
+      "chat": "^4.29.0",
+      "vite": ">=6.0.0 <9.0.0",
+      "react": "^19.0.0",
+      "@x402/evm": "^2.0.0",
+      "just-bash": "^3.0.0",
+      "@x402/core": "^2.0.0",
+      "@tanstack/ai": ">=0.10.2 <1.0.0",
+      "@ai-sdk/react": "^3.0.0 || ^4.0.0",
+      "@ai-sdk/provider": "^4.0.0",
+      "@cloudflare/codemode": ">=0.5.0",
+      "@earendil-works/pi-ai": "^1.0.0",
+      "@modelcontextprotocol/sdk": "1.30.0",
+      "@earendil-works/pi-durable": "^1.0.0",
+      "@modelcontextprotocol/client": "2.0.0",
+      "@modelcontextprotocol/server": "2.0.0"
+    },
+    "peerDependenciesMeta": {
+      "ai": {
+        "optional": true
+      },
+      "chat": {
+        "optional": true
+      },
+      "vite": {
+        "optional": true
+      },
+      "react": {
+        "optional": true
+      },
+      "@x402/evm": {
+        "optional": true
+      },
+      "just-bash": {
+        "optional": true
+      },
+      "@x402/core": {
+        "optional": true
+      },
+      "@tanstack/ai": {
+        "optional": true
+      },
+      "@ai-sdk/react": {
+        "optional": true
+      },
+      "@ai-sdk/provider": {
+        "optional": true
+      },
+      "@cloudflare/codemode": {
+        "optional": true
+      },
+      "@earendil-works/pi-ai": {
+        "optional": true
+      },
+      "@earendil-works/pi-durable": {
+        "optional": true
+      }
+    },
+    "engines": null,
+    "dist": {
+      "shasum": "bd71680ac1636edaa282ac35a78005959d494f95",
+      "tarball": "https://registry.npmjs.org/agents/-/agents-0.26.0.tgz",
+      "fileCount": 368,
+      "integrity": "sha512-r0odbrTXkZMPwl2EvCsPB5jSMZoXUvYDUjhP/VppOpPKc4ddBMWQIgVabnXuSaRF+sqCIPm1txM/qbDpJqXZpQ==",
+      "signatures": [
+        {
+          "sig": "MEQCIDv2SEL2xRRrGcWOltlTA1RkxaxlRZWNsS9XJqnUpQRUAiARz+fws4ljJFGOULMlU7KR0gQ8f5hmIXobIXmPqI2CyA==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEQCIGorOooQm+jGlLiBm1nCyH7DONz2XddFM2GLl8s49H+dAiBtxHGAddBit2zUbCLLlamRWwGbrscyAjo8rUilL4/uLg=="
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/agents@0.26.0",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 8397056
+    },
+    "gitHead": null,
+    "publishedAt": "2026-10-02T17:57:22.928Z"
+  },
+  "@earendil-works/pi-durable": {
+    "name": "@earendil-works/pi-durable",
+    "version": "1.0.4",
+    "license": "MIT",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "source": "./src/index.ts",
+        "default": "./dist/index.js"
+      },
+      "./env": {
+        "types": "./dist/env/index.d.ts",
+        "import": "./dist/env/index.js",
+        "source": "./src/env/index.ts",
+        "default": "./dist/env/index.js"
+      },
+      "./tools": {
+        "types": "./dist/tools/index.d.ts",
+        "import": "./dist/tools/index.js",
+        "source": "./src/tools/index.ts",
+        "default": "./dist/tools/index.js"
+      },
+      "./testing": {
+        "types": "./dist/testing/index.d.ts",
+        "import": "./dist/testing/index.js",
+        "source": "./src/testing/index.ts",
+        "default": "./dist/testing/index.js"
+      },
+      "./env/node": {
+        "types": "./dist/env/node.d.ts",
+        "import": "./dist/env/node.js",
+        "source": "./src/env/node.ts",
+        "default": "./dist/env/node.js"
+      },
+      "./package.json": "./package.json",
+      "./storage/jsonl": {
+        "types": "./dist/storage/jsonl/index.d.ts",
+        "import": "./dist/storage/jsonl/index.js",
+        "source": "./src/storage/jsonl/index.ts",
+        "default": "./dist/storage/jsonl/index.js"
+      },
+      "./storage/memory": {
+        "types": "./dist/storage/memory.d.ts",
+        "import": "./dist/storage/memory.js",
+        "source": "./src/storage/memory.ts",
+        "default": "./dist/storage/memory.js"
+      },
+      "./storage/sqlite": {
+        "types": "./dist/storage/sqlite/index.d.ts",
+        "import": "./dist/storage/sqlite/index.js",
+        "source": "./src/storage/sqlite/index.ts",
+        "default": "./dist/storage/sqlite/index.js"
+      },
+      "./storage/jsonl/node": {
+        "types": "./dist/storage/jsonl/node.d.ts",
+        "import": "./dist/storage/jsonl/node.js",
+        "source": "./src/storage/jsonl/node.ts",
+        "default": "./dist/storage/jsonl/node.js"
+      },
+      "./storage/sqlite/node": {
+        "types": "./dist/storage/sqlite/node.d.ts",
+        "import": "./dist/storage/sqlite/node.js",
+        "source": "./src/storage/sqlite/node.ts",
+        "default": "./dist/storage/sqlite/node.js"
+      }
+    },
+    "dependencies": {
+      "diff": "8.0.4",
+      "typebox": "1.3.27",
+      "@earendil-works/chord": "^1.0.4",
+      "@earendil-works/pi-ai": "^1.0.4"
+    },
+    "peerDependencies": null,
+    "peerDependenciesMeta": null,
+    "engines": {
+      "node": ">=22.19.0"
+    },
+    "dist": {
+      "shasum": "bcd355280351d29c49846a7b142292d931d2ce0a",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-durable/-/pi-durable-1.0.4.tgz",
+      "fileCount": 263,
+      "integrity": "sha512-i22unyhavxrTF/KS/JcBOKprQRgepufOIztnqBKZXJCWbEHsXDzcINtjmmBSbFB/3S+4FWIl3eJ5FMbRe33Ybg==",
+      "signatures": [
+        {
+          "sig": "MEUCIQDyS5RVA1ZFcWQeJYasqt3VMCsY4Hr3luRP+euq1Mpf1AIgRYphs/9iSFzrRuWua8HRg5IC8aARS1+w3fjdjLxSXIE=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEUCIF7y519zwyqtVpBfMimEKvwcg9Q/qQV1B+CUEAMQA5NLAiEAzUcJKLn7tTmwbEsFKrzmZ7RpJzC/mAkGWBvbO/W3Km4="
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-durable@1.0.4",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 2448283
+    },
+    "gitHead": "7c10bd4337495ee613f2224843ecdf349b80d1df",
+    "publishedAt": "2026-10-05T21:46:31.297Z"
+  },
+  "@earendil-works/pi-ai": {
+    "name": "@earendil-works/pi-ai",
+    "version": "1.0.4",
+    "license": "MIT",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./api/*": {
+        "types": "./dist/api/*.d.ts",
+        "import": "./dist/api/*.js"
+      },
+      "./oauth": {
+        "types": "./dist/oauth.d.ts",
+        "import": "./dist/oauth.js"
+      },
+      "./compat": {
+        "types": "./dist/compat.d.ts",
+        "import": "./dist/compat.js"
+      },
+      "./models": {
+        "types": "./dist/models.d.ts",
+        "import": "./dist/models.js"
+      },
+      "./utils/*": {
+        "types": "./dist/utils/*.d.ts",
+        "import": "./dist/utils/*.js"
+      },
+      "./bun-oauth": {
+        "types": "./dist/bun-oauth.d.ts",
+        "import": "./dist/bun-oauth.js"
+      },
+      "./providers/*": {
+        "types": "./dist/providers/*.d.ts",
+        "import": "./dist/providers/*.js"
+      },
+      "./bedrock-provider": {
+        "types": "./dist/bedrock-provider.d.ts",
+        "import": "./dist/bedrock-provider.js"
+      }
+    },
+    "dependencies": {
+      "openai": "7.19.0",
+      "typebox": "1.3.27",
+      "partial-json": "0.1.7",
+      "@google/genai": "2.21.0",
+      "http-proxy-agent": "9.1.0",
+      "@anthropic-ai/sdk": "0.129.0",
+      "https-proxy-agent": "9.1.0",
+      "@smithy/node-http-handler": "4.12.1",
+      "@earendil-works/pi-telemetry": "^1.0.4",
+      "@aws-sdk/client-bedrock-runtime": "3.1127.0"
+    },
+    "peerDependencies": null,
+    "peerDependenciesMeta": null,
+    "engines": {
+      "node": ">=22.19.0"
+    },
+    "dist": {
+      "shasum": "f398aa4469437bfa0c6326bcb61f7bc4f25840e6",
+      "tarball": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-1.0.4.tgz",
+      "fileCount": 817,
+      "integrity": "sha512-/Eu5R0gfor6wcmRcVyOmulUiZmsHJ0bKu5wXXnpCoSHF3y4FnW4fgnjRlLjNza8NJWXdvW5Uew90Zukx7Sh2rw==",
+      "signatures": [
+        {
+          "sig": "MEUCIApAYjgAN/fkbyGucBQpAcFCoQ8a7lAUL2p7abcf7NPLAiEA3FZ3mA8B2JPdCt3RN9NzUZYZq6/iIHdk5E44F9v/NJ8=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEUCIQCPokdQ9k2oheqbeZhslOjPe+erm2QC/HPi6Pfc20cP7QIgKVe5frgXCyboy9mFWagkmsmOYLQ0g3mn82kyQvKs+js="
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@earendil-works%2fpi-ai@1.0.4",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 4005024
+    },
+    "gitHead": "7c10bd4337495ee613f2224843ecdf349b80d1df",
+    "publishedAt": "2026-10-05T21:44:42.433Z"
+  },
+  "effect": {
+    "name": "effect",
+    "version": "3.22.2",
+    "license": "MIT",
+    "exports": {
+      ".": {
+        "types": "./dist/dts/index.d.ts",
+        "import": "./dist/esm/index.js",
+        "default": "./dist/cjs/index.js"
+      },
+      "./HKT": {
+        "types": "./dist/dts/HKT.d.ts",
+        "import": "./dist/esm/HKT.js",
+        "default": "./dist/cjs/HKT.js"
+      },
+      "./Ref": {
+        "types": "./dist/dts/Ref.d.ts",
+        "import": "./dist/esm/Ref.js",
+        "default": "./dist/cjs/Ref.js"
+      },
+      "./STM": {
+        "types": "./dist/dts/STM.d.ts",
+        "import": "./dist/esm/STM.js",
+        "default": "./dist/cjs/STM.js"
+      },
+      "./Cron": {
+        "types": "./dist/dts/Cron.d.ts",
+        "import": "./dist/esm/Cron.js",
+        "default": "./dist/cjs/Cron.js"
+      },
+      "./Data": {
+        "types": "./dist/dts/Data.d.ts",
+        "import": "./dist/esm/Data.js",
+        "default": "./dist/cjs/Data.js"
+      },
+      "./Exit": {
+        "types": "./dist/dts/Exit.d.ts",
+        "import": "./dist/esm/Exit.js",
+        "default": "./dist/cjs/Exit.js"
+      },
+      "./Hash": {
+        "types": "./dist/dts/Hash.d.ts",
+        "import": "./dist/esm/Hash.js",
+        "default": "./dist/cjs/Hash.js"
+      },
+      "./List": {
+        "types": "./dist/dts/List.d.ts",
+        "import": "./dist/esm/List.js",
+        "default": "./dist/cjs/List.js"
+      },
+      "./Pool": {
+        "types": "./dist/dts/Pool.d.ts",
+        "import": "./dist/esm/Pool.js",
+        "default": "./dist/cjs/Pool.js"
+      },
+      "./Sink": {
+        "types": "./dist/dts/Sink.d.ts",
+        "import": "./dist/esm/Sink.js",
+        "default": "./dist/cjs/Sink.js"
+      },
+      "./TMap": {
+        "types": "./dist/dts/TMap.d.ts",
+        "import": "./dist/esm/TMap.js",
+        "default": "./dist/cjs/TMap.js"
+      },
+      "./TRef": {
+        "types": "./dist/dts/TRef.d.ts",
+        "import": "./dist/esm/TRef.js",
+        "default": "./dist/cjs/TRef.js"
+      },
+      "./TSet": {
+        "types": "./dist/dts/TSet.d.ts",
+        "import": "./dist/esm/TSet.js",
+        "default": "./dist/cjs/TSet.js"
+      },
+      "./Take": {
+        "types": "./dist/dts/Take.d.ts",
+        "import": "./dist/esm/Take.js",
+        "default": "./dist/cjs/Take.js"
+      },
+      "./Trie": {
+        "types": "./dist/dts/Trie.d.ts",
+        "import": "./dist/esm/Trie.js",
+        "default": "./dist/cjs/Trie.js"
+      },
+      "./Array": {
+        "types": "./dist/dts/Array.d.ts",
+        "import": "./dist/esm/Array.js",
+        "default": "./dist/cjs/Array.js"
+      },
+      "./Brand": {
+        "types": "./dist/dts/Brand.d.ts",
+        "import": "./dist/esm/Brand.js",
+        "default": "./dist/cjs/Brand.js"
+      },
+      "./Cache": {
+        "types": "./dist/dts/Cache.d.ts",
+        "import": "./dist/esm/Cache.js",
+        "default": "./dist/cjs/Cache.js"
+      },
+      "./Cause": {
+        "types": "./dist/dts/Cause.d.ts",
+        "import": "./dist/esm/Cause.js",
+        "default": "./dist/cjs/Cause.js"
+      },
+      "./Chunk": {
+        "types": "./dist/dts/Chunk.d.ts",
+        "import": "./dist/esm/Chunk.js",
+        "default": "./dist/cjs/Chunk.js"
+      },
+      "./Clock": {
+        "types": "./dist/dts/Clock.d.ts",
+        "import": "./dist/esm/Clock.js",
+        "default": "./dist/cjs/Clock.js"
+      },
+      "./Equal": {
+        "types": "./dist/dts/Equal.d.ts",
+        "import": "./dist/esm/Equal.js",
+        "default": "./dist/cjs/Equal.js"
+      },
+      "./Fiber": {
+        "types": "./dist/dts/Fiber.d.ts",
+        "import": "./dist/esm/Fiber.js",
+        "default": "./dist/cjs/Fiber.js"
+      },
+      "./Graph": {
+        "types": "./dist/dts/Graph.d.ts",
+        "import": "./dist/esm/Graph.js",
+        "default": "./dist/cjs/Graph.js"
+      },
+      "./Layer": {
+        "types": "./dist/dts/Layer.d.ts",
+        "import": "./dist/esm/Layer.js",
+        "default": "./dist/cjs/Layer.js"
+      },
+      "./Match": {
+        "types": "./dist/dts/Match.d.ts",
+        "import": "./dist/esm/Match.js",
+        "default": "./dist/cjs/Match.js"
+      },
+      "./Micro": {
+        "types": "./dist/dts/Micro.d.ts",
+        "import": "./dist/esm/Micro.js",
+        "default": "./dist/cjs/Micro.js"
+      },
+      "./Order": {
+        "types": "./dist/dts/Order.d.ts",
+        "import": "./dist/esm/Order.js",
+        "default": "./dist/cjs/Order.js"
+      },
+      "./Queue": {
+        "types": "./dist/dts/Queue.d.ts",
+        "import": "./dist/esm/Queue.js",
+        "default": "./dist/cjs/Queue.js"
+      },
+      "./RcMap": {
+        "types": "./dist/dts/RcMap.d.ts",
+        "import": "./dist/esm/RcMap.js",
+        "default": "./dist/cjs/RcMap.js"
+      },
+      "./RcRef": {
+        "types": "./dist/dts/RcRef.d.ts",
+        "import": "./dist/esm/RcRef.js",
+        "default": "./dist/cjs/RcRef.js"
+      },
+      "./Scope": {
+        "types": "./dist/dts/Scope.d.ts",
+        "import": "./dist/esm/Scope.js",
+        "default": "./dist/cjs/Scope.js"
+      },
+      "./Tuple": {
+        "types": "./dist/dts/Tuple.d.ts",
+        "import": "./dist/esm/Tuple.js",
+        "default": "./dist/cjs/Tuple.js"
+      },
+      "./Types": {
+        "types": "./dist/dts/Types.d.ts",
+        "import": "./dist/esm/Types.js",
+        "default": "./dist/cjs/Types.js"
+      },
+      "./Unify": {
+        "types": "./dist/dts/Unify.d.ts",
+        "import": "./dist/esm/Unify.js",
+        "default": "./dist/cjs/Unify.js"
+      },
+      "./Utils": {
+        "types": "./dist/dts/Utils.d.ts",
+        "import": "./dist/esm/Utils.js",
+        "default": "./dist/cjs/Utils.js"
+      },
+      "./index": {
+        "types": "./dist/dts/index.d.ts",
+        "import": "./dist/esm/index.js",
+        "default": "./dist/cjs/index.js"
+      },
+      "./.index": {
+        "types": "./dist/dts/.index.d.ts",
+        "import": "./dist/esm/.index.js",
+        "default": "./dist/cjs/.index.js"
+      },
+      "./BigInt": {
+        "types": "./dist/dts/BigInt.d.ts",
+        "import": "./dist/esm/BigInt.js",
+        "default": "./dist/cjs/BigInt.js"
+      },
+      "./Config": {
+        "types": "./dist/dts/Config.d.ts",
+        "import": "./dist/esm/Config.js",
+        "default": "./dist/cjs/Config.js"
+      },
+      "./Differ": {
+        "types": "./dist/dts/Differ.d.ts",
+        "import": "./dist/esm/Differ.js",
+        "default": "./dist/cjs/Differ.js"
+      },
+      "./Effect": {
+        "types": "./dist/dts/Effect.d.ts",
+        "import": "./dist/esm/Effect.js",
+        "default": "./dist/cjs/Effect.js"
+      },
+      "./Either": {
+        "types": "./dist/dts/Either.d.ts",
+        "import": "./dist/esm/Either.js",
+        "default": "./dist/cjs/Either.js"
+      },
+      "./Logger": {
+        "types": "./dist/dts/Logger.d.ts",
+        "import": "./dist/esm/Logger.js",
+        "default": "./dist/cjs/Logger.js"
+      },
+      "./Metric": {
+        "types": "./dist/dts/Metric.d.ts",
+        "import": "./dist/esm/Metric.js",
+        "default": "./dist/cjs/Metric.js"
+      },
+      "./Number": {
+        "types": "./dist/dts/Number.d.ts",
+        "import": "./dist/esm/Number.js",
+        "default": "./dist/cjs/Number.js"
+      },
+      "./Option": {
+        "types": "./dist/dts/Option.d.ts",
+        "import": "./dist/esm/Option.js",
+        "default": "./dist/cjs/Option.js"
+      },
+      "./Pretty": {
+        "types": "./dist/dts/Pretty.d.ts",
+        "import": "./dist/esm/Pretty.js",
+        "default": "./dist/cjs/Pretty.js"
+      },
+      "./PubSub": {
+        "types": "./dist/dts/PubSub.d.ts",
+        "import": "./dist/esm/PubSub.js",
+        "default": "./dist/cjs/PubSub.js"
+      },
+      "./Random": {
+        "types": "./dist/dts/Random.d.ts",
+        "import": "./dist/esm/Random.js",
+        "default": "./dist/cjs/Random.js"
+      },
+      "./Record": {
+        "types": "./dist/dts/Record.d.ts",
+        "import": "./dist/esm/Record.js",
+        "default": "./dist/cjs/Record.js"
+      },
+      "./RegExp": {
+        "types": "./dist/dts/RegExp.d.ts",
+        "import": "./dist/esm/RegExp.js",
+        "default": "./dist/cjs/RegExp.js"
+      },
+      "./Schema": {
+        "types": "./dist/dts/Schema.d.ts",
+        "import": "./dist/esm/Schema.js",
+        "default": "./dist/cjs/Schema.js"
+      },
+      "./Secret": {
+        "types": "./dist/dts/Secret.d.ts",
+        "import": "./dist/esm/Secret.js",
+        "default": "./dist/cjs/Secret.js"
+      },
+      "./Stream": {
+        "types": "./dist/dts/Stream.d.ts",
+        "import": "./dist/esm/Stream.js",
+        "default": "./dist/cjs/Stream.js"
+      },
+      "./String": {
+        "types": "./dist/dts/String.d.ts",
+        "import": "./dist/esm/String.js",
+        "default": "./dist/cjs/String.js"
+      },
+      "./Struct": {
+        "types": "./dist/dts/Struct.d.ts",
+        "import": "./dist/esm/Struct.js",
+        "default": "./dist/cjs/Struct.js"
+      },
+      "./Symbol": {
+        "types": "./dist/dts/Symbol.d.ts",
+        "import": "./dist/esm/Symbol.js",
+        "default": "./dist/cjs/Symbol.js"
+      },
+      "./TArray": {
+        "types": "./dist/dts/TArray.d.ts",
+        "import": "./dist/esm/TArray.js",
+        "default": "./dist/cjs/TArray.js"
+      },
+      "./TQueue": {
+        "types": "./dist/dts/TQueue.d.ts",
+        "import": "./dist/esm/TQueue.js",
+        "default": "./dist/cjs/TQueue.js"
+      },
+      "./Tracer": {
+        "types": "./dist/dts/Tracer.d.ts",
+        "import": "./dist/esm/Tracer.js",
+        "default": "./dist/cjs/Tracer.js"
+      },
+      "./Boolean": {
+        "types": "./dist/dts/Boolean.d.ts",
+        "import": "./dist/esm/Boolean.js",
+        "default": "./dist/cjs/Boolean.js"
+      },
+      "./Channel": {
+        "types": "./dist/dts/Channel.d.ts",
+        "import": "./dist/esm/Channel.js",
+        "default": "./dist/cjs/Channel.js"
+      },
+      "./Console": {
+        "types": "./dist/dts/Console.d.ts",
+        "import": "./dist/esm/Console.js",
+        "default": "./dist/cjs/Console.js"
+      },
+      "./Context": {
+        "types": "./dist/dts/Context.d.ts",
+        "import": "./dist/esm/Context.js",
+        "default": "./dist/cjs/Context.js"
+      },
+      "./FiberId": {
+        "types": "./dist/dts/FiberId.d.ts",
+        "import": "./dist/esm/FiberId.js",
+        "default": "./dist/cjs/FiberId.js"
+      },
+      "./GroupBy": {
+        "types": "./dist/dts/GroupBy.d.ts",
+        "import": "./dist/esm/GroupBy.js",
+        "default": "./dist/cjs/GroupBy.js"
+      },
+      "./HashMap": {
+        "types": "./dist/dts/HashMap.d.ts",
+        "import": "./dist/esm/HashMap.js",
+        "default": "./dist/cjs/HashMap.js"
+      },
+      "./HashSet": {
+        "types": "./dist/dts/HashSet.d.ts",
+        "import": "./dist/esm/HashSet.js",
+        "default": "./dist/cjs/HashSet.js"
+      },
+      "./LogSpan": {
+        "types": "./dist/dts/LogSpan.d.ts",
+        "import": "./dist/esm/LogSpan.js",
+        "default": "./dist/cjs/LogSpan.js"
+      },
+      "./Mailbox": {
+        "types": "./dist/dts/Mailbox.d.ts",
+        "import": "./dist/esm/Mailbox.js",
+        "default": "./dist/cjs/Mailbox.js"
+      },
+      "./Request": {
+        "types": "./dist/dts/Request.d.ts",
+        "import": "./dist/esm/Request.js",
+        "default": "./dist/cjs/Request.js"
+      },
+      "./Runtime": {
+        "types": "./dist/dts/Runtime.d.ts",
+        "import": "./dist/esm/Runtime.js",
+        "default": "./dist/cjs/Runtime.js"
+      },
+      "./TPubSub": {
+        "types": "./dist/dts/TPubSub.d.ts",
+        "import": "./dist/esm/TPubSub.js",
+        "default": "./dist/cjs/TPubSub.js"
+      },
+      "./TRandom": {
+        "types": "./dist/dts/TRandom.d.ts",
+        "import": "./dist/esm/TRandom.js",
+        "default": "./dist/cjs/TRandom.js"
+      },
+      "./DateTime": {
+        "types": "./dist/dts/DateTime.d.ts",
+        "import": "./dist/esm/DateTime.js",
+        "default": "./dist/cjs/DateTime.js"
+      },
+      "./Deferred": {
+        "types": "./dist/dts/Deferred.d.ts",
+        "import": "./dist/esm/Deferred.js",
+        "default": "./dist/cjs/Deferred.js"
+      },
+      "./Duration": {
+        "types": "./dist/dts/Duration.d.ts",
+        "import": "./dist/esm/Duration.js",
+        "default": "./dist/cjs/Duration.js"
+      },
+      "./Encoding": {
+        "types": "./dist/dts/Encoding.d.ts",
+        "import": "./dist/esm/Encoding.js",
+        "default": "./dist/cjs/Encoding.js"
+      },
+      "./FiberMap": {
+        "types": "./dist/dts/FiberMap.d.ts",
+        "import": "./dist/esm/FiberMap.js",
+        "default": "./dist/cjs/FiberMap.js"
+      },
+      "./FiberRef": {
+        "types": "./dist/dts/FiberRef.d.ts",
+        "import": "./dist/esm/FiberRef.js",
+        "default": "./dist/cjs/FiberRef.js"
+      },
+      "./FiberSet": {
+        "types": "./dist/dts/FiberSet.d.ts",
+        "import": "./dist/esm/FiberSet.js",
+        "default": "./dist/cjs/FiberSet.js"
+      },
+      "./Function": {
+        "types": "./dist/dts/Function.d.ts",
+        "import": "./dist/esm/Function.js",
+        "default": "./dist/cjs/Function.js"
+      },
+      "./HashRing": {
+        "types": "./dist/dts/HashRing.d.ts",
+        "import": "./dist/esm/HashRing.js",
+        "default": "./dist/cjs/HashRing.js"
+      },
+      "./Iterable": {
+        "types": "./dist/dts/Iterable.d.ts",
+        "import": "./dist/esm/Iterable.js",
+        "default": "./dist/cjs/Iterable.js"
+      },
+      "./LayerMap": {
+        "types": "./dist/dts/LayerMap.d.ts",
+        "import": "./dist/esm/LayerMap.js",
+        "default": "./dist/cjs/LayerMap.js"
+      },
+      "./LogLevel": {
+        "types": "./dist/dts/LogLevel.d.ts",
+        "import": "./dist/esm/LogLevel.js",
+        "default": "./dist/cjs/LogLevel.js"
+      },
+      "./Ordering": {
+        "types": "./dist/dts/Ordering.d.ts",
+        "import": "./dist/esm/Ordering.js",
+        "default": "./dist/cjs/Ordering.js"
+      },
+      "./Pipeable": {
+        "types": "./dist/dts/Pipeable.d.ts",
+        "import": "./dist/esm/Pipeable.js",
+        "default": "./dist/cjs/Pipeable.js"
+      },
+      "./Readable": {
+        "types": "./dist/dts/Readable.d.ts",
+        "import": "./dist/esm/Readable.js",
+        "default": "./dist/cjs/Readable.js"
+      },
+      "./Redacted": {
+        "types": "./dist/dts/Redacted.d.ts",
+        "import": "./dist/esm/Redacted.js",
+        "default": "./dist/cjs/Redacted.js"
+      },
+      "./Resource": {
+        "types": "./dist/dts/Resource.d.ts",
+        "import": "./dist/esm/Resource.js",
+        "default": "./dist/cjs/Resource.js"
+      },
+      "./Schedule": {
+        "types": "./dist/dts/Schedule.d.ts",
+        "import": "./dist/esm/Schedule.js",
+        "default": "./dist/cjs/Schedule.js"
+      },
+      "./TestLive": {
+        "types": "./dist/dts/TestLive.d.ts",
+        "import": "./dist/esm/TestLive.js",
+        "default": "./dist/cjs/TestLive.js"
+      },
+      "./Arbitrary": {
+        "types": "./dist/dts/Arbitrary.d.ts",
+        "import": "./dist/esm/Arbitrary.js",
+        "default": "./dist/cjs/Arbitrary.js"
+      },
+      "./FastCheck": {
+        "types": "./dist/dts/FastCheck.d.ts",
+        "import": "./dist/esm/FastCheck.js",
+        "default": "./dist/cjs/FastCheck.js"
+      },
+      "./FiberRefs": {
+        "types": "./dist/dts/FiberRefs.d.ts",
+        "import": "./dist/esm/FiberRefs.js",
+        "default": "./dist/cjs/FiberRefs.js"
+      },
+      "./KeyedPool": {
+        "types": "./dist/dts/KeyedPool.d.ts",
+        "import": "./dist/esm/KeyedPool.js",
+        "default": "./dist/cjs/KeyedPool.js"
+      },
+      "./MetricKey": {
+        "types": "./dist/dts/MetricKey.d.ts",
+        "import": "./dist/esm/MetricKey.js",
+        "default": "./dist/cjs/MetricKey.js"
+      },
+      "./Predicate": {
+        "types": "./dist/dts/Predicate.d.ts",
+        "import": "./dist/esm/Predicate.js",
+        "default": "./dist/cjs/Predicate.js"
+      },
+      "./Scheduler": {
+        "types": "./dist/dts/Scheduler.d.ts",
+        "import": "./dist/esm/Scheduler.js",
+        "default": "./dist/cjs/Scheduler.js"
+      },
+      "./SchemaAST": {
+        "types": "./dist/dts/SchemaAST.d.ts",
+        "import": "./dist/esm/SchemaAST.js",
+        "default": "./dist/cjs/SchemaAST.js"
+      },
+      "./ScopedRef": {
+        "types": "./dist/dts/ScopedRef.d.ts",
+        "import": "./dist/esm/ScopedRef.js",
+        "default": "./dist/cjs/ScopedRef.js"
+      },
+      "./SortedMap": {
+        "types": "./dist/dts/SortedMap.d.ts",
+        "import": "./dist/esm/SortedMap.js",
+        "default": "./dist/cjs/SortedMap.js"
+      },
+      "./SortedSet": {
+        "types": "./dist/dts/SortedSet.d.ts",
+        "import": "./dist/esm/SortedSet.js",
+        "default": "./dist/cjs/SortedSet.js"
+      },
+      "./TDeferred": {
+        "types": "./dist/dts/TDeferred.d.ts",
+        "import": "./dist/esm/TDeferred.js",
+        "default": "./dist/cjs/TDeferred.js"
+      },
+      "./TestClock": {
+        "types": "./dist/dts/TestClock.d.ts",
+        "import": "./dist/esm/TestClock.js",
+        "default": "./dist/cjs/TestClock.js"
+      },
+      "./TestSized": {
+        "types": "./dist/dts/TestSized.d.ts",
+        "import": "./dist/esm/TestSized.js",
+        "default": "./dist/cjs/TestSized.js"
+      },
+      "./BigDecimal": {
+        "types": "./dist/dts/BigDecimal.d.ts",
+        "import": "./dist/esm/BigDecimal.js",
+        "default": "./dist/cjs/BigDecimal.js"
+      },
+      "./Effectable": {
+        "types": "./dist/dts/Effectable.d.ts",
+        "import": "./dist/esm/Effectable.js",
+        "default": "./dist/cjs/Effectable.js"
+      },
+      "./JSONSchema": {
+        "types": "./dist/dts/JSONSchema.d.ts",
+        "import": "./dist/esm/JSONSchema.js",
+        "default": "./dist/cjs/JSONSchema.js"
+      },
+      "./MergeState": {
+        "types": "./dist/dts/MergeState.d.ts",
+        "import": "./dist/esm/MergeState.js",
+        "default": "./dist/cjs/MergeState.js"
+      },
+      "./MetricHook": {
+        "types": "./dist/dts/MetricHook.d.ts",
+        "import": "./dist/esm/MetricHook.js",
+        "default": "./dist/cjs/MetricHook.js"
+      },
+      "./MetricPair": {
+        "types": "./dist/dts/MetricPair.d.ts",
+        "import": "./dist/esm/MetricPair.js",
+        "default": "./dist/cjs/MetricPair.js"
+      },
+      "./MutableRef": {
+        "types": "./dist/dts/MutableRef.d.ts",
+        "import": "./dist/esm/MutableRef.js",
+        "default": "./dist/cjs/MutableRef.js"
+      },
+      "./PrimaryKey": {
+        "types": "./dist/dts/PrimaryKey.d.ts",
+        "import": "./dist/esm/PrimaryKey.js",
+        "default": "./dist/cjs/PrimaryKey.js"
+      },
+      "./Reloadable": {
+        "types": "./dist/dts/Reloadable.d.ts",
+        "import": "./dist/esm/Reloadable.js",
+        "default": "./dist/cjs/Reloadable.js"
+      },
+      "./StreamEmit": {
+        "types": "./dist/dts/StreamEmit.d.ts",
+        "import": "./dist/esm/StreamEmit.js",
+        "default": "./dist/cjs/StreamEmit.js"
+      },
+      "./Streamable": {
+        "types": "./dist/dts/Streamable.d.ts",
+        "import": "./dist/esm/Streamable.js",
+        "default": "./dist/cjs/Streamable.js"
+      },
+      "./Supervisor": {
+        "types": "./dist/dts/Supervisor.d.ts",
+        "import": "./dist/esm/Supervisor.js",
+        "default": "./dist/cjs/Supervisor.js"
+      },
+      "./TSemaphore": {
+        "types": "./dist/dts/TSemaphore.d.ts",
+        "import": "./dist/esm/TSemaphore.js",
+        "default": "./dist/cjs/TSemaphore.js"
+      },
+      "./TestConfig": {
+        "types": "./dist/dts/TestConfig.d.ts",
+        "import": "./dist/esm/TestConfig.js",
+        "default": "./dist/cjs/TestConfig.js"
+      },
+      "./ConfigError": {
+        "types": "./dist/dts/ConfigError.d.ts",
+        "import": "./dist/esm/ConfigError.js",
+        "default": "./dist/cjs/ConfigError.js"
+      },
+      "./Equivalence": {
+        "types": "./dist/dts/Equivalence.d.ts",
+        "import": "./dist/esm/Equivalence.js",
+        "default": "./dist/cjs/Equivalence.js"
+      },
+      "./FiberHandle": {
+        "types": "./dist/dts/FiberHandle.d.ts",
+        "import": "./dist/esm/FiberHandle.js",
+        "default": "./dist/cjs/FiberHandle.js"
+      },
+      "./FiberStatus": {
+        "types": "./dist/dts/FiberStatus.d.ts",
+        "import": "./dist/esm/FiberStatus.js",
+        "default": "./dist/cjs/FiberStatus.js"
+      },
+      "./GlobalValue": {
+        "types": "./dist/dts/GlobalValue.d.ts",
+        "import": "./dist/esm/GlobalValue.js",
+        "default": "./dist/cjs/GlobalValue.js"
+      },
+      "./Inspectable": {
+        "types": "./dist/dts/Inspectable.d.ts",
+        "import": "./dist/esm/Inspectable.js",
+        "default": "./dist/cjs/Inspectable.js"
+      },
+      "./MetricLabel": {
+        "types": "./dist/dts/MetricLabel.d.ts",
+        "import": "./dist/esm/MetricLabel.js",
+        "default": "./dist/cjs/MetricLabel.js"
+      },
+      "./MetricState": {
+        "types": "./dist/dts/MetricState.d.ts",
+        "import": "./dist/esm/MetricState.js",
+        "default": "./dist/cjs/MetricState.js"
+      },
+      "./MutableList": {
+        "types": "./dist/dts/MutableList.d.ts",
+        "import": "./dist/esm/MutableList.js",
+        "default": "./dist/cjs/MutableList.js"
+      },
+      "./ParseResult": {
+        "types": "./dist/dts/ParseResult.d.ts",
+        "import": "./dist/esm/ParseResult.js",
+        "default": "./dist/cjs/ParseResult.js"
+      },
+      "./RateLimiter": {
+        "types": "./dist/dts/RateLimiter.d.ts",
+        "import": "./dist/esm/RateLimiter.js",
+        "default": "./dist/cjs/RateLimiter.js"
+      },
+      "./ScopedCache": {
+        "types": "./dist/dts/ScopedCache.d.ts",
+        "import": "./dist/esm/ScopedCache.js",
+        "default": "./dist/cjs/ScopedCache.js"
+      },
+      "./TestContext": {
+        "types": "./dist/dts/TestContext.d.ts",
+        "import": "./dist/esm/TestContext.js",
+        "default": "./dist/cjs/TestContext.js"
+      },
+      "./MutableQueue": {
+        "types": "./dist/dts/MutableQueue.d.ts",
+        "import": "./dist/esm/MutableQueue.js",
+        "default": "./dist/cjs/MutableQueue.js"
+      },
+      "./RedBlackTree": {
+        "types": "./dist/dts/RedBlackTree.d.ts",
+        "import": "./dist/esm/RedBlackTree.js",
+        "default": "./dist/cjs/RedBlackTree.js"
+      },
+      "./RequestBlock": {
+        "types": "./dist/dts/RequestBlock.d.ts",
+        "import": "./dist/esm/RequestBlock.js",
+        "default": "./dist/cjs/RequestBlock.js"
+      },
+      "./RuntimeFlags": {
+        "types": "./dist/dts/RuntimeFlags.d.ts",
+        "import": "./dist/esm/RuntimeFlags.js",
+        "default": "./dist/cjs/RuntimeFlags.js"
+      },
+      "./Subscribable": {
+        "types": "./dist/dts/Subscribable.d.ts",
+        "import": "./dist/esm/Subscribable.js",
+        "default": "./dist/cjs/Subscribable.js"
+      },
+      "./TestServices": {
+        "types": "./dist/dts/TestServices.d.ts",
+        "import": "./dist/esm/TestServices.js",
+        "default": "./dist/cjs/TestServices.js"
+      },
+      "./package.json": "./package.json",
+      "./ExecutionPlan": {
+        "types": "./dist/dts/ExecutionPlan.d.ts",
+        "import": "./dist/esm/ExecutionPlan.js",
+        "default": "./dist/cjs/ExecutionPlan.js"
+      },
+      "./MergeDecision": {
+        "types": "./dist/dts/MergeDecision.d.ts",
+        "import": "./dist/esm/MergeDecision.js",
+        "default": "./dist/cjs/MergeDecision.js"
+      },
+      "./MergeStrategy": {
+        "types": "./dist/dts/MergeStrategy.d.ts",
+        "import": "./dist/esm/MergeStrategy.js",
+        "default": "./dist/cjs/MergeStrategy.js"
+      },
+      "./MetricKeyType": {
+        "types": "./dist/dts/MetricKeyType.d.ts",
+        "import": "./dist/esm/MetricKeyType.js",
+        "default": "./dist/cjs/MetricKeyType.js"
+      },
+      "./MetricPolling": {
+        "types": "./dist/dts/MetricPolling.d.ts",
+        "import": "./dist/esm/MetricPolling.js",
+        "default": "./dist/cjs/MetricPolling.js"
+      },
+      "./ModuleVersion": {
+        "types": "./dist/dts/ModuleVersion.d.ts",
+        "import": "./dist/esm/ModuleVersion.js",
+        "default": "./dist/cjs/ModuleVersion.js"
+      },
+      "./ConfigProvider": {
+        "types": "./dist/dts/ConfigProvider.d.ts",
+        "import": "./dist/esm/ConfigProvider.js",
+        "default": "./dist/cjs/ConfigProvider.js"
+      },
+      "./FiberRefsPatch": {
+        "types": "./dist/dts/FiberRefsPatch.d.ts",
+        "import": "./dist/esm/FiberRefsPatch.js",
+        "default": "./dist/cjs/FiberRefsPatch.js"
+      },
+      "./ManagedRuntime": {
+        "types": "./dist/dts/ManagedRuntime.d.ts",
+        "import": "./dist/esm/ManagedRuntime.js",
+        "default": "./dist/cjs/ManagedRuntime.js"
+      },
+      "./MetricRegistry": {
+        "types": "./dist/dts/MetricRegistry.d.ts",
+        "import": "./dist/esm/MetricRegistry.js",
+        "default": "./dist/cjs/MetricRegistry.js"
+      },
+      "./MutableHashMap": {
+        "types": "./dist/dts/MutableHashMap.d.ts",
+        "import": "./dist/esm/MutableHashMap.js",
+        "default": "./dist/cjs/MutableHashMap.js"
+      },
+      "./MutableHashSet": {
+        "types": "./dist/dts/MutableHashSet.d.ts",
+        "import": "./dist/esm/MutableHashSet.js",
+        "default": "./dist/cjs/MutableHashSet.js"
+      },
+      "./TPriorityQueue": {
+        "types": "./dist/dts/TPriorityQueue.d.ts",
+        "import": "./dist/esm/TPriorityQueue.js",
+        "default": "./dist/cjs/TPriorityQueue.js"
+      },
+      "./TReentrantLock": {
+        "types": "./dist/dts/TReentrantLock.d.ts",
+        "import": "./dist/esm/TReentrantLock.js",
+        "default": "./dist/cjs/TReentrantLock.js"
+      },
+      "./TestAnnotation": {
+        "types": "./dist/dts/TestAnnotation.d.ts",
+        "import": "./dist/esm/TestAnnotation.js",
+        "default": "./dist/cjs/TestAnnotation.js"
+      },
+      "./DefaultServices": {
+        "types": "./dist/dts/DefaultServices.d.ts",
+        "import": "./dist/esm/DefaultServices.js",
+        "default": "./dist/cjs/DefaultServices.js"
+      },
+      "./RequestResolver": {
+        "types": "./dist/dts/RequestResolver.d.ts",
+        "import": "./dist/esm/RequestResolver.js",
+        "default": "./dist/cjs/RequestResolver.js"
+      },
+      "./SubscriptionRef": {
+        "types": "./dist/dts/SubscriptionRef.d.ts",
+        "import": "./dist/esm/SubscriptionRef.js",
+        "default": "./dist/cjs/SubscriptionRef.js"
+      },
+      "./SynchronizedRef": {
+        "types": "./dist/dts/SynchronizedRef.d.ts",
+        "import": "./dist/esm/SynchronizedRef.js",
+        "default": "./dist/cjs/SynchronizedRef.js"
+      },
+      "./TestAnnotations": {
+        "types": "./dist/dts/TestAnnotations.d.ts",
+        "import": "./dist/esm/TestAnnotations.js",
+        "default": "./dist/cjs/TestAnnotations.js"
+      },
+      "./MetricBoundaries": {
+        "types": "./dist/dts/MetricBoundaries.d.ts",
+        "import": "./dist/esm/MetricBoundaries.js",
+        "default": "./dist/cjs/MetricBoundaries.js"
+      },
+      "./NonEmptyIterable": {
+        "types": "./dist/dts/NonEmptyIterable.d.ts",
+        "import": "./dist/esm/NonEmptyIterable.js",
+        "default": "./dist/cjs/NonEmptyIterable.js"
+      },
+      "./ScheduleDecision": {
+        "types": "./dist/dts/ScheduleDecision.d.ts",
+        "import": "./dist/esm/ScheduleDecision.js",
+        "default": "./dist/cjs/ScheduleDecision.js"
+      },
+      "./ScheduleInterval": {
+        "types": "./dist/dts/ScheduleInterval.d.ts",
+        "import": "./dist/esm/ScheduleInterval.js",
+        "default": "./dist/cjs/ScheduleInterval.js"
+      },
+      "./TSubscriptionRef": {
+        "types": "./dist/dts/TSubscriptionRef.d.ts",
+        "import": "./dist/esm/TSubscriptionRef.js",
+        "default": "./dist/cjs/TSubscriptionRef.js"
+      },
+      "./ExecutionStrategy": {
+        "types": "./dist/dts/ExecutionStrategy.d.ts",
+        "import": "./dist/esm/ExecutionStrategy.js",
+        "default": "./dist/cjs/ExecutionStrategy.js"
+      },
+      "./RuntimeFlagsPatch": {
+        "types": "./dist/dts/RuntimeFlagsPatch.d.ts",
+        "import": "./dist/esm/RuntimeFlagsPatch.js",
+        "default": "./dist/cjs/RuntimeFlagsPatch.js"
+      },
+      "./ScheduleIntervals": {
+        "types": "./dist/dts/ScheduleIntervals.d.ts",
+        "import": "./dist/esm/ScheduleIntervals.js",
+        "default": "./dist/cjs/ScheduleIntervals.js"
+      },
+      "./TestAnnotationMap": {
+        "types": "./dist/dts/TestAnnotationMap.d.ts",
+        "import": "./dist/esm/TestAnnotationMap.js",
+        "default": "./dist/cjs/TestAnnotationMap.js"
+      },
+      "./StreamHaltStrategy": {
+        "types": "./dist/dts/StreamHaltStrategy.d.ts",
+        "import": "./dist/esm/StreamHaltStrategy.js",
+        "default": "./dist/cjs/StreamHaltStrategy.js"
+      },
+      "./UpstreamPullRequest": {
+        "types": "./dist/dts/UpstreamPullRequest.d.ts",
+        "import": "./dist/esm/UpstreamPullRequest.js",
+        "default": "./dist/cjs/UpstreamPullRequest.js"
+      },
+      "./PartitionedSemaphore": {
+        "types": "./dist/dts/PartitionedSemaphore.d.ts",
+        "import": "./dist/esm/PartitionedSemaphore.js",
+        "default": "./dist/cjs/PartitionedSemaphore.js"
+      },
+      "./UpstreamPullStrategy": {
+        "types": "./dist/dts/UpstreamPullStrategy.d.ts",
+        "import": "./dist/esm/UpstreamPullStrategy.js",
+        "default": "./dist/cjs/UpstreamPullStrategy.js"
+      },
+      "./ChildExecutorDecision": {
+        "types": "./dist/dts/ChildExecutorDecision.d.ts",
+        "import": "./dist/esm/ChildExecutorDecision.js",
+        "default": "./dist/cjs/ChildExecutorDecision.js"
+      },
+      "./ConfigProviderPathPatch": {
+        "types": "./dist/dts/ConfigProviderPathPatch.d.ts",
+        "import": "./dist/esm/ConfigProviderPathPatch.js",
+        "default": "./dist/cjs/ConfigProviderPathPatch.js"
+      },
+      "./SingleProducerAsyncInput": {
+        "types": "./dist/dts/SingleProducerAsyncInput.d.ts",
+        "import": "./dist/esm/SingleProducerAsyncInput.js",
+        "default": "./dist/cjs/SingleProducerAsyncInput.js"
+      }
+    },
+    "dependencies": {
+      "fast-check": "^3.23.1",
+      "@standard-schema/spec": "^1.0.0"
+    },
+    "peerDependencies": null,
+    "peerDependenciesMeta": null,
+    "engines": null,
+    "dist": {
+      "shasum": "552e6fb8b15fed068129250dc829de2d120061e3",
+      "tarball": "https://registry.npmjs.org/effect/-/effect-3.22.2.tgz",
+      "fileCount": 2715,
+      "integrity": "sha512-fm1CQXCs7GTMwpadZxwU5rnAb2bN6mbQpknq/pXBGCzSKkosNYb9k0wsoL0TfB10rSa5xOEZJjo77u/KLXSANg==",
+      "signatures": [
+        {
+          "sig": "MEQCIGeyJ1Re+hI+r3Rk3I+0JLyGaMmPrLfg25weW8CInaHvAiBMfZO+NlGQGQ50rfp/xbRtfLM+JrzEn99LN6bZ7xD7og==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "sig": "MEQCIEEsWRLjyBrt/KHE79hDLvWLgJk9xRz7R7BGp0ku0KqqAiAQKz4seoEDcgaOXwdXkL5AX86/zQ6Gq1UUyWQ0iwfdeQ==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/effect@3.22.2",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 27163958
+    },
+    "gitHead": null,
+    "publishedAt": "2026-09-09T06:35:32.571Z"
+  },
+  "@tanstack/ai": {
+    "name": "@tanstack/ai",
+    "version": "0.64.1",
+    "license": "MIT",
+    "exports": {
+      ".": {
+        "types": "./dist/esm/index.d.ts",
+        "import": "./dist/esm/index.js"
+      },
+      "./byok": {
+        "types": "./dist/esm/byok.d.ts",
+        "import": "./dist/esm/byok.js"
+      },
+      "./locks": {
+        "types": "./dist/esm/locks.d.ts",
+        "import": "./dist/esm/locks.js"
+      },
+      "./client": {
+        "types": "./dist/esm/client.d.ts",
+        "import": "./dist/esm/client.js"
+      },
+      "./adapters": {
+        "types": "./dist/esm/activities/index.d.ts",
+        "import": "./dist/esm/activities/index.js"
+      },
+      "./byok/server": {
+        "types": "./dist/esm/byok/server.d.ts",
+        "import": "./dist/esm/byok/server.js"
+      },
+      "./middlewares": {
+        "types": "./dist/esm/middlewares/index.d.ts",
+        "import": "./dist/esm/middlewares/index.js"
+      },
+      "./middlewares/otel": {
+        "types": "./dist/esm/middlewares/otel.d.ts",
+        "import": "./dist/esm/middlewares/otel.js"
+      },
+      "./adapter-internals": {
+        "types": "./dist/esm/adapter-internals.d.ts",
+        "import": "./dist/esm/adapter-internals.js"
+      }
+    },
+    "dependencies": {
+      "@ag-ui/core": "1.0.0",
+      "partial-json": "^0.1.7",
+      "@tanstack/ai-utils": "^0.4.1",
+      "@standard-schema/spec": "^1.1.0",
+      "@tanstack/ai-event-client": "^0.13.0"
+    },
+    "peerDependencies": {
+      "@opentelemetry/api": ">=1.9.0"
+    },
+    "peerDependenciesMeta": {
+      "@opentelemetry/api": {
+        "optional": true
+      }
+    },
+    "engines": {
+      "node": ">=18"
+    },
+    "dist": {
+      "shasum": "464d3879c75c4ac4f11f2c8777f08ef0f7f4e655",
+      "tarball": "https://registry.npmjs.org/@tanstack/ai/-/ai-0.64.1.tgz",
+      "fileCount": 564,
+      "integrity": "sha512-ohCqVVd6mbD6KzFfgOBjAIl5ftIkehiTpWlg9uLfv6qGiXyf7vZhNVCJ5LNiwfNnj6Mz+TzK3IO0ztBrhV0Rgw==",
+      "signatures": [
+        {
+          "sig": "MEYCIQD59LzVzx8ZghJmiWbia7GZ8H4zdTOnJgBcHQlqhWrmdgIhAPkjv4zxW8cCXmlhKPoQcLbe+4Gmmqgo1HZE8UZrbj8q",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEYCIQDqg6slJCEdu2223Iq8hkPJszySp14JWnDWkgO7apcyOAIhAO5ClVVySi6kqtPT9SStGXvdZAxRHAFQW/DQ69Jrlu9A"
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tanstack%2fai@0.64.1",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 4870639
+    },
+    "gitHead": null,
+    "publishedAt": "2026-10-05T13:04:46.975Z"
+  },
+  "@tanstack/ai-client": {
+    "name": "@tanstack/ai-client",
+    "version": "0.36.2",
+    "license": "MIT",
+    "exports": {
+      ".": {
+        "types": "./dist/esm/index.d.ts",
+        "import": "./dist/esm/index.js"
+      },
+      "./ui": {
+        "types": "./dist/esm/ui.d.ts",
+        "import": "./dist/esm/ui.js"
+      },
+      "./byok": {
+        "types": "./dist/esm/byok.d.ts",
+        "import": "./dist/esm/byok.js"
+      },
+      "./devtools": {
+        "types": "./dist/esm/devtools.d.ts",
+        "import": "./dist/esm/devtools.js"
+      }
+    },
+    "dependencies": {
+      "@tanstack/ai": "^0.64.1",
+      "@tanstack/ai-utils": "^0.4.1",
+      "@tanstack/ai-event-client": "^0.13.0"
+    },
+    "peerDependencies": null,
+    "peerDependenciesMeta": null,
+    "engines": null,
+    "dist": {
+      "shasum": "ad98ac1cdf0a3ceeb3e04949e816f2163791c6fd",
+      "tarball": "https://registry.npmjs.org/@tanstack/ai-client/-/ai-client-0.36.2.tgz",
+      "fileCount": 126,
+      "integrity": "sha512-mixfIs85IaQkyfUidDVAhTr8UDxNdz8yM9wpMYvav5ySvdWrRMDX358F6wu0hXsAta/lkGLjJsodkBIHFF+R7g==",
+      "signatures": [
+        {
+          "sig": "MEUCIQCjm4GGu6UpUiyXqMdovhIzYUUgFxd1rBIL8ePJjdv9TgIgX4CT6lHf14LmUUdJdMeSX2KiJuN/FdxWCMM0abKf5cI=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEUCIBKZ+PRz42EwDNhmv8FzE3d/U8gTI512Ek/nZE1OZaO0AiEAsMLJf0tdroXzvEuaN2pxdILbAUimHzM1MD+wRIaO7I4="
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tanstack%2fai-client@0.36.2",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 2099057
+    },
+    "gitHead": null,
+    "publishedAt": "2026-10-05T13:03:48.073Z"
+  },
+  "@tanstack/ai-react": {
+    "name": "@tanstack/ai-react",
+    "version": "0.29.4",
+    "license": "MIT",
+    "exports": {
+      ".": {
+        "types": "./dist/esm/index.d.ts",
+        "import": "./dist/esm/index.js"
+      },
+      "./ui": {
+        "types": "./dist/esm/ui.d.ts",
+        "import": "./dist/esm/ui.js"
+      },
+      "./byok": {
+        "types": "./dist/esm/byok.d.ts",
+        "import": "./dist/esm/byok.js"
+      },
+      "./mcp-apps": {
+        "types": "./dist/esm/mcp-apps.d.ts",
+        "import": "./dist/esm/mcp-apps.js"
+      }
+    },
+    "dependencies": {
+      "@tanstack/markdown": "^0.0.13",
+      "@tanstack/ai-client": "^0.36.1"
+    },
+    "peerDependencies": {
+      "react": ">=18.0.0",
+      "react-dom": ">=18.0.0",
+      "@tanstack/ai": "^0.64.0",
+      "@types/react": ">=18.0.0",
+      "@mcp-ui/client": "^7"
+    },
+    "peerDependenciesMeta": {
+      "react-dom": {
+        "optional": true
+      },
+      "@mcp-ui/client": {
+        "optional": true
+      }
+    },
+    "engines": null,
+    "dist": {
+      "shasum": "ab1bb232736b1a96941e0f00ec0520b3112eb774",
+      "tarball": "https://registry.npmjs.org/@tanstack/ai-react/-/ai-react-0.29.4.tgz",
+      "fileCount": 123,
+      "integrity": "sha512-AnYvtHlObx4ZNpA5Q9YLMTklC5dEfOkbQ/U8Kiuxdl1j+jGJILvIIdDSlNekJ6X8b1Cc47rdHPJxCn93f9jVqA==",
+      "signatures": [
+        {
+          "sig": "MEUCIDOpklF+Xu/EXpW9wMQ+SVOoR2CSbArBA5nsZTq9HJMwAiEAqvaAdeEvrraBkjFc4+RX69W2kTkCaxE+D4XPeDfp60c=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEQCICAJoXpCtbdMnN0EpCIbAhrZrwXuASlWrW1kdQyT7e3gAiB9xq6VxULP3W8OqRqEVPiJp8GkuM1EqF9V2+fPiIi2ZQ=="
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@tanstack%2fai-react@0.29.4",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 605131
+    },
+    "gitHead": null,
+    "publishedAt": "2026-10-02T12:41:18.523Z"
+  },
+  "@ag-ui/core": {
+    "name": "@ag-ui/core",
+    "version": "1.0.0",
+    "license": "MIT",
+    "exports": {
+      ".": {
+        "import": "./dist/index.mjs",
+        "require": "./dist/index.js"
+      },
+      "./schemas": {
+        "import": "./dist/schemas.mjs",
+        "require": "./dist/schemas.js"
+      },
+      "./package.json": "./package.json"
+    },
+    "dependencies": null,
+    "peerDependencies": {
+      "zod": "^3.25.18 || ^4.0.0"
+    },
+    "peerDependenciesMeta": {
+      "zod": {
+        "optional": true
+      }
+    },
+    "engines": null,
+    "dist": {
+      "shasum": "b2840ab883713e01ef7f0803f0cab06c2256a0ec",
+      "tarball": "https://registry.npmjs.org/@ag-ui/core/-/core-1.0.0.tgz",
+      "fileCount": 29,
+      "integrity": "sha512-yCRhsQvb4+lmGMrDsi4TOJxqKpm/kb3H64wwL+Z90jNVrkhy17RErfzsNgybfbjNKLM0nenEDYDVJsZHJJSigQ==",
+      "signatures": [
+        {
+          "sig": "MEQCIDF1rBOj1PT3kRxJVbODWQLXz8Nb128mw7Vb9XDUZEIkAiBtx9gwWZE37EDUJ7nqXawpLivV4RwFZdrNv6m5sHy5pA==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "sig": "MEQCIGkP6iqEhXhHtbQyM0YSjxpq7CF7+7E927iNgTmFEgcBAiAIK20WgnYSodWDloGiiTmVsaf4K+Rcc2tBXGY7R4i1OA==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@ag-ui%2fcore@1.0.0",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 1147693
+    },
+    "gitHead": null
+  },
+  "esbuild": {
+    "name": "esbuild",
+    "version": "0.28.2",
+    "license": "MIT",
+    "exports": null,
+    "dependencies": null,
+    "peerDependencies": null,
+    "peerDependenciesMeta": null,
+    "engines": {
+      "node": ">=18"
+    },
+    "dist": {
+      "shasum": "0f43bd1bad955b72d24e2261e3abe5957ccf0816",
+      "tarball": "https://registry.npmjs.org/esbuild/-/esbuild-0.28.2.tgz",
+      "fileCount": 7,
+      "integrity": "sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==",
+      "signatures": [
+        {
+          "sig": "MEYCIQCUNxdzUXI/rpHaMMcf/skpuDBkNL7aLEXFFc0dex0NCAIhAMDKoRFFyK2uR0qEIAoCe4pdRrJ3ld2ZCoHNyNuX6ju7",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+          "sig": "MEUCIQC8VkNobVdJrr03U9huHI7n2VhWQ2shvrTvNYB1Mx8gigIgFkrOTUauuovxR8qg94n81hYvSw6PI2qEQkNiqHkmjcg="
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/esbuild@0.28.2",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 147361
+    },
+    "gitHead": "609683d892977362a0f99026cb74b96263d728a9",
+    "publishedAt": "2026-08-08T20:00:55.454Z"
+  },
+  "typescript": {
+    "name": "typescript",
+    "version": "7.0.2",
+    "license": "Apache-2.0",
+    "exports": {
+      ".": "./lib/version.cjs",
+      "./unstable/fs": "./dist/api/fs.js",
+      "./package.json": "./package.json",
+      "./unstable/ast": "./dist/ast/index.js",
+      "./unstable/sync": "./dist/api/sync/api.js",
+      "./unstable/async": "./dist/api/async/api.js",
+      "./unstable/proto": "./dist/api/proto.js",
+      "./unstable/ast/is": "./dist/ast/is.js",
+      "./unstable/ast/clone": "./dist/ast/clone.js",
+      "./unstable/ast/utils": "./dist/ast/utils.js",
+      "./unstable/ast/factory": "./dist/ast/factory.generated.js",
+      "./unstable/ast/scanner": "./dist/ast/scanner.js",
+      "./unstable/ast/visitor": "./dist/ast/visitor.js"
+    },
+    "dependencies": {
+      "@typescript/typescript-aix-ppc64": "7.0.2",
+      "@typescript/typescript-linux-arm": "7.0.2",
+      "@typescript/typescript-linux-x64": "7.0.2",
+      "@typescript/typescript-sunos-x64": "7.0.2",
+      "@typescript/typescript-win32-x64": "7.0.2",
+      "@typescript/typescript-darwin-x64": "7.0.2",
+      "@typescript/typescript-netbsd-x64": "7.0.2",
+      "@typescript/typescript-freebsd-x64": "7.0.2",
+      "@typescript/typescript-linux-arm64": "7.0.2",
+      "@typescript/typescript-linux-ppc64": "7.0.2",
+      "@typescript/typescript-linux-s390x": "7.0.2",
+      "@typescript/typescript-openbsd-x64": "7.0.2",
+      "@typescript/typescript-win32-arm64": "7.0.2",
+      "@typescript/typescript-darwin-arm64": "7.0.2",
+      "@typescript/typescript-netbsd-arm64": "7.0.2",
+      "@typescript/typescript-freebsd-arm64": "7.0.2",
+      "@typescript/typescript-linux-loong64": "7.0.2",
+      "@typescript/typescript-linux-riscv64": "7.0.2",
+      "@typescript/typescript-openbsd-arm64": "7.0.2",
+      "@typescript/typescript-linux-mips64el": "7.0.2"
+    },
+    "peerDependencies": null,
+    "peerDependenciesMeta": null,
+    "engines": {
+      "node": ">=16.20.0"
+    },
+    "dist": {
+      "shasum": "9ec773d7954a8c182c17cc5bbd575aa28bc51582",
+      "tarball": "https://registry.npmjs.org/typescript/-/typescript-7.0.2.tgz",
+      "fileCount": 416,
+      "integrity": "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==",
+      "signatures": [
+        {
+          "sig": "MEUCIHn8lVrLBbTJToaOcV3IJ0oVPREmFT5BhqmO2niVNCaSAiEAjbubGExGAYMSJN39iEgX/eDYhwBGnh/iyyGTRigXGjY=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 2497498
+    },
+    "gitHead": "2bd066d87f5bafd315be9f40889d0a60b9e58e0b",
+    "publishedAt": "2026-07-08T15:55:18.431Z"
+  }
+}

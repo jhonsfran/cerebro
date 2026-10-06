@@ -1,0 +1,172 @@
+[
+  ["apps/server/tsdown.config.ts", "eslint(require-unicode-regexp)"],
+  ["apps/server/tsdown.config.ts", "eslint(sort-keys)"],
+  ["apps/web/nitro.config.ts", "eslint(sort-keys)"],
+  [
+    "apps/web/src/components/loader.tsx",
+    "react(function-component-definition)"
+  ],
+  ["apps/web/src/components/sign-in-form.tsx", "eslint(sort-keys)"],
+  ["apps/web/src/components/sign-in-form.tsx", "import(no-named-as-default)"],
+  [
+    "apps/web/src/components/sign-in-form.tsx",
+    "react(function-component-definition)"
+  ],
+  ["apps/web/src/components/sign-up-form.tsx", "eslint(sort-keys)"],
+  ["apps/web/src/components/sign-up-form.tsx", "import(no-named-as-default)"],
+  [
+    "apps/web/src/components/sign-up-form.tsx",
+    "react(function-component-definition)"
+  ],
+  ["apps/web/src/functions/get-user.ts", "eslint(arrow-body-style)"],
+  ["apps/web/src/functions/get-user.ts", "eslint(require-await)"],
+  ["apps/web/src/router.tsx", "eslint(sort-keys)"],
+  ["apps/web/src/routes/_auth/route.tsx", "eslint(func-style)"],
+  [
+    "apps/web/src/routes/_auth/route.tsx",
+    "react(function-component-definition)"
+  ],
+  ["apps/web/src/routes/login.tsx", "eslint(func-style)"],
+  ["apps/web/src/routes/login.tsx", "react(function-component-definition)"],
+  ["apps/web/src/utils/orpc.ts", "eslint(func-style)"],
+  ["apps/web/src/utils/orpc.ts", "eslint(require-unicode-regexp)"],
+  ["apps/web/src/utils/orpc.ts", "eslint(sort-keys)"],
+  ["apps/web/vite.config.ts", "eslint(sort-keys)"],
+  ["packages/api/src/context.ts", "typescript(consistent-type-definitions)"],
+  ["packages/api/src/index.ts", "eslint(require-await)"],
+  ["packages/ui/src/components/attachment.tsx", "eslint(func-style)"],
+  ["packages/ui/src/components/attachment.tsx", "eslint(sort-keys)"],
+  [
+    "packages/ui/src/components/attachment.tsx",
+    "import(consistent-type-specifier-style)"
+  ],
+  [
+    "packages/ui/src/components/attachment.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/bubble.tsx", "eslint(func-style)"],
+  ["packages/ui/src/components/bubble.tsx", "eslint(sort-keys)"],
+  [
+    "packages/ui/src/components/bubble.tsx",
+    "import(consistent-type-specifier-style)"
+  ],
+  [
+    "packages/ui/src/components/bubble.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/button.tsx", "eslint(func-style)"],
+  ["packages/ui/src/components/button.tsx", "eslint(sort-keys)"],
+  [
+    "packages/ui/src/components/button.tsx",
+    "import(consistent-type-specifier-style)"
+  ],
+  [
+    "packages/ui/src/components/button.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/card.tsx", "eslint(func-style)"],
+  [
+    "packages/ui/src/components/card.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/checkbox.tsx", "eslint(func-style)"],
+  [
+    "packages/ui/src/components/checkbox.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/dropdown-menu.tsx", "eslint(func-style)"],
+  [
+    "packages/ui/src/components/dropdown-menu.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/empty.tsx", "eslint(func-style)"],
+  ["packages/ui/src/components/empty.tsx", "eslint(sort-keys)"],
+  [
+    "packages/ui/src/components/empty.tsx",
+    "import(consistent-type-specifier-style)"
+  ],
+  [
+    "packages/ui/src/components/empty.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/input-group.tsx", "eslint(func-style)"],
+  ["packages/ui/src/components/input-group.tsx", "eslint(sort-keys)"],
+  [
+    "packages/ui/src/components/input-group.tsx",
+    "import(consistent-type-specifier-style)"
+  ],
+  [
+    "packages/ui/src/components/input-group.tsx",
+    "jsx-a11y(click-events-have-key-events)"
+  ],
+  [
+    "packages/ui/src/components/input-group.tsx",
+    "jsx-a11y(no-noninteractive-element-interactions)"
+  ],
+  [
+    "packages/ui/src/components/input-group.tsx",
+    "jsx-a11y(prefer-tag-over-role)"
+  ],
+  [
+    "packages/ui/src/components/input-group.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/input.tsx", "eslint(func-style)"],
+  [
+    "packages/ui/src/components/input.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/label.tsx", "eslint(func-style)"],
+  [
+    "packages/ui/src/components/label.tsx",
+    "jsx-a11y(label-has-associated-control)"
+  ],
+  [
+    "packages/ui/src/components/label.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/marker.tsx", "eslint(func-style)"],
+  ["packages/ui/src/components/marker.tsx", "eslint(sort-keys)"],
+  [
+    "packages/ui/src/components/marker.tsx",
+    "import(consistent-type-specifier-style)"
+  ],
+  [
+    "packages/ui/src/components/marker.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/message-scroller.tsx", "eslint(func-style)"],
+  [
+    "packages/ui/src/components/message-scroller.tsx",
+    "react(function-component-definition)"
+  ],
+  [
+    "packages/ui/src/components/message-scroller.tsx",
+    "unicorn(prefer-export-from)"
+  ],
+  ["packages/ui/src/components/message.tsx", "eslint(func-style)"],
+  [
+    "packages/ui/src/components/message.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/skeleton.tsx", "eslint(func-style)"],
+  [
+    "packages/ui/src/components/skeleton.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/sonner.tsx", "eslint(sort-keys)"],
+  [
+    "packages/ui/src/components/sonner.tsx",
+    "import(consistent-type-specifier-style)"
+  ],
+  ["packages/ui/src/components/textarea.tsx", "eslint(func-style)"],
+  [
+    "packages/ui/src/components/textarea.tsx",
+    "react(function-component-definition)"
+  ],
+  ["packages/ui/src/components/tooltip.tsx", "eslint(func-style)"],
+  [
+    "packages/ui/src/components/tooltip.tsx",
+    "react(function-component-definition)"
+  ]
+]

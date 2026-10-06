@@ -1,0 +1,96 @@
+{
+  "status": "proposed; no candidate qualified; no fan-out",
+  "hostImage": "ghcr.io/denoland/celld:0.6.0@sha256:e188a7f2bb0b8cec9fb04ee4c3d1ed7cca0ea0419519ae2a9ba36e5b6fe5161b",
+  "stableEffectMajor": 3,
+  "pins": {
+    "agents": "0.26.0",
+    "@earendil-works/pi-durable": "1.0.4",
+    "@earendil-works/pi-ai": "1.0.4",
+    "effect": "3.22.2",
+    "@tanstack/ai": "0.64.1",
+    "@tanstack/ai-client": "0.36.2",
+    "@tanstack/ai-react": "0.29.4",
+    "@ag-ui/core": "1.0.0",
+    "react": "19.2.8",
+    "@types/react": "19.2.18",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3"
+  },
+  "coordinatorChanges": [
+    {
+      "path": "packages/contracts/package.json",
+      "dependencies": {
+        "effect": "3.22.2"
+      }
+    },
+    {
+      "path": "packages/runtime/package.json",
+      "dependencies": {
+        "@earendil-works/pi-durable": "1.0.4",
+        "@earendil-works/pi-ai": "1.0.4",
+        "effect": "3.22.2"
+      },
+      "condition": "Only after one candidate qualifies; agents 0.26.0 is rejected for direct abort semantics."
+    },
+    {
+      "path": "apps/web/package.json",
+      "dependencies": {
+        "@tanstack/ai": "0.64.1",
+        "@tanstack/ai-client": "0.36.2",
+        "@tanstack/ai-react": "0.29.4",
+        "@cerebro/ag-ui": "workspace:*"
+      },
+      "condition": "Do not change the active chat yet."
+    },
+    {
+      "path": "packages/ag-ui/package.json",
+      "name": "@cerebro/ag-ui",
+      "type": "module",
+      "private": true,
+      "exports": {
+        "./protocol": "./src/protocol.ts",
+        "./projection": "./src/projection.ts",
+        "./client": "./src/client.ts"
+      },
+      "dependencies": {
+        "@cerebro/contracts": "workspace:*",
+        "@tanstack/ai": "0.64.1",
+        "@tanstack/ai-client": "0.36.2",
+        "@ag-ui/core": "1.0.0",
+        "effect": "3.22.2"
+      },
+      "scripts": {
+        "build": "tsc -b",
+        "check-types": "tsc -b"
+      },
+      "devDependencies": {
+        "@cerebro/config": "workspace:*",
+        "typescript": "catalog:"
+      },
+      "condition": "Package and source remain coordinator/S1-C owned; no implementation in S1-0."
+    },
+    {
+      "path": "packages/ag-ui/tsconfig.json",
+      "extends": "@cerebro/config/tsconfig.base.json",
+      "compilerOptions": {
+        "allowImportingTsExtensions": true,
+        "composite": true,
+        "declaration": true,
+        "emitDeclarationOnly": true,
+        "outDir": "dist"
+      },
+      "include": ["src/**/*.ts"]
+    },
+    {
+      "path": "package.json",
+      "scripts": {
+        "test:pi-durable:qualification": "node tests/pi-durable-qualification/run.mjs",
+        "test:contracts": "node --test tests/contracts/contracts.test.ts tests/pi-durable-qualification/contracts.test.ts"
+      }
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "request": "One coordinator-generated lockfile commit after approved dependency changes; no hand-edited application lockfile."
+    }
+  ]
+}

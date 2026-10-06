@@ -53,6 +53,12 @@ The cost is explicit ownership at the boundaries. The Cerebro-to-Pi handoff, app
 
 This proposal rejects a generic plugin framework, a broad rewrite of existing company services, and a second policy or approval engine. It uses Effect Layers for the selected adapters and preserves one company authority.
 
+## S1-0 qualification status
+
+The [S1-0 contract proposal](2026-10-05-cerebro-slice-1-contracts.md) records candidate failures on retained celld 0.6.0. The official PiHarness active-operation abort also withdraws queued inputs. The tested portable-storage fallback preserves the queued receipt but fails to progress it after cancellation and restart. No implementation or contracts are frozen; S1-A through S1-D remain blocked. Published TanStack hydrate/joinRun and ChatClient attach/detach passed a headless probe; browser, permission-stream and recovery acceptance remain unverified.
+
+Proposed ports distinguish durable domain revision, ephemeral observation epoch and client access generation. Acknowledgement requires admission, engine acceptance and persisted wake. Approval proposals bind the run and connector-registration fingerprint in addition to existing fields. Effect typed failures and receipt state do not imply host durability. External metering stays unbound, spend control through it is inactive, and native Python remains outside this slice. Manifests and locks remain coordinator-owned requests.
+
 ## Acceptance and maintenance
 
 The [first-slice plan](2026-10-05-cerebro-slice-1-plan.md) defines the runtime checks and later stages.
