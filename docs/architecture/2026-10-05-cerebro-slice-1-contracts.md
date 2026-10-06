@@ -8,6 +8,8 @@ See `tests/pi-durable-qualification/README.md`, its dependency requests, and the
 
 ## Effect boundaries
 
+The user requested the latest Effect 4 release and latest S1-0 dependencies on 2026-10-06. The proposal now uses **Effect 4.0.1**: `Context.Service` keys, array-based `Schema.Union` and `Schema.Literals`, schema checks, and `Effect.result` / `Result` in the fakes suite. TypeScript **7.0.2** checks the isolated signatures. Service methods, typed failures and ownership remain the same.
+
 Every effect has a typed error channel and no implicit application environment. Layers select services. `ExecutionEngine.open`, `SessionService.stream` and `SessionStore.attach` require `Scope.Scope`; vendor resources remain in those implementations. An observer scope owns its subscription, while a host-owned scope owns durable work. Vendor promises, Pi contexts, SQLite connections, alarms and UI protocol types do not appear in these ports. Existing data modules and the old Promise interfaces remain available for the preparation step; final removal belongs to S1-F.
 
 | Module / method | Inputs and success | Failure channel |
@@ -89,7 +91,11 @@ S1-C must use Cerebro custom approval events while continuing to observe an appr
 
 ## Dependency ownership and deferred work
 
-`dependency-requests.json` contains exact versions, scripts and the proposed coordinator-owned AG-UI package/tsconfig/exports. Align `@ag-ui/core` at 1.0.0, which TanStack AI 0.64.1 depends on exactly, instead of introducing a second 1.0.2 copy. Effect is pinned to stable major 3 at 3.22.2; no beta or GitHub main dependency is proposed. The package inventory records installed exports, peers, transitive versions, integrity and licenses; optional architecture packages absent on this machine are distinguished from installed packages.
+`dependency-requests.json` contains exact latest published versions, scripts and the proposed coordinator-owned AG-UI package/tsconfig/exports. The registry snapshot on 2026-10-06 selects Effect **4.0.1**, Pi Durable / Pi AI **1.0.4**, Agents **0.26.0**, TanStack AI **0.65.0**, AI Client **0.37.0**, AI React **0.29.5**, AG-UI **1.0.2**, React / React DOM / their types **19.3.0**, Node types **26.6.4**, esbuild **0.28.2**, and TypeScript **7.0.2**. These are exact npm `dist-tags.latest` selections, not GitHub main references. The Cloudflare [2026-10-02 PiHarness release](https://developers.cloudflare.com/changelog/post/2026-10-02-pi-harness/) is included in Agents 0.26.0; its plain DO `PiHarness` + `Lifecycle` integration remains the first qualification candidate.
+
+TanStack AI still declares AG-UI **1.0.0** as an exact transitive dependency. The isolated graph retains that publisher constraint alongside the requested direct AG-UI **1.0.2** instead of downgrading the direct request or forcing an override. Transitive packages resolve within their published compatibility ranges and are captured in the generated proof lock. The installed inventory records exports, peers, dependencies, integrity and licenses; optional architecture packages absent on this machine are distinguished from installed packages. Shared React and compiler catalog updates require coordinator application checks. This S1-0 proposal does not upgrade unrelated existing application dependencies.
+
+Current qualification evidence uses these latest pins. The earlier Effect 3 proof is retained under `evidence/previous-effect3/` with its original tested SHA; its results are historical and do not qualify the new graph. The Node-free wrapper bundle is an explicit failed check; the additional `nodejs_compat` celld probe diagnoses cancellation independently.
 
 The fixture writes generated manifests only into its isolated temporary directory and retains its install lock as evidence JSON. It does not edit application manifests, the pnpm lockfile or the old runtime's isolated install. A local temporary Effect link is used for direct development checks; a fresh application type/build check requires the coordinator's dependency commit. Focused proofs run from the isolated pinned install. That distinction is part of the blocked handoff.
 

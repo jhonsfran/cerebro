@@ -2,9 +2,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Effect, Either, Schema } from "effect";
+import { Effect, Result, Schema } from "effect";
 
-import { enforceDecision } from "../../packages/contracts/src/authority-service.ts";
+import {
+  AuthorityService,
+  enforceDecision,
+} from "../../packages/contracts/src/authority-service.ts";
 import type { AuthorityRequest } from "../../packages/contracts/src/authority-service.ts";
 import {
   Denied,
@@ -88,10 +91,21 @@ const authorityRequest: AuthorityRequest = {
   tool: invocation.tool,
 };
 const failureTag = async (effect: Effect.Effect<unknown, unknown>) => {
-  const result = await Effect.runPromise(Effect.either(effect));
-  assert.ok(Either.isLeft(result));
-  return result.left;
+  const result = await Effect.runPromise(Effect.result(effect));
+  assert.ok(Result.isFailure(result));
+  return result.failure;
 };
+
+test("Effect 4 service keys resolve through the proposed fake Layer", async () => {
+  const fake = createAuthorityFake(() => now);
+  const permit = await Effect.runPromise(
+    Effect.gen(function* requireAuthority() {
+      const authority = yield* AuthorityService;
+      return yield* authority.require(authorityRequest, options);
+    }).pipe(Effect.provide(fake.layer))
+  );
+  assert.equal(permit.policyVersion, "fixture-v1");
+});
 
 test("policy denial remains data and unavailable enforcement fails closed", async () => {
   const fake = createAuthorityFake(() => now);
@@ -350,6 +364,83 @@ test("denial frames validate and HTTP conversion preserves unknown-outcome meani
       status: 409,
     }
   );
+});
+
+test("Effect 4 observation schemas preserve run variants, revision checks and canonical JSON", () => {
+  const address = {
+    agentId: userEvent.agentId,
+    conversationId: userEvent.conversationId,
+    organizationId: userEvent.organizationId,
+    sessionId: userEvent.sessionId,
+  };
+  const metadata = {
+    accessGeneration: 1,
+    address,
+    epoch: "epoch-A",
+    schemaVersion: 1,
+    sequence: 0,
+  };
+  const snapshot = {
+    address,
+    agentVersion: 1,
+    outputs: [],
+    revision: 0,
+    runs: [
+      { runId: invocation.runId, state: "queued" },
+      { runId: invocation.runId, state: "running" },
+      { runId: invocation.runId, state: "waiting-for-approval" },
+      { completedAt: now, runId: invocation.runId, state: "completed" },
+      { endedAt: now, runId: invocation.runId, state: "failed" },
+      { endedAt: now, runId: invocation.runId, state: "cancelled" },
+      {
+        operationId: invocation.operationId,
+        runId: invocation.runId,
+        state: "unknown-outcome",
+      },
+    ],
+  };
+  const frame = { ...metadata, reason: "attach", snapshot, type: "snapshot" };
+  assert.deepEqual(Schema.decodeUnknownSync(Observation)(frame), frame);
+  for (const change of [
+    { agentVersion: 0 },
+    { revision: -1 },
+    { revision: 0.5 },
+    { runs: [{ runId: " ", state: "queued" }] },
+    { runs: [{ runId: invocation.runId, state: "other" }] },
+  ]) {
+    assert.throws(() =>
+      Schema.decodeUnknownSync(Observation)({
+        ...frame,
+        snapshot: { ...snapshot, ...change },
+      })
+    );
+  }
+  assert.throws(() =>
+    Schema.decodeUnknownSync(Observation)({ ...frame, epoch: "" })
+  );
+  const update = {
+    ...metadata,
+    revision: 1,
+    type: "update",
+    update: {
+      dependencies: { sourceIds: [], toolIds: [] },
+      operationId: invocation.operationId,
+      output: { result: [null, true, 1, "ok"] },
+      runId: invocation.runId,
+      state: "succeeded",
+      toolId: invocation.tool.id,
+      type: "tool",
+    },
+  };
+  assert.deepEqual(Schema.decodeUnknownSync(Observation)(update), update);
+  for (const output of [undefined, Number.NaN, { result: 1n }]) {
+    assert.throws(() =>
+      Schema.decodeUnknownSync(Observation)({
+        ...update,
+        update: { ...update.update, output },
+      })
+    );
+  }
 });
 
 test("Effect scope closes engine resources and cancel A preserves queued B in the contract fake", async () => {

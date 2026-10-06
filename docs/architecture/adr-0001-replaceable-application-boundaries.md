@@ -1,12 +1,12 @@
 # ADR 0001 keeps application behavior independent of replaceable components
 
-Status is proposed. Revised on 2026-10-05. This record does not describe a completed migration.
+Status is proposed. Revised on 2026-10-06. This record does not describe a completed migration.
 
 ## Context
 
 Cerebro needs company policy, durable work, controlled tools, and usable chat. The prototype couples those behaviors to celld, OpenCode, and Cloudflare chat libraries.
 
-The current delivery plan retains celld and replaces OpenCode and AI SDK with Pi Durable and TanStack AI. New Cerebro orchestration uses Effect TS. Future component changes must not require another company-policy implementation.
+The current delivery plan retains celld and replaces OpenCode and AI SDK with Pi Durable and TanStack AI. New Cerebro orchestration uses the latest published Effect 4 release, pinned at 4.0.1 in the S1-0 proposal. S1-0 requests the latest published Pi and TanStack packages and records their exact pins and isolated compatibility evidence. Future component changes must not require another company-policy implementation.
 
 ## Decision
 

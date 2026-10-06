@@ -306,7 +306,7 @@ export const createSessionFake = (
     string,
     {
       event: Parameters<SessionService["submit"]>[0]["event"];
-      receipt: Effect.Effect.Success<ReturnType<SessionService["submit"]>>;
+      receipt: Effect.Success<ReturnType<SessionService["submit"]>>;
     }
   >();
   let snapshot = structuredClone(initial);

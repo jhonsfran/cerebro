@@ -34,7 +34,7 @@ export interface AuthorityService {
     options: ReadOptions
   ) => Effect.Effect<AuthorityPermit, Denied | InvalidInput | Unavailable>;
 }
-export const AuthorityService = Context.GenericTag<AuthorityService>(
+export const AuthorityService = Context.Service<AuthorityService>(
   "@cerebro/AuthorityService"
 );
 export const enforceDecision = (

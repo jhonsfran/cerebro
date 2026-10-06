@@ -52,7 +52,7 @@ export interface ExecutionEngine {
     options: ReadOptions
   ) => Effect.Effect<EngineConversation, ContractFailure, Scope.Scope>;
 }
-export const ExecutionEngine = Context.GenericTag<ExecutionEngine>(
+export const ExecutionEngine = Context.Service<ExecutionEngine>(
   "@cerebro/ExecutionEngine"
 );
 
@@ -128,6 +128,6 @@ export interface SessionStore {
     options: ReadOptions
   ) => Effect.Effect<DomainSnapshot, ContractFailure>;
 }
-export const SessionStore = Context.GenericTag<SessionStore>(
+export const SessionStore = Context.Service<SessionStore>(
   "@cerebro/SessionStore"
 );

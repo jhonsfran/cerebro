@@ -1,26 +1,29 @@
 {
   "status": "proposed; no candidate qualified; no fan-out",
   "hostImage": "ghcr.io/denoland/celld:0.6.0@sha256:e188a7f2bb0b8cec9fb04ee4c3d1ed7cca0ea0419519ae2a9ba36e5b6fe5161b",
-  "stableEffectMajor": 3,
+  "stableEffectMajor": 4,
   "pins": {
     "agents": "0.26.0",
     "@earendil-works/pi-durable": "1.0.4",
     "@earendil-works/pi-ai": "1.0.4",
-    "effect": "3.22.2",
-    "@tanstack/ai": "0.64.1",
-    "@tanstack/ai-client": "0.36.2",
-    "@tanstack/ai-react": "0.29.4",
-    "@ag-ui/core": "1.0.0",
-    "react": "19.2.8",
-    "@types/react": "19.2.18",
+    "effect": "4.0.1",
+    "@tanstack/ai": "0.65.0",
+    "@tanstack/ai-client": "0.37.0",
+    "@tanstack/ai-react": "0.29.5",
+    "@ag-ui/core": "1.0.2",
+    "react": "19.3.0",
+    "@types/react": "19.3.0",
     "esbuild": "0.28.2",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2",
+    "react-dom": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/node": "26.6.4"
   },
   "coordinatorChanges": [
     {
       "path": "packages/contracts/package.json",
       "dependencies": {
-        "effect": "3.22.2"
+        "effect": "4.0.1"
       }
     },
     {
@@ -28,16 +31,21 @@
       "dependencies": {
         "@earendil-works/pi-durable": "1.0.4",
         "@earendil-works/pi-ai": "1.0.4",
-        "effect": "3.22.2"
+        "effect": "4.0.1"
       },
-      "condition": "Only after one candidate qualifies; agents 0.26.0 is rejected for direct abort semantics."
+      "condition": "Only after one candidate qualifies; the tested agents 0.26.0 wrapper and direct probe fail cancellation isolation or queued-turn liveness. Do not downgrade or silently select a fallback.",
+      "candidateDependencies": {
+        "officialWrapper": {
+          "agents": "0.26.0"
+        }
+      }
     },
     {
       "path": "apps/web/package.json",
       "dependencies": {
-        "@tanstack/ai": "0.64.1",
-        "@tanstack/ai-client": "0.36.2",
-        "@tanstack/ai-react": "0.29.4",
+        "@tanstack/ai": "0.65.0",
+        "@tanstack/ai-client": "0.37.0",
+        "@tanstack/ai-react": "0.29.5",
         "@cerebro/ag-ui": "workspace:*"
       },
       "condition": "Do not change the active chat yet."
@@ -54,10 +62,10 @@
       },
       "dependencies": {
         "@cerebro/contracts": "workspace:*",
-        "@tanstack/ai": "0.64.1",
-        "@tanstack/ai-client": "0.36.2",
-        "@ag-ui/core": "1.0.0",
-        "effect": "3.22.2"
+        "@tanstack/ai": "0.65.0",
+        "@tanstack/ai-client": "0.37.0",
+        "@ag-ui/core": "1.0.2",
+        "effect": "4.0.1"
       },
       "scripts": {
         "build": "tsc -b",
@@ -86,11 +94,35 @@
       "scripts": {
         "test:pi-durable:qualification": "node tests/pi-durable-qualification/run.mjs",
         "test:contracts": "node --test tests/contracts/contracts.test.ts tests/pi-durable-qualification/contracts.test.ts"
-      }
+      },
+      "devDependencies": {
+        "effect": "4.0.1",
+        "esbuild": "0.28.2"
+      },
+      "reason": "The root contract tests import Effect directly; package-local contracts dependency alone does not resolve those imports under pnpm."
+    },
+    {
+      "path": "pnpm-workspace.yaml",
+      "catalog": {
+        "typescript": "7.0.2",
+        "react": "19.3.0",
+        "@types/react": "19.3.0",
+        "react-dom": "19.3.0",
+        "@types/react-dom": "19.3.0",
+        "@types/node": "26.6.4"
+      },
+      "condition": "Coordinator reviews latest compiler/React catalog changes and runs full application checks; S1-0 only qualifies its isolated graph."
     },
     {
       "path": "pnpm-lock.yaml",
       "request": "One coordinator-generated lockfile commit after approved dependency changes; no hand-edited application lockfile."
     }
+  ],
+  "selectionPolicy": "Latest published npm dist-tags.latest for every S1-0 direct dependency; exact versions captured on 2026-10-06. Transitive dependencies use publisher-compatible ranges; retained celld image is fixed by the plan.",
+  "registryEvidence": "evidence/registry-latest.json",
+  "compatibilityNotes": [
+    "TanStack AI 0.65.0 pins @ag-ui/core 1.0.0 internally. Keep requested direct @ag-ui/core 1.0.2; the isolated proof records both versions rather than overriding the publisher constraint. Browser/protocol compatibility remains unqualified.",
+    "Latest React, React DOM and matching types are pinned together. Full application verification of shared catalog updates belongs to the coordinator.",
+    "Latest TypeScript 7.0.2 checks the isolated proposed contracts. Existing workspace manifests and lock remain unchanged."
   ]
 }

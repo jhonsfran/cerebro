@@ -43,6 +43,6 @@ export interface ExternalMeter {
   ) => Effect.Effect<MeterReservation, ContractFailure>;
 }
 // Deliberately no Layer: spend control is not active through this port in slice 1.
-export const ExternalMeter = Context.GenericTag<ExternalMeter>(
+export const ExternalMeter = Context.Service<ExternalMeter>(
   "@cerebro/ExternalMeter"
 );

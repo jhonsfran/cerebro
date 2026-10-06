@@ -84,6 +84,6 @@ export interface ToolReceiptStore {
     options: EffectOptions
   ) => Effect.Effect<ToolReceipt, ContractFailure>;
 }
-export const ToolReceiptStore = Context.GenericTag<ToolReceiptStore>(
+export const ToolReceiptStore = Context.Service<ToolReceiptStore>(
   "@cerebro/ToolReceiptStore"
 );

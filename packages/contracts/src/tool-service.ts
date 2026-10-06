@@ -82,6 +82,6 @@ export interface ToolExecutor {
     options: ReadOptions
   ) => Effect.Effect<ToolExecution, ContractFailure>;
 }
-export const ToolExecutor = Context.GenericTag<ToolExecutor>(
+export const ToolExecutor = Context.Service<ToolExecutor>(
   "@cerebro/ToolExecutor"
 );

@@ -18,6 +18,22 @@ const evidence = process.env.S1_0_EVIDENCE_DIR ?? join(work, "evidence");
 await mkdir(evidence, { recursive: true });
 const containers = [];
 const results = [];
+const pendingCases = [
+  "changed-input admission conflict",
+  "idle eviction mid-turn",
+  "alarm-only completion",
+  "snapshot attachment race",
+  "observer overflow",
+  "five handoff crash boundaries",
+  "controlled provider retries and compaction",
+  "current model permission at physical dispatch",
+  "approval across eviction",
+  "denied or revoked approval zero physical tool dispatches",
+  "uncertain write reconciliation",
+  "Effect interruption reaches provider and tool",
+  "real browser page load / approval / reconnect",
+  "production bucket durability / flush before acknowledgment",
+];
 const sourceSha = spawnSync("git", ["rev-parse", "HEAD"], {
   cwd: repo,
   encoding: "utf-8",
@@ -229,7 +245,7 @@ try {
   record(
     "proposed Effect contract fakes",
     "PASS",
-    "Eight focused tests; no durability inference"
+    "Ten focused tests on Effect 4; no durability inference"
   );
   await command("proposed-types", [
     join(work, "node_modules/.bin/tsc"),
@@ -268,6 +284,31 @@ try {
     "TanStack public lifecycle",
     "PASS",
     "hydrate/joinRun and ChatClient.attach/detach; zero submit; headless only"
+  );
+  const strictBundle = spawnSync(
+    join(work, "node_modules/@esbuild/linux-x64/bin/esbuild"),
+    [
+      "wrapper-worker.mjs",
+      "--bundle",
+      "--format=esm",
+      "--platform=browser",
+      "--external:cloudflare:workers",
+      `--outfile=${work}/strict-wrapper.mjs`,
+    ],
+    { cwd: work, encoding: "utf-8" }
+  );
+  await writeFile(
+    join(evidence, "wrapper-strict-browser-bundle.txt"),
+    `${strictBundle.stdout ?? ""}${strictBundle.stderr ?? ""}`
+  );
+  record(
+    "wrapper worker path without Node imports",
+    strictBundle.status === 0 ? "PASS" : "FAIL",
+    {
+      evidence: "wrapper-strict-browser-bundle.txt",
+      exitCode: strictBundle.status,
+      note: "The following celld wrapper probe enables nodejs_compat to diagnose cancellation independently.",
+    }
   );
   const wrapper = await start("wrapper", "wrapper-worker.mjs");
   const timeline = [];
@@ -374,31 +415,16 @@ try {
     join(evidence, "direct-timeline.json"),
     `${JSON.stringify(directTimeline, null, 2)}\n`
   );
-  for (const name of [
-    "changed-input admission conflict",
-    "idle eviction mid-turn",
-    "alarm-only completion",
-    "snapshot attachment race",
-    "observer overflow",
-    "five handoff crash boundaries",
-    "controlled provider retries and compaction",
-    "current model permission at physical dispatch",
-    "approval across eviction",
-    "denied or revoked approval zero physical tool dispatches",
-    "uncertain write reconciliation",
-    "Effect interruption reaches provider and tool",
-    "real browser page load / approval / reconnect",
-    "production bucket durability / flush before acknowledgment",
-  ]) {
-    record(
-      name,
-      "NOT_RUN",
-      "Stopped at candidate cancellation/recovery gate; no host qualification inferred from fakes"
-    );
-  }
 } catch (error) {
   record("qualification runner", "FAIL", String(error));
 } finally {
+  for (const name of pendingCases) {
+    record(
+      name,
+      "NOT_RUN",
+      "Stopped at candidate or prerequisite gate; no host qualification inferred from fakes"
+    );
+  }
   for (const name of containers) {
     const log = spawnSync("docker", ["logs", name], {
       encoding: "utf-8",

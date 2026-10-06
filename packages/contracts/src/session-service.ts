@@ -26,10 +26,10 @@ const dependencies = Schema.Struct({
   sourceIds: Schema.Array(identifier<"SourceId">()),
   toolIds: Schema.Array(Schema.String),
 });
-const run = Schema.Union(
+const run = Schema.Union([
   Schema.Struct({
     runId,
-    state: Schema.Literal("queued", "running", "waiting-for-approval"),
+    state: Schema.Literals(["queued", "running", "waiting-for-approval"]),
   }),
   Schema.Struct({
     completedAt: Schema.Number,
@@ -39,22 +39,22 @@ const run = Schema.Union(
   Schema.Struct({
     endedAt: Schema.Number,
     runId,
-    state: Schema.Literal("failed", "cancelled"),
+    state: Schema.Literals(["failed", "cancelled"]),
   }),
   Schema.Struct({
     operationId,
     runId,
     state: Schema.Literal("unknown-outcome"),
-  })
-);
+  }),
+]);
 const provenance = Schema.Struct({
   observedAt: Schema.Number,
   sourceId: identifier<"SourceId">(),
   sourceUri: Schema.String,
   sourceVersion: Schema.String,
 });
-const jsonValue = Schema.Unknown.pipe(
-  Schema.filter((value) => {
+const jsonValue = Schema.Unknown.check(
+  Schema.makeFilter((value) => {
     try {
       canonicalToolArguments(value);
       return true;
@@ -71,14 +71,14 @@ const output = Schema.Struct({
 });
 export const DomainSnapshot = Schema.Struct({
   address,
-  agentVersion: Schema.Number.pipe(Schema.int(), Schema.positive()),
+  agentVersion: Schema.Int.check(Schema.isGreaterThan(0)),
   outputs: Schema.Array(output),
-  revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   runs: Schema.Array(run),
 });
 export type DomainSnapshot = typeof DomainSnapshot.Type;
 
-export const DomainUpdate = Schema.Union(
+export const DomainUpdate = Schema.Union([
   Schema.Struct({ run, type: Schema.Literal("run") }),
   Schema.Struct({
     runId,
@@ -97,15 +97,15 @@ export const DomainUpdate = Schema.Union(
     operationId,
     output: jsonValue,
     runId,
-    state: Schema.Literal(
+    state: Schema.Literals([
       "requested",
       "waiting-for-approval",
       "running",
       "succeeded",
       "failed",
       "cancelled",
-      "unknown-outcome"
-    ),
+      "unknown-outcome",
+    ]),
     toolId: identifier<"ToolId">(),
     type: Schema.Literal("tool"),
   }),
@@ -115,36 +115,36 @@ export const DomainUpdate = Schema.Union(
     runId,
     text: Schema.String,
     type: Schema.Literal("citation"),
-  })
-);
+  }),
+]);
 export type DomainUpdate = typeof DomainUpdate.Type;
 
 const frameMetadata = {
-  accessGeneration: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  accessGeneration: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   address,
-  epoch: Schema.String.pipe(Schema.nonEmptyString()),
+  epoch: Schema.NonEmptyString,
   schemaVersion: Schema.Literal(1),
-  sequence: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+  sequence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 };
-export const Observation = Schema.Union(
+export const Observation = Schema.Union([
   Schema.Struct({
     ...frameMetadata,
-    reason: Schema.Literal("attach", "overflow", "reconnect"),
+    reason: Schema.Literals(["attach", "overflow", "reconnect"]),
     snapshot: DomainSnapshot,
     type: Schema.Literal("snapshot"),
   }),
   Schema.Struct({
     ...frameMetadata,
-    revision: Schema.Number.pipe(Schema.int(), Schema.nonNegative()),
+    revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     type: Schema.Literal("update"),
     update: DomainUpdate,
   }),
   Schema.Struct({
     ...frameMetadata,
-    reason: Schema.Literal("revoked", "unauthorized"),
+    reason: Schema.Literals(["revoked", "unauthorized"]),
     type: Schema.Literal("access-denied"),
-  })
-);
+  }),
+]);
 export type Observation = typeof Observation.Type;
 export interface ObservationRequest {
   readonly accessGeneration: number;
@@ -179,6 +179,6 @@ export interface SessionService {
     options: ReadOptions
   ) => Stream.Stream<Observation, ContractFailure, Scope.Scope>;
 }
-export const SessionService = Context.GenericTag<SessionService>(
+export const SessionService = Context.Service<SessionService>(
   "@cerebro/SessionService"
 );
