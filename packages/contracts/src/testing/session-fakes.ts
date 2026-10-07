@@ -37,10 +37,26 @@ const deadline = (options: ReadOptions) => {
     throw new Unavailable({ reason: "Deadline or interruption" });
   }
 };
+const isActive = (run: RunState) =>
+  run.state === "running" || run.state === "waiting-for-approval";
+const isPending = (run: RunState) => isActive(run) || run.state === "queued";
+const cancelledRun = (runId: RunId): RunState => ({
+  endedAt: Date.now(),
+  runId,
+  state: "cancelled",
+});
 export const createEngineFake = () => {
   const submissions = new Map<string, EngineSubmission>();
   const runs = new Map<RunId, RunState>();
-  const counts = { cancel: 0, open: 0, release: 0, submit: 0 };
+  const counts = { cancel: 0, open: 0, release: 0, stop: 0, submit: 0 };
+  const stopPending = () => {
+    const affected = [...runs.values()].filter(isPending).map((run) => {
+      const cancelled = cancelledRun(run.runId);
+      runs.set(run.runId, cancelled);
+      return cancelled;
+    });
+    return structuredClone(affected);
+  };
   const conversation: EngineConversation = {
     approve: (approval, options) =>
       attempt(() => {
@@ -54,17 +70,17 @@ export const createEngineFake = () => {
     cancel: (runId, options) =>
       attempt(() => {
         deadline(options);
-        if (!runs.has(runId)) {
+        const prior = runs.get(runId);
+        if (!prior) {
           throw new NotFound({ resource: "run" });
         }
-        const cancelled = {
-          endedAt: Date.now(),
-          runId,
-          state: "cancelled",
-        } as const;
-        runs.set(runId, cancelled);
+        if (isActive(prior)) {
+          stopPending();
+        } else if (prior.state === "queued") {
+          runs.set(runId, cancelledRun(runId));
+        }
         counts.cancel += 1;
-        return cancelled;
+        return structuredClone(runs.get(runId) ?? prior);
       }),
     inspect: (options) =>
       attempt(() => {
@@ -75,6 +91,12 @@ export const createEngineFake = () => {
     release: Effect.sync(() => {
       counts.release += 1;
     }),
+    stop: (options) =>
+      attempt(() => {
+        deadline(options);
+        counts.stop += 1;
+        return stopPending();
+      }),
     submit: (submission, options) =>
       attempt(() => {
         deadline(options);
@@ -89,10 +111,11 @@ export const createEngineFake = () => {
           });
         }
         if (!prior) {
+          const busy = [...runs.values()].some(isActive);
           submissions.set(submission.requestId, structuredClone(submission));
           runs.set(submission.runId, {
             runId: submission.runId,
-            state: runs.size === 0 ? "running" : "queued",
+            state: busy && submission.mode !== "steer" ? "queued" : "running",
           });
           counts.submit += 1;
         }
@@ -147,14 +170,18 @@ export const createStoreFake = (initial: DomainSnapshot) => {
     }
   };
   const service: SessionStore = {
-    admit: (event, agent, options) =>
+    admit: (command, agent, options) =>
       attempt(() => {
+        const { event } = command;
+        const mode = command.mode ?? "follow-up";
         deadline(options);
         access(event, event.context);
         const prior = handoffs.get(event.eventId);
         if (prior) {
           if (
-            classifyEventDelivery(prior.submission.event, event) !== "duplicate"
+            classifyEventDelivery(prior.submission.event, event) !==
+              "duplicate" ||
+            prior.mode !== mode
           ) {
             throw new Conflict({
               code: "digest-mismatch",
@@ -171,16 +198,18 @@ export const createStoreFake = (initial: DomainSnapshot) => {
           agentVersion: agent.version,
           approvals: [],
           engineAccepted: false,
+          mode,
           projectedRevision: 0,
+          replaceStopped: false,
           revision,
           run: { runId: id.run(`run:${event.eventId}`), state: "queued" },
           submission: {
             event: structuredClone(event),
             inputDigest: options.requestDigest,
+            mode: mode === "steer" ? "steer" : "follow-up",
             requestId: event.eventId,
             runId: id.run(`run:${event.eventId}`),
           },
-          wakeRegistered: false,
         };
         handoffs.set(event.eventId, handoff);
         return structuredClone(handoff);
@@ -227,14 +256,28 @@ export const createStoreFake = (initial: DomainSnapshot) => {
           throw new NotFound({ resource: "handoff" });
         }
         if (
-          transition.type === "acknowledged" &&
-          (!prior.wakeRegistered ||
-            (prior.run.state !== "queued" && !prior.engineAccepted))
+          transition.type === "replace-stopped" &&
+          (prior.mode !== "replace" || prior.engineAccepted)
         ) {
           throw new Conflict({
             code: "version-mismatch",
-            reason:
-              "Durable wake required; active runs also need engine acceptance",
+            reason: "Replacement stop must precede engine acceptance",
+          });
+        }
+        if (
+          transition.type === "engine-accepted" &&
+          prior.mode === "replace" &&
+          !prior.replaceStopped
+        ) {
+          throw new Conflict({
+            code: "version-mismatch",
+            reason: "Replacement stop has not completed",
+          });
+        }
+        if (transition.type === "acknowledged" && !prior.engineAccepted) {
+          throw new Conflict({
+            code: "version-mismatch",
+            reason: "Pi acceptance and its Lifecycle wake are required",
           });
         }
         const next = {
@@ -251,14 +294,10 @@ export const createStoreFake = (initial: DomainSnapshot) => {
             transition.type === "projected"
               ? revision + 1
               : prior.projectedRevision,
+          replaceStopped:
+            prior.replaceStopped || transition.type === "replace-stopped",
           revision: revision + 1,
           run: transition.type === "run-state" ? transition.run : prior.run,
-          wakeAt:
-            transition.type === "wake-registered"
-              ? transition.wakeAt
-              : prior.wakeAt,
-          wakeRegistered:
-            prior.wakeRegistered || transition.type === "wake-registered",
         };
         revision += 1;
         handoffs.set(next.submission.requestId, next);
@@ -308,6 +347,7 @@ export const createSessionFake = (
     string,
     {
       event: Parameters<SessionService["submit"]>[0]["event"];
+      mode: Parameters<SessionService["submit"]>[0]["mode"];
       receipt: Effect.Success<ReturnType<SessionService["submit"]>>;
     }
   >();
@@ -347,18 +387,22 @@ export const createSessionFake = (
         if (!snapshot.runs.some((value) => value.runId === command.runId)) {
           throw new NotFound({ resource: "run" });
         }
-        const run = {
-          endedAt: Date.now(),
-          runId: command.runId,
-          state: "cancelled",
-        } as const;
+        const prior = snapshot.runs.find((run) => run.runId === command.runId);
+        const run =
+          prior && isPending(prior) ? cancelledRun(command.runId) : prior;
         snapshot = {
           ...snapshot,
           revision: snapshot.revision + 1,
           runs: snapshot.runs.map((value) =>
-            value.runId === command.runId ? run : value
+            (prior && isActive(prior) && isPending(value)) ||
+            (value.runId === command.runId && isPending(value))
+              ? cancelledRun(value.runId)
+              : value
           ),
         };
+        if (!run) {
+          throw new NotFound({ resource: "run" });
+        }
         return run;
       }),
     inspect: (_address, context, options) =>
@@ -388,10 +432,12 @@ export const createSessionFake = (
     submit: (command, options) =>
       attempt(() => {
         authorize(options, command.event.context);
+        const mode = command.mode ?? "follow-up";
         const prior = receipts.get(command.event.eventId);
         if (prior) {
           if (
-            classifyEventDelivery(prior.event, command.event) !== "duplicate"
+            classifyEventDelivery(prior.event, command.event) !== "duplicate" ||
+            prior.mode !== mode
           ) {
             throw new Conflict({
               code: "digest-mismatch",
@@ -409,12 +455,20 @@ export const createSessionFake = (
         };
         receipts.set(command.event.eventId, {
           event: structuredClone(command.event),
+          mode,
           receipt,
         });
+        const runs = snapshot.runs.map((run) =>
+          mode === "replace" && isPending(run) ? cancelledRun(run.runId) : run
+        );
+        const busy = runs.some(isActive);
         snapshot = {
           ...snapshot,
           revision: snapshot.revision + 1,
-          runs: [...snapshot.runs, { runId, state: "queued" }],
+          runs: [
+            ...runs,
+            { runId, state: busy && mode !== "steer" ? "queued" : "running" },
+          ],
         };
         return receipt;
       }),

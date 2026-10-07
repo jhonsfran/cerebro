@@ -11,11 +11,14 @@ import type {
   DomainUpdate,
   Observation,
   ObservationRequest,
+  SubmissionMode,
+  SubmitCommand,
 } from "./session-service.ts";
 import type { AgentDefinition, RunState, SessionReceipt } from "./session.ts";
 import type { BoundApproval } from "./tool-service.ts";
 
 export interface EngineSubmission {
+  readonly mode?: "follow-up" | "steer";
   readonly requestId: EventEnvelope["eventId"];
   readonly inputDigest: Digest;
   readonly runId: RunId;
@@ -43,6 +46,10 @@ export interface EngineConversation {
     runId: RunId,
     options: ReadOptions
   ) => Effect.Effect<RunState, ContractFailure>;
+  // Native session stop also withdraws queued inputs. Returns affected runs.
+  readonly stop: (
+    options: ReadOptions
+  ) => Effect.Effect<readonly RunState[], ContractFailure>;
   readonly release: Effect.Effect<void, never>;
 }
 export interface ExecutionEngine {
@@ -64,10 +71,10 @@ export interface DurableHandoff {
   readonly revision: number;
   readonly run: RunState;
   readonly approvals: readonly BoundApproval[];
-  readonly wakeAt?: number;
+  readonly mode: SubmissionMode;
+  readonly replaceStopped: boolean;
   readonly engineAccepted: boolean;
-  readonly wakeRegistered: boolean;
-  // A queued receipt acknowledges host admission and wake, before Pi handoff.
+  // PiHarness acceptance includes its durable inbox and Lifecycle wake.
   readonly acknowledged: boolean;
   readonly projectedRevision: number;
 }
@@ -84,11 +91,7 @@ export type HandoffTransition =
       readonly run: RunState;
     }
   | { readonly type: "engine-accepted"; readonly runId: RunId }
-  | {
-      readonly type: "wake-registered";
-      readonly runId: RunId;
-      readonly wakeAt: number;
-    }
+  | { readonly type: "replace-stopped"; readonly runId: RunId }
   | { readonly type: "acknowledged"; readonly runId: RunId }
   | {
       readonly type: "projected";
@@ -97,7 +100,7 @@ export type HandoffTransition =
     };
 export interface SessionStore {
   readonly admit: (
-    event: EventEnvelope,
+    command: SubmitCommand,
     pinnedAgent: AgentDefinition,
     options: EffectOptions
   ) => Effect.Effect<DurableHandoff, ContractFailure>;

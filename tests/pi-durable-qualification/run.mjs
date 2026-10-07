@@ -22,7 +22,9 @@ const pendingCases = [
   "idle eviction mid-turn",
   "snapshot attachment race",
   "observer overflow",
-  "five handoff crash boundaries",
+  "Cerebro intent/engine/projection crash boundaries",
+  "replace interruption and retry between abort and submit",
+  "Cerebro changed-input conflict on real host",
   "controlled provider retries and compaction",
   "current model permission at physical dispatch",
   "approval across eviction",
@@ -38,12 +40,14 @@ const plannedChecks = [
   "proposed contract types",
   "TanStack public lifecycle",
   "wrapper worker path without Node imports",
-  "raw PiHarness cancel A preserves Pi-queued B",
-  "wrapper durable duplicate admission",
-  "changed-input admission conflict",
-  "wrapper cancel A preserves and completes host-queued B",
-  "wrapper cancel queued B preserves active A",
-  "wrapper process restart recovers host-queued B",
+  "native active abort preserves already-queued follow-up",
+  "native durable duplicate submission",
+  "native request ID deduplication boundary",
+  "native follow-ups run in order",
+  "native steering joins the current run after a tool round",
+  "native cancel queued B preserves active A",
+  "native stop then submit replacement",
+  "native process restart recovers Pi-queued B",
   "alarm-only completion",
   ...pendingCases,
 ];
@@ -70,6 +74,9 @@ const command = async (name, args, cwd = work) => {
   }
   return result.stdout;
 };
+const counter = (root, name) =>
+  root.counters.find((row) => row.name === name)?.value ?? 0;
+
 const http = async (base, path, body) => {
   const response = await fetch(
     base + path,
@@ -252,7 +259,7 @@ try {
   record(
     "proposed Effect contract fakes",
     "PASS",
-    "Ten focused tests on Effect 4; no durability inference"
+    "Twelve focused tests on Effect 4; no durability inference"
   );
   await command("proposed-types", [
     join(work, "node_modules/.bin/tsc"),
@@ -330,67 +337,125 @@ try {
     timeline.push({ at: new Date().toISOString(), conversation, path, value });
     return value;
   };
-  // Keep the vendor limitation reproducible; do not relabel it as a pass.
-  await probe("raw", "/raw/submit", { requestId: "run-A", text: "first" });
-  await probe("raw", "/raw/submit", { requestId: "run-B", text: "second" });
-  const rawBefore = await probe("raw", "/pending");
-  assert.ok(rawBefore.some((r) => r.operationId === "run-B"));
-  await probe("raw", "/raw/cancel", { requestId: "run-A" });
-  const rawAfter = await probe("raw", "/pending");
-  record(
-    "raw PiHarness cancel A preserves Pi-queued B",
-    rawAfter.some((r) => r.operationId === "run-B") ? "PASS" : "FAIL",
-    { after: rawAfter, before: rawBefore },
-    "documented-vendor-limitation"
+  // Preserve the original plan case as an executed failure. Native Stop clears
+  // queued inputs by design; the operator chose these semantics over a second queue.
+  await probe("abort-scope", "/submit", { requestId: "run-A", text: "first" });
+  await probe("abort-scope", "/submit", { requestId: "run-B", text: "second" });
+  const abortBefore = await probe("abort-scope", "/pending");
+  assert.equal(
+    abortBefore.find((run) => run.operationId === "run-B").status,
+    "queued"
   );
-  const first = await probe("serial", "/submit", {
+  await probe("abort-scope", "/cancel", { requestId: "run-A" });
+  const abortAfter = await probe("abort-scope", "/pending");
+  record(
+    "native active abort preserves already-queued follow-up",
+    abortAfter.some((run) => run.operationId === "run-B") ? "PASS" : "FAIL",
+    {
+      after: abortAfter,
+      before: abortBefore,
+      note: "Original plan requirement superseded by operator: use native Stop semantics, which withdraw queued inputs. This is expected framework behavior, not a queue defect.",
+    },
+    "operator-approved-semantics-change"
+  );
+
+  const first = await probe("duplicate", "/submit", {
     requestId: "run-A",
     text: "first",
   });
-  const duplicate = await probe("serial", "/submit", {
+  const duplicate = await probe("duplicate", "/submit", {
     requestId: "run-A",
     text: "first",
   });
   assert.equal(first.accepted, true);
   assert.equal(duplicate.accepted, false);
-  record("wrapper durable duplicate admission", "PASS", { duplicate, first });
-  const changed = await fetch(`${wrapper.base}/submit?conversation=serial`, {
-    body: JSON.stringify({ requestId: "run-A", text: "changed" }),
-    method: "POST",
-    signal: AbortSignal.timeout(20_000),
+  record("native durable duplicate submission", "PASS", { duplicate, first });
+  const changed = await probe("duplicate", "/submit", {
+    requestId: "run-A",
+    text: "changed",
   });
-  assert.equal(changed.status, 409);
-  record("changed-input admission conflict", "PASS", {
-    body: await changed.json(),
-    status: changed.status,
+  assert.equal(changed.accepted, false);
+  const original = await probe("duplicate", "/wait?requestId=run-A");
+  const duplicateRoot = await probe("duplicate", "/");
+  assert.equal(original.status, "done");
+  assert.equal(counter(duplicateRoot, "model_calls"), 1);
+  assert.ok(!JSON.stringify(duplicateRoot.calls).includes("changed"));
+  record("native request ID deduplication boundary", "PASS", {
+    changed,
+    counters: duplicateRoot.counters,
+    note: "Pi deduplicates by ID and retains the first payload; it does not enforce changed-input 409. Cerebro retains that check in its command journal. Real-host Cerebro enforcement remains NOT_RUN.",
+    original,
   });
-  await probe("serial", "/submit", { requestId: "run-B", text: "second" });
-  const before = await probe("serial", "/admissions");
-  const piBefore = await probe("serial", "/pending");
-  assert.equal(before.find((r) => r.request_id === "run-B").state, "queued");
-  assert.equal(before.find((r) => r.request_id === "run-B").engine_accepted, 0);
-  assert.ok(piBefore.every((r) => r.operationId === "run-A"));
-  await probe("serial", "/cancel", { requestId: "run-A" });
-  const after = await probe("serial", "/admissions");
-  assert.equal(after.find((r) => r.request_id === "run-A").state, "cancelled");
-  assert.equal(after.find((r) => r.request_id === "run-B").state, "running");
-  await delay(8000);
-  const completed = await probe("serial", "/receipt?requestId=run-B");
-  const serialRoot = await probe("serial", "/");
-  assert.equal(completed.state, "completed");
-  assert.equal(JSON.parse(completed.result).status, "done");
+
+  await probe("follow-up", "/submit", { requestId: "run-A", text: "first" });
+  await probe("follow-up", "/submit", { requestId: "run-B", text: "second" });
+  const followBefore = await probe("follow-up", "/pending");
+  const followSnapshot = await probe("follow-up", "/snapshot");
   assert.equal(
-    serialRoot.counters.find((r) => r.name === "model_calls").value,
-    2
+    followBefore.find((run) => run.operationId === "run-A").status,
+    "running"
   );
-  record("wrapper cancel A preserves and completes host-queued B", "PASS", {
-    after,
-    before,
-    completed,
-    counters: serialRoot.counters,
-    piBefore,
+  assert.equal(
+    followBefore.find((run) => run.operationId === "run-B").status,
+    "queued"
+  );
+  assert.equal(followSnapshot.run.inputs.length, 1);
+  assert.equal(followSnapshot.inbox[0].mode, "followUp");
+  const followA = await probe("follow-up", "/wait?requestId=run-A");
+  const followB = await probe("follow-up", "/wait?requestId=run-B");
+  const followRoot = await probe("follow-up", "/");
+  assert.equal(followA.status, "done");
+  assert.equal(followB.status, "done");
+  assert.equal(counter(followRoot, "model_calls"), 2);
+  assert.ok(!followRoot.calls[0].messages.includes("second"));
+  assert.ok(followRoot.calls[1].messages.includes("second"));
+  assert.ok(
+    followRoot.tables.every((table) => table.name !== "cerebro_admissions")
+  );
+  record("native follow-ups run in order", "PASS", {
+    before: followBefore,
+    counters: followRoot.counters,
+    results: [followA, followB],
+    snapshot: followSnapshot,
+    tables: followRoot.tables,
   });
-  // Cancelling a host-queued run never reaches Pi and cannot stop active A.
+
+  await probe("steer", "/submit", {
+    requestId: "run-A",
+    text: "tool-before-steer",
+  });
+  await probe("steer", "/steer", {
+    requestId: "run-B",
+    text: "use the corrected instructions",
+  });
+  const steerBefore = await probe("steer", "/snapshot");
+  assert.equal(steerBefore.inbox[0].mode, "steer");
+  let joined;
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    joined = await probe("steer", "/snapshot");
+    if (joined.run?.inputs.length === 2) {
+      break;
+    }
+    await delay(250);
+  }
+  assert.equal(joined.run?.inputs.length, 2);
+  const steerA = await probe("steer", "/wait?requestId=run-A");
+  const steerB = await probe("steer", "/wait?requestId=run-B");
+  const steerRoot = await probe("steer", "/");
+  assert.equal(steerA.status, "done");
+  assert.equal(steerB.status, "done");
+  assert.equal(counter(steerRoot, "model_calls"), 2);
+  assert.equal(counter(steerRoot, "tool_calls"), 1);
+  assert.ok(
+    steerRoot.calls[1].messages.includes("use the corrected instructions")
+  );
+  record("native steering joins the current run after a tool round", "PASS", {
+    before: steerBefore,
+    counters: steerRoot.counters,
+    joined,
+    results: [steerA, steerB],
+  });
+
   await probe("queued-cancel", "/submit", {
     requestId: "run-A",
     text: "first",
@@ -402,27 +467,51 @@ try {
   const cancelled = await probe("queued-cancel", "/cancel", {
     requestId: "run-B",
   });
-  assert.equal(cancelled.state, "cancelled");
-  assert.equal(cancelled.engine_accepted, 0);
-  await delay(8000);
-  const surviving = await probe("queued-cancel", "/receipt?requestId=run-A");
+  const queuedA = await probe("queued-cancel", "/wait?requestId=run-A");
+  const queuedB = await probe("queued-cancel", "/wait?requestId=run-B");
   const queuedRoot = await probe("queued-cancel", "/");
-  assert.equal(surviving.state, "completed");
-  assert.equal(
-    queuedRoot.counters.find((r) => r.name === "model_calls").value,
-    1
-  );
-  record("wrapper cancel queued B preserves active A", "PASS", {
+  assert.equal(cancelled.cancelled, true);
+  assert.equal(queuedA.status, "done");
+  assert.equal(queuedB.status, "unanswered");
+  assert.equal(counter(queuedRoot, "model_calls"), 1);
+  record("native cancel queued B preserves active A", "PASS", {
     cancelled,
     counters: queuedRoot.counters,
-    surviving,
+    results: [queuedA, queuedB],
   });
+
+  await probe("replace", "/submit", {
+    requestId: "run-A",
+    text: "original task",
+  });
+  const replaceBefore = await probe("replace", "/pending");
+  assert.equal(replaceBefore[0].status, "running");
+  const replacement = await probe("replace", "/replace", {
+    requestId: "run-B",
+    text: "replacement task",
+  });
+  const replaceA = await probe("replace", "/wait?requestId=run-A");
+  const replaceB = await probe("replace", "/wait?requestId=run-B");
+  const replaceRoot = await probe("replace", "/");
+  assert.equal(replacement.accepted, true);
+  assert.equal(replaceA.status, "unanswered");
+  assert.equal(replaceA.reason, "aborted");
+  assert.equal(replaceB.status, "done");
+  assert.equal(counter(replaceRoot, "model_calls"), 2);
+  record("native stop then submit replacement", "PASS", {
+    before: replaceBefore,
+    counters: replaceRoot.counters,
+    note: "Native abort then submit sequence; no crash injected between calls. Not atomic, not a durable replacement adapter.",
+    replacement,
+    results: [replaceA, replaceB],
+  });
+
   await probe("restart", "/submit", { requestId: "run-A", text: "first" });
   await probe("restart", "/submit", { requestId: "run-B", text: "second" });
-  const restartBefore = await probe("restart", "/admissions");
+  const restartBefore = await probe("restart", "/pending");
   const wakeBefore = await probe("restart", "/");
   assert.equal(
-    restartBefore.find((r) => r.request_id === "run-B").state,
+    restartBefore.find((run) => run.operationId === "run-B").status,
     "queued"
   );
   assert.ok(wakeBefore.alarm);
@@ -435,22 +524,22 @@ try {
     "9876",
   ]);
   wrapper.base = `http://127.0.0.1:${restartedPort.trim().split(":").at(-1)}`;
-  // Do not send a worker request while proving an alarm completes admitted work.
+  // No worker request is sent during the alarm recovery window.
   await delay(20_000);
   await command("wrapper-alarm-only-timeline", [
     "docker",
     "logs",
     wrapper.name,
   ]);
-  const recovered = await probe("restart", "/admissions");
+  const recoveredA = await probe("restart", "/wait?requestId=run-A");
+  const recoveredB = await probe("restart", "/wait?requestId=run-B");
+  const remaining = await probe("restart", "/pending");
   const recoveredRoot = await probe("restart", "/");
-  assert.equal(recovered.length, 2);
-  assert.ok(recovered.every((r) => r.state === "completed"));
-  assert.equal(
-    recovered.find((r) => r.request_id === "run-B").position,
-    restartBefore.find((r) => r.request_id === "run-B").position
-  );
-  record("wrapper process restart recovers host-queued B", "PASS", {
+  assert.equal(recoveredA.status, "done");
+  assert.equal(recoveredB.status, "done");
+  assert.deepEqual(remaining, []);
+  const recovered = [recoveredA, recoveredB];
+  record("native process restart recovers Pi-queued B", "PASS", {
     before: restartBefore,
     counters: recoveredRoot.counters,
     recovered,
@@ -494,7 +583,7 @@ try {
     .digest("hex");
   await writeFile(
     join(evidence, "qualification.json"),
-    `${JSON.stringify({ contractStatus: "ready for coordinator review; qualification incomplete", hostImage: request.hostImage, lockSha256: lockHash, mode: "celld dev with persistent local storage and nodejs_compat; not production bucket", results, selectedImplementation: "official PiHarness + Lifecycle with serialized Cerebro admission", sourceSha }, null, 2)}\n`
+    `${JSON.stringify({ contractStatus: "ready for coordinator review; qualification incomplete", hostImage: request.hostImage, lockSha256: lockHash, mode: "celld dev with persistent local storage and nodejs_compat; not production bucket", results, selectedImplementation: "official PiHarness + Lifecycle; native inbox, steering and stop; thin Effect adapter", sourceSha }, null, 2)}\n`
   );
   process.stdout.write(`Evidence: ${evidence}\n`);
   process.exitCode = results.some(

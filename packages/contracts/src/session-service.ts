@@ -150,13 +150,17 @@ export interface ObservationRequest {
   readonly accessGeneration: number;
   readonly afterRevision?: number;
 }
+export type SubmissionMode = "follow-up" | "steer" | "replace";
+export type SubmitCommand = Extract<SessionCommand, { type: "submit" }> & {
+  readonly mode?: SubmissionMode;
+};
 export type ApprovalCommand = Extract<SessionCommand, { type: "approve" }> & {
   readonly runId: RunId;
   readonly decision: "allow" | "deny";
 };
 export interface SessionService {
   readonly submit: (
-    command: Extract<SessionCommand, { type: "submit" }>,
+    command: SubmitCommand,
     options: EffectOptions
   ) => Effect.Effect<SessionReceipt, ContractFailure>;
   readonly approve: (

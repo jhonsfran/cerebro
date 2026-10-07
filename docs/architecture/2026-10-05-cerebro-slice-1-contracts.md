@@ -2,9 +2,21 @@
 
 Status: **ready for coordinator review; official PiHarness selected with deferred qualification**. On 2026-10-06 the operator chose the official harness, requested a small inexpensive fix, and authorized carrying unresolved checks as TODOs rather than stopping development. This supersedes the S1-0 stop/fallback gate for preparation; it does not turn failed or unrun checks into passes. ADR 0001 remains proposed. The coordinator can publish the reviewed contract and dependency commits for later packets. This task does not execute S1-A through S1-D, merge or deploy.
 
-The selected integration is **`agents/harness/pi` PiHarness + `agents/lifecycle` Lifecycle on retained celld 0.6.0 with `nodejs_compat`**. Pi's operation-specific abort becomes a conversation abort once input is placed, withdrawing Pi-queued follow-ups. Cerebro therefore durably admits later human runs before handing them to Pi, and hands off at most one run per conversation. Cancelling a host-queued run never reaches Pi. Active cancellation finishes before the next handoff. Pi retains its transcript, model/tool loop, retries, private storage and engine-owned inbox; Cerebro owns admission order, not another agent loop.
+The selected integration is **`agents/harness/pi` PiHarness + `agents/lifecycle` Lifecycle on retained celld 0.6.0 with `nodejs_compat` and a thin Effect adapter**. On 2026-10-06 the operator explicitly chose Pi's native inbox, steering and Stop semantics instead of preserving queued messages through a separate Cerebro execution queue. This supersedes the plan's active-cancel-preserves-queued-follow-up requirement and the earlier admission workaround. The original case remains an executed FAIL in historical/current evidence; it is not relabelled PASS.
 
-The qualification fixture exercises this admission strategy through public PiHarness submit/pending/wait/abort methods and public Lifecycle host jobs. It is a small proposed host protocol, not an application adapter. No Pi-private table is edited and no raw task abort is used. The old direct adapter is retired from the default runner; its evidence remains historical. Deferred work and accepted deviations are recorded in `tests/pi-durable-qualification/todos.json`.
+Pi owns its transcript, durable inbox, model/tool loop, submission deduplication, retries, private checkpoints and Lifecycle wake-up. Cerebro owns trusted command validation, immutable input/mode comparison, current company authority, approval decisions, controlled tool receipts and authorized product history. Cerebro command records repair incomplete handoff and projection; they do not schedule a second execution queue. The fixture has no `cerebro_admissions`, pump/drive loop, host admission job or custom alarm.
+
+| Human action | Native public API | Meaning |
+| --- | --- | --- |
+| Follow-up (default) | `PiSession.submit(input, { operationId })` | Pi durably queues input and starts it after the current run. |
+| Steer | `PiSession.steer(input, { operationId })` | Pi joins the input to the current run after the current tool round. |
+| Replace | `PiSession.abort()` then `PiSession.submit(input, { operationId })` | Stop current work and withdraw pending inputs, then start the replacement in the same conversation history. |
+| Cancel a queued operation | `PiSession.abort(operationId)` | Withdraw that input while active work continues. |
+| Stop an already-placed operation | `PiSession.abort(operationId)` | Pi stops the run it joined and withdraws queued inputs. |
+
+One conversation can have several submitted operation IDs inside one physical Pi run when steering joins them. Do not create separate model loops to represent those IDs. Project all affected operations when Stop settles them. Closing an observer releases observation only.
+
+The qualification fixture uses the public submit/steer/abort/wait, harness-level `pending`, session events and model/tool factory APIs. PiSession itself has no `pending()` method at these pins. It uses a controlled faux provider and one harmless registered tool to qualify the steering boundary. Lifecycle installs the official wrapper and owns its jobs and alarms; no Pi-private table is edited. The old direct adapter is historical only. The fixture's replace route tests the ordered two-call sequence, not crash-safe replacement. Deferred checks are in `tests/pi-durable-qualification/todos.json`.
 
 The source baseline is `1855fed13aafee0e7a3369f3e684564f35715086`. The default branch was resolved with `git ls-remote --symref origin HEAD`, then its `AGENTS.md` was read with `git show origin/main:AGENTS.md`. Baseline install, 35 contract tests, and forced build and type checks ran. Baseline lint failed; exact file/rule pairs are in `tests/pi-durable-qualification/evidence/baseline-lint.json`. `rtk` is unavailable: commands ran directly through pnpm/Node. There is no remote coordinator integration branch, so no packet PR target exists.
 
@@ -12,21 +24,22 @@ See `tests/pi-durable-qualification/README.md`, its dependency requests, and the
 
 ## Effect boundaries
 
-The user requested the latest Effect 4 release and latest S1-0 dependencies on 2026-10-06. The proposal now uses **Effect 4.0.1**: `Context.Service` keys, array-based `Schema.Union` and `Schema.Literals`, schema checks, and `Effect.result` / `Result` in the fakes suite. TypeScript **7.0.2** checks the isolated signatures. Service methods, typed failures and ownership remain the same.
+The user requested the latest Effect 4 release and latest S1-0 dependencies on 2026-10-06. The proposal now uses **Effect 4.0.1**: `Context.Service` keys, array-based `Schema.Union` and `Schema.Literals`, schema checks, and `Effect.result` / `Result` in the fakes suite. TypeScript **7.0.2** checks the isolated signatures. The proposed command and engine methods below express native follow-up, steering and Stop semantics; typed failures retain the same meanings.
 
 Every effect has a typed error channel and no implicit application environment. Layers select services. `ExecutionEngine.open`, `SessionService.stream` and `SessionStore.attach` require `Scope.Scope`; vendor resources remain in those implementations. An observer scope owns its subscription, while a host-owned scope owns durable work. Vendor promises, Pi contexts, SQLite connections, alarms and UI protocol types do not appear in these ports. Existing data modules and the old Promise interfaces remain available for the preparation step; final removal belongs to S1-F.
 
 | Module / method | Inputs and success | Failure channel |
 | --- | --- | --- |
-| `SessionService.submit` | Existing submit command + `EffectOptions` → existing `SessionReceipt` | `ContractFailure` |
+| `SessionService.submit` | `SubmitCommand` (existing event plus optional `follow-up`, `steer` or `replace` mode), `EffectOptions` → existing `SessionReceipt` | `ContractFailure` |
 | `SessionService.approve` | Existing approval command + required run identity and allow/deny decision + options → `RunState` | `ContractFailure` |
 | `SessionService.cancel` | Existing run-specific cancel command + options → `RunState` | `ContractFailure` |
 | `SessionService.inspect` | `EventAddress`, trusted `ExecutionContext`, `ReadOptions` → `DomainSnapshot` | `ContractFailure` |
 | `SessionService.stream` | Same address/context, `ObservationRequest` and options → scoped `Stream<Observation>` | `ContractFailure` |
 | `ExecutionEngine.open` | Address, pinned `AgentDefinition`, read options → scoped `EngineConversation` | `ContractFailure` |
-| `EngineConversation.submit` | `EngineSubmission` (request ID, run ID, canonical digest, envelope), read options → run ID and replay marker | `ContractFailure` |
+| `EngineConversation.submit` | `EngineSubmission` (request ID, run ID, canonical digest, envelope, optional follow-up/steer mode), read options → run ID and replay marker | `ContractFailure` |
 | `EngineConversation.inspect`, `observe` | Read options → run states / scoped domain update stream | `ContractFailure` |
 | `EngineConversation.approve`, `cancel` | Bound approval / exact run ID, read options → run state | `ContractFailure` |
+| `EngineConversation.stop` | Read options → affected run states after native session Stop; pending inputs are withdrawn | `ContractFailure` |
 | `EngineConversation.release` | No arguments → void, idempotent resource cleanup | `never` |
 | `AuthorityService.evaluate` | `AuthorityRequest`, read options → existing allow/deny `AuthorizationDecision` | `InvalidInput` or `Unavailable` |
 | `AuthorityService.require` | Same request/options → `AuthorityPermit` with policy version and evaluation time | `Denied`, `InvalidInput` or `Unavailable` |
@@ -38,7 +51,7 @@ Every effect has a typed error channel and no implicit application environment. 
 | `ToolReceiptStore.recordOutcome` | Key, confirmed outcome, effect options → persisted immutable outcome receipt | `ContractFailure` |
 | `ToolReceiptStore.complete` | Key, effect options → completed receipt, only after confirmed outcome | `ContractFailure` |
 | `ToolReceiptStore.unknown` | Key, reason, optional provider receipt, effect options → unknown receipt | `ContractFailure` |
-| `SessionStore.admit` | Envelope, pinned agent, effect options → atomic `DurableHandoff` | `ContractFailure` |
+| `SessionStore.admit` | `SubmitCommand`, pinned agent, effect options → atomic `DurableHandoff` | `ContractFailure` |
 | `SessionStore.commit` | Address, expected domain revision, typed handoff transition, effect options → committed handoff | `ContractFailure` |
 | `SessionStore.receipt`, `recover`, `snapshot` | Stable request / address and options; reads include context → receipt / pending handoffs / domain snapshot | `ContractFailure` |
 | `SessionStore.attach` | Address, context, observation request, options → scoped snapshot plus updates | `ContractFailure` |
@@ -59,17 +72,23 @@ The existing `Approval` remains untouched. The proposed `BoundApproval` adds req
 
 Receipt state is `claimed → dispatched → outcome → completed`, with `dispatched → unknown → outcome` for evidence-based reconciliation. No monetary states occur here. Claim compares the full immutable intent, not only the argument digest. Dispatch compares the current revision and yields one winner; repeats return `dispatch:false`. Writes require a matching approval and current authority. Unknown non-idempotent effects block the same intent even under a new occurrence ID until read-only provider evidence resolves it. The unresolved-intent key uses company, run, pinned agent, tool/version, connector fingerprint, effect kind, argument digest, actor, represented principal and delegation identity; it excludes occurrence ID and policy version. A policy update cannot bypass an unresolved effect. Reconciliation never invokes the effect. Completion and confirmed outcomes are immutable. Durable receipt recording after dispatch must run in a host-owned scope despite caller interruption; that adapter behavior is unqualified.
 
-A handoff stores address, pinned version, full envelope, canonical input digest, stable request/run IDs, admitted/current revision, run state, approvals, wake timestamp, engine acceptance, acknowledgement and projection revision. The proposed queued acknowledgement point is **after durable Cerebro admission and persisted Lifecycle wake registration**. A queued receipt accepts host responsibility while `engineAccepted` remains false. The coordinator hands that run to Pi only after the current run is terminal; an active receipt additionally requires durable engine acceptance. Returning a queue acknowledgement without a persisted wake is invalid. Production bucket flush before acknowledgement remains a deferred check. No network operation runs inside an atomic storage transition.
+A handoff stores the immutable command intent: address, pinned version, full envelope, canonical input digest, submission mode, stable request/run IDs, revisions, approvals, replacement-stop phase, engine acceptance, acknowledgement and projection revision. This record is a command journal, not a queue competing with Pi's inbox.
 
-Recovery must repair, in order:
+The acknowledgement point is **after the official PiHarness submission returns and Cerebro records engine acceptance**. This applies to queued follow-ups as well as active work. The wrapper supplies durable Pi admission and its Lifecycle wake. There is no independent Cerebro `wake-registered` transition, wake timestamp or admission alarm. An acknowledged `queued` receipt means Pi accepted the input into its inbox; accepting only a Cerebro record is insufficient. Production-equivalent flush remains NOT_RUN.
 
-1. Admission committed but wake missing: register a Lifecycle admission job. Once acknowledged, retain queued admissions through recovery; hand off the original request/run only when no prior engine run remains active.
-2. Pi accepted but the Cerebro acceptance marker missing: inspect by stable identity and repair it.
-3. Cancellation committed before the vendor stop completes: keep later runs in Cerebro admission, resume stopping only the recorded active run, and hand off the next run after the current one is terminal.
-4. Wake persisted but acknowledgement missing: return the original queue receipt on retry. Acknowledged host-queued work still needs recovery; acknowledgement does not imply Pi accepted it.
-5. Pi completed but projection missing: project canonical output and tool outcomes without resubmitting.
+`SessionService.submit` defaults to follow-up. Steer maps to the native steering mode. Replace is a coordinator-owned sequence: persist the replacement intent, call `EngineConversation.stop`, record `replace-stopped`, then call engine submit as a follow-up with the original replacement identity. `EngineConversation.stop` returns affected states; it does not erase conversation history. Unknown remote effects still require reconciliation and must never be marked successfully cancelled.
 
-Transitions include engine acceptance, wake registration, acknowledgement, bound approval, run state and domain projection. Projection must atomically persist canonical output, required confirmed tool outcomes and terminal run state/outbox. No final success is conditional on metering. Each transition needs a real crash injection. The fixture **has not individually qualified these five crash boundaries**. The operator deferred them for continued development. Keep their TODOs open and distinguish the local process-restart experiment from production durability or remote-effect guarantees.
+Replacement is two vendor calls, not an atomic vendor operation. Command retries must compare mode as well as the full input, return an existing accepted receipt before issuing Stop again, and inspect the original Pi operation when acceptance is ambiguous. Otherwise a retry could stop its own replacement or later work. Serialize conflicting human command mutations during the replacement sequence. The later runtime packet must qualify this repair behavior; the fixture does not implement a durable replacement command coordinator.
+
+Recovery boundaries still requiring real crash injection:
+
+1. Command intent committed before Pi acceptance: repair the original stable handoff, without another execution scheduler.
+2. Replacement Stop in progress or completed before its marker commits: inspect original operation state before repeating Stop; retain the command's original identity and mode.
+3. Pi accepted before Cerebro records acceptance: inspect/reuse the original vendor operation and repair the marker. This also applies to replacement; do not blindly repeat abort-then-submit.
+4. Acceptance recorded before acknowledgement: return the same receipt on retry. Pi's own Lifecycle job owns execution recovery.
+5. Pi completed before product projection: project canonical output and confirmed tool outcomes without resubmitting.
+
+The command fake checks replacement phase ordering, mode/input conflicts, acceptance before acknowledgement and replay without another Stop. These are contract checks, not host crash qualification. Pi-native follow-up/steering and local process restart are tested separately. Projection must atomically persist canonical output, required confirmed tool outcomes and terminal run state/outbox. No final success is conditional on metering. Network operations remain outside atomic storage transitions.
 
 ## Observation schemas and ordering
 
@@ -91,7 +110,7 @@ At the proposed pins, use `stream(factory, { hydrate, joinRun })` from `@tanstac
 
 The headless published-client probe verifies construction opens no connection, attach hydrates/joins, detach removes observers, reattach hydrates/joins again, and an external approval notification continues the same run with zero `connect` submissions. It checks final assembled text and zero observers. It does not run React or a browser, enforce domain access generations, prove a race-free server attachment, or test wire reconnection faults.
 
-S1-C must use Cerebro custom approval events while continuing to observe an approval-waiting run. Hydrating TanStack's own pending interrupts suppresses joining that run; do not introduce its separate resume/tool loop. All submit/approve/Stop actions call Cerebro commands. `detach`, EOF, rehydrate and `joinRun` never submit, approve or cancel. Do not use TanStack `chat`, AI SDK, `StreamDurability`, built-in byte replay, or model/tool client callbacks. Implement custom canonical resnapshot and reconnect through these public handlers, with an adapter-specific generation guard before TanStack processes a frame. Real browser qualification remains required.
+S1-C must use Cerebro custom approval events while continuing to observe an approval-waiting run. Hydrating TanStack's own pending interrupts suppresses joining that run; do not introduce its separate resume/tool loop. All submit/steer/replace/approve/Stop actions call Cerebro commands; submission mode is part of immutable command identity. `detach`, EOF, rehydrate and `joinRun` never submit, approve or cancel. Do not use TanStack `chat`, AI SDK, `StreamDurability`, built-in byte replay, or model/tool client callbacks. Implement custom canonical resnapshot and reconnect through these public handlers, with an adapter-specific generation guard before TanStack processes a frame. Real browser qualification remains required.
 
 ## Dependency ownership and deferred work
 
@@ -99,7 +118,7 @@ S1-C must use Cerebro custom approval events while continuing to observe an appr
 
 TanStack AI still declares AG-UI **1.0.0** as an exact transitive dependency. The isolated graph retains that publisher constraint alongside the requested direct AG-UI **1.0.2** instead of downgrading the direct request or forcing an override. Transitive packages resolve within their published compatibility ranges and are captured in the generated proof lock. The installed inventory records exports, peers, dependencies, integrity and licenses; optional architecture packages absent on this machine are distinguished from installed packages. Shared React and compiler catalog updates require coordinator application checks. This S1-0 proposal does not upgrade unrelated existing application dependencies.
 
-Current qualification evidence uses these latest pins. Earlier proofs are retained under `evidence/previous-effect3/` and `evidence/previous-effect4/` with their tested SHAs. The Node-free wrapper bundle remains an executed failed check and is marked as an accepted deviation for the chosen compatibility mode. The raw Pi-queued cancellation failure remains reproducible and is documented as a vendor limitation. Neither changes status to PASS because the selected strategy uses host admission.
+Current qualification evidence uses these latest pins. Earlier proofs are retained under `evidence/previous-effect3/` and `evidence/previous-effect4/` and `evidence/previous-admission/` with their tested SHAs. The previous admission results qualify only that retired strategy. The Node-free wrapper bundle remains an executed failed check and is marked as an accepted deviation for the chosen compatibility mode. The original active-cancel-preserves-queued-follow-up case remains an executed FAIL with an operator-approved semantics change. Native Stop intentionally withdraws pending inputs. Neither original requirement becomes PASS. The thin native cases are measured independently.
 
 The fixture writes generated manifests only into its isolated temporary directory and retains its install lock as evidence JSON. It does not edit application manifests, the pnpm lockfile or the old runtime's isolated install. A local temporary Effect link is used for direct development checks; a fresh application type/build check requires the coordinator's dependency commit. Focused proofs run from the isolated pinned install. That distinction is part of the blocked handoff.
 

@@ -2,10 +2,11 @@
   "status": "open; operator authorized development to proceed with official PiHarness",
   "operatorDecision": {
     "date": "2026-10-06",
-    "choice": "official PiHarness first; inexpensive fixes; defer unresolved checks",
-    "scope": "S1-0 preparation only; no S1-A through S1-D execution, merge or deployment"
+    "choice": "Use a thin adapter and reuse Pi native behavior; remove the separate Cerebro execution queue; keep unresolved checks as TODOs",
+    "scope": "S1-0 preparation only; no S1-A through S1-D execution, merge or deployment",
+    "supersedes": "Active cancel must preserve Pi-queued follow-ups. Native active Stop withdraws queued inputs; submit replacement only after Stop."
   },
-  "selectedImplementation": "PiHarness + Lifecycle; retained celld 0.6.0; nodejs_compat; one handed-off run per conversation",
+  "selectedImplementation": "PiHarness + Lifecycle; retained celld 0.6.0; nodejs_compat; native inbox, steering and Stop",
   "items": [
     {
       "id": "S1-0-T01",
@@ -19,16 +20,16 @@
       "id": "S1-0-T02",
       "owner": "runtime packet",
       "status": "open",
-      "issue": "Raw active PiHarness abort withdraws Pi-queued follow-ups",
-      "approach": "Keep later runs in durable Cerebro admission; hand off one run at a time. Preserve stable request/run identity; serialize cancellation and handoff. Qualification workaround must become an Effect adapter in the later runtime packet.",
-      "evidence": "evidence/wrapper-timeline.json; raw vendor limitation remains FAIL"
+      "issue": "Implement the thin Effect bridge to native follow-up, steer, queued withdrawal and session Stop",
+      "approach": "Use official public APIs. Keep company authority, command digest/mode checks, approval binding, tool receipts and product projection in Cerebro. Project all affected operation IDs when native Stop settles them. Do not rebuild the Pi inbox, dispatcher or Lifecycle alarms.",
+      "evidence": "evidence/wrapper-timeline.json; native semantics cases in qualification.json; original stronger Stop requirement remains FAIL with operator-approved semantics change"
     },
     {
       "id": "S1-0-T03",
       "owner": "runtime/host packets",
       "status": "deferred",
-      "issue": "Idle eviction and five individual admission/wake/cancel/projection crash boundaries",
-      "approach": "Inject each crash on retained host; queued acknowledgment accepts durable admission plus wake, not engine execution"
+      "issue": "Idle eviction and individual Cerebro command intent/acceptance/projection crash boundaries",
+      "approach": "Inject each crash on retained host. Reuse Pi stable submission IDs and official wake/recovery; acknowledge only after native acceptance is recorded. Do not add a host execution queue."
     },
     {
       "id": "S1-0-T04",
@@ -71,6 +72,14 @@
       "status": "open",
       "issue": "No codex/cerebro-slice-1 integration branch for a packet PR",
       "approach": "Create the reviewed integration baseline when starting later packets; use this branch SHA for review now"
+    },
+    {
+      "id": "S1-0-T10",
+      "owner": "runtime/host packets",
+      "status": "deferred",
+      "issue": "Replacement interruption and retry between native abort and submit; real-host changed-input/mode conflict enforcement",
+      "approach": "Use the existing Cerebro command journal with immutable mode/input and replacement phase. Before retrying Stop inspect the original replacement operation; an accepted replacement retry must not abort itself or later work. Serialize conflicting human command mutations. Inject crashes before/after Stop and Pi acceptance. The fixture replace route qualifies only the ordered two-call sequence, not durable replacement retries.",
+      "evidence": "Contract fakes pass phase/replay/conflict checks; real-host replacement crash/duplicate command cases remain NOT_RUN."
     }
   ]
 }

@@ -121,7 +121,7 @@
     "Latest React, React DOM and matching types are pinned together. Full application verification of shared catalog updates belongs to the coordinator.",
     "Latest TypeScript 7.0.2 checks the isolated proposed contracts. Existing workspace manifests and lock remain unchanged."
   ],
-  "selectedImplementation": "official PiHarness + Lifecycle with serialized Cerebro admission",
+  "selectedImplementation": "official PiHarness + Lifecycle; native inbox, steering and stop; thin Effect adapter",
   "workerCompatibilityFlags": ["nodejs_compat"],
   "todoEvidence": "todos.json"
 }

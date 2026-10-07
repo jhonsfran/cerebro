@@ -443,7 +443,13 @@ test("Effect 4 observation schemas preserve run variants, revision checks and ca
   }
 });
 
-test("Effect scope closes engine resources and cancel A preserves queued B in the contract fake", async () => {
+const submitCommand = (name: string) =>
+  ({
+    event: { ...userEvent, eventId: id.event(name) },
+    type: "submit",
+  }) as const;
+
+test("Effect scope releases resources; native cancellation withdraws active work and queued inputs", async () => {
   const { createEngineFake } =
     await import("../../packages/contracts/src/testing/session-fakes.ts");
   const fake = createEngineFake();
@@ -456,36 +462,48 @@ test("Effect scope closes engine resources and cancel A preserves queued B in th
           authorityRequest.pinnedAgent,
           future
         );
-        yield* conversation.submit(
-          {
-            event: userEvent,
-            inputDigest: userEvent.payloadDigest,
-            requestId: userEvent.eventId,
-            runId: id.run("run-A"),
-          },
-          future
+        const submit = (
+          name: string,
+          mode: "follow-up" | "steer" = "follow-up"
+        ) =>
+          conversation.submit(
+            {
+              event: { ...userEvent, eventId: id.event(name) },
+              inputDigest: userEvent.payloadDigest,
+              mode,
+              requestId: id.event(name),
+              runId: id.run(name),
+            },
+            future
+          );
+        yield* submit("run-A");
+        yield* submit("run-B");
+        yield* submit("run-C", "steer");
+        const initial = yield* conversation.inspect(future);
+        assert.deepEqual(
+          initial.map((run) => run.state),
+          ["running", "queued", "running"]
         );
-        yield* conversation.submit(
-          {
-            event: { ...userEvent, eventId: id.event("event-B") },
-            inputDigest: userEvent.payloadDigest,
-            requestId: id.event("event-B"),
-            runId: id.run("run-B"),
-          },
-          future
+        yield* conversation.cancel(id.run("run-B"), future);
+        const afterQueuedCancel = yield* conversation.inspect(future);
+        assert.deepEqual(
+          afterQueuedCancel.map((run) => run.state),
+          ["running", "cancelled", "running"]
         );
+        yield* submit("run-D");
         yield* conversation.cancel(id.run("run-A"), future);
-        const runs = yield* conversation.inspect(future);
-        assert.equal(
-          runs.find((run) => run.runId === "run-B")?.state,
-          "queued"
-        );
+        const stopped = yield* conversation.inspect(future);
+        assert.ok(stopped.every((run) => run.state === "cancelled"));
+        yield* submit("run-E");
+        assert.equal((yield* conversation.stop(future)).length, 1);
       })
     )
   );
   assert.equal(fake.counts.release, 1);
+  assert.equal(fake.counts.stop, 1);
 });
-test("host fake acknowledges queued admission after durable wake; active runs require engine acceptance; observer close submits nothing", async () => {
+
+test("handoff acknowledgment requires Pi acceptance for queued work; observer close submits nothing", async () => {
   const { createStoreFake, createSessionFake } =
     await import("../../packages/contracts/src/testing/session-fakes.ts");
   const { Stream } = await import("effect");
@@ -499,7 +517,11 @@ test("host fake acknowledges queued admission after durable wake; active runs re
   const fake = createStoreFake(snapshot);
   const future = { ...options, deadlineAt: Date.now() + 60_000 };
   const handoff = await Effect.runPromise(
-    fake.service.admit(userEvent, authorityRequest.pinnedAgent, future)
+    fake.service.admit(
+      { event: userEvent, type: "submit" },
+      authorityRequest.pinnedAgent,
+      future
+    )
   );
   const acknowledge = {
     runId: handoff.submission.runId,
@@ -519,8 +541,7 @@ test("host fake acknowledges queued admission after durable wake; active runs re
       fake.getRevision(),
       {
         runId: handoff.submission.runId,
-        type: "wake-registered",
-        wakeAt: Date.now() + 1000,
+        type: "engine-accepted",
       },
       future
     )
@@ -536,44 +557,8 @@ test("host fake acknowledges queued admission after durable wake; active runs re
   const recovered = await Effect.runPromise(
     fake.service.recover(userEvent, future)
   );
-  assert.equal(recovered[0].engineAccepted, false);
+  assert.equal(recovered[0].engineAccepted, true);
   assert.equal(recovered[0].run.state, "queued");
-  await Effect.runPromise(
-    fake.service.commit(
-      userEvent,
-      fake.getRevision(),
-      {
-        run: { runId: handoff.submission.runId, state: "running" },
-        runId: handoff.submission.runId,
-        type: "run-state",
-      },
-      future
-    )
-  );
-  assert.equal(
-    (
-      await failureTag(
-        fake.service.commit(userEvent, fake.getRevision(), acknowledge, future)
-      )
-    )._tag,
-    "Conflict"
-  );
-  await Effect.runPromise(
-    fake.service.commit(
-      userEvent,
-      fake.getRevision(),
-      { runId: handoff.submission.runId, type: "engine-accepted" },
-      future
-    )
-  );
-  assert.equal(
-    (
-      await Effect.runPromise(
-        fake.service.commit(userEvent, fake.getRevision(), acknowledge, future)
-      )
-    ).engineAccepted,
-    true
-  );
   const session = createSessionFake(snapshot);
   await Effect.runPromise(
     Effect.scoped(
@@ -594,5 +579,141 @@ test("host fake acknowledges queued admission after durable wake; active runs re
       )
     ).runs.length,
     0
+  );
+});
+
+test("replacement cancels previous pending work once; replay preserves later requests and mode changes conflict", async () => {
+  const { createSessionFake } =
+    await import("../../packages/contracts/src/testing/session-fakes.ts");
+  const fake = createSessionFake({
+    address: userEvent,
+    agentVersion: 1,
+    outputs: [],
+    revision: 0,
+    runs: [],
+  });
+  const future = { ...options, deadlineAt: Date.now() + 60_000 };
+  await Effect.runPromise(fake.service.submit(submitCommand("A"), future));
+  await Effect.runPromise(fake.service.submit(submitCommand("B"), future));
+  const replacement = { ...submitCommand("C"), mode: "replace" } as const;
+  await Effect.runPromise(fake.service.submit(replacement, future));
+  await Effect.runPromise(fake.service.submit(submitCommand("D"), future));
+  const beforeReplay = await Effect.runPromise(
+    fake.service.inspect(userEvent, allowedContext, future)
+  );
+  assert.deepEqual(
+    beforeReplay.runs.map((run) => run.state),
+    ["cancelled", "cancelled", "running", "queued"]
+  );
+  assert.equal(
+    (await Effect.runPromise(fake.service.submit(replacement, future)))
+      .replayed,
+    true
+  );
+  assert.deepEqual(
+    await Effect.runPromise(
+      fake.service.inspect(userEvent, allowedContext, future)
+    ),
+    beforeReplay
+  );
+  assert.equal(
+    (
+      await failureTag(
+        fake.service.submit({ ...replacement, mode: "steer" }, future)
+      )
+    )._tag,
+    "Conflict"
+  );
+});
+
+test("replacement intent records mode and stop before engine acceptance; changed input or mode conflicts", async () => {
+  const { createStoreFake } =
+    await import("../../packages/contracts/src/testing/session-fakes.ts");
+  const fake = createStoreFake({
+    address: userEvent,
+    agentVersion: 1,
+    outputs: [],
+    revision: 0,
+    runs: [],
+  });
+  const future = { ...options, deadlineAt: Date.now() + 60_000 };
+  const command = {
+    event: userEvent,
+    mode: "replace",
+    type: "submit",
+  } as const;
+  const handoff = await Effect.runPromise(
+    fake.service.admit(command, authorityRequest.pinnedAgent, future)
+  );
+  const accepted = {
+    runId: handoff.submission.runId,
+    type: "engine-accepted",
+  } as const;
+  assert.equal(
+    (
+      await failureTag(
+        fake.service.commit(userEvent, fake.getRevision(), accepted, future)
+      )
+    )._tag,
+    "Conflict"
+  );
+  await Effect.runPromise(
+    fake.service.commit(
+      userEvent,
+      fake.getRevision(),
+      { runId: handoff.submission.runId, type: "replace-stopped" },
+      future
+    )
+  );
+  await Effect.runPromise(
+    fake.service.commit(userEvent, fake.getRevision(), accepted, future)
+  );
+  assert.equal(
+    (
+      await failureTag(
+        fake.service.commit(
+          userEvent,
+          fake.getRevision(),
+          { runId: handoff.submission.runId, type: "replace-stopped" },
+          future
+        )
+      )
+    )._tag,
+    "Conflict"
+  );
+  assert.equal(
+    (
+      await Effect.runPromise(
+        fake.service.admit(command, authorityRequest.pinnedAgent, future)
+      )
+    ).engineAccepted,
+    true
+  );
+  assert.equal(
+    (
+      await failureTag(
+        fake.service.admit(
+          { ...command, mode: "steer" },
+          authorityRequest.pinnedAgent,
+          future
+        )
+      )
+    )._tag,
+    "Conflict"
+  );
+  assert.equal(
+    (
+      await failureTag(
+        fake.service.admit(
+          {
+            ...command,
+            event: { ...userEvent, payloadDigest: id.digest("changed") },
+          },
+          authorityRequest.pinnedAgent,
+          future
+        )
+      )
+    )._tag,
+    "Conflict"
   );
 });
