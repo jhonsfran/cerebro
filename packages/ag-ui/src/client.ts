@@ -67,40 +67,50 @@ const pause = async (
 };
 
 export const createObservationClient = (options: ObservationClientOptions) => {
+  interface Attachment {
+    readonly controller: AbortController;
+    readonly generation: number;
+  }
   let client: ChatClient | null = null;
   let projection: ConversationProjection | null = null;
   let guard: ReturnType<typeof createObservationGuard> | undefined;
   let protocol = createProtocolProjection();
-  let generation = options.generation();
   let attached = false;
   let denied = false;
-  let attachment = new AbortController();
+  let disposed = false;
+  let attachment: Attachment = {
+    controller: new AbortController(),
+    generation: options.generation(),
+  };
   let observer:
     | {
         controller: AbortController;
         iterator: AsyncIterator<unknown>;
-        lifecycle: AbortController;
+        lifecycle: Attachment;
       }
     | undefined;
   let initialFrame: Observation | undefined;
-  const current = () =>
+  const current = (lifecycle: Attachment) =>
+    attachment === lifecycle &&
     attached &&
     !denied &&
-    !attachment.signal.aborted &&
-    generation === options.generation();
-  const notify = (frame: Observation) => {
+    !disposed &&
+    !lifecycle.controller.signal.aborted &&
+    lifecycle.generation === options.generation();
+  const notify = (frame: Observation, lifecycle: Attachment) => {
     projection = projectObservation(projection, frame);
     options.onProjection(projection);
     if (
-      frame.type === "snapshot" ||
-      (frame.type === "update" &&
-        ["canonical-output", "user-message"].includes(frame.update.type))
+      current(lifecycle) &&
+      (frame.type === "snapshot" ||
+        (frame.type === "update" &&
+          ["canonical-output", "user-message"].includes(frame.update.type)))
     ) {
       client?.setMessagesManually(projectionMessages(projection));
     }
   };
-  const closeObserver = async (lifecycle?: AbortController) => {
-    if (lifecycle && observer?.lifecycle !== lifecycle) {
+  const closeObserver = async (lifecycle: Attachment) => {
+    if (observer?.lifecycle !== lifecycle) {
       return;
     }
     const closing = observer;
@@ -108,32 +118,44 @@ export const createObservationClient = (options: ObservationClientOptions) => {
     closing?.controller.abort();
     await closing?.iterator.return?.();
   };
-  const releaseObserver = async () => {
-    try {
-      await closeObserver(attachment);
-    } catch (error) {
-      options.onError?.(
-        error instanceof Error ? error : new Error(String(error))
-      );
-    }
-  };
-  const deny = () => {
-    if (denied) {
+  const deny = (lifecycle: Attachment) => {
+    if (!current(lifecycle)) {
       return;
     }
     denied = true;
     attached = false;
-    attachment.abort();
+    lifecycle.controller.abort();
     observer?.controller.abort();
     projection = null;
     client?.setMessagesManually([]);
     options.onProjection(null);
     options.onStatus?.("denied");
-    void releaseObserver();
     options.onDenied();
   };
-  const accept = (input: unknown): Observation | undefined => {
-    if (!current()) {
+  const reportError = (error: unknown, lifecycle: Attachment) => {
+    if (!current(lifecycle)) {
+      return;
+    }
+    if (accessDenied(error)) {
+      deny(lifecycle);
+    } else {
+      options.onError?.(
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
+  };
+  const releaseObserver = async (lifecycle: Attachment) => {
+    try {
+      await closeObserver(lifecycle);
+    } catch (error) {
+      reportError(error, lifecycle);
+    }
+  };
+  const accept = (
+    input: unknown,
+    lifecycle: Attachment
+  ): Observation | undefined => {
+    if (!current(lifecycle)) {
       return;
     }
     const decoded = decodeObservation(input);
@@ -147,76 +169,85 @@ export const createObservationClient = (options: ObservationClientOptions) => {
       ) {
         throw new Error("Observation belongs to a different conversation.");
       }
-      guard = createObservationGuard(decoded.address, generation);
+      guard = createObservationGuard(decoded.address, lifecycle.generation);
     }
     const frame = guard(decoded);
     if (frame?.type === "access-denied") {
-      deny();
+      deny(lifecycle);
       return;
     }
     if (frame) {
-      notify(frame);
+      notify(frame, lifecycle);
     }
     return frame;
   };
-  const openSnapshot = async (): Promise<Observation> => {
-    const lifecycle = attachment;
-    await closeObserver();
-    if (!current() || attachment !== lifecycle) {
+  const openSnapshot = async (lifecycle: Attachment): Promise<Observation> => {
+    if (!current(lifecycle)) {
+      throw new DOMException("Observation detached.", "AbortError");
+    }
+    await closeObserver(lifecycle);
+    if (!current(lifecycle)) {
       throw new DOMException("Observation detached.", "AbortError");
     }
     const controller = new AbortController();
     const abort = () => controller.abort();
-    attachment.signal.addEventListener("abort", abort, { once: true });
-    const source = options.open(generation, controller.signal);
-    const iterator = source[Symbol.asyncIterator]();
-    observer = { controller, iterator, lifecycle };
+    lifecycle.controller.signal.addEventListener("abort", abort, {
+      once: true,
+    });
     try {
+      const source = options.open(lifecycle.generation, controller.signal);
+      const iterator = source[Symbol.asyncIterator]();
+      observer = { controller, iterator, lifecycle };
       const next = await iterator.next();
-      if (!current() || controller.signal.aborted || attachment !== lifecycle) {
+      if (!current(lifecycle) || controller.signal.aborted) {
         throw new DOMException("Observation detached.", "AbortError");
       }
-      const frame = next.done ? undefined : accept(next.value);
+      const frame = next.done ? undefined : accept(next.value, lifecycle);
+      if (!current(lifecycle)) {
+        throw new DOMException("Observation detached.", "AbortError");
+      }
       if (!frame || frame.type !== "snapshot") {
         throw new ResnapshotRequiredError(
           "Attachment did not return an authorized snapshot."
         );
       }
       options.onStatus?.("connected");
+      if (!current(lifecycle)) {
+        throw new DOMException("Observation detached.", "AbortError");
+      }
       protocol = createProtocolProjection();
       return frame;
     } finally {
-      lifecycle.signal.removeEventListener("abort", abort);
+      lifecycle.controller.signal.removeEventListener("abort", abort);
     }
   };
-  const abortObserver = () => {
-    attachment.abort();
-    observer?.controller.abort();
-  };
-  const reportError = (error: unknown) => {
-    if (accessDenied(error)) {
-      deny();
-    } else if (current()) {
-      options.onError?.(
-        error instanceof Error ? error : new Error(String(error))
-      );
-    }
-  };
-  const restore = async () => {
-    const lifecycle = attachment;
-    const keepOpen = () => current() && attachment === lifecycle;
+  const restore = async (lifecycle: Attachment) => {
+    const keepOpen = () => current(lifecycle);
     while (keepOpen()) {
       try {
-        return await openSnapshot();
+        return await openSnapshot(lifecycle);
       } catch (error) {
-        reportError(error);
-        await closeObserver(lifecycle);
-        if (current() && attachment === lifecycle) {
-          await pause(options.retryDelayMs ?? 500, lifecycle.signal);
+        reportError(error, lifecycle);
+        await releaseObserver(lifecycle);
+        if (keepOpen()) {
+          await pause(options.retryDelayMs ?? 500, lifecycle.controller.signal);
         }
       }
     }
-    throw new DOMException("Observation detached.", "AbortError");
+  };
+  const events = function* events(frame: Observation, lifecycle: Attachment) {
+    for (const chunk of protocol(frame)) {
+      if (!current(lifecycle)) {
+        return;
+      }
+      if (chunk.type === "RUN_ERROR") {
+        reportError(new Error(chunk.message), lifecycle);
+        if (!current(lifecycle)) {
+          return;
+        }
+      }
+      yield chunk;
+    }
   };
   const connection = stream(
     () => {
@@ -224,96 +255,114 @@ export const createObservationClient = (options: ObservationClientOptions) => {
     },
     {
       hydrate: async (threadId) => {
+        const lifecycle = attachment;
         if (threadId !== options.address.conversationId) {
           throw new Error("Cannot hydrate a different conversation.");
         }
-        try {
-          initialFrame = await restore();
-          const run = projection?.snapshot.runs.find(
-            (value) =>
-              value.state === "running" ||
-              value.state === "waiting-for-approval"
-          );
-          return {
-            // An idle observation cursor keeps access revalidation and new runs observable.
-            activeRun: {
-              runId: run?.runId ?? `observation:${options.address.sessionId}`,
-            },
-            interrupts: null,
-            messages: projectionMessages(projection),
-          };
-        } catch (error) {
-          if (accessDenied(error)) {
-            deny();
-          }
-          throw error;
+        const snapshotFrame = await restore(lifecycle);
+        if (!snapshotFrame || !current(lifecycle)) {
+          // Settle retired hydration without a TanStack error or a run to rejoin.
+          return { activeRun: null, interrupts: null, messages: [] };
         }
+        initialFrame = snapshotFrame;
+        const run = projection?.snapshot.runs.find(
+          (value) =>
+            value.state === "running" || value.state === "waiting-for-approval"
+        );
+        return {
+          // An idle observation cursor keeps access revalidation and new runs observable.
+          activeRun: {
+            runId: run?.runId ?? `observation:${options.address.sessionId}`,
+          },
+          interrupts: null,
+          messages: projectionMessages(projection),
+        };
       },
       async *joinRun(_runId, signal): AsyncIterable<StreamChunk> {
         const lifecycle = attachment;
-        const keepOpen = () => current() && attachment === lifecycle;
-        signal?.addEventListener("abort", abortObserver, { once: true });
-        try {
-          if (initialFrame && current()) {
-            yield observationEvent(initialFrame);
+        const keepOpen = () => current(lifecycle);
+        const abortObserver = () => {
+          lifecycle.controller.abort();
+          if (observer?.lifecycle === lifecycle) {
+            observer.controller.abort();
           }
+        };
+        signal?.addEventListener("abort", abortObserver, { once: true });
+        if (signal?.aborted) {
+          abortObserver();
+        }
+        try {
+          if (!keepOpen()) {
+            return;
+          }
+          const firstFrame = initialFrame;
           initialFrame = undefined;
+          if (firstFrame) {
+            yield observationEvent(firstFrame);
+          }
           while (keepOpen()) {
             try {
               const observing = observer;
-              if (observing) {
+              if (observing?.lifecycle === lifecycle) {
                 const next = await observing.iterator.next();
                 if (next.done) {
                   await closeObserver(lifecycle);
                 } else {
                   const frame = observing.controller.signal.aborted
                     ? undefined
-                    : accept(next.value);
-                  if (frame) {
-                    yield* protocol(frame);
+                    : accept(next.value, lifecycle);
+                  if (frame && keepOpen()) {
+                    yield* events(frame, lifecycle);
                   }
                   continue;
                 }
               } else {
-                yield* protocol(await openSnapshot());
+                const snapshotFrame = await openSnapshot(lifecycle);
+                if (keepOpen()) {
+                  yield* events(snapshotFrame, lifecycle);
+                }
                 continue;
               }
             } catch (error) {
-              reportError(error);
-              await closeObserver(lifecycle);
+              reportError(error, lifecycle);
+              await releaseObserver(lifecycle);
             }
             if (keepOpen()) {
               options.onStatus?.("connecting");
-              await pause(options.retryDelayMs ?? 500, attachment.signal);
+              await pause(
+                options.retryDelayMs ?? 500,
+                lifecycle.controller.signal
+              );
             }
           }
         } finally {
           signal?.removeEventListener("abort", abortObserver);
-          await closeObserver(lifecycle);
+          await releaseObserver(lifecycle);
         }
       },
     }
   );
   client = new ChatClient({
     connection,
-    onError: (error) => {
-      if (current()) {
-        options.onError?.(error);
-      }
-    },
     persistence: true,
     threadId: options.address.conversationId,
   });
   return {
     attach: () => {
-      if (attached) {
+      if (attached || disposed) {
         return;
       }
-      generation = options.generation();
       denied = false;
       attached = true;
-      attachment = new AbortController();
+      attachment = {
+        controller: new AbortController(),
+        generation: options.generation(),
+      };
       guard = undefined;
+      initialFrame = undefined;
+      protocol = createProtocolProjection();
+      // Invalidate TanStack's in-flight hydration before starting a fresh attachment.
+      client.clear();
       options.onStatus?.("connecting");
       client.attach();
     },
@@ -321,18 +370,19 @@ export const createObservationClient = (options: ObservationClientOptions) => {
     connection,
     detach: () => {
       attached = false;
-      attachment.abort();
+      attachment.controller.abort();
       observer?.controller.abort();
       client.detach();
-      void releaseObserver();
+      void releaseObserver(attachment);
       options.onStatus?.("disconnected");
     },
     dispose: () => {
+      disposed = true;
       attached = false;
-      attachment.abort();
+      attachment.controller.abort();
       observer?.controller.abort();
       client.dispose();
-      void releaseObserver();
+      void releaseObserver(attachment);
     },
     getProjection: () => projection,
   };

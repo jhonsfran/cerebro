@@ -33,9 +33,6 @@ export const readObservations = async function* readObservations(
   );
   assertCurrentAccess(generation);
   if (!response.ok) {
-    if ([401, 403].includes(response.status)) {
-      clearProductCache();
-    }
     throw new ProductError(
       response.status,
       "Conversation observation is unavailable."

@@ -1,5 +1,7 @@
+/* oxlint-disable no-await-in-loop -- Browser observation tests wait for serial lifecycle transitions. */
 import { afterEach, beforeEach, mock, test } from "bun:test";
 import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { z } from "zod";
 
@@ -10,6 +12,7 @@ import {
 import { operationFor } from "../../apps/web/src/features/product/intent";
 import type { OperationIntent } from "../../apps/web/src/features/product/intent";
 import type { AgentDetail } from "../../apps/web/src/features/product/types";
+import { createObservationClient } from "../../packages/ag-ui/src/client.ts";
 
 mock.module("../../apps/web/src/env.public", () => ({
   ENV: { VITE_SERVER_URL: "http://fixture.invalid" },
@@ -256,6 +259,15 @@ const ndjson = (frames: unknown[]) =>
   new Response(`${frames.map((frame) => JSON.stringify(frame)).join("\n")}\n`, {
     headers: { "Content-Type": "application/x-ndjson" },
   });
+const waitForObservation = async (predicate: () => boolean) => {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await delay(10);
+  }
+  assert.fail("Browser observation did not settle.");
+};
 
 test("a new authorized observation replaces the view with an empty transcript", async () => {
   installFetch(() => ndjson([emptyObservation()]));
@@ -299,8 +311,79 @@ test("observation distinguishes HTTP denial from normal EOF and clears private c
     ),
     { status: 403 }
   );
-  assert.equal(storage.getItem(pendingKey), null);
+  assert.equal(storage.getItem(pendingKey), "private pending message");
+  const observer = createObservationClient({
+    address: emptyObservation().address,
+    generation: currentAccessGeneration,
+    onDenied: clearProductCache,
+    onProjection: () => {},
+    open: (generation, signal) =>
+      readObservations("/conversation", generation, signal),
+  });
+  try {
+    observer.attach();
+    await waitForObservation(() => storage.getItem(pendingKey) === null);
+    assert.equal(storage.getItem(pendingKey), null);
+    assert.equal(observer.getProjection(), null);
+  } finally {
+    observer.dispose();
+  }
 });
+
+const checkRetiredHttpObservation = async (
+  retirement: "reattach" | "dispose" | "generation"
+) => {
+  const response = Promise.withResolvers<Response>();
+  let fetches = 0;
+  let denials = 0;
+  installFetch(() => {
+    fetches += 1;
+    return fetches === 1 ? response.promise : ndjson([emptyObservation()]);
+  });
+  const observer = createObservationClient({
+    address: emptyObservation().address,
+    generation: currentAccessGeneration,
+    onDenied: () => {
+      denials += 1;
+      clearProductCache();
+    },
+    onProjection: () => {},
+    open: (generation, signal) =>
+      readObservations("/conversation", generation, signal),
+  });
+  try {
+    observer.attach();
+    await waitForObservation(() => fetches === 1);
+    assert.equal(fetches, 1);
+    if (retirement === "generation") {
+      clearProductCache();
+    } else if (retirement === "dispose") {
+      observer.dispose();
+    } else {
+      observer.detach();
+      observer.attach();
+    }
+    const generation = currentAccessGeneration();
+    storage.setItem(pendingKey, "current private message");
+    response.resolve(forbidden());
+    await delay(30);
+    assert.equal(denials, 0);
+    assert.equal(currentAccessGeneration(), generation);
+    assert.equal(storage.getItem(pendingKey), "current private message");
+    assert.equal(observer.client.getError(), undefined);
+    if (retirement === "reattach") {
+      assert.equal(fetches, 2);
+      assert.ok(observer.getProjection());
+    }
+  } finally {
+    response.resolve(forbidden());
+    observer.dispose();
+  }
+};
+for (const retirement of ["reattach", "dispose", "generation"] as const) {
+  test(`retired HTTP observation after ${retirement} cannot clear current browser caches`, () =>
+    checkRetiredHttpObservation(retirement));
+}
 
 test("the observation reader rejects truncated JSON and releases its reader", async () => {
   installFetch(

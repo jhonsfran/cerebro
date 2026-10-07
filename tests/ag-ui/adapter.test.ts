@@ -20,6 +20,7 @@ import {
   observationResponse,
   ResnapshotRequiredError,
 } from "../../packages/ag-ui/src/protocol.ts";
+import { Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import { DomainSnapshot } from "../../packages/contracts/src/session-service.ts";
 import type { Observation } from "../../packages/contracts/src/session-service.ts";
@@ -732,3 +733,250 @@ test("canonical outputs render even when the snapshot contains no active run rec
     JSON.stringify(projectionMessages(projection)).includes("Canonical answer")
   );
 });
+
+const attachmentFailures = [
+  {
+    label: "HTTP 401",
+    value: Object.assign(new Error("Unauthorized"), { status: 401 }),
+  },
+  {
+    label: "HTTP 403",
+    value: Object.assign(new Error("Forbidden"), { status: 403 }),
+  },
+  {
+    label: "typed Denied",
+    value: new Denied({ code: "revoked", reason: "Denied" }),
+  },
+  { label: "transport error", value: new Error("Transport failed") },
+] as const;
+
+for (const state of ["failed", "unknown-outcome"] as const) {
+  test(`current ${state} observations still report domain errors`, async () => {
+    const source = fakeSource(snapshot, [
+      update(1, 1, {
+        run: { endedAt: 1, operationId: "operation-1", runId: "run-1", state },
+        type: "run",
+      }),
+    ]);
+    const errors: Error[] = [];
+    const observer = createObservationClient({
+      address: snapshot.address,
+      generation: () => 0,
+      onDenied: () => assert.fail("Unexpected denial"),
+      onError: (error) => errors.push(error),
+      onProjection: () => {},
+      open: source.open,
+    });
+    try {
+      observer.attach();
+      await waitFor(() => errors.length === 1);
+      assert.equal(observer.getProjection()?.snapshot.runs[0]?.state, state);
+      assert.match(
+        errors[0]?.message ?? "",
+        state === "failed" ? /Execution failed/u : /Reconciliation is required/u
+      );
+      assert.equal(source.fake.counts.submit, 0);
+    } finally {
+      observer.dispose();
+    }
+  });
+}
+
+for (const retirement of ["reattach", "dispose", "generation"] as const) {
+  for (const failure of attachmentFailures) {
+    test(`iterator cleanup ${failure.label} after ${retirement} cannot affect current observation`, async () => {
+      const source = fakeSource();
+      const releaseRead = Promise.withResolvers<null>();
+      const releaseCleanup = Promise.withResolvers<null>();
+      const cleanupSettled = Promise.withResolvers<null>();
+      const effects: string[] = [];
+      let generation = 0;
+      let attempts = 0;
+      let waiting = false;
+      let cleanupStarted = false;
+      let sentSnapshot = false;
+      const iterator: AsyncIterator<unknown> = {
+        next: async () => {
+          if (!sentSnapshot) {
+            sentSnapshot = true;
+            return { done: false, value: frame("retired") };
+          }
+          waiting = true;
+          await releaseRead.promise;
+          return { done: true, value: undefined };
+        },
+        return: async () => {
+          cleanupStarted = true;
+          try {
+            await releaseCleanup.promise;
+            throw failure.value;
+          } finally {
+            cleanupSettled.resolve(null);
+          }
+        },
+      };
+      const observer = createObservationClient({
+        address: snapshot.address,
+        generation: () => generation,
+        onDenied: () => effects.push("denied"),
+        onError: () => effects.push("error"),
+        onProjection: () => effects.push("projection"),
+        onStatus: (status) => effects.push(status),
+        open: (accessGeneration, signal) => {
+          attempts += 1;
+          return attempts === 1
+            ? { [Symbol.asyncIterator]: () => iterator }
+            : source.open(accessGeneration, signal);
+        },
+      });
+      try {
+        observer.attach();
+        await waitFor(() => waiting);
+        if (retirement === "generation") {
+          generation += 1;
+        } else if (retirement === "dispose") {
+          observer.dispose();
+        } else {
+          observer.detach();
+          observer.attach();
+          await waitFor(() => source.counts.observers === 1);
+        }
+        effects.length = 0;
+        releaseRead.resolve(null);
+        await waitFor(() => cleanupStarted);
+        releaseCleanup.resolve(null);
+        await cleanupSettled.promise;
+        await delay(20);
+        assert.deepEqual(effects, []);
+        assert.equal(observer.client.getError(), undefined);
+        if (retirement === "reattach") {
+          assert.equal(source.counts.observers, 1);
+          assert.deepEqual(observer.getProjection()?.snapshot, snapshot);
+        } else if (retirement === "dispose") {
+          observer.attach();
+          assert.equal(attempts, 1);
+        }
+        assert.equal(source.fake.counts.submit, 0);
+      } finally {
+        releaseRead.resolve(null);
+        releaseCleanup.resolve(null);
+        observer.dispose();
+      }
+    });
+  }
+}
+
+for (const stage of ["snapshot", "tail"] as const) {
+  for (const retirement of ["reattach", "dispose", "generation"] as const) {
+    for (const failure of attachmentFailures) {
+      test(`${stage} ${failure.label} after ${retirement} cannot affect current observation`, async () => {
+        const source = fakeSource();
+        const release = Promise.withResolvers<null>();
+        const settled = Promise.withResolvers<null>();
+        const effects: string[] = [];
+        let generation = 0;
+        let attempts = 0;
+        let waiting = false;
+        const observer = createObservationClient({
+          address: snapshot.address,
+          generation: () => generation,
+          onDenied: () => effects.push("denied"),
+          onError: () => effects.push("error"),
+          onProjection: () => effects.push("projection"),
+          onStatus: (status) => effects.push(status),
+          open: (accessGeneration, signal) =>
+            (async function* observe() {
+              attempts += 1;
+              if (attempts > 1) {
+                yield* source.open(accessGeneration, signal);
+                return;
+              }
+              try {
+                if (stage === "tail") {
+                  yield frame("retired", accessGeneration);
+                }
+                waiting = true;
+                await release.promise;
+                throw failure.value;
+              } finally {
+                settled.resolve(null);
+              }
+            })(),
+          retryDelayMs: 1,
+        });
+        try {
+          observer.attach();
+          await waitFor(() => waiting);
+          if (retirement === "generation") {
+            generation += 1;
+          } else if (retirement === "dispose") {
+            observer.dispose();
+          } else {
+            observer.detach();
+            observer.attach();
+            await waitFor(() => source.counts.observers === 1);
+          }
+          effects.length = 0;
+          release.resolve(null);
+          await settled.promise;
+          await delay(20);
+          assert.equal(effects.includes("denied"), false);
+          assert.equal(effects.includes("error"), false);
+          assert.equal(observer.client.getError(), undefined);
+          if (retirement !== "reattach") {
+            assert.deepEqual(effects, []);
+          }
+          if (retirement === "generation") {
+            observer.detach();
+            observer.attach();
+          }
+          if (retirement !== "dispose") {
+            await waitFor(() => source.counts.observers === 1);
+            assert.deepEqual(observer.getProjection()?.snapshot, snapshot);
+            assert.equal(attempts, 2);
+          }
+          assert.equal(source.fake.counts.submit, 0);
+        } finally {
+          release.resolve(null);
+          observer.dispose();
+        }
+      });
+    }
+  }
+  for (const failure of attachmentFailures.slice(0, 3)) {
+    test(`current ${stage} ${failure.label} still clears protected state and stops retrying`, async () => {
+      const source = fakeSource();
+      let denials = 0;
+      let attempts = 0;
+      const observer = createObservationClient({
+        address: snapshot.address,
+        generation: () => 0,
+        onDenied: () => {
+          denials += 1;
+        },
+        onProjection: () => {},
+        open: (generation) =>
+          (async function* observe() {
+            attempts += 1;
+            if (stage === "tail") {
+              yield frame("current", generation);
+            }
+            throw failure.value;
+          })(),
+        retryDelayMs: 1,
+      });
+      try {
+        observer.attach();
+        await waitFor(() => denials === 1);
+        await delay(20);
+        assert.equal(observer.getProjection(), null);
+        assert.deepEqual(observer.client.getMessages(), []);
+        assert.equal(attempts, 1);
+        assert.equal(denials, 1);
+        assert.equal(source.fake.counts.submit, 0);
+      } finally {
+        observer.dispose();
+      }
+    });
+  }
+}
