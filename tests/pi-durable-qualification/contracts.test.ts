@@ -9,6 +9,7 @@ import {
   enforceDecision,
 } from "../../packages/contracts/src/authority-service.ts";
 import type { AuthorityRequest } from "../../packages/contracts/src/authority-service.ts";
+import type { HandoffTransition } from "../../packages/contracts/src/execution.ts";
 import {
   Denied,
   failureToHttp,
@@ -388,6 +389,7 @@ test("Effect 4 observation schemas preserve run variants, revision checks and ca
     address,
     agentVersion: 1,
     approvals: [],
+    executions: [],
     outputs: [],
     revision: 0,
     runs: [
@@ -476,11 +478,20 @@ const reloadSnapshot = (): DomainSnapshot => ({
       state: "pending",
     },
   ],
+  executions: [
+    {
+      executionId: id.execution("execution:completed-run"),
+      runIds: [id.run("completed-run")],
+    },
+  ],
   outputs: [
     {
+      answerId: id.answer("answer:previous"),
       citations: [],
       dependencies: { sourceIds: [], toolIds: [] },
+      executionId: id.execution("execution:completed-run"),
       runId: id.run("completed-run"),
+      runIds: [id.run("completed-run")],
       text: "Previous canonical answer",
     },
   ],
@@ -544,7 +555,7 @@ test("reload snapshots retain messages, pending approvals and tool state; partia
   const snapshot = reloadSnapshot();
   const decoded = decodeReloadSnapshot(snapshot);
   assert.deepEqual(decoded, snapshot);
-  for (const key of ["userMessages", "approvals", "tools"]) {
+  for (const key of ["userMessages", "approvals", "tools", "executions"]) {
     const partial = { ...snapshot };
     Reflect.deleteProperty(partial, key);
     assert.throws(() => Schema.decodeUnknownSync(DomainSnapshot)(partial));
@@ -619,6 +630,174 @@ test("live message, approval and tool updates use the same records as canonical 
       { ...tool, type: "tool" }
     );
   }
+});
+
+test("joined runs reload one canonical answer and reject ambiguous execution membership", () => {
+  const seed = reloadSnapshot();
+  const runIds = [id.run("completed-run"), id.run("steered-run")] as const;
+  const execution = {
+    executionId: id.execution("execution:completed-run"),
+    runIds,
+  };
+  const output = { ...seed.outputs[0], ...execution, runId: runIds[0] };
+  const snapshot = { ...seed, executions: [execution], outputs: [output] };
+  assert.deepEqual(decodeReloadSnapshot(snapshot), snapshot);
+  assert.deepEqual(
+    Schema.decodeUnknownSync(DomainUpdate)({ execution, type: "execution" }),
+    { execution, type: "execution" }
+  );
+  assert.deepEqual(
+    Schema.decodeUnknownSync(DomainUpdate)({
+      output,
+      type: "canonical-output",
+    }),
+    { output, type: "canonical-output" }
+  );
+  for (const change of [
+    { executions: [] },
+    { executions: [execution, execution] },
+    {
+      executions: [
+        execution,
+        { executionId: id.execution("other"), runIds: [runIds[1]] },
+      ],
+    },
+    { executions: [{ ...execution, runIds: [] }] },
+    { executions: [{ ...execution, runIds: [runIds[0], runIds[0]] }] },
+    { outputs: [output, output] },
+    { outputs: [{ ...output, answerId: "" }] },
+    { outputs: [{ ...output, executionId: "" }] },
+    { outputs: [{ ...output, runId: runIds[1] }] },
+    { outputs: [{ ...output, runIds: [runIds[0]] }] },
+  ]) {
+    assert.throws(() =>
+      Schema.decodeUnknownSync(DomainSnapshot)({ ...snapshot, ...change })
+    );
+  }
+  assert.throws(() =>
+    Schema.decodeUnknownSync(DomainUpdate)({
+      runId: runIds[0],
+      text: "old frame",
+      type: "provisional-text",
+    })
+  );
+});
+
+test("atomic projection contract settles joined runs together and rolls back an invalid answer", async () => {
+  const { createStoreFake } =
+    await import("../../packages/contracts/src/testing/session-fakes.ts");
+  const seed = reloadSnapshot();
+  const fake = createStoreFake({
+    ...seed,
+    executions: [],
+    outputs: [],
+    runs: [],
+  });
+  const future = { ...options, deadlineAt: Date.now() + 60_000 };
+  const first = await Effect.runPromise(
+    fake.service.admit(
+      submitCommand("joined-A"),
+      authorityRequest.pinnedAgent,
+      future
+    )
+  );
+  const second = await Effect.runPromise(
+    fake.service.admit(
+      { ...submitCommand("joined-B"), mode: "steer" },
+      authorityRequest.pinnedAgent,
+      future
+    )
+  );
+  const runIds = [first.run.runId, second.run.runId] as const;
+  const execution = {
+    executionId: id.execution(`execution:${runIds[0]}`),
+    runIds,
+  };
+  const output = {
+    answerId: id.answer("shared-answer"),
+    citations: [],
+    dependencies: { sourceIds: [], toolIds: [] },
+    ...execution,
+    runId: runIds[0],
+    text: "One answer to both inputs",
+  };
+  const batch = {
+    runId: runIds[0],
+    type: "projected-batch",
+    updates: [
+      { execution, type: "execution" },
+      { output, type: "canonical-output" },
+      {
+        run: { completedAt: now, runId: runIds[0], state: "completed" },
+        type: "run",
+      },
+      {
+        run: { completedAt: now, runId: runIds[1], state: "completed" },
+        type: "run",
+      },
+    ],
+  } satisfies HandoffTransition;
+  const revision = fake.getRevision();
+  const before = await Effect.runPromise(
+    fake.service.recover(seed.address, future)
+  );
+  const invalid = {
+    ...batch,
+    updates: [
+      batch.updates[0],
+      { output: { ...output, runIds: [runIds[0]] }, type: "canonical-output" },
+    ],
+  } satisfies HandoffTransition;
+  assert.equal(
+    (
+      await failureTag(
+        fake.service.commit(seed.address, revision, invalid, future)
+      )
+    )._tag,
+    "Unavailable"
+  );
+  assert.equal(fake.getRevision(), revision);
+  assert.deepEqual(
+    await Effect.runPromise(fake.service.recover(seed.address, future)),
+    before
+  );
+  await Effect.runPromise(
+    fake.service.commit(seed.address, revision, batch, future)
+  );
+  const snapshot = await Effect.runPromise(
+    fake.service.snapshot(seed.address, allowedContext, future)
+  );
+  assert.equal(snapshot.revision, revision + batch.updates.length);
+  assert.deepEqual(snapshot.outputs, [output]);
+  const handoffs = await Effect.runPromise(
+    fake.service.recover(seed.address, future)
+  );
+  assert.ok(handoffs.every((value) => value.run.state === "completed"));
+  assert.ok(
+    handoffs.every((value) => value.projectedRevision === snapshot.revision)
+  );
+  await Effect.runPromise(
+    fake.service.commit(seed.address, snapshot.revision, batch, future)
+  );
+  assert.equal(fake.getRevision(), snapshot.revision);
+  const changed = {
+    ...batch,
+    updates: [
+      {
+        output: { ...output, text: "Changed final answer" },
+        type: "canonical-output",
+      },
+    ],
+  } satisfies HandoffTransition;
+  assert.equal(
+    (
+      await failureTag(
+        fake.service.commit(seed.address, snapshot.revision, changed, future)
+      )
+    )._tag,
+    "Conflict"
+  );
+  assert.equal(fake.getRevision(), snapshot.revision);
 });
 
 test("fresh inspect and attachment restore full authorized state without submitting or reusing caller objects", async () => {
@@ -757,6 +936,7 @@ test("handoff acknowledgment requires Pi acceptance for queued work; observer cl
     address: userEvent,
     agentVersion: 1,
     approvals: [],
+    executions: [],
     outputs: [],
     revision: 0,
     runs: [],
@@ -838,6 +1018,7 @@ test("replacement cancels previous pending work once; replay preserves later req
     address: userEvent,
     agentVersion: 1,
     approvals: [],
+    executions: [],
     outputs: [],
     revision: 0,
     runs: [],
@@ -894,6 +1075,7 @@ test("replacement intent records mode and stop before engine acceptance; changed
     address: userEvent,
     agentVersion: 1,
     approvals: [],
+    executions: [],
     outputs: [],
     revision: 0,
     runs: [],

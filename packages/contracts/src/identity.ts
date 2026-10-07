@@ -7,6 +7,8 @@ export type AgentId = BrandedId<"AgentId">;
 export type ConversationId = BrandedId<"ConversationId">;
 export type SessionId = BrandedId<"SessionId">;
 export type RunId = BrandedId<"RunId">;
+export type ExecutionId = BrandedId<"ExecutionId">;
+export type AnswerId = BrandedId<"AnswerId">;
 export type EventId = BrandedId<"EventId">;
 export type OperationId = BrandedId<"OperationId">;
 export type PrincipalId = BrandedId<"PrincipalId">;
@@ -28,12 +30,14 @@ const parseId = <Name extends string>(value: string): BrandedId<Name> => {
 
 export const id = {
   agent: (value: string): AgentId => parseId<"AgentId">(value),
+  answer: (value: string): AnswerId => parseId<"AnswerId">(value),
   artifact: (value: string): ArtifactId => parseId<"ArtifactId">(value),
   conversation: (value: string): ConversationId =>
     parseId<"ConversationId">(value),
   delegation: (value: string): DelegationId => parseId<"DelegationId">(value),
   digest: (value: string): Digest => parseId<"Digest">(value),
   event: (value: string): EventId => parseId<"EventId">(value),
+  execution: (value: string): ExecutionId => parseId<"ExecutionId">(value),
   operation: (value: string): OperationId => parseId<"OperationId">(value),
   organization: (value: string): OrganizationId =>
     parseId<"OrganizationId">(value),

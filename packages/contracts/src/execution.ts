@@ -97,6 +97,11 @@ export type HandoffTransition =
       readonly type: "projected";
       readonly runId: RunId;
       readonly update: DomainUpdate;
+    }
+  | {
+      readonly type: "projected-batch";
+      readonly runId: RunId;
+      readonly updates: readonly [DomainUpdate, ...DomainUpdate[]];
     };
 export interface SessionStore {
   readonly admit: (

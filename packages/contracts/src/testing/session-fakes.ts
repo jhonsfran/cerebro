@@ -1,4 +1,4 @@
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Schema, Stream } from "effect";
 
 import { classifyEventDelivery } from "../events.ts";
 import { ExecutionEngine, SessionStore } from "../execution.ts";
@@ -12,8 +12,12 @@ import type { ContractFailure } from "../failures.ts";
 import { id, isExecutionContextActiveAt } from "../identity.ts";
 import type { RunId } from "../identity.ts";
 import type { ReadOptions } from "../port.ts";
-import { SessionService } from "../session-service.ts";
-import type { DomainSnapshot, Observation } from "../session-service.ts";
+import {
+  DomainSnapshot,
+  DomainUpdate,
+  SessionService,
+} from "../session-service.ts";
+import type { Observation } from "../session-service.ts";
 import type { RunState } from "../session.ts";
 import { canonicalToolArguments } from "../tools.ts";
 
@@ -45,6 +49,128 @@ const cancelledRun = (runId: RunId): RunState => ({
   runId,
   state: "cancelled",
 });
+const upsert = <A>(
+  values: readonly A[],
+  value: A,
+  key: (item: A) => string
+): readonly A[] => [
+  ...values.filter((item) => key(item) !== key(value)),
+  value,
+];
+const projectFixtureUpdate = (
+  snapshot: DomainSnapshot,
+  update: DomainUpdate
+): DomainSnapshot => {
+  switch (update.type) {
+    case "execution": {
+      const prior = snapshot.executions.find(
+        (value) => value.executionId === update.execution.executionId
+      );
+      if (
+        prior &&
+        !prior.runIds.every(
+          (member, index) => member === update.execution.runIds[index]
+        )
+      ) {
+        throw new Conflict({
+          code: "already-final",
+          reason: "Execution membership changed",
+        });
+      }
+      return {
+        ...snapshot,
+        executions: upsert(
+          snapshot.executions,
+          update.execution,
+          (value) => value.executionId
+        ),
+      };
+    }
+    case "canonical-output": {
+      const prior = snapshot.outputs.find(
+        (value) => value.answerId === update.output.answerId
+      );
+      if (
+        prior &&
+        canonicalToolArguments(prior) !== canonicalToolArguments(update.output)
+      ) {
+        throw new Conflict({
+          code: "already-final",
+          reason: "Answer is immutable",
+        });
+      }
+      return {
+        ...snapshot,
+        outputs: upsert(
+          snapshot.outputs,
+          update.output,
+          (value) => value.answerId
+        ),
+      };
+    }
+    case "run": {
+      return {
+        ...snapshot,
+        runs: upsert(snapshot.runs, update.run, (value) => value.runId),
+      };
+    }
+    case "user-message": {
+      return {
+        ...snapshot,
+        userMessages: upsert(
+          snapshot.userMessages,
+          update.message,
+          (value) => value.eventId
+        ),
+      };
+    }
+    case "approval": {
+      const { type: _type, ...approval } = update;
+      return {
+        ...snapshot,
+        approvals: upsert(
+          snapshot.approvals,
+          approval,
+          (value) => value.approvalId
+        ),
+      };
+    }
+    case "tool": {
+      const { type: _type, ...tool } = update;
+      return {
+        ...snapshot,
+        tools: upsert(snapshot.tools, tool, (value) => value.operationId),
+      };
+    }
+    case "citation":
+    case "provisional-text": {
+      return snapshot;
+    }
+    default: {
+      const exhaustive: never = update;
+      return exhaustive;
+    }
+  }
+};
+const projectionRunIds = (update: DomainUpdate): readonly RunId[] => {
+  switch (update.type) {
+    case "execution": {
+      return update.execution.runIds;
+    }
+    case "canonical-output": {
+      return update.output.runIds;
+    }
+    case "run": {
+      return [update.run.runId];
+    }
+    case "user-message": {
+      return [update.message.runId];
+    }
+    default: {
+      return [update.runId];
+    }
+  }
+};
 export const createEngineFake = () => {
   const submissions = new Map<string, EngineSubmission>();
   const runs = new Map<RunId, RunState>();
@@ -149,7 +275,7 @@ const sameAddress = (
   first.agentId === second.agentId &&
   first.sessionId === second.sessionId;
 export const createStoreFake = (seed: DomainSnapshot) => {
-  const initial = structuredClone(seed);
+  let initial = structuredClone(seed);
   const handoffs = new Map<string, DurableHandoff>();
   let { revision } = initial;
   const access = (
@@ -169,6 +295,64 @@ export const createStoreFake = (seed: DomainSnapshot) => {
         reason: "Current access denied",
       });
     }
+  };
+  const commitBatch = (
+    prior: DurableHandoff,
+    updates: readonly [DomainUpdate, ...DomainUpdate[]]
+  ): DurableHandoff => {
+    if (updates.length === 0) {
+      throw new Conflict({
+        code: "version-mismatch",
+        reason: "Empty projection batch",
+      });
+    }
+    let projected = structuredClone(initial);
+    const affected = new Set<RunId>();
+    for (const update of updates) {
+      Schema.decodeUnknownSync(DomainUpdate)(update);
+      if (update.type === "provisional-text" || update.type === "citation") {
+        throw new Conflict({
+          code: "version-mismatch",
+          reason: "Projection batches require durable updates",
+        });
+      }
+      for (const member of projectionRunIds(update)) {
+        if (
+          ![...handoffs.values()].some(
+            (value) => value.submission.runId === member
+          )
+        ) {
+          throw new NotFound({ resource: "projection handoff" });
+        }
+        affected.add(member);
+      }
+      projected = projectFixtureUpdate(projected, update);
+    }
+    if (canonicalToolArguments(projected) === canonicalToolArguments(initial)) {
+      return structuredClone(prior);
+    }
+    const nextRevision = revision + updates.length;
+    projected = Schema.decodeUnknownSync(DomainSnapshot)({
+      ...projected,
+      revision: nextRevision,
+    });
+    for (const handoff of handoffs.values()) {
+      if (!affected.has(handoff.submission.runId)) {
+        continue;
+      }
+      const run = projected.runs.find(
+        (value) => value.runId === handoff.submission.runId
+      );
+      handoffs.set(handoff.submission.requestId, {
+        ...handoff,
+        projectedRevision: nextRevision,
+        revision: nextRevision,
+        run: run ?? handoff.run,
+      });
+    }
+    initial = projected;
+    revision = nextRevision;
+    return structuredClone(handoffs.get(prior.submission.requestId) ?? prior);
   };
   const service: SessionStore = {
     admit: (command, agent, options) =>
@@ -255,6 +439,9 @@ export const createStoreFake = (seed: DomainSnapshot) => {
         );
         if (!prior) {
           throw new NotFound({ resource: "handoff" });
+        }
+        if (transition.type === "projected-batch") {
+          return commitBatch(prior, transition.updates);
         }
         if (
           transition.type === "replace-stopped" &&

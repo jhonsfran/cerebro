@@ -21,6 +21,15 @@ const address = Schema.Struct({
   sessionId: identifier<"SessionId">(),
 });
 const runId = identifier<"RunId">();
+const executionId = identifier<"ExecutionId">();
+const memberRunIds = Schema.NonEmptyArray(runId).check(
+  Schema.makeFilter((values) => new Set(values).size === values.length)
+);
+export const ExecutionState = Schema.Struct({
+  executionId,
+  runIds: memberRunIds,
+});
+export type ExecutionState = typeof ExecutionState.Type;
 const operationId = identifier<"OperationId">();
 const dependencies = Schema.Struct({
   sourceIds: Schema.Array(identifier<"SourceId">()),
@@ -63,12 +72,16 @@ const jsonValue = Schema.Unknown.check(
     }
   })
 );
-const output = Schema.Struct({
+export const CanonicalOutput = Schema.Struct({
+  answerId: identifier<"AnswerId">(),
   citations: Schema.Array(provenance),
   dependencies,
+  executionId,
   runId,
+  runIds: memberRunIds,
   text: Schema.String,
-});
+}).check(Schema.makeFilter((value) => value.runId === value.runIds[0]));
+export type CanonicalOutput = typeof CanonicalOutput.Type;
 export const UserMessage = Schema.Struct({
   eventId: identifier<"EventId">(),
   mode: Schema.Literals(["follow-up", "steer", "replace"]),
@@ -119,23 +132,61 @@ export const DomainSnapshot = Schema.Struct({
   address,
   agentVersion: Schema.Int.check(Schema.isGreaterThan(0)),
   approvals: Schema.Array(ApprovalState),
-  outputs: Schema.Array(output),
+  executions: Schema.Array(ExecutionState),
+  outputs: Schema.Array(CanonicalOutput),
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   runs: Schema.Array(run),
   tools: Schema.Array(ToolState),
   userMessages: Schema.Array(UserMessage),
-});
+}).check(
+  Schema.makeFilter((snapshot) => {
+    const executionIds = new Set(
+      snapshot.executions.map((value) => value.executionId)
+    );
+    const memberIds = snapshot.executions.flatMap((value) => value.runIds);
+    if (
+      executionIds.size !== snapshot.executions.length ||
+      new Set(memberIds).size !== memberIds.length ||
+      new Set(snapshot.outputs.map((value) => value.answerId)).size !==
+        snapshot.outputs.length ||
+      new Set(snapshot.outputs.map((value) => value.executionId)).size !==
+        snapshot.outputs.length
+    ) {
+      return false;
+    }
+    return snapshot.outputs.every((value) => {
+      const execution = snapshot.executions.find(
+        (item) => item.executionId === value.executionId
+      );
+      return (
+        execution !== undefined &&
+        execution.runIds.length === value.runIds.length &&
+        execution.runIds.every(
+          (member, index) => member === value.runIds[index]
+        )
+      );
+    });
+  })
+);
 export type DomainSnapshot = typeof DomainSnapshot.Type;
 
 export const DomainUpdate = Schema.Union([
   Schema.Struct({ run, type: Schema.Literal("run") }),
+  Schema.Struct({
+    execution: ExecutionState,
+    type: Schema.Literal("execution"),
+  }),
   Schema.Struct({ message: UserMessage, type: Schema.Literal("user-message") }),
   Schema.Struct({
+    executionId,
     runId,
     text: Schema.String,
     type: Schema.Literal("provisional-text"),
   }),
-  Schema.Struct({ output, type: Schema.Literal("canonical-output") }),
+  Schema.Struct({
+    output: CanonicalOutput,
+    type: Schema.Literal("canonical-output"),
+  }),
   Schema.Struct({
     ...ApprovalState.fields,
     type: Schema.Literal("approval"),
@@ -147,6 +198,7 @@ export const DomainUpdate = Schema.Union([
   Schema.Struct({
     citation: provenance,
     dependencies,
+    executionId,
     runId,
     text: Schema.String,
     type: Schema.Literal("citation"),
