@@ -19,6 +19,9 @@ await mkdir(evidence, { recursive: true });
 const containers = [];
 const results = [];
 const timeline = [];
+// celld's default cold-alarm rediscovery tick is 60 seconds. Allow a complete
+// scan plus both controlled turns; this is functional recovery, not a latency SLO.
+const recoveryNoHttpWindowMs = 90_000;
 const pendingCases = [
   "idle eviction mid-turn",
   "snapshot attachment race",
@@ -525,7 +528,7 @@ try {
   ]);
   wrapper.base = `http://127.0.0.1:${restartedPort.trim().split(":").at(-1)}`;
   // No worker request is sent during the alarm recovery window.
-  await delay(45_000);
+  await delay(recoveryNoHttpWindowMs);
   await command("wrapper-alarm-only-timeline", [
     "docker",
     "logs",
@@ -533,17 +536,28 @@ try {
   ]);
   // Read a snapshot before waiting: wait() could otherwise finish work after
   // HTTP resumes and falsely look like alarm-only completion.
+  const observationStartedAt = Date.now();
   const recoveredSnapshot = await probe("restart", "/snapshot");
   if (recoveredSnapshot.run || recoveredSnapshot.inbox.length) {
     record(
       "alarm-only completion",
       "FAIL",
-      { noHttpWindowMs: 45_000, snapshot: recoveredSnapshot },
+      { noHttpWindowMs: recoveryNoHttpWindowMs, snapshot: recoveredSnapshot },
       "deferred-host-qualification"
     );
   }
   assert.equal(recoveredSnapshot.run, undefined);
   assert.deepEqual(recoveredSnapshot.inbox, []);
+  const recoveredAnswers = recoveredSnapshot.entries
+    .flatMap((entry) => entry.model ?? [])
+    .filter((message) => message.role === "assistant");
+  assert.equal(recoveredAnswers.length, 2);
+  assert.ok(
+    recoveredAnswers.every(
+      (message) => message.timestamp < observationStartedAt
+    ),
+    "Both answers must exist before the first observation request"
+  );
   const recoveredA = await probe("restart", "/wait?requestId=run-A");
   const recoveredB = await probe("restart", "/wait?requestId=run-B");
   const remaining = await probe("restart", "/pending");
@@ -560,7 +574,11 @@ try {
     wakeBefore: wakeBefore.alarm,
   });
   record("alarm-only completion", "PASS", {
-    mode: "celld dev local storage; no HTTP request for forty-five seconds after process restart",
+    answerTimestamps: recoveredAnswers.map((message) => message.timestamp),
+    defaultWakerTickMs: 60_000,
+    mode: "celld dev local storage; no HTTP request for ninety seconds after process restart",
+    noHttpWindowMs: recoveryNoHttpWindowMs,
+    observationStartedAt,
     recovered,
     snapshot: recoveredSnapshot,
     timeline: "wrapper-alarm-only-timeline.txt",
