@@ -21,7 +21,7 @@ const {
   mutate,
   request,
 } = await import("../../apps/web/src/features/product/api");
-const { conversationItems, loadChatMessages, messageText } =
+const { conversationItems, messageText, pendingChatSchema } =
   await import("../../apps/web/src/features/product/chat");
 
 class MemoryStorage {
@@ -217,129 +217,175 @@ test("unauthenticated optional budget requests still clear private state", async
   assert.equal(storage.getItem(pendingKey), null);
 });
 
-test("a new SDK chat loads an empty transcript", async () => {
-  installFetch(() => Response.json([]));
-  assert.deepEqual(
-    await loadChatMessages({ url: "http://fixture.invalid/conversation/chat" }),
-    []
-  );
-});
-
-test("SDK chat history cannot expose a stale response after access changes", async () => {
-  const history = delayedJson();
-  installFetch(() => history.response);
-  const oldHistory = loadChatMessages({
-    url: "http://fixture.invalid/conversation/chat",
-  });
-  clearProductCache();
-  await history.finish([
-    {
-      id: "assistant:run",
-      parts: [{ text: "private output", type: "text" }],
-      role: "assistant",
+const { readObservations, submitMessage, sendRunCommand } =
+  await import("../../apps/web/src/features/product/chat-connection");
+const { decodeObservation } = await import("../../packages/ag-ui/src/protocol");
+const { projectObservation, projectionMessages } =
+  await import("../../packages/ag-ui/src/projection");
+const emptyObservation = () =>
+  decodeObservation({
+    accessGeneration: currentAccessGeneration(),
+    address: {
+      agentId: "agent",
+      conversationId: "conversation",
+      organizationId: "company",
+      sessionId: "session",
     },
-  ]);
-  assert.deepEqual(await oldHistory, []);
+    epoch: "epoch",
+    reason: "attach",
+    schemaVersion: 1,
+    sequence: 0,
+    snapshot: {
+      address: {
+        agentId: "agent",
+        conversationId: "conversation",
+        organizationId: "company",
+        sessionId: "session",
+      },
+      agentVersion: 1,
+      approvals: [],
+      outputs: [],
+      revision: 0,
+      runs: [],
+      tools: [],
+      userMessages: [],
+    },
+    type: "snapshot",
+  });
+const ndjson = (frames: unknown[]) =>
+  new Response(`${frames.map((frame) => JSON.stringify(frame)).join("\n")}\n`, {
+    headers: { "Content-Type": "application/x-ndjson" },
+  });
+
+test("a new authorized observation replaces the view with an empty transcript", async () => {
+  installFetch(() => ndjson([emptyObservation()]));
+  const values = await Array.fromAsync(
+    readObservations(
+      "/conversation",
+      currentAccessGeneration(),
+      new AbortController().signal
+    )
+  );
+  assert.equal(values.length, 1);
+  const projection = projectObservation(null, decodeObservation(values[0]));
+  assert.deepEqual(projectionMessages(projection), []);
+  assert.deepEqual(conversationItems(projection, "/conversation"), []);
 });
 
-test("SDK chat history clears private cache on denied access", async () => {
+test("observation rejects stale access while response headers are pending", async () => {
+  const response = Promise.withResolvers<Response>();
+  installFetch(() => response.promise);
+  const iterator = readObservations(
+    "/conversation",
+    currentAccessGeneration(),
+    new AbortController().signal
+  )[Symbol.asyncIterator]();
+  const next = assert.rejects(iterator.next(), { status: 403 });
+  clearProductCache();
+  response.resolve(ndjson([emptyObservation()]));
+  await next;
+});
+
+test("observation distinguishes HTTP denial from normal EOF and clears private cache", async () => {
   storage.setItem(pendingKey, "private pending message");
   installFetch(() => forbidden());
-  assert.deepEqual(
-    await loadChatMessages({ url: "http://fixture.invalid/conversation/chat" }),
-    []
+  await assert.rejects(
+    Array.fromAsync(
+      readObservations(
+        "/conversation",
+        currentAccessGeneration(),
+        new AbortController().signal
+      )
+    ),
+    { status: 403 }
   );
   assert.equal(storage.getItem(pendingKey), null);
 });
 
-test("SDK chat parts preserve text and deduplicate execution records by domain identity", async () => {
-  installFetch(() =>
-    Response.json([
-      {
-        id: "assistant:run",
-        parts: [
-          { text: "Live ", type: "text" },
-          { text: "response", type: "text" },
-          {
-            data: {
-              cursor: "2",
-              run: { runId: "run", state: "completed" },
-              type: "run",
-            },
-            type: "data-conversation-item",
-          },
-        ],
-        role: "assistant",
-      },
-    ])
+test("the observation reader rejects truncated JSON and releases its reader", async () => {
+  installFetch(
+    () =>
+      new Response('{"unfinished":', {
+        headers: { "Content-Type": "application/x-ndjson" },
+      })
   );
-  const messages = await loadChatMessages({
-    url: "http://fixture.invalid/conversation/chat",
-  });
-  const [first] = messages;
-  assert.ok(first);
-  assert.equal(messageText(first), "Live response");
-  assert.deepEqual(
-    conversationItems(messages, [
-      { cursor: "1", eventId: "event", text: "Hello", type: "user" },
-      {
-        cursor: "projection:2",
-        run: { runId: "run", state: "running" },
-        type: "run",
-      },
-    ]),
-    [
-      { cursor: "1", eventId: "event", text: "Hello", type: "user" },
-      { cursor: "2", run: { runId: "run", state: "completed" }, type: "run" },
-    ]
-  );
-});
-
-test("SDK replay cannot replace a settled run with an earlier state", () => {
-  assert.deepEqual(
-    conversationItems(
-      [
-        {
-          id: "assistant:run",
-          parts: [
-            {
-              data: {
-                cursor: "session:2",
-                run: { runId: "run", state: "running" },
-                type: "run",
-              },
-              type: "data-conversation-item",
-            },
-          ],
-          role: "assistant",
-        },
-      ],
-      [{ cursor: "10", run: { runId: "run", state: "completed" }, type: "run" }]
+  await assert.rejects(
+    Array.fromAsync(
+      readObservations(
+        "/conversation",
+        currentAccessGeneration(),
+        new AbortController().signal
+      )
     ),
-    [{ cursor: "10", run: { runId: "run", state: "completed" }, type: "run" }]
+    /inside a frame/u
   );
 });
 
-test("settled output replaces streamed assistant steps with the canonical answer", () => {
+test("TanStack text parts display the canonical answer", () => {
   assert.equal(
     messageText({
       id: "assistant:run",
-      parts: [
-        { text: "I will check. ", type: "text" },
-        { text: "Streamed draft answer.", type: "text" },
-        {
-          data: {
-            cursor: "session:8",
-            runId: "run",
-            text: "Verified final answer.",
-            type: "output",
-          },
-          type: "data-conversation-item",
-        },
-      ],
+      parts: [{ content: "Canonical answer", type: "text" }],
       role: "assistant",
     }),
-    "Verified final answer."
+    "Canonical answer"
+  );
+  assert.deepEqual(
+    pendingChatSchema.parse({ eventId: "event", text: "Draft" }),
+    { eventId: "event", mode: "follow-up", text: "Draft" }
+  );
+});
+
+test("browser mutations use Cerebro commands and preserve stable operation IDs and modes", async () => {
+  const requests: { url: string; body: unknown }[] = [];
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: (input: RequestInfo | URL, init: RequestInit) => {
+      requests.push({
+        body: JSON.parse(String(init.body)),
+        url: String(input),
+      });
+      return Promise.resolve(
+        String(input).endsWith("/messages")
+          ? Response.json({
+              cursor: "1",
+              receipt: {
+                acceptedEventId: "event",
+                replayed: false,
+                runId: "run",
+                sessionId: "session",
+              },
+            })
+          : Response.json({ run: { runId: "run", state: "running" } })
+      );
+    },
+    writable: true,
+  });
+  const message = pendingChatSchema.parse({
+    eventId: "event",
+    mode: "steer",
+    text: "Draft",
+  });
+  await submitMessage("/conversation", message);
+  await submitMessage("/conversation", message);
+  await sendRunCommand(
+    "/conversation",
+    "approvals/approval",
+    "approval-operation",
+    { decision: "allow", runId: "run" }
+  );
+  await sendRunCommand("/conversation", "runs/run/cancel", "stop-operation", {
+    runId: "run",
+  });
+  assert.deepEqual(requests[0], requests[1]);
+  assert.deepEqual(
+    requests.map((value) => value.body),
+    [
+      { eventId: "event", mode: "steer", operationId: "event", text: "Draft" },
+      { eventId: "event", mode: "steer", operationId: "event", text: "Draft" },
+      { decision: "allow", operationId: "approval-operation", runId: "run" },
+      { operationId: "stop-operation", runId: "run" },
+    ]
   );
 });
 

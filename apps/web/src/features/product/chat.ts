@@ -1,135 +1,107 @@
-import { validateUIMessages } from "ai";
-import type { UIMessage } from "ai";
+import type { ConversationProjection } from "@cerebro/ag-ui/projection";
+import type { UIMessage } from "@tanstack/ai-client";
 import { z } from "zod";
 
-import {
-  assertCurrentAccess,
-  currentAccessGeneration,
-  ProductError,
-  request,
-} from "./api";
-import { conversationItemSchema } from "./types";
-import type { ConversationItem } from "./types";
+import type { ConversationItem, PendingMessage } from "./types";
 
-export type ConversationMessage = UIMessage<
-  unknown,
-  { "conversation-item": ConversationItem }
->;
-
-export const conversationDataSchemas = {
-  "conversation-item": conversationItemSchema,
+export type ConversationMessage = UIMessage;
+export type PendingChatMessage = PendingMessage & {
+  mode: "follow-up" | "steer" | "replace";
 };
-
-export const loadChatMessages = async ({
-  url,
-}: {
-  url?: string;
-}): Promise<ConversationMessage[]> => {
-  if (!url) {
-    return [];
-  }
-  const generation = currentAccessGeneration();
-  const endpoint = new URL(url);
-  endpoint.pathname += "/get-messages";
-  try {
-    const value = await request(
-      `${endpoint.pathname}${endpoint.search}`,
-      z.unknown()
-    );
-    if (Array.isArray(value) && value.length === 0) {
-      assertCurrentAccess(generation);
-      return [];
-    }
-    const messages = await validateUIMessages<ConversationMessage>({
-      dataSchemas: conversationDataSchemas,
-      messages: value,
-    });
-    assertCurrentAccess(generation);
-    return messages;
-  } catch (error) {
-    if (error instanceof ProductError && [401, 403].includes(error.status)) {
-      return [];
-    }
-    throw error;
-  }
-};
-
-const terminalRunStates = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "unknown-outcome",
-]);
-
-const conversationItemKey = (item: ConversationItem): string => {
-  switch (item.type) {
-    case "user": {
-      return `user:${item.eventId ?? item.cursor}`;
-    }
-    case "output": {
-      return `output:${item.runId}`;
-    }
-    case "run": {
-      return `run:${item.run.runId}`;
-    }
-    case "tool": {
-      return `tool:${item.runId}:${item.toolId}`;
-    }
-    case "approval": {
-      return `approval:${item.approvalId}`;
-    }
-    case "citation": {
-      return `citation:${item.runId}:${item.sourceId}:${item.sourceVersion}`;
-    }
-    default: {
-      return item satisfies never;
-    }
-  }
+export const pendingChatSchema = z.object({
+  eventId: z.string(),
+  mode: z.enum(["follow-up", "steer", "replace"]).default("follow-up"),
+  text: z.string(),
+});
+export type ConversationViewItem = ConversationItem & {
+  operationId?: string;
+  approvalState?: string;
+  expiresAt?: number;
+  arguments?: unknown;
+  output?: unknown;
 };
 
 export const conversationItems = (
-  messages: ConversationMessage[],
-  initial: ConversationItem[]
-): ConversationItem[] => {
-  const items = new Map<string, ConversationItem>();
-  const add = (item: ConversationItem) => {
-    const key = conversationItemKey(item);
-    const prior = items.get(key);
-    if (
-      item.type === "run" &&
-      prior?.type === "run" &&
-      terminalRunStates.has(prior.run.state) &&
-      !terminalRunStates.has(item.run.state)
-    ) {
-      return;
-    }
-    items.set(key, item);
+  projection: ConversationProjection | null,
+  path: string
+): ConversationViewItem[] => {
+  if (!projection) {
+    return [];
+  }
+  const { snapshot } = projection;
+  const items: ConversationViewItem[] = [];
+  for (const message of snapshot.userMessages) {
+    items.push({
+      cursor: `user:${message.eventId}`,
+      eventId: message.eventId,
+      text: message.text,
+      type: "user",
+    });
+  }
+  for (const run of snapshot.runs) {
+    items.push({ cursor: `run:${run.runId}`, run, type: "run" });
+  }
+  for (const tool of snapshot.tools) {
+    items.push({
+      arguments: tool.arguments,
+      cursor: `tool:${tool.operationId}`,
+      name: tool.toolId,
+      operationId: tool.operationId,
+      output: tool.output,
+      runId: tool.runId,
+      state: tool.state,
+      toolId: tool.toolId,
+      type: "tool",
+    });
+  }
+  for (const approval of snapshot.approvals) {
+    items.push({
+      approvalId: approval.approvalId,
+      approvalState: approval.state,
+      cursor: `approval:${approval.approvalId}`,
+      expiresAt: approval.expiresAt,
+      operationId: approval.operationId,
+      runId: approval.runId,
+      type: "approval",
+    });
+  }
+  const citations = new Map<string, ConversationViewItem>();
+  const addCitation = (
+    runId: string,
+    citation: (typeof snapshot.outputs)[number]["citations"][number]
+  ) => {
+    const cursor = `citation:${runId}:${citation.sourceId}:${citation.sourceVersion}`;
+    citations.set(cursor, {
+      cursor,
+      href: `${path}/sources/${encodeURIComponent(citation.sourceId)}`,
+      runId,
+      sourceId: citation.sourceId,
+      sourceVersion: citation.sourceVersion,
+      title: citation.sourceId,
+      type: "citation",
+    });
   };
-  for (const item of initial) {
-    add(item);
-  }
-  for (const message of messages) {
-    for (const part of message.parts) {
-      if (part.type === "data-conversation-item") {
-        add(part.data);
-      }
+  for (const output of snapshot.outputs) {
+    items.push({
+      cursor: `output:${output.runId}`,
+      runId: output.runId,
+      text: output.text,
+      type: "output",
+    });
+    for (const citation of output.citations) {
+      addCitation(output.runId, citation);
     }
   }
-  return [...items.values()];
+  for (const update of projection.citations) {
+    if (update.type === "citation") {
+      addCitation(update.runId, update.citation);
+    }
+  }
+  return [...items, ...citations.values()];
 };
 
-export const messageText = (message: ConversationMessage): string => {
-  let text = "";
-  let output: string | undefined;
-  for (const part of message.parts) {
-    if (part.type === "text") {
-      text += part.text;
-    } else if (
-      part.type === "data-conversation-item" &&
-      part.data.type === "output"
-    ) {
-      output = part.data.text;
-    }
-  }
-  return output ?? text;
-};
+export const messageText = (message: ConversationMessage): string =>
+  message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => part.content)
+    .join("");
