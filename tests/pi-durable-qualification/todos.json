@@ -21,7 +21,7 @@
       "owner": "runtime packet",
       "status": "open",
       "issue": "Implement the thin Effect bridge to native follow-up, steer, queued withdrawal and session Stop",
-      "approach": "Use official public APIs. Keep company authority, command digest/mode checks, approval binding, tool receipts and product projection in Cerebro. Project all affected operation IDs when native Stop settles them. Do not rebuild the Pi inbox, dispatcher or Lifecycle alarms.",
+      "approach": "Use official public APIs. Keep company authority, command digest/mode checks, approval binding, tool receipts and product projection in Cerebro. Project all affected operation IDs when native Stop settles them. Do not rebuild the Pi inbox, dispatcher or Lifecycle alarms. Map joined steering operation IDs to shared execution and one canonical answer in the authorized product projection.",
       "evidence": "evidence/wrapper-timeline.json; native semantics cases in qualification.json; original stronger Stop requirement remains FAIL with operator-approved semantics change"
     },
     {
@@ -80,6 +80,14 @@
       "issue": "Replacement interruption and retry between native abort and submit; real-host changed-input/mode conflict enforcement",
       "approach": "Use the existing Cerebro command journal with immutable mode/input and replacement phase. Before retrying Stop inspect the original replacement operation; an accepted replacement retry must not abort itself or later work. Serialize conflicting human command mutations. Inject crashes before/after Stop and Pi acceptance. The fixture replace route qualifies only the ordered two-call sequence, not durable replacement retries.",
       "evidence": "Contract fakes pass phase/replay/conflict checks; real-host replacement crash/duplicate command cases remain NOT_RUN."
+    },
+    {
+      "id": "S1-0-T11",
+      "owner": "host/runtime packets",
+      "status": "open; development proceeds with official wrapper",
+      "issue": "Strict native PiHarness/Lifecycle alarm-only recovery on celld remains incomplete after a forty-five-second no-HTTP window",
+      "approach": "Investigate official Lifecycle wake-job recovery and celld alarm handling. Keep Pi native execution/inbox/recovery ownership; do not add a second Cerebro execution queue. Rerun the idle-snapshot-before-wait proof and then verify settled results. The native wrapper heartbeat is thirty seconds; increasing the observation window from twenty to forty-five seconds did not resolve the case.",
+      "evidence": "evidence/qualification.json and wrapper-timeline.json at the tested source; native-recovery-20s preserves the earlier strict failure. The runner assertion is from this same failed case; dependent process-restart completion remains NOT_RUN."
     }
   ]
 }

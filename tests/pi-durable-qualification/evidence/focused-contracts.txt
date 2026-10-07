@@ -1,0 +1,20 @@
+✔ Effect 4 service keys resolve through the proposed fake Layer (3.079746ms)
+✔ policy denial remains data and unavailable enforcement fails closed (0.725236ms)
+✔ approvals bind run, registration version and destination, arguments, identity, policy and expiry (5.293732ms)
+✔ atomic dispatch claims one write and immutable completion survives duplicate callers (1.935816ms)
+✔ changed intent conflicts, uncertain writes cannot dispatch, and revocation denies reads (1.308918ms)
+✔ denied and revoked approval cause zero fake dispatches; reconcile never executes (0.706117ms)
+✔ denial frames validate and HTTP conversion preserves unknown-outcome meaning (3.120277ms)
+✔ Effect 4 observation schemas preserve run variants, revision checks and canonical JSON (2.502373ms)
+✔ Effect scope releases resources; native cancellation withdraws active work and queued inputs (8.630757ms)
+✔ handoff acknowledgment requires Pi acceptance for queued work; observer close submits nothing (2.148307ms)
+✔ replacement cancels previous pending work once; replay preserves later requests and mode changes conflict (1.059952ms)
+✔ replacement intent records mode and stop before engine acceptance; changed input or mode conflicts (0.592506ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 318.330618

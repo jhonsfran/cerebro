@@ -14,7 +14,7 @@ Pi owns its transcript, durable inbox, model/tool loop, submission deduplication
 | Cancel a queued operation | `PiSession.abort(operationId)` | Withdraw that input while active work continues. |
 | Stop an already-placed operation | `PiSession.abort(operationId)` | Pi stops the run it joined and withdraws queued inputs. |
 
-One conversation can have several submitted operation IDs inside one physical Pi run when steering joins them. Do not create separate model loops to represent those IDs. Project all affected operations when Stop settles them. Closing an observer releases observation only.
+One conversation can have several submitted operation IDs inside one physical Pi run when steering joins them. Do not create separate model loops to represent those IDs. Project all affected operations when Stop settles them. The product adapter must map joined operation IDs to the shared execution and present one canonical assistant answer; this product projection remains later-packet work. Closing an observer releases observation only.
 
 The qualification fixture uses the public submit/steer/abort/wait, harness-level `pending`, session events and model/tool factory APIs. PiSession itself has no `pending()` method at these pins. It uses a controlled faux provider and one harmless registered tool to qualify the steering boundary. Lifecycle installs the official wrapper and owns its jobs and alarms; no Pi-private table is edited. The old direct adapter is historical only. The fixture's replace route tests the ordered two-call sequence, not crash-safe replacement. Deferred checks are in `tests/pi-durable-qualification/todos.json`.
 
@@ -88,7 +88,7 @@ Recovery boundaries still requiring real crash injection:
 4. Acceptance recorded before acknowledgement: return the same receipt on retry. Pi's own Lifecycle job owns execution recovery.
 5. Pi completed before product projection: project canonical output and confirmed tool outcomes without resubmitting.
 
-The command fake checks replacement phase ordering, mode/input conflicts, acceptance before acknowledgement and replay without another Stop. These are contract checks, not host crash qualification. Pi-native follow-up/steering and local process restart are tested separately. Projection must atomically persist canonical output, required confirmed tool outcomes and terminal run state/outbox. No final success is conditional on metering. Network operations remain outside atomic storage transitions.
+The command fake checks replacement phase ordering, mode/input conflicts, acceptance before acknowledgement and replay without another Stop. These are contract checks, not host crash qualification. Pi-native follow-up/steering is measured separately. The current strict local process-kill probe fails alarm-only completion after forty-five seconds; the dependent restart completion check is NOT_RUN. A prior development probe used blocking HTTP waits and is not evidence of alarm-only completion. Host qualification remains open in S1-0-T11, without adding a Cerebro scheduler. Projection must atomically persist canonical output, required confirmed tool outcomes and terminal run state/outbox. No final success is conditional on metering. Network operations remain outside atomic storage transitions.
 
 ## Observation schemas and ordering
 

@@ -22,7 +22,9 @@ The native cases verify:
 - Withdrawing queued B leaves active A running.
 - Active Stop withdraws queued inputs. The original stronger preservation case remains an executed FAIL with an operator-approved semantics change, not a vendor queue defect.
 - Native abort followed by submit stops A and completes replacement B in the same conversation. This route has no durable replacement retry protocol; crash/retry between the two calls remains NOT_RUN.
-- Pi's own Lifecycle wake recovers accepted follow-ups after process kill/restart during forty-five seconds without worker HTTP requests. This is local celld-dev storage evidence, not production bucket durability or exactly-once physical model dispatch.
+- The strict alarm-only recovery probe leaves the worker without HTTP requests for forty-five seconds after process kill/restart, then reads a snapshot before any blocking wait. At the current source that snapshot still has live work: alarm-only completion is FAIL and the runner stops at that assertion. The dependent process-restart completion check is NOT_RUN. This is a retained-host TODO; no custom scheduler is added. The earlier twenty-second blocking-wait development probe was too weak to prove alarm-only completion and is not reused as a PASS. The executed strict twenty-second failure is archived under `evidence/native-recovery-20s/`.
+
+Current results and exact counts are recorded in `evidence/qualification.json`; its runner failure is the assertion from the same alarm-only case, not another independent vendor behavior. `todos.json` keeps this host gap open while development proceeds.
 
 The strict Node-free bundle remains FAIL; the selected host uses `nodejs_compat`. The runner intentionally exits nonzero while original failed constraints and unrun checks remain. Operator-authorized preparation proceeds with the limitations listed in `todos.json`. No complete qualification PASS is claimed.
 
