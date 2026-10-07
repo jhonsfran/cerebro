@@ -1,5 +1,8 @@
 /* oxlint-disable no-await-in-loop, unicorn/no-await-expression-member -- Each assertion inspects its preceding durable transition. */
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
@@ -92,12 +95,21 @@ const emptySnapshot: DomainSnapshot = {
   address,
   agentVersion: 1,
   approvals: [],
+  executions: [],
   outputs: [],
   revision: 0,
   runs: [],
   tools: [],
   userMessages: [],
 };
+const answerIdentity = (
+  runId: RunId,
+  runIds: readonly [RunId, ...RunId[]] = [runId]
+) => ({
+  answerId: id.answer(`answer:${runId}`),
+  executionId: id.execution(`execution:${runId}`),
+  runIds,
+});
 const event = (name = "A") => ({ ...userEvent, eventId: id.event(name) });
 const options = () => ({
   deadlineAt: Date.now() + 10_000,
@@ -110,7 +122,7 @@ const failure = async <E>(effect: Effect.Effect<unknown, E>) => {
   return result.failure;
 };
 
-const setup = async (useContractStore = false) => {
+const setup = async (useContractStore = false, persistent = false) => {
   let beforeRead:
     | ((
         dependencies: ContentDependencies
@@ -119,7 +131,13 @@ const setup = async (useContractStore = false) => {
   const scope = Scope.makeUnsafe();
   const authority = createAuthorityFake(Date.now);
   const engine = createEngineFake();
-  const database = new DatabaseSync(":memory:");
+  const directory = persistent
+    ? mkdtempSync(path.join(tmpdir(), "cerebro-joined-"))
+    : undefined;
+  const databasePath = directory
+    ? path.join(directory, "state.sqlite")
+    : ":memory:";
+  let database = new DatabaseSync(databasePath);
   database.exec(
     "CREATE TABLE state (id INTEGER PRIMARY KEY, json TEXT NOT NULL)"
   );
@@ -177,7 +195,7 @@ const setup = async (useContractStore = false) => {
           yield* beforeRead(contentDependencies);
         }
       }),
-    observerCapacity: 2,
+    observerCapacity: 8,
   };
   const store = createSessionStore(persistence, storeConfiguration);
   const contractStore = createStoreFake(emptySnapshot);
@@ -198,11 +216,18 @@ const setup = async (useContractStore = false) => {
     close: async () => {
       await Effect.runPromise(Scope.close(scope, Exit.void));
       database.close();
+      if (directory) {
+        rmSync(directory, { recursive: true });
+      }
     },
     dependencies,
     engine,
     persistence,
     reopen: () => createSessionStore(persistence, storeConfiguration),
+    reopenDatabase: () => {
+      database.close();
+      database = new DatabaseSync(databasePath);
+    },
     setReadHook: (
       hook: (
         dependencies: ContentDependencies
@@ -496,6 +521,7 @@ test("terminal success requires durable canonical output and confirmed tools, pr
       output: {
         citations: [],
         dependencies: { sourceIds: [], toolIds: ["fixture"] },
+        ...answerIdentity(receipt.runId),
         runId: receipt.runId,
         text: "canonical answer",
       },
@@ -892,7 +918,7 @@ test("observer overflow creates a fresh epoch and complete canonical snapshot", 
       )
     )[Symbol.asyncIterator]();
     const attached = await iterator.next();
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < 9; index += 1) {
       await Effect.runPromise(
         fixture.project({
           arguments: {},
@@ -914,7 +940,7 @@ test("observer overflow creates a fresh epoch and complete canonical snapshot", 
       assert.equal(next.value.reason, "overflow");
       assert.equal(next.value.sequence, 0);
       assert.notEqual(next.value.epoch, attached.value?.epoch);
-      assert.equal(next.value.snapshot.tools.length, 5);
+      assert.equal(next.value.snapshot.tools.length, 9);
     }
     await iterator.return?.();
   } finally {
@@ -1067,21 +1093,14 @@ test("unknown effects cannot become successful Stop or replacement", async () =>
   }
 });
 
-test("native steering fails closed until shared answer identity is frozen", async () => {
+test("coordinator admits native steering through the frozen engine port", async () => {
   const fixture = await setup();
   try {
-    assert.equal(
-      (
-        await failure(
-          fixture.service.submit(
-            { event: event(), mode: "steer", type: "submit" },
-            options()
-          )
-        )
-      )._tag,
-      "Unavailable"
-    );
-    assert.equal(fixture.engine.counts.submit, 0);
+    const first = await submit(fixture);
+    const steered = await submit(fixture, "B", "steer");
+    assert.notEqual(first.runId, steered.runId);
+    assert.equal((await submit(fixture, "B", "steer")).replayed, true);
+    assert.equal(fixture.engine.counts.submit, 2);
   } finally {
     await fixture.close();
   }
@@ -1143,6 +1162,7 @@ test("completion during snapshot authorization appears in the snapshot or follow
             output: {
               citations: [],
               dependencies: { sourceIds: [], toolIds: [] },
+              ...answerIdentity(receipt.runId),
               runId: receipt.runId,
               text: "answer during attach",
             },
@@ -1170,6 +1190,7 @@ test("completion during snapshot authorization appears in the snapshot or follow
       )
     )[Symbol.asyncIterator]();
     const frames = [
+      await iterator.next(),
       await iterator.next(),
       await iterator.next(),
       await iterator.next(),
@@ -1210,10 +1231,19 @@ test("a protected commit during authorization is rechecked before emitting its u
                 sourceIds: [id.source("forbidden")],
                 toolIds: [],
               },
+              ...answerIdentity(receipt.runId),
               runId: receipt.runId,
               text: "protected answer",
             },
             type: "canonical-output",
+          });
+          yield* fixture.project({
+            run: {
+              completedAt: Date.now(),
+              runId: receipt.runId,
+              state: "completed",
+            },
+            type: "run",
           });
         }
       })
@@ -1229,7 +1259,11 @@ test("a protected commit during authorization is rechecked before emitting its u
       )
     )[Symbol.asyncIterator]();
     assert.equal((await iterator.next()).value?.type, "snapshot");
-    const next = await iterator.next();
+    let next = await iterator.next();
+    if (next.value?.type === "update") {
+      assert.equal(next.value.update.type, "execution");
+      next = await iterator.next();
+    }
     assert.equal(next.value?.type, "access-denied");
     assert.equal((await iterator.next()).done, true);
     assert.equal(fixture.store.observerCount(), 0);
@@ -1246,15 +1280,26 @@ test("repeated canonical projection preserves domain revision and outbox identit
       output: {
         citations: [],
         dependencies: { sourceIds: [], toolIds: [] },
+        ...answerIdentity(receipt.runId),
         runId: receipt.runId,
         text: "one answer",
       },
       type: "canonical-output" as const,
     };
     await Effect.runPromise(fixture.project(update));
+    const terminal: DomainUpdate = {
+      run: {
+        completedAt: Date.now(),
+        runId: receipt.runId,
+        state: "completed",
+      },
+      type: "run",
+    };
+    await Effect.runPromise(fixture.project(terminal));
     const { revision } = fixture.store.domain();
     const outbox = fixture.store.outbox();
     await Effect.runPromise(fixture.project(update));
+    await Effect.runPromise(fixture.project(terminal));
     assert.equal(fixture.store.domain().revision, revision);
     assert.deepEqual(fixture.store.outbox(), outbox);
   } finally {
@@ -1330,9 +1375,14 @@ test("Pi observer binds delayed text to native run inputs and detaches without S
         }),
       handoffs: () => Effect.succeed(handoffs),
       harness: {
-        pi: () => Promise.resolve({ root: () => Promise.resolve({ id: 1 }) }),
+        pi: () =>
+          Promise.resolve({
+            root: () => Promise.resolve({ id: 1 }),
+            snapshot: () => Promise.resolve({ run: { inputs: [2] } }),
+          }),
         session: () => session,
       } as unknown as PiEngineConfiguration["harness"],
+      snapshot: fixture.store.domain,
       storage: () => ({
         submissionByRequest: (_conversationId: number, requestId: string) =>
           Promise.resolve(
@@ -1348,10 +1398,11 @@ test("Pi observer binds delayed text to native run inputs and detaches without S
         conversation.observe({ deadlineAt: Number.MAX_SAFE_INTEGER })
       )
     )[Symbol.asyncIterator]();
-    const canonical = await iterator.next();
-    assert.equal(canonical.value?.type, "canonical-output");
-    await iterator.next();
-    await iterator.next();
+    const initial = [];
+    for (let index = 0; index < 5; index += 1) {
+      initial.push((await iterator.next()).value);
+    }
+    assert.ok(initial.some((value) => value?.type === "canonical-output"));
     assert.ok(listener);
     await listener([
       {
@@ -1362,7 +1413,10 @@ test("Pi observer binds delayed text to native run inputs and detaches without S
         usage: fauxAssistantMessage("").usage,
       },
     ]);
-    const delta = await iterator.next();
+    let delta = await iterator.next();
+    while (delta.value && delta.value.type !== "provisional-text") {
+      delta = await iterator.next();
+    }
     assert.equal(delta.value?.type, "provisional-text");
     assert.ok(delta.value && delta.value.type === "provisional-text");
     assert.equal(delta.value.runId, first.runId);
@@ -1563,8 +1617,7 @@ test(
       context.diagnostic(
         JSON.stringify({
           done: [doneA, doneB],
-          evidence:
-            "native Pi public API mapping only; Cerebro steering remains guarded",
+          evidence: "native Pi public API identity mapping",
           initialRun: initial.run,
           joinedRun: joined.run,
           modelCalls: fixture.modelCalls(),
@@ -1654,8 +1707,7 @@ test(
       context.diagnostic(
         JSON.stringify({
           affected: stopped,
-          evidence:
-            "native Pi public API Stop mapping only; Cerebro steering remains guarded",
+          evidence: "native Pi public API Stop mapping",
           joinedRun: joined?.run,
           modelCalls: fixture.modelCalls(),
           stopTarget: steered.id,
@@ -1691,3 +1743,751 @@ test("contract-fake admission adapter timing is measured separately from host pe
     await fixture.close();
   }
 });
+
+// Public PiSession protocol delegates to the installed Harness APIs. Lifecycle
+// and celld alarm/eviction behavior remain separate host qualification checks.
+const joinedAdapterFixture = async () => {
+  const native = await nativeSteeringFixture();
+  const fixture = await setup(false, true);
+  let submissions = 0;
+  const enqueue = async (
+    text: string,
+    operationId: string,
+    whenBusy: "followUp" | "steer"
+  ) => {
+    submissions += 1;
+    const prior = await native.storage.submissionByRequest(
+      native.root.id,
+      operationId,
+      native.context
+    );
+    await native.root.submit(
+      { content: text, requestId: operationId, type: "input", whenBusy },
+      native.context
+    );
+    return { accepted: !prior, operationId, session: String(native.root.id) };
+  };
+  const session = {
+    abort: async (requestId?: string) => {
+      if (!requestId) {
+        await native.root.abort(native.context);
+        return true;
+      }
+      const record = await native.storage.submissionByRequest(
+        native.root.id,
+        requestId,
+        native.context
+      );
+      if (!record) {
+        return false;
+      }
+      const result = await native.pi.abortSubmission(
+        record.id,
+        native.context,
+        native.root.id
+      );
+      if (result === "already_placed") {
+        await native.root.abort(native.context);
+      }
+      return result !== "settled" && result !== "not_found";
+    },
+    events: (context: Parameters<typeof watchEvents>[2]) =>
+      watchEvents(native.pi, native.root.id, context),
+    steer: (text: string, input: { operationId: string }) =>
+      enqueue(text, input.operationId, "steer"),
+    submit: (text: string, input: { operationId: string }) =>
+      enqueue(text, input.operationId, "followUp"),
+    wait: async (requestId: string, signal?: AbortSignal) => {
+      const context = piContext(signal);
+      const record = await native.storage.submissionByRequest(
+        native.root.id,
+        requestId,
+        context
+      );
+      assert.ok(record);
+      const handle = await native.pi.submission(record.id, context);
+      assert.ok(handle);
+      const done = await handle.wait(context);
+      assert.ok(done.type === "input" && done.status === "done");
+      const entry = await native.storage.entry(
+        native.root.id,
+        done.answer,
+        context
+      );
+      const text = (entry?.entry.model ?? [])
+        .flatMap((message) =>
+          message.role === "assistant"
+            ? message.content.flatMap((part) =>
+                part.type === "text" ? [part.text] : []
+              )
+            : []
+        )
+        .join("");
+      return {
+        operationId: requestId,
+        session: String(native.root.id),
+        status: "done" as const,
+        text,
+      };
+    },
+  };
+  let hostScope = Scope.makeUnsafe();
+  const makeRuntime = async () => {
+    const engine = createPiExecutionEngine({
+      address,
+      agent,
+      content: () =>
+        Effect.succeed({
+          citations: [],
+          dependencies: { sourceIds: [], toolIds: [] },
+        }),
+      handoffs: () => fixture.store.service.recover(address, options()),
+      harness: {
+        pi: () => Promise.resolve(native.pi),
+        session: () => session,
+      } as unknown as PiEngineConfiguration["harness"],
+      snapshot: fixture.store.domain,
+      storage: () => native.storage,
+    });
+    return await Effect.runPromise(
+      Scope.provide(hostScope)(
+        createSessionService({
+          ...fixture.dependencies,
+          engine: engine.service,
+        })
+      )
+    );
+  };
+  let runtime = await makeRuntime();
+  return {
+    ...fixture,
+    close: async () => {
+      await Effect.runPromise(Scope.close(hostScope, Exit.void));
+      await native.close();
+      await fixture.close();
+    },
+    crashProjection: async () => {
+      await Effect.runPromise(Scope.close(hostScope, Exit.void));
+    },
+    native,
+    restartProjection: async (recover = true) => {
+      await Effect.runPromise(Scope.close(hostScope, Exit.void));
+      fixture.reopenDatabase();
+      hostScope = Scope.makeUnsafe();
+      runtime = await makeRuntime();
+      if (recover) {
+        await Effect.runPromise(runtime.recover());
+      }
+    },
+    runtime: () => runtime,
+    submissions: () => submissions,
+    submitNative: async (name: string, text: string, mode?: "steer") =>
+      await Effect.runPromise(
+        runtime.service.submit(
+          {
+            event: {
+              ...event(name),
+              event: { payload: { text }, type: "user.message" },
+            },
+            mode,
+            type: "submit",
+          },
+          options()
+        )
+      ),
+  };
+};
+const until = async (condition: () => boolean) => {
+  const deadline = Date.now() + 2000;
+  while (!condition()) {
+    assert.ok(
+      Date.now() < deadline,
+      "Projection did not settle within two seconds"
+    );
+    await Effect.runPromise(Effect.sleep(5));
+  }
+};
+
+const placeJoined = async (
+  fixture: Awaited<ReturnType<typeof joinedAdapterFixture>>
+) => {
+  const first = await fixture.submitNative("A", "initial instructions");
+  await fixture.native.firstStarted.promise;
+  const initial = await fixture.native.pi.snapshot(
+    LiveDoc,
+    fixture.native.root.id,
+    fixture.native.context
+  );
+  const second = await fixture.submitNative(
+    "B",
+    "steered instructions",
+    "steer"
+  );
+  await until(() => fixture.store.domain().executions[0]?.runIds.length === 1);
+  fixture.native.firstGate.resolve(true);
+  await fixture.native.secondStarted.promise;
+  await until(() => fixture.store.domain().executions[0]?.runIds.length === 2);
+  const joined = await fixture.native.pi.snapshot(
+    LiveDoc,
+    fixture.native.root.id,
+    fixture.native.context
+  );
+  assert.notEqual(initial?.run?.taskId, joined?.run?.taskId);
+  assert.deepEqual(fixture.store.domain().executions, [
+    {
+      executionId: id.execution(`execution:${first.runId}`),
+      runIds: [first.runId, second.runId],
+    },
+  ]);
+  return [first, second] as const;
+};
+
+test(
+  "public Pi adapter joins steering into one SQLite answer; retry and reconnect submit zero work",
+  { timeout: 5000 },
+  async (context) => {
+    const fixture = await joinedAdapterFixture();
+    try {
+      const [first, second] = await placeJoined(fixture);
+      fixture.native.secondGate.resolve(true);
+      await until(() =>
+        fixture.store.domain().runs.every((run) => run.state === "completed")
+      );
+      const snapshot = fixture.store.domain();
+      assert.equal(snapshot.outputs.length, 1);
+      assert.equal(snapshot.outputs[0]?.text, "one native answer");
+      assert.deepEqual(snapshot.outputs[0]?.runIds, [
+        first.runId,
+        second.runId,
+      ]);
+      assert.equal(snapshot.outputs[0]?.runId, first.runId);
+      assert.equal(snapshot.userMessages.length, 2);
+      const answerRecords = fixture.store
+        .outbox()
+        .filter((record) => record.update.type === "canonical-output");
+      assert.equal(answerRecords.length, 1);
+      const terminalRecords = fixture.store
+        .outbox()
+        .filter(
+          (record) =>
+            record.update.type === "run" &&
+            record.update.run.state === "completed"
+        );
+      assert.equal(terminalRecords.length, 2);
+      assert.equal(
+        terminalRecords[0]?.revision,
+        (answerRecords[0]?.revision ?? 0) + 1
+      );
+      assert.equal(
+        terminalRecords[1]?.revision,
+        (answerRecords[0]?.revision ?? 0) + 2
+      );
+      const { revision } = snapshot;
+      assert.equal(
+        (await fixture.submitNative("B", "steered instructions", "steer"))
+          .replayed,
+        true
+      );
+      await Effect.runPromise(fixture.runtime().recover());
+      const iterator = Stream.toAsyncIterable(
+        Stream.scoped(
+          fixture
+            .runtime()
+            .service.stream(
+              address,
+              allowedContext,
+              { accessGeneration: 2, afterRevision: revision },
+              options()
+            )
+        )
+      )[Symbol.asyncIterator]();
+      const attached = await iterator.next();
+      assert.equal(attached.value?.type, "snapshot");
+      if (attached.value?.type === "snapshot") {
+        assert.deepEqual(attached.value.snapshot.outputs, snapshot.outputs);
+      }
+      await iterator.return?.();
+      assert.equal(fixture.store.domain().revision, revision);
+      assert.equal(fixture.submissions(), 2);
+      assert.equal(fixture.native.modelCalls(), 2);
+      assert.equal(fixture.native.toolCalls(), 1);
+      assert.equal(fixture.native.steeredInputPresent(), true);
+      context.diagnostic(
+        JSON.stringify({
+          answer: snapshot.outputs[0],
+          evidence: "public Pi adapter with SQLite projection",
+          logicalRuns: snapshot.runs,
+          modelCalls: fixture.native.modelCalls(),
+          reconnectResubmissions: 0,
+          submissions: fixture.submissions(),
+        })
+      );
+    } finally {
+      await fixture.close();
+    }
+  }
+);
+
+test(
+  "placed steering Stop projects every joined run and the withdrawn queued input",
+  { timeout: 5000 },
+  async () => {
+    const fixture = await joinedAdapterFixture();
+    try {
+      const [first, second] = await placeJoined(fixture);
+      const queued = await fixture.submitNative("C", "queued follow-up");
+      const stopped = await Effect.runPromise(
+        fixture.runtime().service.cancel(
+          {
+            address,
+            context: allowedContext,
+            runId: second.runId,
+            type: "cancel",
+          },
+          options()
+        )
+      );
+      assert.equal(stopped.state, "cancelled");
+      const snapshot = fixture.store.domain();
+      assert.deepEqual(
+        snapshot.runs.map((run) => run.runId).toSorted(),
+        [first.runId, second.runId, queued.runId].toSorted()
+      );
+      assert.ok(snapshot.runs.every((run) => run.state === "cancelled"));
+      assert.deepEqual(snapshot.executions[0]?.runIds, [
+        first.runId,
+        second.runId,
+      ]);
+      assert.equal(snapshot.outputs.length, 0);
+      assert.equal(fixture.submissions(), 3);
+    } finally {
+      await fixture.close();
+    }
+  }
+);
+
+test(
+  "native completion repairs SQLite projection after scope loss and database reopen without resubmission",
+  { timeout: 5000 },
+  async () => {
+    const fixture = await joinedAdapterFixture();
+    try {
+      const first = await fixture.submitNative("A", "initial instructions");
+      await fixture.native.firstStarted.promise;
+      const second = await fixture.submitNative(
+        "B",
+        "steered instructions",
+        "steer"
+      );
+      await until(
+        () => fixture.store.domain().executions[0]?.runIds.length === 1
+      );
+      await fixture.crashProjection();
+      fixture.native.firstGate.resolve(true);
+      await fixture.native.secondStarted.promise;
+      fixture.native.secondGate.resolve(true);
+      await fixture.native.root.waitForIdle(fixture.native.context);
+      assert.equal(fixture.store.domain().outputs.length, 0);
+      assert.equal(fixture.store.domain().executions[0]?.runIds.length, 1);
+      await fixture.restartProjection();
+      await until(() =>
+        fixture.store.domain().runs.every((run) => run.state === "completed")
+      );
+      const repaired = fixture.store.domain();
+      assert.equal(repaired.outputs.length, 1);
+      assert.deepEqual(repaired.outputs[0]?.runIds, [
+        first.runId,
+        second.runId,
+      ]);
+      await fixture.restartProjection();
+      assert.deepEqual(fixture.store.domain().outputs, repaired.outputs);
+      assert.equal(fixture.submissions(), 2);
+      assert.equal(fixture.native.modelCalls(), 2);
+    } finally {
+      await fixture.close();
+    }
+  }
+);
+
+const joinedBatch = (
+  first: RunId,
+  second: RunId
+): readonly [DomainUpdate, ...DomainUpdate[]] => [
+  {
+    execution: {
+      executionId: id.execution(`execution:${first}`),
+      runIds: [first, second],
+    },
+    type: "execution",
+  },
+  {
+    output: {
+      ...answerIdentity(first, [first, second]),
+      citations: [],
+      dependencies: { sourceIds: [], toolIds: [] },
+      runId: first,
+      text: "atomic joined answer",
+    },
+    type: "canonical-output",
+  },
+  { run: { completedAt: 123, runId: first, state: "completed" }, type: "run" },
+  { run: { completedAt: 123, runId: second, state: "completed" }, type: "run" },
+];
+
+test("SQLite projected batches roll back late validation and save failures; observers see only committed joined state", async () => {
+  const fixture = await setup();
+  try {
+    const first = await submit(fixture);
+    const second = await submit(fixture, "B", "steer");
+    const updates = joinedBatch(first.runId, second.runId);
+    const before = fixture.store.domain();
+    const outbox = fixture.store.outbox();
+    const commit = (batch: readonly [DomainUpdate, ...DomainUpdate[]]) =>
+      fixture.store.service.commit(
+        address,
+        fixture.store.domain().revision,
+        { runId: first.runId, type: "projected-batch", updates: batch },
+        options()
+      );
+    const invalid: readonly [DomainUpdate, ...DomainUpdate[]] = [
+      ...updates,
+      {
+        run: { endedAt: 123, runId: id.run("unadmitted"), state: "cancelled" },
+        type: "run",
+      },
+    ];
+    assert.equal((await failure(commit(invalid)))._tag, "NotFound");
+    assert.deepEqual(fixture.store.domain(), before);
+    assert.deepEqual(fixture.store.outbox(), outbox);
+    const iterator = Stream.toAsyncIterable(
+      Stream.scoped(
+        fixture.store.service.attach(
+          address,
+          allowedContext,
+          { accessGeneration: 1 },
+          options()
+        )
+      )
+    )[Symbol.asyncIterator]();
+    await iterator.next();
+    const { save } = fixture.persistence;
+    fixture.persistence.save = (json) => {
+      save(json);
+      throw new Error("Injected SQLite post-write failure");
+    };
+    assert.equal((await failure(commit(updates)))._tag, "Unavailable");
+    fixture.persistence.save = save;
+    assert.deepEqual(fixture.store.domain(), before);
+    assert.deepEqual(fixture.store.outbox(), outbox);
+    let authorizedFinal = 0;
+    fixture.setReadHook(() =>
+      Effect.sync(() => {
+        const snapshot = fixture.store.domain();
+        if (snapshot.outputs.length) {
+          assert.ok(snapshot.runs.every((run) => run.state === "completed"));
+          authorizedFinal += 1;
+        }
+      })
+    );
+    await Effect.runPromise(commit(updates));
+    const after = fixture.store.domain();
+    assert.equal(after.revision, before.revision + updates.length);
+    for (let index = 0; index < updates.length; index += 1) {
+      const frame = await iterator.next();
+      assert.ok(frame.value?.type === "update");
+      assert.equal(frame.value.revision, before.revision + index + 1);
+      assert.deepEqual(frame.value.update, updates[index]);
+    }
+    assert.ok(authorizedFinal >= 4);
+    await iterator.return?.();
+    const handoffs = await Effect.runPromise(
+      fixture.store.service.recover(address, options())
+    );
+    assert.ok(
+      handoffs.every(
+        (handoff) =>
+          handoff.run.state === "completed" &&
+          handoff.projectedRevision === after.revision &&
+          handoff.revision === after.revision
+      )
+    );
+    const committedOutbox = fixture.store.outbox();
+    await Effect.runPromise(commit(updates));
+    assert.deepEqual(fixture.store.domain(), after);
+    assert.deepEqual(fixture.store.outbox(), committedOutbox);
+    const changed = updates.map((update) =>
+      update.type === "canonical-output"
+        ? {
+            ...update,
+            output: { ...update.output, text: "changed final answer" },
+          }
+        : update
+    ) as unknown as readonly [DomainUpdate, ...DomainUpdate[]];
+    assert.equal((await failure(commit(changed)))._tag, "Conflict");
+    assert.equal(
+      (
+        await failure(
+          commit([
+            {
+              execution: {
+                executionId: id.execution(`execution:${first.runId}`),
+                runIds: [first.runId],
+              },
+              type: "execution",
+            },
+          ])
+        )
+      )._tag,
+      "Conflict"
+    );
+    assert.equal(
+      (
+        await failure(
+          commit([
+            {
+              execution: {
+                executionId: id.execution("other-execution"),
+                runIds: [second.runId],
+              },
+              type: "execution",
+            },
+          ])
+        )
+      )._tag,
+      "Conflict"
+    );
+    assert.deepEqual(fixture.store.domain(), after);
+    assert.deepEqual(fixture.store.outbox(), committedOutbox);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("SQLite rejects incomplete, unknown-tool, and ephemeral joined completion batches without mutation", async () => {
+  const fixture = await setup();
+  try {
+    const first = await submit(fixture);
+    const second = await submit(fixture, "B", "steer");
+    const updates = joinedBatch(first.runId, second.runId);
+    const commit = (batch: readonly [DomainUpdate, ...DomainUpdate[]]) =>
+      fixture.store.service.commit(
+        address,
+        fixture.store.domain().revision,
+        { runId: first.runId, type: "projected-batch", updates: batch },
+        options()
+      );
+    const before = fixture.store.domain();
+    assert.equal(
+      (await failure(commit([updates[0], ...updates.slice(1, 2)])))._tag,
+      "Conflict"
+    );
+    const tool: DomainUpdate = {
+      arguments: {},
+      dependencies: { sourceIds: [], toolIds: [] },
+      effect: "write",
+      operationId: id.operation("unknown-joined-write"),
+      output: null,
+      runId: second.runId,
+      state: "unknown-outcome",
+      toolId: id.tool("fixture-write"),
+      toolVersion: "1",
+      type: "tool",
+    };
+    assert.equal(
+      (await failure(commit([updates[0], tool, ...updates.slice(1)])))._tag,
+      "Conflict"
+    );
+    assert.equal((await failure(commit([...updates, tool])))._tag, "Conflict");
+    assert.equal(
+      (
+        await failure(
+          commit([
+            updates[0],
+            {
+              executionId: id.execution(`execution:${first.runId}`),
+              runId: first.runId,
+              text: "ephemeral",
+              type: "provisional-text",
+            },
+          ])
+        )
+      )._tag,
+      "InvalidInput"
+    );
+    assert.deepEqual(fixture.store.domain(), before);
+    // Confirmed tool ownership remains on B while both logical runs complete.
+    await Effect.runPromise(
+      commit([
+        updates[0],
+        { ...tool, output: "confirmed", state: "succeeded" },
+        ...updates.slice(1),
+      ])
+    );
+    assert.equal(fixture.store.domain().tools[0]?.runId, second.runId);
+    assert.ok(
+      fixture.store.domain().runs.every((run) => run.state === "completed")
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test(
+  "unknown write on a joined member blocks native answer completion for every logical run",
+  { timeout: 5000 },
+  async () => {
+    const fixture = await joinedAdapterFixture();
+    try {
+      const [first, second] = await placeJoined(fixture);
+      await Effect.runPromise(
+        fixture.store.publish(first.runId, {
+          run: {
+            operationId: id.operation("uncertain-write"),
+            runId: first.runId,
+            state: "unknown-outcome",
+          },
+          type: "run",
+        })
+      );
+      fixture.native.secondGate.resolve(true);
+      await fixture.native.root.waitForIdle(fixture.native.context);
+      await Effect.runPromise(fixture.runtime().recover());
+      const snapshot = fixture.store.domain();
+      assert.equal(snapshot.outputs.length, 0);
+      assert.equal(
+        snapshot.runs.find((run) => run.runId === first.runId)?.state,
+        "unknown-outcome"
+      );
+      assert.notEqual(
+        snapshot.runs.find((run) => run.runId === second.runId)?.state,
+        "completed"
+      );
+      assert.equal(fixture.submissions(), 2);
+      assert.equal(fixture.runtime().backgroundFailure(), undefined);
+    } finally {
+      await fixture.close();
+    }
+  }
+);
+
+test(
+  "withdrawing a queued steer leaves the primary native execution running and never joins that member",
+  { timeout: 5000 },
+  async () => {
+    const fixture = await joinedAdapterFixture();
+    try {
+      const first = await fixture.submitNative("A", "initial instructions");
+      await fixture.native.firstStarted.promise;
+      const second = await fixture.submitNative(
+        "B",
+        "steered instructions",
+        "steer"
+      );
+      await Effect.runPromise(
+        fixture.runtime().service.cancel(
+          {
+            address,
+            context: allowedContext,
+            runId: second.runId,
+            type: "cancel",
+          },
+          options()
+        )
+      );
+      assert.equal(
+        fixture.store.domain().runs.find((run) => run.runId === first.runId)
+          ?.state,
+        "running"
+      );
+      assert.equal(
+        fixture.store.domain().runs.find((run) => run.runId === second.runId)
+          ?.state,
+        "cancelled"
+      );
+      fixture.native.firstGate.resolve(true);
+      await fixture.native.secondStarted.promise;
+      fixture.native.secondGate.resolve(true);
+      await until(() => fixture.store.domain().outputs.length === 1);
+      assert.deepEqual(fixture.store.domain().executions[0]?.runIds, [
+        first.runId,
+      ]);
+      assert.deepEqual(fixture.store.domain().outputs[0]?.runIds, [
+        first.runId,
+      ]);
+      assert.equal(fixture.native.steeredInputPresent(), false);
+      assert.equal(fixture.submissions(), 2);
+    } finally {
+      await fixture.close();
+    }
+  }
+);
+
+test(
+  "Stop persists newly placed membership after lost observation before removing Pi's live execution",
+  { timeout: 5000 },
+  async () => {
+    const fixture = await joinedAdapterFixture();
+    try {
+      const first = await fixture.submitNative("A", "initial instructions");
+      await fixture.native.firstStarted.promise;
+      const second = await fixture.submitNative(
+        "B",
+        "steered instructions",
+        "steer"
+      );
+      await until(
+        () => fixture.store.domain().executions[0]?.runIds.length === 1
+      );
+      await fixture.crashProjection();
+      fixture.native.firstGate.resolve(true);
+      await fixture.native.secondStarted.promise;
+      assert.equal(fixture.store.domain().executions[0]?.runIds.length, 1);
+      await fixture.restartProjection(false);
+      await Effect.runPromise(
+        fixture.runtime().service.cancel(
+          {
+            address,
+            context: allowedContext,
+            runId: second.runId,
+            type: "cancel",
+          },
+          options()
+        )
+      );
+      assert.deepEqual(fixture.store.domain().executions[0]?.runIds, [
+        first.runId,
+        second.runId,
+      ]);
+      assert.ok(
+        fixture.store.domain().runs.every((run) => run.state === "cancelled")
+      );
+      assert.equal(fixture.runtime().backgroundFailure(), undefined);
+      assert.equal(fixture.submissions(), 2);
+    } finally {
+      await fixture.close();
+    }
+  }
+);
+
+test(
+  "fast native progress establishes execution identity before projection and completes once",
+  { timeout: 5000 },
+  async () => {
+    const fixture = await joinedAdapterFixture();
+    try {
+      fixture.native.firstGate.resolve(true);
+      fixture.native.secondGate.resolve(true);
+      const first = await fixture.submitNative("A", "initial instructions");
+      await until(() => fixture.store.domain().outputs.length === 1);
+      assert.deepEqual(fixture.store.domain().outputs[0]?.runIds, [
+        first.runId,
+      ]);
+      assert.equal(fixture.store.domain().runs[0]?.state, "completed");
+      assert.equal(fixture.runtime().backgroundFailure(), undefined);
+      assert.equal(fixture.submissions(), 1);
+      assert.equal(fixture.native.modelCalls(), 2);
+    } finally {
+      await fixture.close();
+    }
+  }
+);

@@ -36,7 +36,12 @@ import {
 import { Effect, Layer, Schema, Stream } from "effect";
 
 import { sameAddress } from "./event-handler.ts";
-import { pendingRun, projectUpdate, updateRunId } from "./pi-projection.ts";
+import {
+  pendingRun,
+  projectUpdate,
+  updateRunId,
+  updateRunIds,
+} from "./pi-projection.ts";
 import { attempt, checkOptions, contractFailure } from "./runtime-ports.ts";
 
 export interface SessionPersistence {
@@ -249,6 +254,7 @@ export const createSessionStore = (
       address: configuration.address,
       agentVersion: configuration.agent.version,
       approvals: [],
+      executions: [],
       outputs: [],
       revision: 0,
       runs: [],
@@ -311,6 +317,92 @@ export const createSessionStore = (
       })
     );
     return record;
+  };
+  const commitBatch = (
+    state: StoreState,
+    prior: DurableHandoff,
+    updates: readonly [DomainUpdate, ...DomainUpdate[]]
+  ) => {
+    if (updates.length === 0) {
+      throw new InvalidInput({ reason: "Empty projection batch" });
+    }
+    const affected = new Set<RunId>();
+    let projected = state.snapshot;
+    for (const update of updates) {
+      Schema.decodeUnknownSync(DomainUpdate)(update);
+      if (update.type === "provisional-text" || update.type === "citation") {
+        throw new InvalidInput({
+          reason: "Projection batches require durable updates",
+        });
+      }
+      for (const runId of updateRunIds(update)) {
+        if (!state.handoffs.some((value) => value.submission.runId === runId)) {
+          throw new NotFound({ resource: "Projection member admission" });
+        }
+        affected.add(runId);
+      }
+      projected = projectUpdate(projected, update);
+    }
+    // A final answer cannot escape independently of any linked terminal transition.
+    for (const output of projected.outputs) {
+      if (
+        projected.tools.some(
+          (tool) =>
+            output.runIds.includes(tool.runId) &&
+            tool.state !== "succeeded" &&
+            tool.state !== "failed" &&
+            tool.state !== "cancelled"
+        ) ||
+        output.runIds.some(
+          (runId) =>
+            !projected.runs.some(
+              (run) => run.runId === runId && run.state === "completed"
+            )
+        )
+      ) {
+        throw new Conflict({
+          code: "version-mismatch",
+          reason:
+            "Every answer member and required tool must complete in the same transaction",
+        });
+      }
+    }
+    if (
+      canonicalToolArguments(projected) ===
+      canonicalToolArguments(state.snapshot)
+    ) {
+      return { next: prior, records: [] };
+    }
+    const revision = state.snapshot.revision + updates.length;
+    const records = updates.map((update, index) => ({
+      id: `${configuration.address.sessionId}:${state.snapshot.revision + index + 1}`,
+      revision: state.snapshot.revision + index + 1,
+      update,
+    }));
+    const handoffs = state.handoffs.map((handoff) =>
+      affected.has(handoff.submission.runId)
+        ? {
+            ...handoff,
+            projectedRevision: revision,
+            revision,
+            run:
+              projected.runs.find(
+                (run) => run.runId === handoff.submission.runId
+              ) ?? handoff.run,
+          }
+        : handoff
+    );
+    const next =
+      handoffs.find(
+        (handoff) => handoff.submission.runId === prior.submission.runId
+      ) ?? prior;
+    save({
+      ...state,
+      handoffs,
+      outbox: [...state.outbox, ...records],
+      snapshot: { ...projected, revision },
+    });
+    return { next, records };
   };
   const snapshotRead = (
     address: EventAddress,
@@ -511,7 +603,7 @@ export const createSessionStore = (
               handoffs: [...state.handoffs, next],
               snapshot: { ...state.snapshot, revision },
             });
-            return { next, record };
+            return { next, records: record ? [record] : [] };
           });
           return "next" in handoff
             ? structuredClone(handoff.next)
@@ -577,20 +669,28 @@ export const createSessionStore = (
           if (!prior) {
             throw new NotFound({ resource: "handoff" });
           }
+          if (transition.type === "projected-batch") {
+            return commitBatch(state, prior, transition.updates);
+          }
           validateTransition(prior, transition);
           const update = transitionUpdate(prior, transition);
           if (update?.type === "provisional-text") {
-            Schema.decodeUnknownSync(DomainUpdate)(update);
+            projectUpdate(state.snapshot, update);
             return {
               next: prior,
-              record: pendingRun(prior.run)
-                ? {
-                    id: `provisional:${transition.runId}`,
-                    revision: expectedRevision,
-                    update,
-                  }
-                : undefined,
+              records: pendingRun(prior.run)
+                ? [
+                    {
+                      id: `provisional:${transition.runId}`,
+                      revision: expectedRevision,
+                      update,
+                    },
+                  ]
+                : [],
             };
+          }
+          if (transition.type === "projected" && update) {
+            return commitBatch(state, prior, [update]);
           }
           const projected = update
             ? projectUpdate(state.snapshot, update)
@@ -601,7 +701,7 @@ export const createSessionStore = (
             canonicalToolArguments(projected) ===
               canonicalToolArguments(state.snapshot)
           ) {
-            return { next: prior, record: undefined };
+            return { next: prior, records: [] };
           }
           const revision = expectedRevision + 1;
           const snapshot = { ...projected, revision };
@@ -616,10 +716,10 @@ export const createSessionStore = (
             },
             update
           );
-          return { next, record };
+          return { next, records: record ? [record] : [] };
         });
-        if (result.record) {
-          notify(result.record);
+        for (const record of result.records) {
+          notify(record);
         }
         return structuredClone(result.next);
       }),
@@ -681,7 +781,7 @@ export const createSessionStore = (
         }
         if (update.type === "provisional-text") {
           yield* attempt(() => {
-            Schema.decodeUnknownSync(DomainUpdate)(update);
+            projectUpdate(state.snapshot, update);
             notify({
               id: `provisional:${runId}`,
               revision: state.snapshot.revision,

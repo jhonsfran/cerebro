@@ -206,6 +206,7 @@ export class SessionAgent<
         handoffs: () =>
           store.service.recover(configuration.address, hostOptions()),
         harness: this.harness,
+        snapshot: store.domain,
         storage: () => {
           if (!this.piStorage) {
             throw new Unavailable({
@@ -333,11 +334,7 @@ export class SessionAgent<
           Effect.gen(function* authorizePhysicalModel() {
             const values = yield* engine.records(options);
             const active = values
-              .filter(
-                (value) =>
-                  value.record.status === "placed" ||
-                  value.record.status === "queued"
-              )
+              .filter((value) => value.record.status === "placed")
               .map((value) => value.handoff);
             yield* modelAuthority(
               configuration.authority,

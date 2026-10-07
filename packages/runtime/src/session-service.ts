@@ -20,9 +20,12 @@ import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext, RunId } from "@cerebro/contracts/identity";
 import type { EffectOptions, ReadOptions } from "@cerebro/contracts/port";
 import type { AgentDefinition, RunState } from "@cerebro/contracts/session";
-import { SessionService } from "@cerebro/contracts/session-service";
-import type { DomainUpdate } from "@cerebro/contracts/session-service";
-import { Effect, Fiber, Layer, Scope, Semaphore, Stream } from "effect";
+import {
+  DomainUpdate,
+  SessionService,
+} from "@cerebro/contracts/session-service";
+import { canonicalToolArguments } from "@cerebro/contracts/tools";
+import { Effect, Fiber, Layer, Scope, Schema, Semaphore, Stream } from "effect";
 
 import { sameAddress, validateEvent } from "./event-handler.ts";
 import { pendingRun, updateRunId } from "./pi-projection.ts";
@@ -111,10 +114,75 @@ export const createSessionService = (
           )
         );
     });
+  // This only assembles durable projection frames from Pi's sole execution loop.
+  // A crash discards the buffer; native done records reconstruct the same batch.
+  const answers = new Map<
+    RunId,
+    Extract<DomainUpdate, { type: "canonical-output" }>
+  >();
+  const terminals = new Map<RunId, Extract<DomainUpdate, { type: "run" }>>();
   const project = (update: DomainUpdate) =>
     Effect.gen(function* projectDomain() {
+      yield* attempt(() => Schema.decodeUnknownSync(DomainUpdate)(update));
       const runId = updateRunId(update);
       const handoff = yield* findHandoff(runId);
+      if (update.type === "canonical-output") {
+        const prior = answers.get(runId);
+        if (
+          prior &&
+          canonicalToolArguments(prior) !== canonicalToolArguments(update)
+        ) {
+          return yield* Effect.fail(
+            new Conflict({
+              code: "already-final",
+              reason: "Pending canonical answer changed",
+            })
+          );
+        }
+        answers.set(runId, update);
+        return;
+      }
+      if (update.type === "run" && update.run.state === "completed") {
+        const answer = [...answers.values()].find((value) =>
+          value.output.runIds.includes(runId)
+        );
+        if (answer) {
+          terminals.set(runId, update);
+          const completed = answer.output.runIds.map((member) =>
+            terminals.get(member)
+          );
+          if (completed.some((value) => !value)) {
+            return;
+          }
+          const runs: DomainUpdate[] = [];
+          for (const value of completed) {
+            if (value) {
+              runs.push(value);
+            }
+          }
+          const primary = yield* findHandoff(answer.output.runId);
+          yield* commit(primary, {
+            runId: answer.output.runId,
+            type: "projected-batch",
+            updates: [
+              {
+                execution: {
+                  executionId: answer.output.executionId,
+                  runIds: answer.output.runIds,
+                },
+                type: "execution",
+              },
+              answer,
+              ...runs,
+            ],
+          });
+          answers.delete(answer.output.runId);
+          for (const member of answer.output.runIds) {
+            terminals.delete(member);
+          }
+          return;
+        }
+      }
       yield* commit(handoff, { runId, type: "projected", update });
     });
   const projectStates = (states: readonly RunState[]) =>
@@ -134,6 +202,16 @@ export const createSessionService = (
         });
       }
     });
+  const projectBeforeStop = (engine: EngineConversation, runId: RunId) =>
+    Effect.scoped(
+      Stream.runForEach(
+        Stream.takeUntil(
+          engine.observe(hostOptions()),
+          (update) => update.type === "run" && update.run.runId === runId
+        ),
+        project
+      )
+    );
   const repair = (original: DurableHandoff, engine: EngineConversation) =>
     Effect.gen(function* repairHandoff() {
       let handoff = original;
@@ -154,6 +232,10 @@ export const createSessionService = (
                   reason: "Reconcile the uncertain effect before replacement",
                 })
               );
+            }
+            const pending = states.find(pendingRun);
+            if (pending) {
+              yield* projectBeforeStop(engine, pending.runId);
             }
             yield* projectStates(yield* engine.stop(hostOptions()));
           }
@@ -332,6 +414,9 @@ export const createSessionService = (
                 },
               });
               const engine = yield* open();
+              if (command.decision !== "allow") {
+                yield* projectBeforeStop(engine, command.runId);
+              }
               const run =
                 command.decision === "allow"
                   ? yield* engine.approve(bound, hostOptions())
@@ -373,6 +458,8 @@ export const createSessionService = (
                 return handoff.run;
               }
               const engine = yield* open();
+              // Stop removes Pi's live membership; persist a fresh observation first.
+              yield* projectBeforeStop(engine, command.runId);
               const run = yield* engine.cancel(command.runId, hostOptions());
               yield* projectStates(yield* engine.inspect(hostOptions()));
               return run;
@@ -425,18 +512,11 @@ export const createSessionService = (
             "execute",
             options
           );
-          if (command.mode === "steer") {
-            return yield* Effect.fail(
-              new Unavailable({
-                reason:
-                  "Native steering awaits the coordinator's shared execution identity contract",
-              })
-            );
-          }
           yield* attempt(() => {
             if (
               command.mode !== undefined &&
               command.mode !== "follow-up" &&
+              command.mode !== "steer" &&
               command.mode !== "replace"
             ) {
               throw new InvalidInput({ reason: "Unsupported submission mode" });

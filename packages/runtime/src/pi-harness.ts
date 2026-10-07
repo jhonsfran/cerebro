@@ -13,12 +13,15 @@ import {
   Unavailable,
 } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
+import { id } from "@cerebro/contracts/identity";
 import type { ReadOptions } from "@cerebro/contracts/port";
 import type { AgentDefinition, RunState } from "@cerebro/contracts/session";
 import type {
   DomainSnapshot,
   DomainUpdate,
+  ExecutionState,
 } from "@cerebro/contracts/session-service";
+import { LiveDoc } from "@earendil-works/pi-durable";
 import type {
   AgentEvent,
   Harness,
@@ -44,6 +47,7 @@ export interface PiEngineConfiguration {
   readonly address: EventAddress;
   readonly agent: AgentDefinition;
   readonly harness: Pick<PiHarness, "session" | "pi" | "pending">;
+  readonly snapshot: () => DomainSnapshot;
   readonly storage: () => Pick<Storage, "submissionByRequest">;
   readonly handoffs: () => Effect.Effect<
     readonly DurableHandoff[],
@@ -55,6 +59,11 @@ export interface PiEngineConfiguration {
     Pick<DomainSnapshot["outputs"][number], "dependencies" | "citations">,
     ContractFailure
   >;
+}
+
+interface NativeInput {
+  readonly handoff: DurableHandoff;
+  readonly record: SubmissionRecord;
 }
 
 const stateOf = (
@@ -106,6 +115,19 @@ export const createPiExecutionEngine = (
 ) => {
   const session = configuration.harness.session();
   const terminalTimes = new Map<number, number>();
+  const answerId = (answer: number) =>
+    id.answer(
+      JSON.stringify([
+        configuration.address.organizationId,
+        configuration.address.sessionId,
+        answer,
+      ])
+    );
+  const executions = new Map(
+    configuration
+      .snapshot()
+      .executions.map((value) => [value.executionId, value])
+  );
   const runState = (record: SubmissionRecord, handoff: DurableHandoff) => {
     if (record.status === "done" || record.status === "unanswered") {
       terminalTimes.set(record.id, terminalTimes.get(record.id) ?? Date.now());
@@ -120,8 +142,7 @@ export const createPiExecutionEngine = (
       const handoffs = await Effect.runPromise(configuration.handoffs(), {
         signal,
       });
-      const results: { handoff: DurableHandoff; record: SubmissionRecord }[] =
-        [];
+      const results: NativeInput[] = [];
       for (const handoff of handoffs) {
         const record = await configuration
           .storage()
@@ -132,10 +153,6 @@ export const createPiExecutionEngine = (
       }
       return results;
     });
-  const inspect = (options: ReadOptions) =>
-    Effect.map(records(options), (values) =>
-      values.map(({ record, handoff }) => runState(record, handoff))
-    );
   const resolve = (runId: RunState["runId"]) =>
     Effect.gen(function* resolveRun() {
       const handoffs = yield* configuration.handoffs();
@@ -144,43 +161,237 @@ export const createPiExecutionEngine = (
         handoff ?? (yield* Effect.fail(new NotFound({ resource: "Pi run" })))
       );
     });
+  const remember = (members: readonly NativeInput[]) => {
+    const [primary, ...rest] = members;
+    if (!primary) {
+      return;
+    }
+    const runIds: ExecutionState["runIds"] = [
+      primary.handoff.submission.runId,
+      ...rest.map((value) => value.handoff.submission.runId),
+    ];
+    const executionId = id.execution(`execution:${runIds[0]}`);
+    const previous = executions.get(executionId);
+    if (
+      previous &&
+      previous.runIds.length > runIds.length &&
+      runIds.every((member, index) => member === previous.runIds[index])
+    ) {
+      return previous;
+    }
+    const execution = { executionId, runIds };
+    executions.set(executionId, execution);
+    return execution;
+  };
+  const captureMembership = (options: ReadOptions) =>
+    Effect.gen(function* readExecutions() {
+      const inputs = yield* vendorEffect(options, async (signal) => {
+        const context = piContext(signal);
+        const pi = await configuration.harness.pi();
+        const root = await pi.root(context);
+        const snapshot = await pi.snapshot(LiveDoc, root.id, context);
+        return snapshot?.run?.inputs ?? [];
+      });
+      const values = yield* records(options);
+      for (const execution of configuration.snapshot().executions) {
+        const remembered = executions.get(execution.executionId);
+        if (
+          !remembered ||
+          remembered.runIds.length <= execution.runIds.length
+        ) {
+          executions.set(execution.executionId, execution);
+        }
+      }
+      const active = inputs.flatMap((input) =>
+        values.filter((value) => value.record.id === input)
+      );
+      if (active.length !== inputs.length) {
+        return yield* Effect.fail(
+          new Unavailable({
+            reason:
+              "Native execution contains an input without a Cerebro admission",
+          })
+        );
+      }
+      remember(active);
+      const answers = new Set(
+        values.flatMap(({ record }) =>
+          record.type === "input" && record.status === "done"
+            ? [record.answer]
+            : []
+        )
+      );
+      for (const answer of answers) {
+        const members = values
+          .filter(
+            ({ record }) =>
+              record.type === "input" &&
+              record.status === "done" &&
+              record.answer === answer
+          )
+          .toSorted(
+            (left, right) =>
+              (left.record.entry ?? 0) - (right.record.entry ?? 0)
+          );
+        remember(members);
+      }
+      return values;
+    });
+  const executionBlocked = (
+    execution: ExecutionState,
+    members: readonly NativeInput[]
+  ) =>
+    members.some(({ handoff }) => handoff.run.state === "unknown-outcome") ||
+    configuration
+      .snapshot()
+      .tools.some(
+        (tool) =>
+          execution.runIds.includes(tool.runId) &&
+          tool.state !== "succeeded" &&
+          tool.state !== "failed" &&
+          tool.state !== "cancelled"
+      );
+  const inspect = (options: ReadOptions) =>
+    Effect.map(captureMembership(options), (values) => {
+      const blocked = new Set(
+        [...executions.values()]
+          .filter((execution) =>
+            executionBlocked(
+              execution,
+              values.filter(({ handoff }) =>
+                execution.runIds.includes(handoff.submission.runId)
+              )
+            )
+          )
+          .flatMap((execution) => execution.runIds)
+      );
+      return values.map(({ record, handoff }) =>
+        record.status === "done" && blocked.has(handoff.submission.runId)
+          ? handoff.run
+          : runState(record, handoff)
+      );
+    });
+  const projectedAlready = (
+    execution: ExecutionState,
+    members: readonly NativeInput[]
+  ) => {
+    if (!members.every(({ handoff }) => handoff.run.state === "completed")) {
+      return false;
+    }
+    const frozen = configuration
+      .snapshot()
+      .outputs.find((output) => output.executionId === execution.executionId);
+    const [primary] = members;
+    if (
+      !frozen ||
+      !primary ||
+      primary.record.type !== "input" ||
+      primary.record.status !== "done" ||
+      frozen.answerId !== answerId(primary.record.answer) ||
+      JSON.stringify(frozen.runIds) !== JSON.stringify(execution.runIds)
+    ) {
+      throw new Conflict({
+        code: "already-final",
+        reason: "Native final answer identity or membership changed",
+      });
+    }
+    return true;
+  };
   const updates = (options: ReadOptions) =>
     Effect.gen(function* canonicalProjection() {
-      const values = yield* records(options);
+      const values = yield* captureMembership(options);
       const projected: DomainUpdate[] = [];
-      const answers = new Set<number>();
-      for (const { handoff, record } of values) {
-        if (handoff.run.state === "completed") {
+      const grouped = new Set<string>();
+      for (const execution of executions.values()) {
+        const members = execution.runIds.flatMap((runId) =>
+          values.filter((value) => value.handoff.submission.runId === runId)
+        );
+        if (!members.length) {
           continue;
         }
-        if (
-          record.status === "done" &&
-          record.type === "input" &&
-          handoff.run.state !== "unknown-outcome"
-        ) {
-          if (answers.has(record.answer)) {
-            return yield* Effect.fail(
-              new Unavailable({
-                reason:
-                  "Shared Pi answer identity requires the coordinator's joined-run contract",
-              })
-            );
-          }
-          answers.add(record.answer);
-          const result = yield* vendorEffect(options, (signal) =>
-            session.wait(handoff.submission.requestId, signal)
+        if (members.length !== execution.runIds.length) {
+          return yield* Effect.fail(
+            new Unavailable({
+              reason: "Native execution membership is incomplete",
+            })
           );
-          const content = yield* configuration.content(handoff);
-          projected.push({
-            output: {
-              runId: handoff.submission.runId,
-              text: result.text ?? "",
-              ...content,
-            },
-            type: "canonical-output",
-          });
         }
-        projected.push({ run: runState(record, handoff), type: "run" });
+        for (const member of members) {
+          grouped.add(member.handoff.submission.runId);
+        }
+        if (yield* attempt(() => projectedAlready(execution, members))) {
+          continue;
+        }
+        projected.push({ execution, type: "execution" });
+        const done = members.every(
+          ({ record }) => record.type === "input" && record.status === "done"
+        );
+        const blocked = executionBlocked(execution, members);
+        if (done && !blocked) {
+          const [primary] = members;
+          if (
+            primary &&
+            primary.record.type === "input" &&
+            primary.record.status === "done"
+          ) {
+            const result = yield* vendorEffect(options, (signal) =>
+              session.wait(primary.handoff.submission.requestId, signal)
+            );
+            const contents = [];
+            for (const { handoff } of members) {
+              contents.push(yield* configuration.content(handoff));
+            }
+            projected.push({
+              output: {
+                answerId: answerId(primary.record.answer),
+                citations: [
+                  ...new Map(
+                    contents
+                      .flatMap((content) => content.citations)
+                      .map((citation) => [JSON.stringify(citation), citation])
+                  ).values(),
+                ],
+                dependencies: {
+                  sourceIds: [
+                    ...new Set(
+                      contents.flatMap(
+                        (content) => content.dependencies.sourceIds
+                      )
+                    ),
+                  ],
+                  toolIds: [
+                    ...new Set(
+                      contents.flatMap(
+                        (content) => content.dependencies.toolIds
+                      )
+                    ),
+                  ],
+                },
+                executionId: execution.executionId,
+                runId: execution.runIds[0],
+                runIds: execution.runIds,
+                text: result.text ?? "",
+              },
+              type: "canonical-output",
+            });
+          }
+        }
+        for (const { handoff, record } of members) {
+          if (
+            blocked &&
+            record.status === "done" &&
+            handoff.run.state !== "unknown-outcome"
+          ) {
+            projected.push({ run: handoff.run, type: "run" });
+            continue;
+          }
+          projected.push({ run: runState(record, handoff), type: "run" });
+        }
+      }
+      for (const { handoff, record } of values) {
+        if (!grouped.has(handoff.submission.runId)) {
+          projected.push({ run: runState(record, handoff), type: "run" });
+        }
       }
       return projected;
     });
@@ -207,6 +418,7 @@ export const createPiExecutionEngine = (
     cancel: (runId, options) =>
       Effect.gen(function* withdrawNative() {
         const handoff = yield* resolve(runId);
+        yield* captureMembership(options);
         yield* vendorEffect(options, () =>
           session.abort(handoff.submission.requestId)
         );
@@ -232,6 +444,20 @@ export const createPiExecutionEngine = (
             const values = await Effect.runPromise(updates(options));
             Queue.offerAllUnsafe(queue, values);
           };
+          const sendMembership = async () => {
+            const current = await Effect.runPromise(records(options));
+            const members = activeInputs.flatMap((input) =>
+              current.filter((value) => value.record.id === input)
+            );
+            if (members.length !== activeInputs.length) {
+              return;
+            }
+            const execution = remember(members);
+            if (execution) {
+              Queue.offerUnsafe(queue, { execution, type: "execution" });
+            }
+            return execution;
+          };
           const sendBatch = async (events: readonly AgentEvent[]) => {
             for (const event of events) {
               if (event.type === "snapshot") {
@@ -243,19 +469,29 @@ export const createPiExecutionEngine = (
               if (event.type === "run_end") {
                 activeInputs = [];
               }
+              const placed =
+                event.type === "submission" && event.record.status === "placed";
+              if (placed && !activeInputs.includes(event.record.id)) {
+                activeInputs = [...activeInputs, event.record.id];
+              }
+              if (
+                placed ||
+                event.type === "run_start" ||
+                event.type === "snapshot"
+              ) {
+                await sendMembership();
+              }
               if (event.type === "message_update") {
                 const text = event.changes
                   .filter((change) => change.type === "text_delta")
                   .map((change) => ("delta" in change ? change.delta : ""))
                   .join("");
-                const current = await Effect.runPromise(records(options));
-                const inputs = activeInputs;
-                const running = current.find((value) =>
-                  inputs.includes(value.record.id)
-                );
-                if (text && running) {
+                // A fast first text batch can precede the authoritative snapshot read.
+                const execution = await sendMembership();
+                if (text && execution) {
                   Queue.offerUnsafe(queue, {
-                    runId: running.handoff.submission.runId,
+                    executionId: execution.executionId,
+                    runId: execution.runIds[0],
                     text,
                     type: "provisional-text",
                   });
@@ -289,6 +525,7 @@ export const createPiExecutionEngine = (
     release: Effect.void,
     stop: (options) =>
       Effect.gen(function* stopNative() {
+        yield* captureMembership(options);
         yield* vendorEffect(options, () => session.abort());
         return yield* inspect(options);
       }),
