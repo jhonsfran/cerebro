@@ -383,7 +383,11 @@ if (values["self-test"]) {
         organizationId: userEvent.organizationId,
         version: 1,
       },
-      resource: { id: userEvent.sessionId, kind: "session" },
+      resource: {
+        id: userEvent.agentId,
+        kind: "agent",
+        organizationId: userEvent.organizationId,
+      },
     };
     const options = { deadlineAt: now + 5000 };
     assert.equal(
@@ -398,6 +402,12 @@ if (values["self-test"]) {
               ...input,
               address: {
                 ...userEvent,
+                organizationId: id.organization(
+                  configuration.seed.otherCompany
+                ),
+              },
+              resource: {
+                ...input.resource,
                 organizationId: id.organization(
                   configuration.seed.otherCompany
                 ),
