@@ -1,52 +1,29 @@
-import { useAgentChat } from "@cloudflare/ai-chat/react";
-import { useAgent } from "agents/react";
-import type { ChatStatus, DataUIPart } from "ai";
-import {
-  useCallback,
-  useEffect,
-  useEffectEvent,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  apiUrl,
   cacheKey,
-  clearProductCache,
   assertCurrentAccess,
   currentAccessGeneration,
   encoded,
-  mutate,
   productPath,
   request,
 } from "./api";
+import { conversationItems, messageText, pendingChatSchema } from "./chat";
+import type { PendingChatMessage } from "./chat";
 import {
-  conversationDataSchemas,
-  conversationItems,
-  loadChatMessages,
-  messageText,
-} from "./chat";
-import type { ConversationMessage } from "./chat";
-import type {
-  Audit,
-  Conversation,
-  ConversationItem,
-  History,
-  PendingMessage,
-  Source,
-} from "./types";
+  sendRunCommand,
+  submitMessage,
+  useConversationConnection,
+} from "./chat-connection";
+import type { Audit, Conversation, History, Source } from "./types";
 import {
   auditSchema,
   conversationSchema,
   historySchema,
-  pendingSchema,
   sourceSchema,
-  stateMutationSchema,
 } from "./types";
 
-type Connection = "connecting" | "connected" | "disconnected";
+type Connection = "connecting" | "connected" | "disconnected" | "denied";
 type Detail =
   | { type: "source"; value: Source }
   | { type: "audit"; value: Audit };
@@ -116,6 +93,7 @@ const ConversationHeader = ({
   connection,
   fixture,
   toggle,
+  retired,
 }: {
   agentName: string;
   sessionId: string | undefined;
@@ -123,6 +101,7 @@ const ConversationHeader = ({
   connection: Connection;
   fixture: boolean;
   toggle: () => void;
+  retired: boolean;
 }) => (
   <>
     <div className="panel-heading">
@@ -130,8 +109,13 @@ const ConversationHeader = ({
         <p className="eyebrow">Conversation</p>
         <h2>{agentName}</h2>
       </div>
-      <button className="quiet-button" type="button" onClick={toggle}>
-        {connected ? "Disconnect" : "Resume conversation"}
+      <button
+        className="quiet-button"
+        type="button"
+        disabled={retired}
+        onClick={toggle}
+      >
+        {connected ? "Disconnect" : "Reconnect"}
       </button>
     </div>
     <div className="session-line">
@@ -159,21 +143,25 @@ const ConversationComposer = ({
   pending,
   fixture,
   send,
+  mode,
+  setMode,
 }: {
   text: string;
   setText: (value: string) => void;
   sending: boolean;
   connected: boolean;
-  pending: PendingMessage | null;
+  pending: PendingChatMessage | null;
   fixture: boolean;
-  send: (message: PendingMessage) => Promise<void>;
+  send: (message: PendingChatMessage) => Promise<void>;
+  mode: PendingChatMessage["mode"];
+  setMode: (mode: PendingChatMessage["mode"]) => void;
 }) => (
   <form
     className="message-composer"
     onSubmit={(event) => {
       event.preventDefault();
       if (text.trim() && !pending) {
-        send({ eventId: crypto.randomUUID(), text: text.trim() });
+        void send({ eventId: crypto.randomUUID(), mode, text: text.trim() });
       }
     }}
   >
@@ -188,6 +176,20 @@ const ConversationComposer = ({
       rows={2}
       disabled={sending || !connected || Boolean(pending)}
     />
+    <label>
+      Send as
+      <select
+        value={mode}
+        disabled={sending || !connected || Boolean(pending)}
+        onChange={(event) =>
+          setMode(pendingChatSchema.shape.mode.parse(event.target.value))
+        }
+      >
+        <option value="follow-up">Follow-up</option>
+        <option value="steer">Steer current work</option>
+        <option value="replace">Stop and replace</option>
+      </select>
+    </label>
     <div className="composer-footer">
       <span>
         {fixture
@@ -205,6 +207,40 @@ const ConversationComposer = ({
   </form>
 );
 
+const ConversationNotice = ({
+  retired,
+  message,
+}: {
+  retired: boolean;
+  message: string;
+}) => (
+  <>
+    {retired ? (
+      <p className="error-banner">
+        This conversation is retired. Start a new conversation from the agent
+        list.
+      </p>
+    ) : null}
+    {message ? (
+      <p className="error-banner" role="alert">
+        {message}
+      </p>
+    ) : null}
+  </>
+);
+const ConversationProgress = ({
+  recovering,
+  busy,
+}: {
+  recovering: boolean;
+  busy: boolean;
+}) =>
+  recovering || busy ? (
+    <output className="tool-status">
+      {recovering ? "Recovering response..." : "Preparing response..."}
+    </output>
+  ) : null;
+
 const ConversationSession = ({
   conversationId,
   userId,
@@ -219,131 +255,79 @@ const ConversationSession = ({
   fixture: boolean;
 }) => {
   const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [initialItems, setInitialItems] = useState<ConversationItem[]>([]);
   const [history, setHistory] = useState<History | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [connection, setConnection] = useState<Connection>("connecting");
   const [connected, setConnected] = useState(true);
   const [accessValid, setAccessValid] = useState(true);
-  const accessGeneration = useRef(currentAccessGeneration());
-  const [revision, setRevision] = useState(0);
+  const [mode, setMode] = useState<PendingChatMessage["mode"]>("follow-up");
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const commandIds = useRef(new Map<string, string>());
   const transcript = useRef<HTMLDivElement>(null);
   const path = productPath(`conversations/${encoded(conversationId)}`);
   const pendingKey = cacheKey(userId, conversationId, "pending");
-  const [pending, setPending] = useState<PendingMessage | null>(() => {
+  const [pending, setPending] = useState<PendingChatMessage | null>(() => {
     try {
       const raw = sessionStorage.getItem(pendingKey);
-      return raw ? pendingSchema.parse(JSON.parse(raw)) : null;
+      return raw ? pendingChatSchema.parse(JSON.parse(raw)) : null;
     } catch {
       return null;
     }
   });
   const pendingRef = useRef(pending);
-  const chatState = useRef<{
-    isRecovering: boolean;
-    isStreaming: boolean;
-    messages: ConversationMessage[];
-    status: ChatStatus;
-  }>({
-    isRecovering: false,
-    isStreaming: false,
-    messages: [],
-    status: "ready",
-  });
-  const acknowledge = useCallback(
-    (item: ConversationItem) => {
-      if (
-        item.type === "user" &&
-        item.eventId === pendingRef.current?.eventId
-      ) {
-        sessionStorage.removeItem(pendingKey);
-        pendingRef.current = null;
-        setPending(null);
-        setText("");
-      }
-    },
-    [pendingKey, setPending, setText]
-  );
-  const agent = useAgent({
-    agent: "session-agent",
-    basePath: `${path.slice(1)}/chat`,
-    host: new URL(apiUrl(path)).host,
-    name: conversationId,
-    onClose: (event) => {
-      setConnection("disconnected");
-      if ([1008, 4401, 4403].includes(event.code)) {
-        clearProductCache();
-        setErrorMessage("Conversation access is no longer available.");
-      }
-    },
-    onOpen: () => {
-      setConnection("connected");
-      setRevision((current) => current + 1);
-    },
-    startClosed: !connected,
-  });
+  const retired = conversation?.mode === "retired";
   const {
-    messages,
-    sendMessage,
-    setMessages,
-    status,
-    isStreaming,
-    isRecovering,
+    connection,
     error: chatError,
-  } = useAgentChat<unknown, ConversationMessage>({
-    agent,
-    credentials: "include",
-    dataPartSchemas: conversationDataSchemas,
-    getInitialMessages: loadChatMessages,
-    onData: (part: DataUIPart<{ "conversation-item": ConversationItem }>) => {
-      if (accessGeneration.current !== currentAccessGeneration()) {
-        return;
-      }
-      if (part.type === "data-conversation-item") {
-        acknowledge(part.data);
-        setInitialItems((current) =>
-          current.some((item) => item.cursor === part.data.cursor)
-            ? current
-            : [...current, part.data]
-        );
-      }
-    },
-    onError: (error) => {
-      setErrorMessage(messageOf(error));
-      if (error.message === "Conversation access is no longer available.") {
-        clearProductCache();
-      }
-    },
-    syncMessagesToServer: false,
-  });
-  const replaceMessages = useEffectEvent((value: ConversationMessage[]) => {
-    setMessages(value);
-  });
-  useLayoutEffect(() => {
-    chatState.current = { isRecovering, isStreaming, messages, status };
-  }, [isRecovering, isStreaming, messages, status]);
-  const items = useMemo(
-    () => conversationItems(messages, initialItems),
-    [messages, initialItems]
+    messages,
+    projection,
+  } = useConversationConnection(
+    conversation,
+    path,
+    connected && accessValid && !retired
   );
-  const runs = useMemo(() => {
-    const result = new Map(
-      (conversation?.snapshot.runs ?? []).map((run) => [run.runId, run])
-    );
-    for (const item of items) {
-      if (item.type === "run") {
-        result.set(item.run.runId, item.run);
-      }
+  const items = useMemo(
+    () => conversationItems(projection, path),
+    [projection, path]
+  );
+  const runs = useMemo(
+    () =>
+      new Map<string, { runId: string; state: string }>(
+        (projection?.snapshot.runs ?? []).map((run) => [run.runId, run])
+      ),
+    [projection]
+  );
+  const acknowledge = (eventId: string) => {
+    if (eventId === pendingRef.current?.eventId) {
+      sessionStorage.removeItem(pendingKey);
+      pendingRef.current = null;
+      setPending(null);
+      setText("");
     }
-    return result;
-  }, [conversation, items]);
+  };
+  useEffect(() => {
+    if (
+      projection?.snapshot.userMessages.some(
+        (message) => message.eventId === pendingRef.current?.eventId
+      )
+    ) {
+      sessionStorage.removeItem(pendingKey);
+      pendingRef.current = null;
+      setPending(null);
+      setText("");
+    }
+  }, [projection, pendingKey]);
   const historyRuns = useMemo(() => {
-    const result = new Map(
-      (history?.runs ?? []).map((run) => [run.runId, run])
-    );
+    const result = new Map<
+      string,
+      { auditHref: string; runId: string; state: string }
+    >();
     for (const run of runs.values()) {
       result.set(run.runId, {
         auditHref: `${path}/audit/${encoded(run.runId)}`,
@@ -352,22 +336,15 @@ const ConversationSession = ({
       });
     }
     return [...result.values()];
-  }, [history, path, runs]);
-  const sending = busy || status === "submitted" || isStreaming || isRecovering;
-
-  useEffect(() => {
-    if (!connected) {
-      agent.close();
-    } else if (agent.readyState === 3) {
-      agent.reconnect();
-    }
-  }, [agent, connected]);
-
+  }, [path, runs]);
+  const sending = busy;
+  const disabled = busy || retired || connection !== "connected";
+  const displayedError = errorMessage || chatError;
+  const online = connected && connection === "connected" && !retired;
+  const isRecovering = connection === "connecting";
   useEffect(() => {
     const clear = () => {
-      replaceMessages([]);
       setAccessValid(false);
-      setInitialItems([]);
       setConversation(null);
       setHistory(null);
       setDetail(null);
@@ -401,46 +378,19 @@ const ConversationSession = ({
         ) {
           setErrorMessage("The conversation does not belong to this agent.");
           setConnected(false);
-          replaceMessages([]);
           return;
-        }
-        for (const item of value.items) {
-          acknowledge(item);
         }
         setConversation(value);
         setHistory(executionHistory);
-        setInitialItems((current) =>
-          conversationItems([], [...value.items, ...current])
-        );
-        const idle = () =>
-          ["ready", "error"].includes(chatState.current.status) &&
-          !chatState.current.isStreaming &&
-          !chatState.current.isRecovering;
-        if (idle()) {
-          const before = chatState.current;
-          const refreshed = await loadChatMessages({
-            url: apiUrl(`${path}/chat`),
-          });
-          assertCurrentAccess(generation);
-          if (
-            !controller.signal.aborted &&
-            idle() &&
-            chatState.current === before
-          ) {
-            replaceMessages(refreshed);
-          }
-        }
       } catch (error) {
         if (!controller.signal.aborted) {
           setErrorMessage(messageOf(error));
         }
       }
     };
-    if (revision >= 0) {
-      load();
-    }
+    void load();
     return () => controller.abort();
-  }, [acknowledge, agentId, conversationId, path, revision]);
+  }, [agentId, conversationId, path]);
 
   useEffect(() => {
     if (items.length || messages.length) {
@@ -451,33 +401,48 @@ const ConversationSession = ({
     }
   }, [items, messages]);
 
-  const send = async (message: PendingMessage) => {
+  const send = async (message: PendingChatMessage) => {
+    if (retired || !accessValid || connection !== "connected") {
+      return;
+    }
+    setBusy(true);
     setErrorMessage("");
     sessionStorage.setItem(pendingKey, JSON.stringify(message));
     pendingRef.current = message;
     setPending(message);
+    const generation = currentAccessGeneration();
     try {
-      const existing = messages.some((item) => item.id === message.eventId);
-      await sendMessage({
-        id: message.eventId,
-        ...(existing ? { messageId: message.eventId } : {}),
-        parts: [{ text: message.text, type: "text" }],
-        role: "user",
-      });
+      const result = await submitMessage(path, message);
+      assertCurrentAccess(generation);
+      acknowledge(result.receipt.acceptedEventId);
     } catch (error) {
       setErrorMessage(messageOf(error));
     }
+    setBusy(false);
   };
-  const act = async (suffix: string) => {
+  const act = async (
+    suffix: string,
+    runId: string,
+    decision?: "allow" | "deny"
+  ) => {
+    if (retired || !accessValid || connection !== "connected") {
+      return;
+    }
+    const intent = `${suffix}:${runId}:${decision ?? "stop"}`;
+    const commandKey = cacheKey(userId, conversationId, `command:${intent}`);
+    const operationId =
+      commandIds.current.get(intent) ??
+      sessionStorage.getItem(commandKey) ??
+      crypto.randomUUID();
+    commandIds.current.set(intent, operationId);
+    sessionStorage.setItem(commandKey, operationId);
     setBusy(true);
     setErrorMessage("");
     try {
-      await mutate(
-        `${path}/${suffix}`,
-        { operationId: crypto.randomUUID() },
-        stateMutationSchema
-      );
-      setRevision((current) => current + 1);
+      await sendRunCommand(path, suffix, operationId, {
+        runId,
+        ...(decision ? { decision } : {}),
+      });
     } catch (error) {
       setErrorMessage(messageOf(error));
     }
@@ -532,12 +497,9 @@ const ConversationSession = ({
         connection={connected ? connection : "disconnected"}
         fixture={fixture}
         toggle={() => setConnected((value) => !value)}
+        retired={retired}
       />
-      {errorMessage || chatError ? (
-        <p className="error-banner" role="alert">
-          {errorMessage || chatError?.message}
-        </p>
-      ) : null}
+      <ConversationNotice retired={retired} message={displayedError} />
       <div
         className="transcript"
         ref={transcript}
@@ -574,11 +536,7 @@ const ConversationSession = ({
             </article>
           ) : null;
         })}
-        {isRecovering || status === "submitted" ? (
-          <output className="tool-status">
-            {isRecovering ? "Recovering response..." : "Preparing response..."}
-          </output>
-        ) : null}
+        <ConversationProgress recovering={isRecovering} busy={busy} />
         {items.map((item) => {
           switch (item.type) {
             case "citation": {
@@ -596,14 +554,25 @@ const ConversationSession = ({
             }
             case "tool": {
               return (
-                <p className="tool-status" key={item.cursor}>
+                <div className="tool-status" key={item.cursor}>
                   <span aria-hidden="true">◇</span> {item.name}
                   <span className="status-pill">{item.state}</span>
-                </p>
+                  <details>
+                    <summary>Tool details</summary>
+                    <pre>
+                      {JSON.stringify(
+                        { arguments: item.arguments, output: item.output },
+                        null,
+                        2
+                      )}
+                    </pre>
+                  </details>
+                </div>
               );
             }
             case "approval": {
-              return runs.get(item.runId)?.state === "waiting-for-approval" ? (
+              return item.approvalState === "pending" &&
+                (item.expiresAt ?? 0) > now ? (
                 <section
                   className="approval-card"
                   key={item.cursor}
@@ -619,21 +588,31 @@ const ConversationSession = ({
                   <div className="button-row">
                     <button
                       className="primary-button"
-                      disabled={busy}
+                      disabled={disabled}
                       type="button"
                       onClick={() =>
-                        act(`approvals/${encoded(item.approvalId)}`)
+                        act(
+                          `approvals/${encoded(item.approvalId)}`,
+                          item.runId,
+                          "allow"
+                        )
                       }
                     >
                       Approve request
                     </button>
                     <button
                       className="quiet-button"
-                      disabled={busy}
+                      disabled={disabled}
                       type="button"
-                      onClick={() => act(`runs/${encoded(item.runId)}/cancel`)}
+                      onClick={() =>
+                        act(
+                          `approvals/${encoded(item.approvalId)}`,
+                          item.runId,
+                          "deny"
+                        )
+                      }
                     >
-                      Cancel run
+                      Deny request
                     </button>
                   </div>
                 </section>
@@ -645,17 +624,21 @@ const ConversationSession = ({
                   <span className="status-pill">
                     {item.run.state.replaceAll("-", " ")}
                   </span>
-                  {["queued", "running"].includes(item.run.state) &&
-                  runs.get(item.run.runId)?.state === item.run.state ? (
+                  {["queued", "running", "waiting-for-approval"].includes(
+                    item.run.state
+                  ) && runs.get(item.run.runId)?.state === item.run.state ? (
                     <button
                       className="text-button"
                       type="button"
-                      disabled={busy}
+                      disabled={disabled}
                       onClick={() =>
-                        act(`runs/${encoded(item.run.runId)}/cancel`)
+                        act(
+                          `runs/${encoded(item.run.runId)}/cancel`,
+                          item.run.runId
+                        )
                       }
                     >
-                      Cancel
+                      Stop
                     </button>
                   ) : null}
                 </div>
@@ -672,7 +655,7 @@ const ConversationSession = ({
           <p>A message awaits confirmation. Retry with the same event ID.</p>
           <button
             className="quiet-button"
-            disabled={sending}
+            disabled={disabled}
             type="button"
             onClick={() => send(pending)}
           >
@@ -684,10 +667,12 @@ const ConversationSession = ({
         text={text}
         setText={setText}
         sending={sending}
-        connected={connected}
+        connected={online}
         pending={pending}
         fixture={fixture}
         send={send}
+        mode={mode}
+        setMode={setMode}
       />
       <details className="execution-history">
         <summary>

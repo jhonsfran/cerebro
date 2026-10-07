@@ -1,5 +1,7 @@
+/* oxlint-disable no-await-in-loop -- Browser observation tests wait for serial lifecycle transitions. */
 import { afterEach, beforeEach, mock, test } from "bun:test";
 import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { z } from "zod";
 
@@ -10,6 +12,7 @@ import {
 import { operationFor } from "../../apps/web/src/features/product/intent";
 import type { OperationIntent } from "../../apps/web/src/features/product/intent";
 import type { AgentDetail } from "../../apps/web/src/features/product/types";
+import { createObservationClient } from "../../packages/ag-ui/src/client.ts";
 
 mock.module("../../apps/web/src/env.public", () => ({
   ENV: { VITE_SERVER_URL: "http://fixture.invalid" },
@@ -21,7 +24,7 @@ const {
   mutate,
   request,
 } = await import("../../apps/web/src/features/product/api");
-const { conversationItems, loadChatMessages, messageText } =
+const { conversationItems, messageText, pendingChatSchema } =
   await import("../../apps/web/src/features/product/chat");
 
 class MemoryStorage {
@@ -217,129 +220,393 @@ test("unauthenticated optional budget requests still clear private state", async
   assert.equal(storage.getItem(pendingKey), null);
 });
 
-test("a new SDK chat loads an empty transcript", async () => {
-  installFetch(() => Response.json([]));
-  assert.deepEqual(
-    await loadChatMessages({ url: "http://fixture.invalid/conversation/chat" }),
-    []
-  );
-});
-
-test("SDK chat history cannot expose a stale response after access changes", async () => {
-  const history = delayedJson();
-  installFetch(() => history.response);
-  const oldHistory = loadChatMessages({
-    url: "http://fixture.invalid/conversation/chat",
-  });
-  clearProductCache();
-  await history.finish([
-    {
-      id: "assistant:run",
-      parts: [{ text: "private output", type: "text" }],
-      role: "assistant",
+const { readObservations, submitMessage, sendRunCommand } =
+  await import("../../apps/web/src/features/product/chat-connection");
+const { decodeObservation } = await import("../../packages/ag-ui/src/protocol");
+const { projectObservation, projectionMessages } =
+  await import("../../packages/ag-ui/src/projection");
+const emptyObservation = () =>
+  decodeObservation({
+    accessGeneration: currentAccessGeneration(),
+    address: {
+      agentId: "agent",
+      conversationId: "conversation",
+      organizationId: "company",
+      sessionId: "session",
     },
-  ]);
-  assert.deepEqual(await oldHistory, []);
-});
-
-test("SDK chat history clears private cache on denied access", async () => {
-  storage.setItem(pendingKey, "private pending message");
-  installFetch(() => forbidden());
-  assert.deepEqual(
-    await loadChatMessages({ url: "http://fixture.invalid/conversation/chat" }),
-    []
-  );
-  assert.equal(storage.getItem(pendingKey), null);
-});
-
-test("SDK chat parts preserve text and deduplicate execution records by domain identity", async () => {
-  installFetch(() =>
-    Response.json([
-      {
-        id: "assistant:run",
-        parts: [
-          { text: "Live ", type: "text" },
-          { text: "response", type: "text" },
-          {
-            data: {
-              cursor: "2",
-              run: { runId: "run", state: "completed" },
-              type: "run",
-            },
-            type: "data-conversation-item",
-          },
-        ],
-        role: "assistant",
+    epoch: "epoch",
+    reason: "attach",
+    schemaVersion: 1,
+    sequence: 0,
+    snapshot: {
+      address: {
+        agentId: "agent",
+        conversationId: "conversation",
+        organizationId: "company",
+        sessionId: "session",
       },
-    ])
-  );
-  const messages = await loadChatMessages({
-    url: "http://fixture.invalid/conversation/chat",
+      agentVersion: 1,
+      approvals: [],
+      executions: [],
+      outputs: [],
+      revision: 0,
+      runs: [],
+      tools: [],
+      userMessages: [],
+    },
+    type: "snapshot",
   });
-  const [first] = messages;
-  assert.ok(first);
-  assert.equal(messageText(first), "Live response");
-  assert.deepEqual(
-    conversationItems(messages, [
-      { cursor: "1", eventId: "event", text: "Hello", type: "user" },
-      {
-        cursor: "projection:2",
-        run: { runId: "run", state: "running" },
-        type: "run",
-      },
-    ]),
-    [
-      { cursor: "1", eventId: "event", text: "Hello", type: "user" },
-      { cursor: "2", run: { runId: "run", state: "completed" }, type: "run" },
-    ]
+const ndjson = (frames: unknown[]) =>
+  new Response(`${frames.map((frame) => JSON.stringify(frame)).join("\n")}\n`, {
+    headers: { "Content-Type": "application/x-ndjson" },
+  });
+const waitForObservation = async (predicate: () => boolean) => {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await delay(10);
+  }
+  assert.fail("Browser observation did not settle.");
+};
+
+test("a new authorized observation replaces the view with an empty transcript", async () => {
+  installFetch(() => ndjson([emptyObservation()]));
+  const values = await Array.fromAsync(
+    readObservations(
+      "/conversation",
+      currentAccessGeneration(),
+      new AbortController().signal
+    )
   );
+  assert.equal(values.length, 1);
+  const projection = projectObservation(null, decodeObservation(values[0]));
+  assert.deepEqual(projectionMessages(projection), []);
+  assert.deepEqual(conversationItems(projection, "/conversation"), []);
 });
 
-test("SDK replay cannot replace a settled run with an earlier state", () => {
-  assert.deepEqual(
-    conversationItems(
-      [
+const joinedBrowserObservation = () => {
+  const initial = emptyObservation();
+  if (initial.type !== "snapshot") {
+    throw new Error("Expected the empty observation snapshot.");
+  }
+  return decodeObservation({
+    ...initial,
+    snapshot: {
+      ...initial.snapshot,
+      executions: [{ executionId: "execution", runIds: ["first", "steered"] }],
+      outputs: [
         {
-          id: "assistant:run",
-          parts: [
+          answerId: "answer",
+          citations: [
             {
-              data: {
-                cursor: "session:2",
-                run: { runId: "run", state: "running" },
-                type: "run",
-              },
-              type: "data-conversation-item",
+              observedAt: 1,
+              sourceId: "source",
+              sourceUri: "https://fixture.invalid/source",
+              sourceVersion: "1",
             },
           ],
-          role: "assistant",
+          dependencies: { sourceIds: ["source"], toolIds: [] },
+          executionId: "execution",
+          runId: "first",
+          runIds: ["first", "steered"],
+          text: "One joined answer",
         },
       ],
-      [{ cursor: "10", run: { runId: "run", state: "completed" }, type: "run" }]
+      runs: [
+        { completedAt: 1, runId: "first", state: "completed" },
+        { completedAt: 1, runId: "steered", state: "completed" },
+      ],
+      userMessages: [
+        {
+          eventId: "first-input",
+          mode: "follow-up",
+          occurredAt: 1,
+          runId: "first",
+          text: "Question",
+        },
+        {
+          eventId: "steered-input",
+          mode: "steer",
+          occurredAt: 2,
+          runId: "steered",
+          text: "Steering",
+        },
+      ],
+    },
+  });
+};
+
+test("browser transcript and evidence use one answer for distinct joined inputs", () => {
+  const projection = projectObservation(null, joinedBrowserObservation());
+  const messages = projectionMessages(projection);
+  assert.deepEqual(
+    messages.map((message) => message.id),
+    ["first-input", "steered-input", "assistant:answer"]
+  );
+  assert.deepEqual(
+    messages.map((message) => messageText(message)),
+    ["Question", "Steering", "One joined answer"]
+  );
+  const items = conversationItems(projection, "/conversation");
+  assert.deepEqual(
+    items.filter((item) => item.type === "output").map((item) => item.cursor),
+    ["output:answer"]
+  );
+  assert.deepEqual(
+    items.filter((item) => item.type === "citation").map((item) => item.cursor),
+    ["citation:execution:source:1"]
+  );
+  assert.equal(items.filter((item) => item.type === "user").length, 2);
+  assert.equal(items.filter((item) => item.type === "run").length, 2);
+});
+
+test("browser canonical citations replace provisional execution citations and empty snapshots clear evidence", () => {
+  const final = joinedBrowserObservation();
+  assert.equal(final.type, "snapshot");
+  if (final.type !== "snapshot") {
+    assert.fail("Expected snapshot");
+  }
+  let projection = projectObservation(
+    null,
+    decodeObservation({
+      ...final,
+      snapshot: {
+        ...final.snapshot,
+        outputs: [],
+        runs: final.snapshot.runs.map((run) => ({ ...run, state: "running" })),
+      },
+    })
+  );
+  projection = projectObservation(
+    projection,
+    decodeObservation({
+      accessGeneration: final.accessGeneration,
+      address: final.address,
+      epoch: final.epoch,
+      revision: 0,
+      schemaVersion: 1,
+      sequence: 1,
+      type: "update",
+      update: {
+        citation: {
+          observedAt: 1,
+          sourceId: "source",
+          sourceUri: "https://fixture.invalid/source",
+          sourceVersion: "1",
+        },
+        dependencies: { sourceIds: ["source"], toolIds: [] },
+        executionId: "execution",
+        runId: "first",
+        text: "Draft",
+        type: "citation",
+      },
+    })
+  );
+  assert.equal(
+    conversationItems(projection, "/conversation").filter(
+      (item) => item.type === "citation"
+    ).length,
+    1
+  );
+  projection = projectObservation(projection, final);
+  assert.deepEqual(projection?.citations, []);
+  assert.equal(
+    conversationItems(projection, "/conversation").filter(
+      (item) => item.type === "citation"
+    ).length,
+    1
+  );
+  projection = projectObservation(projection, emptyObservation());
+  assert.deepEqual(conversationItems(projection, "/conversation"), []);
+  assert.deepEqual(projectionMessages(projection), []);
+});
+
+test("observation rejects stale access while response headers are pending", async () => {
+  const response = Promise.withResolvers<Response>();
+  installFetch(() => response.promise);
+  const iterator = readObservations(
+    "/conversation",
+    currentAccessGeneration(),
+    new AbortController().signal
+  )[Symbol.asyncIterator]();
+  const next = assert.rejects(iterator.next(), { status: 403 });
+  clearProductCache();
+  response.resolve(ndjson([emptyObservation()]));
+  await next;
+});
+
+test("observation distinguishes HTTP denial from normal EOF and clears private cache", async () => {
+  storage.setItem(pendingKey, "private pending message");
+  installFetch(() => forbidden());
+  await assert.rejects(
+    Array.fromAsync(
+      readObservations(
+        "/conversation",
+        currentAccessGeneration(),
+        new AbortController().signal
+      )
     ),
-    [{ cursor: "10", run: { runId: "run", state: "completed" }, type: "run" }]
+    { status: 403 }
+  );
+  assert.equal(storage.getItem(pendingKey), "private pending message");
+  const observer = createObservationClient({
+    address: emptyObservation().address,
+    generation: currentAccessGeneration,
+    onDenied: clearProductCache,
+    onProjection: () => {},
+    open: (generation, signal) =>
+      readObservations("/conversation", generation, signal),
+  });
+  try {
+    observer.attach();
+    await waitForObservation(() => storage.getItem(pendingKey) === null);
+    assert.equal(storage.getItem(pendingKey), null);
+    assert.equal(observer.getProjection(), null);
+  } finally {
+    observer.dispose();
+  }
+});
+
+const checkRetiredHttpObservation = async (
+  retirement: "reattach" | "dispose" | "generation"
+) => {
+  const response = Promise.withResolvers<Response>();
+  let fetches = 0;
+  let denials = 0;
+  installFetch(() => {
+    fetches += 1;
+    return fetches === 1 ? response.promise : ndjson([emptyObservation()]);
+  });
+  const observer = createObservationClient({
+    address: emptyObservation().address,
+    generation: currentAccessGeneration,
+    onDenied: () => {
+      denials += 1;
+      clearProductCache();
+    },
+    onProjection: () => {},
+    open: (generation, signal) =>
+      readObservations("/conversation", generation, signal),
+  });
+  try {
+    observer.attach();
+    await waitForObservation(() => fetches === 1);
+    assert.equal(fetches, 1);
+    if (retirement === "generation") {
+      clearProductCache();
+    } else if (retirement === "dispose") {
+      observer.dispose();
+    } else {
+      observer.detach();
+      observer.attach();
+    }
+    const generation = currentAccessGeneration();
+    storage.setItem(pendingKey, "current private message");
+    response.resolve(forbidden());
+    await delay(30);
+    assert.equal(denials, 0);
+    assert.equal(currentAccessGeneration(), generation);
+    assert.equal(storage.getItem(pendingKey), "current private message");
+    assert.equal(observer.client.getError(), undefined);
+    if (retirement === "reattach") {
+      assert.equal(fetches, 2);
+      assert.ok(observer.getProjection());
+    }
+  } finally {
+    response.resolve(forbidden());
+    observer.dispose();
+  }
+};
+for (const retirement of ["reattach", "dispose", "generation"] as const) {
+  test(`retired HTTP observation after ${retirement} cannot clear current browser caches`, () =>
+    checkRetiredHttpObservation(retirement));
+}
+
+test("the observation reader rejects truncated JSON and releases its reader", async () => {
+  installFetch(
+    () =>
+      new Response('{"unfinished":', {
+        headers: { "Content-Type": "application/x-ndjson" },
+      })
+  );
+  await assert.rejects(
+    Array.fromAsync(
+      readObservations(
+        "/conversation",
+        currentAccessGeneration(),
+        new AbortController().signal
+      )
+    ),
+    /inside a frame/u
   );
 });
 
-test("settled output replaces streamed assistant steps with the canonical answer", () => {
+test("TanStack text parts display the canonical answer", () => {
   assert.equal(
     messageText({
       id: "assistant:run",
-      parts: [
-        { text: "I will check. ", type: "text" },
-        { text: "Streamed draft answer.", type: "text" },
-        {
-          data: {
-            cursor: "session:8",
-            runId: "run",
-            text: "Verified final answer.",
-            type: "output",
-          },
-          type: "data-conversation-item",
-        },
-      ],
+      parts: [{ content: "Canonical answer", type: "text" }],
       role: "assistant",
     }),
-    "Verified final answer."
+    "Canonical answer"
+  );
+  assert.deepEqual(
+    pendingChatSchema.parse({ eventId: "event", text: "Draft" }),
+    { eventId: "event", mode: "follow-up", text: "Draft" }
+  );
+});
+
+test("browser mutations use Cerebro commands and preserve stable operation IDs and modes", async () => {
+  const requests: { url: string; body: unknown }[] = [];
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: (input: RequestInfo | URL, init: RequestInit) => {
+      requests.push({
+        body: JSON.parse(String(init.body)),
+        url: String(input),
+      });
+      return Promise.resolve(
+        String(input).endsWith("/messages")
+          ? Response.json({
+              cursor: "1",
+              receipt: {
+                acceptedEventId: "event",
+                replayed: false,
+                runId: "run",
+                sessionId: "session",
+              },
+            })
+          : Response.json({ run: { runId: "run", state: "running" } })
+      );
+    },
+    writable: true,
+  });
+  const message = pendingChatSchema.parse({
+    eventId: "event",
+    mode: "steer",
+    text: "Draft",
+  });
+  await submitMessage("/conversation", message);
+  await submitMessage("/conversation", message);
+  await sendRunCommand(
+    "/conversation",
+    "approvals/approval",
+    "approval-operation",
+    { decision: "allow", runId: "run" }
+  );
+  await sendRunCommand("/conversation", "runs/run/cancel", "stop-operation", {
+    runId: "run",
+  });
+  assert.deepEqual(requests[0], requests[1]);
+  assert.deepEqual(
+    requests.map((value) => value.body),
+    [
+      { eventId: "event", mode: "steer", operationId: "event", text: "Draft" },
+      { eventId: "event", mode: "steer", operationId: "event", text: "Draft" },
+      { decision: "allow", operationId: "approval-operation", runId: "run" },
+      { operationId: "stop-operation", runId: "run" },
+    ]
   );
 });
 
