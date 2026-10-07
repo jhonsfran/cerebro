@@ -13,15 +13,17 @@ import type {
   ToolExecution,
   ToolExecutor,
 } from "@cerebro/contracts/tools";
+import { Effect } from "effect";
 import { z } from "zod";
 
 import { readBoundedJson, redactSecrets } from "./bounded-json.ts";
 import { authorizeTool, checkToolApproval } from "./broker.ts";
 import type { ToolAuthority } from "./broker.ts";
-import { toolCallSchema } from "./capability.ts";
-import type { CapabilitySigner } from "./capability.ts";
+import { boundToolCallSchema, toolCallSchema } from "./capability.ts";
+import type { CapabilitySigner, GatewayInvocation } from "./capability.ts";
 import { mcpToolRequest, readMcpToolResult } from "./mcp-transport.ts";
 import type { RegisteredTool, ToolRegistry } from "./registry.ts";
+import { bindRegisteredTool } from "./registry.ts";
 
 export interface ConnectorCredentials {
   readonly headers: Readonly<Record<string, string>>;
@@ -32,7 +34,7 @@ export interface McpGateway {
   readonly reconcile: ToolExecutor["reconcile"];
 }
 const gatewayIntent = z.strictObject({
-  call: toolCallSchema,
+  call: z.union([toolCallSchema, boundToolCallSchema]),
   fingerprint: z.string(),
   kind: z.literal("gateway"),
 });
@@ -150,6 +152,49 @@ export const createMcpGateway = (
       value: { entry, policyVersion: allowed.value.policyVersion },
     } as const;
   };
+  const boundRegistrationMatches = async (
+    invocation: GatewayInvocation
+  ): Promise<boolean> => {
+    if (!("runId" in invocation.call) || !("runId" in invocation.capability)) {
+      return true;
+    }
+    const entry = dependencies.registry.get(invocation.call.tool.id);
+    if (!entry) {
+      return false;
+    }
+    const bound = await Effect.runPromise(bindRegisteredTool(entry));
+    return (
+      invocation.call.runId === invocation.capability.runId &&
+      invocation.call.tool.connectorFingerprint ===
+        bound.connectorFingerprint &&
+      invocation.capability.connectorFingerprint ===
+        bound.connectorFingerprint &&
+      invocation.capability.policyVersion === invocation.policyVersion
+    );
+  };
+  const beforeDispatch = async (
+    call: ToolCall,
+    options: EffectOptions,
+    policyVersion: string
+  ): Promise<PortResult<void>> => {
+    const preflight = preflightEffect(options, now());
+    if (preflight.status !== "ok") {
+      return preflight;
+    }
+    const current = await permitted(call, options);
+    if (current.status !== "ok") {
+      return current;
+    }
+    if (current.value.policyVersion !== policyVersion) {
+      return {
+        code: "unauthorized",
+        reason: "Authority changed before connector dispatch.",
+        status: "denied",
+      };
+    }
+    return preflightEffect(options, now());
+  };
+
   const validateRequest = async (request: Request) => {
     if (
       request.method !== "POST" ||
@@ -214,6 +259,16 @@ export const createMcpGateway = (
         { status: 403 }
       );
     }
+    if (!(await boundRegistrationMatches(invocation))) {
+      return Response.json(
+        {
+          code: "unauthorized",
+          reason: "The bound capability differs from the current registration.",
+          status: "denied",
+        },
+        { status: 403 }
+      );
+    }
     const allowed = await permitted(call, options);
     if (allowed.status !== "ok") {
       return Response.json(allowed);
@@ -236,7 +291,12 @@ export const createMcpGateway = (
         status: "denied",
       });
     }
-    return { call, entry: allowed.value.entry, options };
+    return {
+      call,
+      entry: allowed.value.entry,
+      options,
+      policyVersion: invocation.policyVersion,
+    };
   };
   return {
     async fetch(request) {
@@ -244,7 +304,7 @@ export const createMcpGateway = (
       if (validated instanceof Response) {
         return validated;
       }
-      const { call, options, entry } = validated;
+      const { call, options, entry, policyVersion } = validated;
       const credentials = await dependencies.credentials(
         call.organizationId,
         call.tool.connectorId
@@ -256,6 +316,14 @@ export const createMcpGateway = (
             "Connector credentials are unavailable for this organization.",
           status: "denied",
         });
+      }
+      const afterCredentials = await beforeDispatch(
+        call,
+        options,
+        policyVersion
+      );
+      if (afterCredentials.status !== "ok") {
+        return Response.json(afterCredentials);
       }
       const claimed = await dependencies.journal.claim(
         {
@@ -307,14 +375,14 @@ export const createMcpGateway = (
           operationId: options.operationId,
           tool: entry.target.method,
         };
-        const preDispatch = preflightEffect(options, now());
-        if (preDispatch.status !== "ok") {
+        const current = await beforeDispatch(call, options, policyVersion);
+        if (current.status !== "ok") {
           const saved = await dependencies.journal.complete(
             claimToken,
-            preDispatch,
+            current,
             persistedOptions(options)
           );
-          return Response.json(saved.status === "ok" ? preDispatch : saved);
+          return Response.json(saved.status === "ok" ? current : saved);
         }
         const providerHeaders = new Headers(credentials.headers);
         for (const [name, value] of Object.entries({
@@ -463,7 +531,14 @@ export const createMcpGateway = (
           result,
           persistedOptions(effect)
         );
-        return saved.status === "ok" ? result : saved;
+        if (saved.status !== "ok") {
+          return saved;
+        }
+        const current = await permitted(
+          intent.data.call,
+          persistedOptions(effect)
+        );
+        return current.status === "ok" ? result : current;
       } catch {
         return {
           operationId,
