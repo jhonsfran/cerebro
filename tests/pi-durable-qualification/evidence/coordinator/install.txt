@@ -1,0 +1,15 @@
+Scope: all 16 workspace projects
+✓ Lockfile passes supply-chain policies (verified 10s ago)
+Lockfile is up to date, resolution step is skipped
+Progress: resolved 1, reused 0, downloaded 0, added 0
+Packages: +53 -36
++++++++++++++++++++++++++++++++++++++++++++++++---------------------------------
+Progress: resolved 53, reused 53, downloaded 0, added 16, done
+
+devDependencies:
++ @ai-sdk/provider 3.0.8
++ @opentelemetry/api 1.9.1
+
+. prepare$ husky
+. prepare: Done
+Done in 1.3s using pnpm v11.9.0

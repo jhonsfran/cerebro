@@ -1,0 +1,29 @@
+Issues with peer dependencies found
+
+✕ unmet peer @ai-sdk/provider
+  Installed: 3.0.8
+  Wanted:
+    ^4.0.0:
+      agents@0.26.0
+
+✕ unmet peer @babel/core
+  Installed: 7.29.7
+  Wanted:
+    ^8.0.0:
+      @babel/plugin-proposal-decorators@8.0.2
+      @babel/helper-create-class-features-plugin@8.0.6
+      @babel/helper-replace-supers@8.0.1
+      @babel/helper-plugin-utils@8.0.1
+      @babel/plugin-syntax-decorators@8.0.1
+
+✕ unmet peer typescript
+  Installed: 7.0.2
+  Wanted:
+    ^5:
+      bun-ffi-structs@0.3.1
+
+✕ unmet peer @ai-sdk/provider
+  Installed: 3.0.8
+  Wanted:
+    ^4.0.0:
+      agents@0.26.0

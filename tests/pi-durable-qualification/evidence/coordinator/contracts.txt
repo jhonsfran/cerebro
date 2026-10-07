@@ -1,0 +1,311 @@
+$ node --test tests/contracts/contracts.test.ts tests/pi-durable-qualification/contracts.test.ts
+TAP version 13
+# Subtest: a disabled principal and an expired delegation cannot enter a session
+ok 1 - a disabled principal and an expired delegation cannot enter a session
+  ---
+  duration_ms: 0.575375
+  type: 'test'
+  ...
+# Subtest: the inbox detects duplicate delivery and rejects changed payloads
+ok 2 - the inbox detects duplicate delivery and rejects changed payloads
+  ---
+  duration_ms: 0.152667
+  type: 'test'
+  ...
+# Subtest: one operation ID cannot be reused with different arguments
+ok 3 - one operation ID cannot be reused with different arguments
+  ---
+  duration_ms: 0.062458
+  type: 'test'
+  ...
+# Subtest: a past deadline and a cancelled signal stop a new effect
+ok 4 - a past deadline and a cancelled signal stop a new effect
+  ---
+  duration_ms: 0.34325
+  type: 'test'
+  ...
+# Subtest: approval binds the exact tool, arguments, principal, policy, and expiry
+ok 5 - approval binds the exact tool, arguments, principal, policy, and expiry
+  ---
+  duration_ms: 4.525083
+  type: 'test'
+  ...
+# Subtest: approval rejects changed arguments when the stored digest is reused
+ok 6 - approval rejects changed arguments when the stored digest is reused
+  ---
+  duration_ms: 0.420333
+  type: 'test'
+  ...
+# Subtest: approval binds the delegated actor and delegation ID
+ok 7 - approval binds the delegated actor and delegation ID
+  ---
+  duration_ms: 0.215875
+  type: 'test'
+  ...
+# Subtest: a capability cannot authorize a different tool invocation
+ok 8 - a capability cannot authorize a different tool invocation
+  ---
+  duration_ms: 0.274833
+  type: 'test'
+  ...
+# Subtest: fixture policy denies an active principal without a grant
+ok 9 - fixture policy denies an active principal without a grant
+  ---
+  duration_ms: 0.5785
+  type: 'test'
+  ...
+# Subtest: fixture budget denies depleted capacity and preserves retry outcome
+ok 10 - fixture budget denies depleted capacity and preserves retry outcome
+  ---
+  duration_ms: 0.433583
+  type: 'test'
+  ...
+# Subtest: fixture session accepts one event and replays duplicate delivery
+ok 11 - fixture session accepts one event and replays duplicate delivery
+  ---
+  duration_ms: 0.257583
+  type: 'test'
+  ...
+# Subtest: fixture tool reports an unknown outcome without a second effect
+ok 12 - fixture tool reports an unknown outcome without a second effect
+  ---
+  duration_ms: 0.582917
+  type: 'test'
+  ...
+# Subtest: fixture adapters reject production mode
+ok 13 - fixture adapters reject production mode
+  ---
+  duration_ms: 0.161292
+  type: 'test'
+  ...
+# Subtest: agent repository reads a pinned version after a new version is published
+ok 14 - agent repository reads a pinned version after a new version is published
+  ---
+  duration_ms: 0.161459
+  type: 'test'
+  ...
+# Subtest: fixture approval replays and a final run cannot be cancelled
+ok 15 - fixture approval replays and a final run cannot be cancelled
+  ---
+  duration_ms: 0.249458
+  type: 'test'
+  ...
+# Subtest: fixture session inspection excludes another session's run
+ok 16 - fixture session inspection excludes another session's run
+  ---
+  duration_ms: 0.2265
+  type: 'test'
+  ...
+# Subtest: fixture tool rejects changed arguments even when the caller reuses a digest
+ok 17 - fixture tool rejects changed arguments even when the caller reuses a digest
+  ---
+  duration_ms: 1.059708
+  type: 'test'
+  ...
+# Subtest: a delegated capability binds the actor as well as the represented user
+ok 18 - a delegated capability binds the actor as well as the represented user
+  ---
+  duration_ms: 0.406708
+  type: 'test'
+  ...
+# Subtest: grant-scoped memory follows current fixture grants
+ok 19 - grant-scoped memory follows current fixture grants
+  ---
+  duration_ms: 0.372
+  type: 'test'
+  ...
+# Subtest: tool argument digests ignore object key order and reject non-JSON values
+ok 20 - tool argument digests ignore object key order and reject non-JSON values
+  ---
+  duration_ms: 0.495667
+  type: 'test'
+  ...
+# Subtest: artifact fixture checks current grants and copies stored bytes
+ok 21 - artifact fixture checks current grants and copies stored bytes
+  ---
+  duration_ms: 0.231167
+  type: 'test'
+  ...
+# Subtest: decision fixture chooses only a supplied action and replays it
+ok 22 - decision fixture chooses only a supplied action and replays it
+  ---
+  duration_ms: 0.214583
+  type: 'test'
+  ...
+# Subtest: budget fixture binds reservation requests and finalization targets
+ok 23 - budget fixture binds reservation requests and finalization targets
+  ---
+  duration_ms: 0.1715
+  type: 'test'
+  ...
+# Subtest: agent publish replay checks the definition and expected version
+ok 24 - agent publish replay checks the definition and expected version
+  ---
+  duration_ms: 0.081542
+  type: 'test'
+  ...
+# Subtest: memory fixture binds record, source, and scope on replay
+ok 25 - memory fixture binds record, source, and scope on replay
+  ---
+  duration_ms: 0.12975
+  type: 'test'
+  ...
+# Subtest: artifact delete replay binds artifact and actor
+ok 26 - artifact delete replay binds artifact and actor
+  ---
+  duration_ms: 0.143625
+  type: 'test'
+  ...
+# Subtest: session fixture rejects one operation ID across command types
+ok 27 - session fixture rejects one operation ID across command types
+  ---
+  duration_ms: 0.101625
+  type: 'test'
+  ...
+# Subtest: tool fixture replay checks the authorized call identity
+ok 28 - tool fixture replay checks the authorized call identity
+  ---
+  duration_ms: 0.9255
+  type: 'test'
+  ...
+# Subtest: session cancel replay binds the run and caller
+ok 29 - session cancel replay binds the run and caller
+  ---
+  duration_ms: 0.136
+  type: 'test'
+  ...
+# Subtest: session fixture returns typed invalid-input for non-JSON event data
+ok 30 - session fixture returns typed invalid-input for non-JSON event data
+  ---
+  duration_ms: 0.073709
+  type: 'test'
+  ...
+# Subtest: budget reservation ignores mutations to input and returned amounts
+ok 31 - budget reservation ignores mutations to input and returned amounts
+  ---
+  duration_ms: 0.075791
+  type: 'test'
+  ...
+# Subtest: agent definitions cannot change through input or read aliases
+ok 32 - agent definitions cannot change through input or read aliases
+  ---
+  duration_ms: 0.094791
+  type: 'test'
+  ...
+# Subtest: memory and artifact visibility ignore caller mutation
+ok 33 - memory and artifact visibility ignore caller mutation
+  ---
+  duration_ms: 0.141041
+  type: 'test'
+  ...
+# Subtest: session state ignores mutations to submitted and inspected objects
+ok 34 - session state ignores mutations to submitted and inspected objects
+  ---
+  duration_ms: 0.501167
+  type: 'test'
+  ...
+# Subtest: tool output and decision replay ignore returned object mutation
+ok 35 - tool output and decision replay ignore returned object mutation
+  ---
+  duration_ms: 0.984083
+  type: 'test'
+  ...
+# Subtest: Effect 4 service keys resolve through the proposed fake Layer
+ok 36 - Effect 4 service keys resolve through the proposed fake Layer
+  ---
+  duration_ms: 1.512834
+  type: 'test'
+  ...
+# Subtest: policy denial remains data and unavailable enforcement fails closed
+ok 37 - policy denial remains data and unavailable enforcement fails closed
+  ---
+  duration_ms: 0.39275
+  type: 'test'
+  ...
+# Subtest: approvals bind run, registration version and destination, arguments, identity, policy and expiry
+ok 38 - approvals bind run, registration version and destination, arguments, identity, policy and expiry
+  ---
+  duration_ms: 4.961708
+  type: 'test'
+  ...
+# Subtest: atomic dispatch claims one write and immutable completion survives duplicate callers
+ok 39 - atomic dispatch claims one write and immutable completion survives duplicate callers
+  ---
+  duration_ms: 1.083417
+  type: 'test'
+  ...
+# Subtest: changed intent conflicts, uncertain writes cannot dispatch, and revocation denies reads
+ok 40 - changed intent conflicts, uncertain writes cannot dispatch, and revocation denies reads
+  ---
+  duration_ms: 0.576292
+  type: 'test'
+  ...
+# Subtest: denied and revoked approval cause zero fake dispatches; reconcile never executes
+ok 41 - denied and revoked approval cause zero fake dispatches; reconcile never executes
+  ---
+  duration_ms: 0.525125
+  type: 'test'
+  ...
+# Subtest: denial frames validate and HTTP conversion preserves unknown-outcome meaning
+ok 42 - denial frames validate and HTTP conversion preserves unknown-outcome meaning
+  ---
+  duration_ms: 1.612125
+  type: 'test'
+  ...
+# Subtest: Effect 4 observation schemas preserve run variants, revision checks and canonical JSON
+ok 43 - Effect 4 observation schemas preserve run variants, revision checks and canonical JSON
+  ---
+  duration_ms: 1.711458
+  type: 'test'
+  ...
+# Subtest: reload snapshots retain messages, pending approvals and tool state; partial snapshots fail
+ok 44 - reload snapshots retain messages, pending approvals and tool state; partial snapshots fail
+  ---
+  duration_ms: 0.759666
+  type: 'test'
+  ...
+# Subtest: live message, approval and tool updates use the same records as canonical snapshots
+ok 45 - live message, approval and tool updates use the same records as canonical snapshots
+  ---
+  duration_ms: 0.758291
+  type: 'test'
+  ...
+# Subtest: fresh inspect and attachment restore full authorized state without submitting or reusing caller objects
+ok 46 - fresh inspect and attachment restore full authorized state without submitting or reusing caller objects
+  ---
+  duration_ms: 6.275333
+  type: 'test'
+  ...
+# Subtest: Effect scope releases resources; native cancellation withdraws active work and queued inputs
+ok 47 - Effect scope releases resources; native cancellation withdraws active work and queued inputs
+  ---
+  duration_ms: 0.659209
+  type: 'test'
+  ...
+# Subtest: handoff acknowledgment requires Pi acceptance for queued work; observer close submits nothing
+ok 48 - handoff acknowledgment requires Pi acceptance for queued work; observer close submits nothing
+  ---
+  duration_ms: 0.436917
+  type: 'test'
+  ...
+# Subtest: replacement cancels previous pending work once; replay preserves later requests and mode changes conflict
+ok 49 - replacement cancels previous pending work once; replay preserves later requests and mode changes conflict
+  ---
+  duration_ms: 0.341167
+  type: 'test'
+  ...
+# Subtest: replacement intent records mode and stop before engine acceptance; changed input or mode conflicts
+ok 50 - replacement intent records mode and stop before engine acceptance; changed input or mode conflicts
+  ---
+  duration_ms: 0.252083
+  type: 'test'
+  ...
+1..50
+# tests 50
+# suites 0
+# pass 50
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 244.604667

@@ -8,6 +8,8 @@ Recovery clarification on 2026-10-07: retain celld and, under the operator's lat
 
 ## How to read this
 
+Coordinator review on 2026-10-06: import corrected S1-0 at `46a44e199b3bf43173602ea609f40a0b6958f201` and freeze its shared contracts for implementation preparation. Dependency commit `8ee8135ffc89e0789538ec32957d12d1b552711f` applies the reviewed pins and AG-UI metadata. [The coordinator baseline record](2026-10-06-cerebro-slice-1-coordinator-baseline.md) records passing contract, type and build checks, the existing lint failures, and remaining peer and qualification work. No implementation owner starts in this preparation.
+
 One box is one unit of work. Every box names the evidence that checks it. Check a box only when its evidence exists. Record the command, result, artifact path, and tested commit.
 
 Use the operator-controlled stack workflow from Poteto Mode's `playbooks/autopilot-stack.md`, adapted to remote Codex branches and local integration. This plan overrides automatic merge, cloud wake chains, and fixed model defaults. Remote agents return reviewed branches. The local coordinator integrates them. S1-F is the single delivered application PR.
@@ -20,10 +22,10 @@ Paths in task packets are relative to the checkout root. New paths are marked as
 
 ### Arm the program
 
-- [ ] Publish the reviewed plan and the intended source baseline to a remote branch. Record its SHA. Review the existing local changes before choosing that baseline.
-- [ ] Record the current trunk SHA and run the existing baseline checks. Capture failures by file and cause. Do not classify all later failures as pre-existing.
-- [ ] Read the repository instructions at the baseline. Use `git show origin/main:AGENTS.md` if the remote default branch is `main`. Resolve the actual default branch first.
-- [ ] Run S1-0 before implementation fan-out. Record the selected package pins, host integration, contracts, and qualification artifacts.
+- [x] Publish the reviewed plan and the intended source baseline to a remote branch. Record its SHA. Review the existing local changes before choosing that baseline.
+- [x] Record the current trunk SHA and run the existing baseline checks. Capture failures by file and cause. Do not classify all later failures as pre-existing.
+- [x] Read the repository instructions at the baseline. Use `git show origin/main:AGENTS.md` if the remote default branch is `main`. Resolve the actual default branch first.
+- [x] Run S1-0 before implementation fan-out. Record the selected package pins, host integration, contracts, and qualification artifacts. Qualification remains partial under the operator amendment; failed and unrun cases retain their recorded status.
 - [ ] Use the configured Codex model for each owner. A `/goal` requires a separate explicit operator request. This plan does not create a goal or automation.
 - [ ] For work longer than 30 minutes, request a status message from each active owner at each 30-minute review. Include the branch, head SHA, last passing check, next check, and blocker.
 - [ ] On an operator hold, stop remote writes and record every branch head.

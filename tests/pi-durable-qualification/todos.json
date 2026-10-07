@@ -62,17 +62,18 @@
     {
       "id": "S1-0-T08",
       "owner": "coordinator",
-      "status": "open",
-      "issue": "Application manifests, catalogs, lockfile, root test aliases and AG-UI package metadata remain unapplied",
-      "approach": "Apply dependency-requests.json in one owner commit and run fresh application checks"
+      "status": "resolved for dependency preparation",
+      "issue": "Coordinator applied reviewed dependencies, catalogs, lockfile, test aliases, host pins and AG-UI metadata",
+      "approach": "Commit 8ee8135ffc89e0789538ec32957d12d1b552711f; 50 contract tests, 13 type tasks and 11 build tasks pass. AG-UI source/scripts and optional peer compatibility remain later-packet work.",
+      "evidence": "evidence/coordinator/review.json"
     },
     {
       "id": "S1-0-T09",
       "owner": "coordinator",
       "status": "resolved by coordinator",
       "issue": "Approved integration baseline is published on codex/cerebro-slice-1",
-      "approach": "Use baseline 1855fed13aafee0e7a3369f3e684564f35715086; snapshot correction is ready for coordinator review before contract freeze, dependency commit and workspace checks. No later packet starts here.",
-      "evidence": "git ls-remote confirmed the coordinator-published branch; evidence/snapshot-correction/report.json"
+      "approach": "Planning baseline 1855fed13aafee0e7a3369f3e684564f35715086 was published. Corrected S1-0 46a44e199b3bf43173602ea609f40a0b6958f201 is reviewed and imported; shared dependency commit 8ee8135ffc89e0789538ec32957d12d1b552711f. Use the published integration branch head for later handoffs. No later owner starts here.",
+      "evidence": "evidence/snapshot-correction/report.json; evidence/coordinator/review.json"
     },
     {
       "id": "S1-0-T10",
@@ -89,6 +90,14 @@
       "issue": "Earlier 45-second functional test ended before celld default 60-second cold-alarm discovery scan",
       "approach": "Use a 90-second no-HTTP functional window with the default host scan; require an idle snapshot and saved answers before observation, then verify both operations settled. Retain official PiHarness startup/resume and Lifecycle alarms. Production storage and separate idle eviction remain T04/T03; the S1-F 60-second performance budget remains NOT_RUN.",
       "evidence": "evidence/recovery-investigation/summary.json: separate executed PASS on 0.6.0 and 0.6.1 automatic recovery and 0.6.1 request-triggered resume. Current fixture results in evidence/qualification.json; native-recovery-45s/native-recovery-20s preserve their original FAIL."
+    },
+    {
+      "id": "S1-0-T12",
+      "owner": "coordinator/UI packet/S1-F",
+      "status": "open",
+      "issue": "Activate AG-UI source checks and resolve or remove optional peer incompatibilities",
+      "approach": "S1-C adds source before the coordinator activates AG-UI build/check-types scripts. Later checks must cover Agents provider-4 features or remove that optional path, Babel 8 plugins with core 7, and bun-ffi-structs TypeScript-5 expectations. Remove the transitional root @ai-sdk/provider pin in S1-F with the remaining AI SDK graph. Current builds and types pass; these optional paths are not qualified.",
+      "evidence": "evidence/coordinator/review.json; evidence/coordinator/peers.txt"
     }
   ],
   "recoveryDecision": {

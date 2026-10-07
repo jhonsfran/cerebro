@@ -1,0 +1,78 @@
+
+   • turbo 2.11.4
+   • Packages in scope: @cerebro/ag-ui, @cerebro/api, @cerebro/auth, @cerebro/authorization, @cerebro/channels, @cerebro/config, @cerebro/contracts, @cerebro/db, @cerebro/memory, @cerebro/policy, @cerebro/runtime, @cerebro/tools, @cerebro/ui, server, web
+   • Running check-types in 15 packages
+   • Remote caching disabled
+
+@cerebro/contracts:check-types: cache bypass, force executing 83d9698fc5ece051
+@cerebro/ui:check-types: cache bypass, force executing 48a979abf3ff48df
+@cerebro/ui:check-types: $ tsc --noEmit
+@cerebro/contracts:check-types: $ tsc -b
+@cerebro/tools:check-types: cache bypass, force executing c32c2fcb1d1bac38
+@cerebro/db:check-types: cache bypass, force executing 6a1ac859d5804b64
+@cerebro/db:check-types: $ tsc -b
+@cerebro/tools:check-types: $ tsc -b
+@cerebro/policy:check-types: cache bypass, force executing e95874835d731556
+@cerebro/auth:check-types: cache bypass, force executing 348131645f8378fd
+@cerebro/authorization:check-types: cache bypass, force executing 2b55dd9aaca5f7ad
+@cerebro/auth:check-types: $ tsc -b
+@cerebro/authorization:check-types: $ tsc -b
+@cerebro/policy:check-types: $ tsc --noEmit
+@cerebro/memory:check-types: cache bypass, force executing 17bdf96365f0edfb
+@cerebro/channels:check-types: cache bypass, force executing b13887e72f600990
+@cerebro/memory:check-types: $ tsc -b
+@cerebro/channels:check-types: $ tsc -b
+@cerebro/runtime:check-types: cache bypass, force executing 86f270f2f78ea30d
+@cerebro/runtime:check-types: $ tsc --noEmit -p tsconfig.json
+@cerebro/api:check-types: cache bypass, force executing 32746dd8f99d1bc6
+@cerebro/api:check-types: $ tsc -b
+web:check-types: cache bypass, force executing d010ead8f51a25d4
+server:check-types: cache bypass, force executing d7dc3e0672a93f57
+web:check-types: $ tsc -b ../../packages/api && vite build && tsc --noEmit
+server:check-types: $ tsc -b ../../packages/api && tsc --noEmit
+web:check-types: vite v8.3.1 building client environment for production...
+web:check-types: transforming...
+web:check-types: ✓ 2609 modules transformed.
+web:check-types: rendering chunks...
+web:check-types: computing gzip size...
+web:check-types: dist/client/assets/index-D9s_vNdP.css        86.67 kB │ gzip:  15.21 kB
+web:check-types: dist/client/assets/route-D-WCNj1N.js          0.15 kB │ gzip:   0.14 kB
+web:check-types: dist/client/assets/routes-Z6oxTK_T.js         1.31 kB │ gzip:   0.71 kB
+web:check-types: dist/client/assets/useSelector-l9-UeEiu.js   10.68 kB │ gzip:   3.98 kB
+web:check-types: dist/client/assets/env.public-CjD840ow.js    37.48 kB │ gzip:  10.64 kB
+web:check-types: dist/client/assets/login-BnB3l9Hf.js         69.01 kB │ gzip:  17.06 kB
+web:check-types: dist/client/assets/schemas-IGXj7Dwt.js       96.92 kB │ gzip:  27.19 kB
+web:check-types: dist/client/assets/dashboard-DxdjPzGA.js    302.09 kB │ gzip:  77.54 kB
+web:check-types: dist/client/assets/index-D2GGUlO-.js        576.56 kB │ gzip: 191.38 kB
+web:check-types: 
+web:check-types: [plugin builtin:vite-reporter] 
+web:check-types: (!) Some chunks are larger than 500 kB after minification. Consider:
+web:check-types: - Using dynamic import() to code-split the application
+web:check-types: - Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+web:check-types: - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+web:check-types: ✓ built in 348ms
+web:check-types: vite v8.3.1 building ssr environment for production...
+web:check-types: transforming...
+web:check-types: ✓ 440 modules transformed.
+web:check-types: rendering chunks...
+web:check-types: computing gzip size...
+web:check-types: dist/server/assets/env.public-CnkmaeDd.js                    0.11 kB │ gzip:   0.12 kB
+web:check-types: dist/server/assets/route-04_Rhovd.js                         0.26 kB │ gzip:   0.20 kB
+web:check-types: dist/server/assets/start-D8hUYJWo.js                         0.29 kB │ gzip:   0.22 kB
+web:check-types: dist/server/assets/empty-plugin-adapters-DSgy9uwE.js         0.31 kB │ gzip:   0.21 kB
+web:check-types: dist/server/assets/_tanstack-start-manifest_v-Z11FyB1z.js    1.21 kB │ gzip:   0.47 kB
+web:check-types: dist/server/assets/routes-DfJfweTP.js                        1.71 kB │ gzip:   0.82 kB
+web:check-types: dist/server/assets/login-BLP2Fy9K.js                        21.99 kB │ gzip:   5.01 kB
+web:check-types: dist/server/assets/dashboard-BvzqwECL.js                    56.91 kB │ gzip:  12.71 kB
+web:check-types: dist/server/server.js                                      238.80 kB │ gzip:  55.39 kB
+web:check-types: dist/server/assets/router-B6Eg5z4n.js                      508.93 kB │ gzip: 122.88 kB
+web:check-types: 
+web:check-types: ✓ built in 196ms
+
+ Tasks:    13 successful, 13 total
+Cached:    0 cached, 13 total
+  Time:    6.01s 
+
+ WARNING  no output files found for task @cerebro/policy#check-types. Please check your `outputs` key in `turbo.json`
+ WARNING  no output files found for task @cerebro/runtime#check-types. Please check your `outputs` key in `turbo.json`
+ WARNING  no output files found for task @cerebro/ui#check-types. Please check your `outputs` key in `turbo.json`
