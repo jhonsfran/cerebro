@@ -531,6 +531,11 @@ try {
     "logs",
     wrapper.name,
   ]);
+  // Read a snapshot before waiting: wait() could otherwise finish work after
+  // HTTP resumes and falsely look like alarm-only completion.
+  const recoveredSnapshot = await probe("restart", "/snapshot");
+  assert.equal(recoveredSnapshot.run, undefined);
+  assert.deepEqual(recoveredSnapshot.inbox, []);
   const recoveredA = await probe("restart", "/wait?requestId=run-A");
   const recoveredB = await probe("restart", "/wait?requestId=run-B");
   const remaining = await probe("restart", "/pending");
@@ -543,11 +548,13 @@ try {
     before: restartBefore,
     counters: recoveredRoot.counters,
     recovered,
+    snapshot: recoveredSnapshot,
     wakeBefore: wakeBefore.alarm,
   });
   record("alarm-only completion", "PASS", {
     mode: "celld dev local storage; no HTTP request for twenty seconds after process restart",
     recovered,
+    snapshot: recoveredSnapshot,
     timeline: "wrapper-alarm-only-timeline.txt",
   });
   await writeFile(
