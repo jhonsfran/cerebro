@@ -45,9 +45,18 @@ import {
   Type,
   fauxProvider,
   fauxAssistantMessage,
+  fauxToolCall,
   createAssistantMessageEventStream,
   normalizeContext,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
+import { createModels } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/models.js";
+import {
+  Harness,
+  LiveDoc,
+  MemoryStorage,
+  createRegistry,
+  watchEvents,
+} from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import type {
   AgentEvent,
   AgentEventStream,
@@ -1366,6 +1375,298 @@ test("Pi observer binds delayed text to native run inputs and detaches without S
     await fixture.close();
   }
 });
+
+const nativeSteeringFixture = async () => {
+  const context = piContext();
+  const firstStarted = Promise.withResolvers<boolean>();
+  const secondStarted = Promise.withResolvers<boolean>();
+  const firstGate = Promise.withResolvers<boolean>();
+  const secondGate = Promise.withResolvers<boolean>();
+  const provider = fauxProvider({ tokensPerSecond: 1_000_000 });
+  let modelCalls = 0;
+  let toolCalls = 0;
+  let steeredInputPresent = false;
+  provider.setResponses([
+    async (_transcript, callOptions) => {
+      modelCalls += 1;
+      firstStarted.resolve(true);
+      callOptions?.signal?.addEventListener(
+        "abort",
+        () => firstGate.resolve(true),
+        { once: true }
+      );
+      await firstGate.promise;
+      return fauxAssistantMessage(
+        fauxToolCall("mapping_round", {}, { id: "mapping-tool-call" }),
+        { stopReason: "toolUse" }
+      );
+    },
+    async (transcript, callOptions) => {
+      modelCalls += 1;
+      steeredInputPresent = transcript.messages.some(
+        (message) =>
+          message.role === "user" && message.content === "steered instructions"
+      );
+      secondStarted.resolve(true);
+      callOptions?.signal?.addEventListener(
+        "abort",
+        () => secondGate.resolve(true),
+        { once: true }
+      );
+      await secondGate.promise;
+      return fauxAssistantMessage("one native answer");
+    },
+  ]);
+  const registry = createRegistry();
+  registry.install({
+    name: "native-mapping-fixture",
+    tools: [
+      {
+        description: "Harmless gated native steering mapping probe",
+        execute: () => {
+          toolCalls += 1;
+          return Promise.resolve({
+            content: [{ text: "mapping tool result", type: "text" as const }],
+          });
+        },
+        name: "mapping_round",
+        parameters: Type.Object({}),
+        replay: "safe",
+      },
+    ],
+  });
+  const models = createModels();
+  models.setProvider(provider.provider);
+  const storage = new MemoryStorage();
+  const pi = await Harness.open(
+    storage,
+    { models, registry, settings: { followUpMode: "one-at-a-time" } },
+    context
+  );
+  const model = provider.getModel();
+  const root = await pi.root(context, {
+    agent: { model: { modelId: model.id, provider: model.provider } },
+  });
+  return {
+    close: async () => {
+      firstGate.resolve(true);
+      secondGate.resolve(true);
+      await pi.close(context);
+    },
+    context,
+    firstGate,
+    firstStarted,
+    modelCalls: () => modelCalls,
+    pi,
+    root,
+    secondGate,
+    secondStarted,
+    steeredInputPresent: () => steeredInputPresent,
+    storage,
+    toolCalls: () => toolCalls,
+  };
+};
+
+test(
+  "native Pi identity evidence: steer transitions queued to placed and shares one answer EntryId",
+  { timeout: 5000 },
+  async (context) => {
+    const fixture = await nativeSteeringFixture();
+    const { pi, root, storage } = fixture;
+    let events: AgentEvent[] = [];
+    const stream = await watchEvents(pi, root.id, fixture.context);
+    stream.start((batch) => {
+      events = [...events, ...batch];
+      return Promise.resolve();
+    });
+    try {
+      const first = await root.submit(
+        { content: "initial instructions", requestId: "A", type: "input" },
+        fixture.context
+      );
+      await fixture.firstStarted.promise;
+      const initial = await pi.snapshot(LiveDoc, root.id, fixture.context);
+      assert.ok(initial?.run);
+      const firstPlaced = await first.status(fixture.context);
+      assert.equal(firstPlaced.status, "placed");
+      const steered = await root.submit(
+        {
+          content: "steered instructions",
+          requestId: "B",
+          type: "input",
+          whenBusy: "steer",
+        },
+        fixture.context
+      );
+      const queued = await steered.status(fixture.context);
+      assert.equal(queued.status, "queued");
+      assert.equal(queued.entry, undefined);
+      assert.equal(queued.answer, undefined);
+      fixture.firstGate.resolve(true);
+      await fixture.secondStarted.promise;
+      const joined = await pi.snapshot(LiveDoc, root.id, fixture.context);
+      assert.ok(joined?.run);
+      assert.deepEqual(joined.run.inputs, [first.id, steered.id]);
+      assert.notEqual(joined.run.taskId, initial.run.taskId);
+      const steeredPlaced = await steered.status(fixture.context);
+      assert.equal(steeredPlaced.status, "placed");
+      assert.equal(steeredPlaced.id, queued.id);
+      assert.ok(
+        firstPlaced.type === "input" && firstPlaced.status === "placed"
+      );
+      assert.ok(
+        steeredPlaced.type === "input" && steeredPlaced.status === "placed"
+      );
+      assert.notEqual(firstPlaced.entry, steeredPlaced.entry);
+      fixture.secondGate.resolve(true);
+      const [doneA, doneB] = await Promise.all([
+        first.wait(fixture.context),
+        steered.wait(fixture.context),
+      ]);
+      assert.ok(doneA.type === "input" && doneA.status === "done");
+      assert.ok(doneB.type === "input" && doneB.status === "done");
+      assert.equal(doneA.answer, doneB.answer);
+      assert.equal(doneA.id, first.id);
+      assert.equal(doneB.id, steered.id);
+      assert.equal(doneA.entry, firstPlaced.entry);
+      assert.equal(doneB.entry, steeredPlaced.entry);
+      const answer = await storage.entry(
+        root.id,
+        doneA.answer,
+        fixture.context
+      );
+      assert.equal(answer?.entry.model?.[0]?.role, "assistant");
+      await root.waitForIdle(fixture.context);
+      const reconnect = await watchEvents(pi, root.id, fixture.context);
+      await reconnect.stop();
+      const readBack = await storage.submissionByRequest(
+        root.id,
+        "B",
+        fixture.context
+      );
+      assert.deepEqual(readBack, doneB);
+      assert.equal(fixture.modelCalls(), 2);
+      assert.equal(fixture.toolCalls(), 1);
+      assert.equal(fixture.steeredInputPresent(), true);
+      assert.equal(
+        events.filter((nativeEvent) => nativeEvent.type === "run_start").length,
+        1
+      );
+      assert.ok(
+        events.some(
+          (nativeEvent) =>
+            nativeEvent.type === "submission" &&
+            nativeEvent.record.id === steered.id &&
+            nativeEvent.record.status === "placed"
+        )
+      );
+      context.diagnostic(
+        JSON.stringify({
+          done: [doneA, doneB],
+          evidence:
+            "native Pi public API mapping only; Cerebro steering remains guarded",
+          initialRun: initial.run,
+          joinedRun: joined.run,
+          modelCalls: fixture.modelCalls(),
+          nativeRunStarts: events.filter(
+            (nativeEvent) => nativeEvent.type === "run_start"
+          ).length,
+          placed: [firstPlaced, steeredPlaced],
+          queuedB: queued,
+          reconnectModelCalls: fixture.modelCalls(),
+          toolCalls: fixture.toolCalls(),
+        })
+      );
+    } finally {
+      await stream.stop();
+      await fixture.close();
+    }
+  }
+);
+
+test(
+  "native Pi Stop identity evidence: placed steer stops every joined request and queued follow-up",
+  { timeout: 5000 },
+  async (context) => {
+    const fixture = await nativeSteeringFixture();
+    const { pi, root } = fixture;
+    try {
+      const first = await root.submit(
+        { content: "initial instructions", requestId: "A", type: "input" },
+        fixture.context
+      );
+      await fixture.firstStarted.promise;
+      const steered = await root.submit(
+        {
+          content: "steered instructions",
+          requestId: "B",
+          type: "input",
+          whenBusy: "steer",
+        },
+        fixture.context
+      );
+      fixture.firstGate.resolve(true);
+      await fixture.secondStarted.promise;
+      const joined = await pi.snapshot(LiveDoc, root.id, fixture.context);
+      const queued = await root.submit(
+        {
+          content: "queued follow-up",
+          requestId: "C",
+          type: "input",
+          whenBusy: "followUp",
+        },
+        fixture.context
+      );
+      assert.equal((await queued.status(fixture.context)).status, "queued");
+      // This is the published PiSession.abort(operationId) sequence for a placed input.
+      const withdrawal = await pi.abortSubmission(
+        steered.id,
+        fixture.context,
+        root.id
+      );
+      assert.equal(withdrawal, "already_placed");
+      await root.abort(fixture.context);
+      const stopped = await Promise.all([
+        first.wait(fixture.context),
+        steered.wait(fixture.context),
+        queued.wait(fixture.context),
+      ]);
+      for (const record of stopped) {
+        assert.equal(record.status, "unanswered");
+        assert.equal(record.reason, "aborted");
+        assert.equal(record.answer, undefined);
+      }
+      assert.deepEqual(
+        stopped.map((record) => record.requestId),
+        ["A", "B", "C"]
+      );
+      assert.deepEqual(
+        stopped.map((record) => record.id),
+        [first.id, steered.id, queued.id]
+      );
+      assert.equal(
+        (await pi.snapshot(LiveDoc, root.id, fixture.context))?.run,
+        undefined
+      );
+      assert.equal(fixture.modelCalls(), 2);
+      assert.equal(fixture.toolCalls(), 1);
+      assert.equal(fixture.steeredInputPresent(), true);
+      context.diagnostic(
+        JSON.stringify({
+          affected: stopped,
+          evidence:
+            "native Pi public API Stop mapping only; Cerebro steering remains guarded",
+          joinedRun: joined?.run,
+          modelCalls: fixture.modelCalls(),
+          stopTarget: steered.id,
+          toolCalls: fixture.toolCalls(),
+        })
+      );
+    } finally {
+      await fixture.close();
+    }
+  }
+);
 
 test("contract-fake admission adapter timing is measured separately from host performance", async (context) => {
   const fixture = await setup();
