@@ -247,6 +247,7 @@ const emptyObservation = () =>
       },
       agentVersion: 1,
       approvals: [],
+      executions: [],
       outputs: [],
       revision: 0,
       runs: [],
@@ -282,6 +283,143 @@ test("a new authorized observation replaces the view with an empty transcript", 
   const projection = projectObservation(null, decodeObservation(values[0]));
   assert.deepEqual(projectionMessages(projection), []);
   assert.deepEqual(conversationItems(projection, "/conversation"), []);
+});
+
+const joinedBrowserObservation = () => {
+  const initial = emptyObservation();
+  if (initial.type !== "snapshot") {
+    throw new Error("Expected the empty observation snapshot.");
+  }
+  return decodeObservation({
+    ...initial,
+    snapshot: {
+      ...initial.snapshot,
+      executions: [{ executionId: "execution", runIds: ["first", "steered"] }],
+      outputs: [
+        {
+          answerId: "answer",
+          citations: [
+            {
+              observedAt: 1,
+              sourceId: "source",
+              sourceUri: "https://fixture.invalid/source",
+              sourceVersion: "1",
+            },
+          ],
+          dependencies: { sourceIds: ["source"], toolIds: [] },
+          executionId: "execution",
+          runId: "first",
+          runIds: ["first", "steered"],
+          text: "One joined answer",
+        },
+      ],
+      runs: [
+        { completedAt: 1, runId: "first", state: "completed" },
+        { completedAt: 1, runId: "steered", state: "completed" },
+      ],
+      userMessages: [
+        {
+          eventId: "first-input",
+          mode: "follow-up",
+          occurredAt: 1,
+          runId: "first",
+          text: "Question",
+        },
+        {
+          eventId: "steered-input",
+          mode: "steer",
+          occurredAt: 2,
+          runId: "steered",
+          text: "Steering",
+        },
+      ],
+    },
+  });
+};
+
+test("browser transcript and evidence use one answer for distinct joined inputs", () => {
+  const projection = projectObservation(null, joinedBrowserObservation());
+  const messages = projectionMessages(projection);
+  assert.deepEqual(
+    messages.map((message) => message.id),
+    ["first-input", "steered-input", "assistant:answer"]
+  );
+  assert.deepEqual(
+    messages.map((message) => messageText(message)),
+    ["Question", "Steering", "One joined answer"]
+  );
+  const items = conversationItems(projection, "/conversation");
+  assert.deepEqual(
+    items.filter((item) => item.type === "output").map((item) => item.cursor),
+    ["output:answer"]
+  );
+  assert.deepEqual(
+    items.filter((item) => item.type === "citation").map((item) => item.cursor),
+    ["citation:execution:source:1"]
+  );
+  assert.equal(items.filter((item) => item.type === "user").length, 2);
+  assert.equal(items.filter((item) => item.type === "run").length, 2);
+});
+
+test("browser canonical citations replace provisional execution citations and empty snapshots clear evidence", () => {
+  const final = joinedBrowserObservation();
+  assert.equal(final.type, "snapshot");
+  if (final.type !== "snapshot") {
+    assert.fail("Expected snapshot");
+  }
+  let projection = projectObservation(
+    null,
+    decodeObservation({
+      ...final,
+      snapshot: {
+        ...final.snapshot,
+        outputs: [],
+        runs: final.snapshot.runs.map((run) => ({ ...run, state: "running" })),
+      },
+    })
+  );
+  projection = projectObservation(
+    projection,
+    decodeObservation({
+      accessGeneration: final.accessGeneration,
+      address: final.address,
+      epoch: final.epoch,
+      revision: 0,
+      schemaVersion: 1,
+      sequence: 1,
+      type: "update",
+      update: {
+        citation: {
+          observedAt: 1,
+          sourceId: "source",
+          sourceUri: "https://fixture.invalid/source",
+          sourceVersion: "1",
+        },
+        dependencies: { sourceIds: ["source"], toolIds: [] },
+        executionId: "execution",
+        runId: "first",
+        text: "Draft",
+        type: "citation",
+      },
+    })
+  );
+  assert.equal(
+    conversationItems(projection, "/conversation").filter(
+      (item) => item.type === "citation"
+    ).length,
+    1
+  );
+  projection = projectObservation(projection, final);
+  assert.deepEqual(projection?.citations, []);
+  assert.equal(
+    conversationItems(projection, "/conversation").filter(
+      (item) => item.type === "citation"
+    ).length,
+    1
+  );
+  projection = projectObservation(projection, emptyObservation());
+  assert.deepEqual(conversationItems(projection, "/conversation"), []);
+  assert.deepEqual(projectionMessages(projection), []);
 });
 
 test("observation rejects stale access while response headers are pending", async () => {

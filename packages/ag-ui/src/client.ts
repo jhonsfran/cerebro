@@ -9,7 +9,6 @@ import {
   createObservationGuard,
   createProtocolProjection,
   decodeObservation,
-  observationEvent,
   ResnapshotRequiredError,
 } from "./protocol.ts";
 
@@ -104,7 +103,9 @@ export const createObservationClient = (options: ObservationClientOptions) => {
       current(lifecycle) &&
       (frame.type === "snapshot" ||
         (frame.type === "update" &&
-          ["canonical-output", "user-message"].includes(frame.update.type)))
+          ["canonical-output", "execution", "user-message"].includes(
+            frame.update.type
+          )))
     ) {
       client?.setMessagesManually(projectionMessages(projection));
     }
@@ -265,14 +266,22 @@ export const createObservationClient = (options: ObservationClientOptions) => {
           return { activeRun: null, interrupts: null, messages: [] };
         }
         initialFrame = snapshotFrame;
-        const run = projection?.snapshot.runs.find(
-          (value) =>
-            value.state === "running" || value.state === "waiting-for-approval"
+        const execution = projection?.snapshot.executions.find((value) =>
+          value.runIds.some((runId) =>
+            projection?.snapshot.runs.some(
+              (run) =>
+                run.runId === runId &&
+                (run.state === "running" ||
+                  run.state === "waiting-for-approval")
+            )
+          )
         );
         return {
           // An idle observation cursor keeps access revalidation and new runs observable.
           activeRun: {
-            runId: run?.runId ?? `observation:${options.address.sessionId}`,
+            runId:
+              execution?.executionId ??
+              `observation:${options.address.sessionId}`,
           },
           interrupts: null,
           messages: projectionMessages(projection),
@@ -298,7 +307,7 @@ export const createObservationClient = (options: ObservationClientOptions) => {
           const firstFrame = initialFrame;
           initialFrame = undefined;
           if (firstFrame) {
-            yield observationEvent(firstFrame);
+            yield* events(firstFrame, lifecycle);
           }
           while (keepOpen()) {
             try {

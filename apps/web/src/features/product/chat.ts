@@ -67,10 +67,11 @@ export const conversationItems = (
   }
   const citations = new Map<string, ConversationViewItem>();
   const addCitation = (
-    runId: string,
+    executionId: (typeof snapshot.executions)[number]["executionId"],
+    runId: (typeof snapshot.outputs)[number]["runId"],
     citation: (typeof snapshot.outputs)[number]["citations"][number]
   ) => {
-    const cursor = `citation:${runId}:${citation.sourceId}:${citation.sourceVersion}`;
+    const cursor = `citation:${executionId}:${citation.sourceId}:${citation.sourceVersion}`;
     citations.set(cursor, {
       cursor,
       href: `${path}/sources/${encodeURIComponent(citation.sourceId)}`,
@@ -83,19 +84,17 @@ export const conversationItems = (
   };
   for (const output of snapshot.outputs) {
     items.push({
-      cursor: `output:${output.runId}`,
+      cursor: `output:${output.answerId}`,
       runId: output.runId,
       text: output.text,
       type: "output",
     });
     for (const citation of output.citations) {
-      addCitation(output.runId, citation);
+      addCitation(output.executionId, output.runId, citation);
     }
   }
   for (const update of projection.citations) {
-    if (update.type === "citation") {
-      addCitation(update.runId, update.citation);
-    }
+    addCitation(update.executionId, update.runId, update.citation);
   }
   return [...items, ...citations.values()];
 };

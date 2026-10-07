@@ -1,9 +1,18 @@
 import { EventType } from "@ag-ui/core";
 import type { ContractFailure } from "@cerebro/contracts/failures";
+import type { ExecutionId } from "@cerebro/contracts/identity";
 import { Observation } from "@cerebro/contracts/session-service";
+import type {
+  DomainSnapshot,
+  DomainUpdate,
+  ExecutionState,
+} from "@cerebro/contracts/session-service";
 import type { StreamChunk } from "@tanstack/ai";
 import { Schema, Stream } from "effect";
 import type { Scope } from "effect";
+
+import { projectObservation } from "./projection.ts";
+import type { ConversationProjection } from "./projection.ts";
 
 export const decodeObservation = Schema.decodeUnknownSync(Observation);
 
@@ -128,32 +137,165 @@ export const decodeCustomObservation = (event: {
 };
 
 export const createProtocolProjection = () => {
-  const textStarted = new Set<string>();
+  let projection: ConversationProjection | null = null;
+  const textStarted = new Set<ExecutionId>();
   const toolsStarted = new Set<string>();
-  const canonicalRuns = new Set<string>();
+  const startedExecutions = new Set<ExecutionId>();
+  const settledExecutions = new Set<ExecutionId>();
+  const resetSnapshot = (snapshot: DomainSnapshot) => {
+    textStarted.clear();
+    toolsStarted.clear();
+    startedExecutions.clear();
+    settledExecutions.clear();
+    for (const execution of snapshot.executions) {
+      const runs = execution.runIds.map((runId) =>
+        snapshot.runs.find((run) => run.runId === runId)
+      );
+      if (
+        runs.some(
+          (run) =>
+            run?.state === "running" || run?.state === "waiting-for-approval"
+        )
+      ) {
+        startedExecutions.add(execution.executionId);
+      }
+      if (
+        runs.every(
+          (run) =>
+            run &&
+            ["completed", "cancelled", "failed", "unknown-outcome"].includes(
+              run.state
+            )
+        )
+      ) {
+        settledExecutions.add(execution.executionId);
+      }
+    }
+  };
+  const lifecycleEvents = (execution: ExecutionState): StreamChunk[] => {
+    if (!projection || settledExecutions.has(execution.executionId)) {
+      return [];
+    }
+    const { snapshot } = projection;
+    const runs = execution.runIds.map((runId) =>
+      snapshot.runs.find((run) => run.runId === runId)
+    );
+    const failure = runs.find(
+      (run) => run?.state === "failed" || run?.state === "unknown-outcome"
+    );
+    if (failure) {
+      settledExecutions.add(execution.executionId);
+      return [
+        {
+          message:
+            failure.state === "unknown-outcome"
+              ? "The remote outcome is unknown. Reconciliation is required."
+              : "Execution failed.",
+          type: EventType.RUN_ERROR,
+        },
+      ];
+    }
+    if (
+      runs.every((run) => run?.state === "completed") &&
+      snapshot.outputs.some(
+        (output) => output.executionId === execution.executionId
+      )
+    ) {
+      settledExecutions.add(execution.executionId);
+      return [
+        {
+          runId: execution.executionId,
+          threadId: snapshot.address.conversationId,
+          type: EventType.RUN_FINISHED,
+        },
+      ];
+    }
+    if (
+      runs.every((run) => run && ["completed", "cancelled"].includes(run.state))
+    ) {
+      settledExecutions.add(execution.executionId);
+      return [];
+    }
+    if (
+      runs.some((run) => run?.state === "running") &&
+      !startedExecutions.has(execution.executionId)
+    ) {
+      startedExecutions.add(execution.executionId);
+      return [
+        {
+          runId: execution.executionId,
+          threadId: snapshot.address.conversationId,
+          type: EventType.RUN_STARTED,
+        },
+      ];
+    }
+    return [];
+  };
+  const toolEvents = (
+    update: Extract<DomainUpdate, { type: "tool" }>
+  ): StreamChunk[] => {
+    const events: StreamChunk[] = [];
+    const toolCallId = update.operationId;
+    const execution = projection?.snapshot.executions.find((value) =>
+      value.runIds.includes(update.runId)
+    );
+    const output = projection?.snapshot.outputs.find(
+      (value) => value.executionId === execution?.executionId
+    );
+    if (!toolsStarted.has(toolCallId)) {
+      toolsStarted.add(toolCallId);
+      events.push(
+        {
+          ...(execution
+            ? {
+                parentMessageId: `assistant:${output?.answerId ?? execution.executionId}`,
+              }
+            : {}),
+          toolCallId,
+          toolCallName: update.toolId,
+          type: EventType.TOOL_CALL_START,
+        },
+        {
+          delta: JSON.stringify(update.arguments),
+          toolCallId,
+          type: EventType.TOOL_CALL_ARGS,
+        },
+        { toolCallId, type: EventType.TOOL_CALL_END }
+      );
+    }
+    if (update.state === "succeeded" || update.state === "failed") {
+      events.push({
+        content: JSON.stringify(update.output),
+        messageId: `tool:${toolCallId}`,
+        role: "tool",
+        toolCallId,
+        type: EventType.TOOL_CALL_RESULT,
+      });
+    }
+    return events;
+  };
   return (frame: Observation): StreamChunk[] => {
+    projection = projectObservation(projection, frame);
     const events: StreamChunk[] = [observationEvent(frame)];
     if (frame.type === "snapshot") {
-      textStarted.clear();
-      toolsStarted.clear();
-      canonicalRuns.clear();
-      for (const output of frame.snapshot.outputs) {
-        canonicalRuns.add(output.runId);
-      }
+      resetSnapshot(frame.snapshot);
       return events;
     }
     if (frame.type !== "update") {
       return events;
     }
     const { update } = frame;
-    const threadId = frame.address.conversationId;
     if (update.type === "provisional-text") {
-      if (canonicalRuns.has(update.runId)) {
+      if (
+        projection?.snapshot.outputs.some(
+          (output) => output.executionId === update.executionId
+        )
+      ) {
         return events;
       }
-      const messageId = `assistant:${update.runId}`;
-      if (!textStarted.has(messageId)) {
-        textStarted.add(messageId);
+      const messageId = `assistant:${update.executionId}`;
+      if (!textStarted.has(update.executionId)) {
+        textStarted.add(update.executionId);
         events.push({
           messageId,
           role: "assistant",
@@ -166,64 +308,24 @@ export const createProtocolProjection = () => {
         type: EventType.TEXT_MESSAGE_CONTENT,
       });
     } else if (update.type === "canonical-output") {
-      canonicalRuns.add(update.output.runId);
-      if (textStarted.delete(`assistant:${update.output.runId}`)) {
+      if (textStarted.delete(update.output.executionId)) {
         events.push({
-          messageId: `assistant:${update.output.runId}`,
+          messageId: `assistant:${update.output.executionId}`,
           type: EventType.TEXT_MESSAGE_END,
         });
       }
-    } else if (update.type === "run") {
-      const { run } = update;
-      if (run.state === "running") {
-        events.push({
-          runId: run.runId,
-          threadId,
-          type: EventType.RUN_STARTED,
-        });
-      } else if (run.state === "completed") {
-        events.push({
-          runId: run.runId,
-          threadId,
-          type: EventType.RUN_FINISHED,
-        });
-      } else if (["failed", "unknown-outcome"].includes(run.state)) {
-        events.push({
-          message:
-            run.state === "unknown-outcome"
-              ? "The remote outcome is unknown. Reconciliation is required."
-              : "Execution failed.",
-          type: EventType.RUN_ERROR,
-        });
+    } else if (update.type === "run" || update.type === "execution") {
+      const execution =
+        update.type === "execution"
+          ? update.execution
+          : projection?.snapshot.executions.find((value) =>
+              value.runIds.includes(update.run.runId)
+            );
+      if (execution) {
+        events.push(...lifecycleEvents(execution));
       }
     } else if (update.type === "tool") {
-      const toolCallId = update.operationId;
-      if (!toolsStarted.has(toolCallId)) {
-        toolsStarted.add(toolCallId);
-        events.push(
-          {
-            parentMessageId: `assistant:${update.runId}`,
-            toolCallId,
-            toolCallName: update.toolId,
-            type: EventType.TOOL_CALL_START,
-          },
-          {
-            delta: JSON.stringify(update.arguments),
-            toolCallId,
-            type: EventType.TOOL_CALL_ARGS,
-          },
-          { toolCallId, type: EventType.TOOL_CALL_END }
-        );
-      }
-      if (update.state === "succeeded" || update.state === "failed") {
-        events.push({
-          content: JSON.stringify(update.output),
-          messageId: `tool:${toolCallId}`,
-          role: "tool",
-          toolCallId,
-          type: EventType.TOOL_CALL_RESULT,
-        });
-      }
+      events.push(...toolEvents(update));
     }
     return events;
   };
