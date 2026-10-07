@@ -1,1557 +1,485 @@
-/* oxlint-disable no-await-in-loop -- Recovery and tool transitions use the state from the preceding durable operation. */
-import { setTimeout as delay } from "node:timers/promises";
-
-import type { EventAddress, EventEnvelope } from "@cerebro/contracts/events";
-import { id, isExecutionContextActiveAt } from "@cerebro/contracts/identity";
-import type { ExecutionContext, SourceId } from "@cerebro/contracts/identity";
-import type { EffectOptions, PortResult } from "@cerebro/contracts/port";
-import { preflightEffect } from "@cerebro/contracts/port";
+import type { AuthorityService } from "@cerebro/contracts/authority-service";
+import type { EventAddress } from "@cerebro/contracts/events";
+import type { DurableHandoff } from "@cerebro/contracts/execution";
+import {
+  Denied,
+  InvalidInput,
+  NotFound,
+  Unavailable,
+  failureToHttp,
+} from "@cerebro/contracts/failures";
+import type { ContractFailure } from "@cerebro/contracts/failures";
+import { id } from "@cerebro/contracts/identity";
+import type { ExecutionContext, RunId } from "@cerebro/contracts/identity";
+import type { EffectOptions, ReadOptions } from "@cerebro/contracts/port";
+import type { ToolReceiptStore } from "@cerebro/contracts/receipt-service";
 import type {
-  RunState,
-  SessionReceipt,
-  SessionSnapshot,
-  SessionStreamItem,
+  AgentDefinition,
+  ContentDependencies,
 } from "@cerebro/contracts/session";
-import { approvalMatches, digestToolArguments } from "@cerebro/contracts/tools";
-import type { ToolExecution, ToolInvocation } from "@cerebro/contracts/tools";
-import type { PaidWorkRequest } from "@cerebro/policy/authorization-gate";
-import { AIChatAgent } from "@cloudflare/ai-chat";
-import type { OpenCodeWorkerd } from "@opencode-ai/sdk/workerd";
-
-import { sameAddress, validateEvent } from "./event-handler.ts";
-import {
-  createFixtureToolExecutor,
-  fixturePolicyVersion,
-  fixtureTool,
-  isFixtureInput,
-} from "./fixture-tool.ts";
-import { SessionLedger } from "./ledger.ts";
 import type {
-  StoredApprovalRequest,
-  StoredInvocation,
-  StoredRun,
-} from "./ledger.ts";
-import { createModelHttpPlugin } from "./model-http-plugin.ts";
-import {
-  createOpenCodeClient,
-  fixturePrompt,
-  fixtureReplyMatches,
-} from "./opencode-adapter.ts";
-import type { ModelToolCall } from "./opencode-adapter.ts";
-import { readFinalReply } from "./opencode-reply.ts";
-import { drainOutbox } from "./outbox.ts";
-import { isPinnedAgent } from "./pinned-agent.ts";
-import {
-  recoverInterruptedInvocation,
-  recoverInterruptedInvocations,
-} from "./recovery.ts";
-import type { RuntimePorts, ModelHttpReceipt } from "./runtime-ports.ts";
-import { priorInvocationForCall, sdkCallKey } from "./tool-call-identity.ts";
+  ApprovalCommand,
+  DomainSnapshot,
+  SubmitCommand,
+} from "@cerebro/contracts/session-service";
+import type {
+  BoundApproval,
+  BoundInvocation,
+  ToolExecutor,
+} from "@cerebro/contracts/tool-service";
+import { canonicalToolArguments } from "@cerebro/contracts/tools";
+import { createModels } from "@earendil-works/pi-ai/models";
+import { Harness, createRegistry } from "@earendil-works/pi-durable";
+import type { Storage } from "@earendil-works/pi-durable";
+import { PiHarness } from "agents/harness/pi";
+import { Lifecycle } from "agents/lifecycle";
+import { DurableObject } from "cloudflare:workers";
+import { Effect, Exit, Result, Scope, Stream } from "effect";
 
-export interface SessionEnvironment {
-  readonly DEPLOY_MODE: "local" | "fixture" | "production";
-  readonly FIXTURE_URL: string;
-  readonly TOOL_GATEWAY: Fetcher;
-  readonly AUDIT_SINK?: Fetcher;
-  readonly POLICY_GATEWAY?: Fetcher;
-  readonly TOOL_EFFECT_MODE: "idempotent" | "non-idempotent";
-  readonly HOLD_AFTER_EFFECT?: "0" | "1";
+import { createCelldSessionStore } from "./celld-session-store.ts";
+import { createPiExecutionEngine, modelAuthority } from "./pi-harness.ts";
+import { createControlledProvider } from "./pi-provider.ts";
+import type { ControlledProviderConfiguration } from "./pi-provider.ts";
+import { createPiTools } from "./pi-tools.ts";
+import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
+import { attempt, checkOptions } from "./runtime-ports.ts";
+import { createSessionService } from "./session-service.ts";
+
+export type SessionEnvironment = Readonly<Record<string, unknown>>;
+export interface SessionHostConfiguration {
+  readonly address: EventAddress;
+  readonly agent: AgentDefinition;
+  readonly authority: AuthorityService;
+  readonly executor: ToolExecutor;
+  readonly receipts: ToolReceiptStore;
+  readonly provider: Omit<ControlledProviderConfiguration, "authorize">;
+  readonly tools: readonly PiRegisteredTool[];
+  readonly authenticate: (
+    request: Request
+  ) => Effect.Effect<ExecutionContext, ContractFailure>;
+  readonly content: (
+    handoff: DurableHandoff
+  ) => Effect.Effect<
+    Pick<DomainSnapshot["outputs"][number], "dependencies" | "citations">,
+    ContractFailure
+  >;
+  readonly toolDependencies: PiToolConfiguration["dependencies"];
+  readonly checkDependencies: (
+    context: ExecutionContext,
+    dependencies: ContentDependencies,
+    options: ReadOptions
+  ) => Effect.Effect<void, ContractFailure>;
 }
 
-const terminal = (state: RunState["state"]): boolean =>
-  state === "completed" ||
-  state === "failed" ||
-  state === "cancelled" ||
-  state === "unknown-outcome";
-
-const parseBody = async (
-  request: Request
-): Promise<Record<string, unknown> | undefined> => {
-  try {
-    const value: unknown = await request.json();
-    return value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Record<string, unknown>)
-      : undefined;
-  } catch {
-    return undefined;
+const hostOptions = () => ({ deadlineAt: Date.now() + 30_000 });
+const validApproval = (command: ApprovalCommand): boolean =>
+  typeof command?.approvalId === "string" &&
+  typeof command.runId === "string" &&
+  (command.decision === "allow" || command.decision === "deny");
+const requestOptions = (value: unknown): EffectOptions => {
+  const supplied = value as Partial<EffectOptions> | undefined;
+  if (
+    typeof supplied?.operationId !== "string" ||
+    !supplied.operationId.trim() ||
+    typeof supplied.requestDigest !== "string" ||
+    !supplied.requestDigest.trim() ||
+    typeof supplied.deadlineAt !== "number"
+  ) {
+    throw new InvalidInput({
+      reason: "Stable operation identity and deadline are required",
+    });
   }
+  const options = {
+    deadlineAt: supplied.deadlineAt,
+    operationId: supplied.operationId,
+    requestDigest: supplied.requestDigest,
+  };
+  checkOptions(options);
+  return options;
 };
 
-const isAddress = (value: unknown): value is EventAddress =>
-  !!value &&
-  typeof value === "object" &&
-  "organizationId" in value &&
-  typeof value.organizationId === "string" &&
-  "agentId" in value &&
-  typeof value.agentId === "string" &&
-  "conversationId" in value &&
-  typeof value.conversationId === "string" &&
-  "sessionId" in value &&
-  typeof value.sessionId === "string";
-
-const isEffectOptions = (value: unknown): value is EffectOptions =>
-  !!value &&
-  typeof value === "object" &&
-  "operationId" in value &&
-  typeof value.operationId === "string" &&
-  "requestDigest" in value &&
-  typeof value.requestDigest === "string" &&
-  "deadlineAt" in value &&
-  typeof value.deadlineAt === "number";
-
-export class SessionAgent extends AIChatAgent<SessionEnvironment> {
-  private readonly chatChanges = new Set<() => void>();
-  private readonly chatText = new Map<
-    string,
-    { readonly messageId: string; readonly text: string }
-  >();
-  private runtimePorts: RuntimePorts | undefined;
-  private ledger: SessionLedger | undefined;
-  private client: Promise<OpenCodeWorkerd.Interface> | undefined;
-  private closingClient: Promise<void> | undefined;
-  private clientRunId: StoredRun["runId"] | undefined;
-  private modelTask: Promise<void> | undefined;
-  private driveTask: Promise<void> | undefined;
-  private activeRunId: StoredRun["runId"] | undefined;
-  private modelAttemptId: string | undefined;
-
-  protected storage(): SessionLedger {
-    this.ledger ??= new SessionLedger(this.ctx.storage, () =>
-      this.notifyChat()
-    );
-    return this.ledger;
-  }
-
-  private notifyChat(): void {
-    for (const notify of this.chatChanges) {
-      notify();
-    }
-  }
-
-  protected async *observeChatRun(
-    runId: string,
-    signal: AbortSignal
-  ): AsyncIterable<{
-    readonly run: StoredRun;
-    readonly items: readonly SessionStreamItem[];
-    readonly text: string;
-    readonly textId: string;
-  }> {
-    let changed = Promise.withResolvers<null>();
-    const notify = () => changed.resolve(null);
-    this.chatChanges.add(notify);
-    signal.addEventListener("abort", notify, { once: true });
-    let cursor: string | undefined;
-    try {
-      while (!signal.aborted) {
-        const run = this.storage().run(id.run(runId));
-        if (!run) {
-          throw new Error("The admitted chat run is missing.");
-        }
-        const items = this.storage().stream(cursor);
-        cursor = items.at(-1)?.cursor ?? cursor;
-        const text = this.chatText.get(runId);
-        yield {
-          items: items.filter(
-            (item) =>
-              (item.type === "run" ? item.run.runId : item.runId) === runId
-          ),
-          run,
-          text: terminal(run.state) ? (run.output ?? "") : (text?.text ?? ""),
-          textId: text?.messageId ?? runId,
-        };
-        if (terminal(run.state)) {
-          this.chatText.delete(runId);
-          return;
-        }
-        await changed.promise;
-        changed = Promise.withResolvers<null>();
-      }
-    } finally {
-      signal.removeEventListener("abort", notify);
-      this.chatChanges.delete(notify);
-    }
-  }
-
-  private observeOpenCodeText(
-    client: OpenCodeWorkerd.Interface,
-    run: StoredRun,
-    sessionId: string,
-    parentSignal: AbortSignal
-  ): { readonly ready: Promise<null>; readonly closed: Promise<void> } {
-    const connected = Promise.withResolvers<null>();
-    const interrupted = Promise.withResolvers<never>();
-    const abort = new AbortController();
-    const signal = AbortSignal.any([parentSignal, abort.signal]);
-    const deadline = setTimeout(() => {
-      abort.abort(
-        new Error("OpenCode event subscription did not become ready.")
+// S1-F supplies the trusted configuration and authentication adapters in a subclass.
+// This plain host installs only official Pi and Lifecycle capabilities.
+export class SessionAgent<
+  Environment extends SessionEnvironment = SessionEnvironment,
+> extends DurableObject<Environment> {
+  private readonly hostScope = Scope.makeUnsafe();
+  private piStorage: Storage | undefined;
+  private initialized:
+    | Promise<
+        Effect.Success<ReturnType<SessionAgent<Environment>["initialize"]>>
+      >
+    | undefined;
+  readonly harness = new PiHarness({
+    harness: async ({ storage, context }) => {
+      this.piStorage = storage;
+      const runtime = await this.ready();
+      const registry = createRegistry();
+      registry.install({ name: "cerebro-controlled", tools: runtime.tools });
+      const models = createModels();
+      models.setProvider(runtime.provider);
+      const pi = await Harness.open(
+        storage,
+        {
+          models,
+          registry,
+          settings: {
+            followUpMode: "one-at-a-time",
+            stream: {
+              maxRetries: 0,
+              timeoutMs: runtime.configuration.provider.deadlineMs,
+              transport: "sse",
+            },
+          },
+        },
+        context
       );
-    }, 5000);
-    const onAbort = () => interrupted.reject(signal.reason);
-    signal.addEventListener("abort", onAbort, { once: true });
-    if (signal.aborted) {
-      onAbort();
-    }
-    const events = client.events.subscribe({ signal })[Symbol.asyncIterator]();
-    const closed = (async () => {
-      try {
-        for (;;) {
-          const next = await Promise.race([events.next(), interrupted.promise]);
-          if (next.done) {
-            throw new Error("OpenCode event subscription ended unexpectedly.");
-          }
-          const event = next.value;
-          if (event.type === "server.connected") {
-            clearTimeout(deadline);
-            connected.resolve(null);
-          }
-          if (
-            event.type === "session.text.delta" &&
-            event.data.sessionID === sessionId
-          ) {
-            const prior = this.chatText.get(run.runId);
-            this.chatText.set(run.runId, {
-              messageId: event.data.assistantMessageID,
-              text:
-                (prior?.messageId === event.data.assistantMessageID
-                  ? prior.text
-                  : "") + event.data.delta,
-            });
-            this.notifyChat();
-          }
-        }
-      } catch (error) {
-        connected.reject(error);
-        if (!signal.aborted) {
-          throw error;
-        }
-      } finally {
-        clearTimeout(deadline);
-        signal.removeEventListener("abort", onAbort);
-        abort.abort();
-        let cleanupDeadline: ReturnType<typeof setTimeout> | undefined;
-        try {
-          if (events.return) {
-            const timeout = Promise.withResolvers<null>();
-            cleanupDeadline = setTimeout(() => timeout.resolve(null), 1000);
-            await Promise.race([events.return(), timeout.promise]);
-          }
-        } finally {
-          clearTimeout(cleanupDeadline);
-        }
-      }
-    })();
-    return { closed, ready: connected.promise };
-  }
-
-  protected createRuntime(_run: StoredRun): Promise<RuntimePorts | undefined> {
-    if (this.env.DEPLOY_MODE !== "fixture") {
-      throw new Error("Production runtime composition is missing.");
-    }
-    return Promise.resolve(this.runtimePorts);
-  }
-
-  private matches(address: EventAddress): boolean {
-    const current = this.storage().address();
-    return !!current && sameAddress(current, address);
-  }
-
-  private async ensureWake(): Promise<void> {
-    const schedules = await this.listSchedules();
-    if (!schedules.some((schedule) => schedule.callback === "reconcile")) {
-      await this.scheduleEvery(1, "reconcile", undefined, {
-        retry: { maxAttempts: 1 },
+      await pi.root(context, {
+        agent: {
+          instructions: runtime.configuration.agent.instructions,
+          model: {
+            modelId: runtime.configuration.provider.model.id,
+            provider: runtime.configuration.provider.model.provider,
+          },
+        },
       });
-    }
+      this.ctx.waitUntil(Effect.runPromise(runtime.recover()));
+      return pi;
+    },
+  });
+  readonly lifecycle = Lifecycle.install(this).use(this.harness);
+
+  // oxlint-disable-next-line class-methods-use-this -- Host subclasses provide their trusted environment bindings.
+  protected configure(): Effect.Effect<
+    SessionHostConfiguration,
+    ContractFailure
+  > {
+    return Effect.fail(
+      new Unavailable({ reason: "Session host composition is not configured" })
+    );
+  }
+
+  private initialize() {
+    return Effect.gen({ self: this }, function* initializeHost() {
+      const configuration = yield* this.configure();
+      const store = createCelldSessionStore(this.ctx.storage, {
+        address: configuration.address,
+        agent: configuration.agent,
+        authorize: (context, dependencies, options) =>
+          Effect.gen(function* authorizeProjection() {
+            yield* configuration.authority.require(
+              {
+                action: "read",
+                address: configuration.address,
+                context,
+                pinnedAgent: configuration.agent,
+                resource: {
+                  id: configuration.address.agentId,
+                  kind: "agent",
+                  organizationId: configuration.address.organizationId,
+                },
+              },
+              options
+            );
+            yield* configuration.checkDependencies(
+              context,
+              dependencies,
+              options
+            );
+          }),
+      });
+      if (
+        canonicalToolArguments(store.pinnedAgent()) !==
+        canonicalToolArguments(configuration.agent)
+      ) {
+        return yield* Effect.fail(
+          new Unavailable({
+            reason:
+              "Resolve the conversation's persisted pinned agent before opening Pi",
+          })
+        );
+      }
+      const engine = createPiExecutionEngine({
+        address: configuration.address,
+        agent: configuration.agent,
+        content: configuration.content,
+        handoffs: () =>
+          store.service.recover(configuration.address, hostOptions()),
+        harness: this.harness,
+        snapshot: store.domain,
+        storage: () => {
+          if (!this.piStorage) {
+            throw new Unavailable({
+              reason: "Official Pi storage is not open",
+            });
+          }
+          return this.piStorage;
+        },
+      });
+      const runtime = yield* createSessionService({
+        ...configuration,
+        engine: engine.service,
+        store: store.service,
+      });
+      const resolve = (runId?: RunId) =>
+        Effect.gen(function* resolveToolRun() {
+          const values = yield* store.service.recover(
+            configuration.address,
+            hostOptions()
+          );
+          if (runId) {
+            const exact = values.find(
+              (handoff) => handoff.submission.runId === runId
+            );
+            return (
+              exact ??
+              (yield* Effect.fail(new NotFound({ resource: "Tool run" })))
+            );
+          }
+          const active = (yield* engine.records(hostOptions())).find(
+            (value) => value.record.status === "placed"
+          );
+          return active
+            ? active.handoff
+            : yield* Effect.fail(
+                new NotFound({ resource: "Active Pi tool input" })
+              );
+        });
+      const approve = (
+        invocation: BoundInvocation,
+        approval: BoundApproval,
+        options: ReadOptions
+      ) =>
+        Effect.gen(function* durableApprovalWait() {
+          const handoff = yield* resolve(invocation.runId);
+          const snapshot = store.domain();
+          const existing = snapshot.approvals.find(
+            (value) => value.approvalId === approval.id
+          );
+          if (!existing) {
+            const revision = Math.max(
+              0,
+              ...(yield* store.service.recover(
+                configuration.address,
+                hostOptions()
+              )).map((value) => value.revision)
+            );
+            yield* store.service.commit(
+              configuration.address,
+              revision,
+              { approval, runId: invocation.runId, type: "approval" },
+              {
+                ...hostOptions(),
+                operationId: invocation.operationId,
+                requestDigest: invocation.argumentDigest,
+              }
+            );
+            yield* store.publish(invocation.runId, {
+              approvalId: approval.id,
+              expiresAt: approval.expiresAt,
+              operationId: invocation.operationId,
+              runId: invocation.runId,
+              state: "pending",
+              type: "approval",
+            });
+            yield* store.publish(invocation.runId, {
+              run: { runId: invocation.runId, state: "waiting-for-approval" },
+              type: "run",
+            });
+          }
+          while (true) {
+            yield* attempt(() => checkOptions(options));
+            const current = yield* store.service.snapshot(
+              configuration.address,
+              handoff.submission.event.context,
+              options
+            );
+            const decision = current.approvals.find(
+              (value) => value.approvalId === approval.id
+            );
+            if (decision?.state === "allowed") {
+              const accepted = (yield* resolve(
+                invocation.runId
+              )).approvals.find((value) => value.id === approval.id);
+              if (accepted) {
+                return accepted;
+              }
+            }
+            if (decision && decision.state !== "pending") {
+              return yield* Effect.fail(
+                new Denied({
+                  code: "revoked",
+                  reason: "Approval was denied or cancelled",
+                })
+              );
+            }
+            yield* Effect.sleep(250);
+          }
+        });
+      const tools = createPiTools({
+        agent: configuration.agent,
+        approval: approve,
+        authority: configuration.authority,
+        deadlineMs: configuration.provider.deadlineMs,
+        dependencies: configuration.toolDependencies,
+        executor: configuration.executor,
+        publish: store.publish,
+        receipts: configuration.receipts,
+        resolve,
+        tools: configuration.tools,
+      });
+      const provider = createControlledProvider({
+        ...configuration.provider,
+        authorize: (options) =>
+          Effect.gen(function* authorizePhysicalModel() {
+            const values = yield* engine.records(options);
+            const active = values
+              .filter((value) => value.record.status === "placed")
+              .map((value) => value.handoff);
+            yield* modelAuthority(
+              configuration.authority,
+              configuration.address,
+              configuration.agent,
+              active,
+              options
+            );
+          }),
+      });
+      return { ...runtime, configuration, engine, provider, store, tools };
+    });
+  }
+
+  private ready() {
+    this.initialized ??= Effect.runPromise(
+      Scope.provide(this.hostScope)(this.initialize())
+    );
+    return this.initialized;
+  }
+
+  // Called by the coordinator's host startup hook. Official Lifecycle resumes Pi;
+  // this only repairs Cerebro command markers and product projection.
+  async recover(): Promise<void> {
+    const runtime = await this.ready();
+    await Effect.runPromise(runtime.recover());
+  }
+
+  async dispose(): Promise<void> {
+    await Effect.runPromise(Scope.close(this.hostScope, Exit.void));
+    await this.harness.dispose();
   }
 
   async onRequest(request: Request): Promise<Response> {
-    const body = await parseBody(request);
-    if (!body || request.method !== "POST") {
-      return Response.json({
-        reason: "Invalid session request",
-        status: "invalid-input",
-      } satisfies PortResult<never>);
-    }
-    const path = new URL(request.url).pathname;
-    if (path === "/submit") {
-      return await this.submit(body);
-    }
-    if (path === "/inspect" || path === "/stream") {
-      return await this.readSession(path, body);
-    }
-    if (path === "/approve" || path === "/cancel") {
-      return path === "/approve" ? this.approve(body) : this.cancel(body);
-    }
-    return Response.json({
-      resource: "session route",
-      status: "not-found",
-    } satisfies PortResult<never>);
-  }
-
-  private async submit(body: Record<string, unknown>): Promise<Response> {
-    const { event, options, agent } = body;
-    if (
-      !isAddress(event) ||
-      !isEffectOptions(options) ||
-      !isPinnedAgent(agent) ||
-      agent.organizationId !== event.organizationId ||
-      agent.agentId !== event.agentId ||
-      !("eventId" in event) ||
-      typeof event.eventId !== "string" ||
-      !("event" in event) ||
-      !event.event ||
-      typeof event.event !== "object"
-    ) {
-      return Response.json({
-        reason: "Invalid event",
-        status: "invalid-input",
-      } satisfies PortResult<never>);
-    }
-    const preflight = preflightEffect(options, Date.now());
-    if (preflight.status !== "ok") {
-      return Response.json(preflight);
-    }
-    const validated = validateEvent(event as EventEnvelope, Date.now());
-    if (validated.status !== "ok") {
-      return Response.json(validated);
-    }
-    await this.ensureWake();
-    const result = this.storage().admit(event as EventEnvelope, options, agent);
-    if (result.status === "ok") {
-      this.ctx.waitUntil(this.reconcile());
-    }
-    return Response.json(result satisfies PortResult<SessionReceipt>);
-  }
-
-  private async readSession(
-    path: string,
-    body: Record<string, unknown>
-  ): Promise<Response> {
-    const { address, cursor } = body;
-    if (!isAddress(address) || !this.storage().bind(address)) {
-      return Response.json({
-        resource: "session",
-        status: "not-found",
-      } satisfies PortResult<never>);
-    }
-    await this.ctx.storage.sync();
-    if (path === "/inspect") {
-      const snapshot = this.storage().snapshot();
-      if (!snapshot) {
-        return Response.json({
-          resource: "session",
-          status: "not-found",
-        } satisfies PortResult<never>);
-      }
-      return Response.json({
-        status: "ok",
-        value: snapshot,
-      } satisfies PortResult<SessionSnapshot>);
-    }
-    try {
-      const items = this.storage().stream(
-        typeof cursor === "string" ? cursor : undefined
-      );
-      return Response.json({ status: "ok", value: items } satisfies PortResult<
-        SessionStreamItem[]
-      >);
-    } catch {
-      return Response.json({
-        reason: "Invalid cursor",
-        status: "invalid-input",
-      } satisfies PortResult<never>);
-    }
-  }
-
-  private command(body: Record<string, unknown>):
-    | {
-        command: Record<string, unknown> & { address: EventAddress };
-        options: EffectOptions;
-      }
-    | undefined {
-    const { command, options } = body;
-    if (
-      !command ||
-      typeof command !== "object" ||
-      !("address" in command) ||
-      !isAddress(command.address) ||
-      !this.matches(command.address) ||
-      !isEffectOptions(options)
-    ) {
-      return undefined;
-    }
-    return {
-      command: command as Record<string, unknown> & { address: EventAddress },
-      options,
-    };
-  }
-
-  private async authorizeApproval(
-    approvalId: string,
-    deadlineAt: number
-  ): Promise<PortResult<void>> {
-    const approval = this.storage().approval(approvalId);
-    const invocation = approval
-      ? this.storage().invocation(approval.operationId)
-      : undefined;
-    const run = invocation ? this.storage().run(invocation.runId) : undefined;
-    if (invocation && run) {
-      const ports = await this.createRuntime(run);
-      if (ports) {
-        const decision = await ports.authorization.evaluate(
-          invocation.invocation.context,
-          "execute",
-          {
-            id: invocation.invocation.tool.id,
-            kind: "tool",
-            organizationId: run.agent.organizationId,
-          },
-          { deadlineAt }
-        );
-        if (decision.status !== "ok") {
-          return decision;
-        }
-        if (decision.value.decision !== "allow") {
-          return {
-            code: "unauthorized",
-            reason: "Current policy denies the approved tool.",
-            status: "denied",
-          } satisfies PortResult<never>;
-        }
-        const dependencies = await ports.checkDependencies(
-          run,
-          run.dependencies ?? { sourceIds: [], toolIds: [] },
-          { deadlineAt }
-        );
-        if (dependencies.status !== "ok") {
-          return dependencies;
-        }
-      }
-    }
-    return { status: "ok", value: undefined };
-  }
-
-  private async approve(body: Record<string, unknown>): Promise<Response> {
-    const parsed = this.command(body);
-    if (!parsed) {
-      return Response.json({
-        reason: "Invalid command",
-        status: "invalid-input",
-      } satisfies PortResult<never>);
-    }
-    const { command, options } = parsed;
-    if (
-      typeof command.approvalId !== "string" ||
-      !command.context ||
-      typeof command.context !== "object" ||
-      !("actor" in command.context) ||
-      !command.context.actor ||
-      typeof command.context.actor !== "object" ||
-      !("id" in command.context.actor) ||
-      typeof command.context.actor.id !== "string"
-    ) {
-      return Response.json({
-        reason: "Invalid approval",
-        status: "invalid-input",
-      } satisfies PortResult<never>);
-    }
-    if (
-      !isExecutionContextActiveAt(
-        command.context as ExecutionContext,
-        command.address.organizationId,
-        Date.now()
-      )
-    ) {
-      return Response.json({
-        code: "unauthorized",
-        reason: "Approver context is inactive",
-        status: "denied",
-      } satisfies PortResult<never>);
-    }
-    const permitted = await this.authorizeApproval(
-      command.approvalId,
-      options.deadlineAt
-    );
-    if (permitted.status !== "ok") {
-      return Response.json(permitted);
-    }
-    const result = this.storage().approve(
-      command.approvalId,
-      id.principal(command.context.actor.id),
-      options
-    );
-    if (result.status === "ok") {
-      this.ctx.waitUntil(this.reconcile());
-    }
-    return Response.json(result satisfies PortResult<RunState>);
-  }
-
-  private cancel(body: Record<string, unknown>): Response {
-    const parsed = this.command(body);
-    if (!parsed) {
-      return Response.json({
-        reason: "Invalid command",
-        status: "invalid-input",
-      } satisfies PortResult<never>);
-    }
-    const { command, options } = parsed;
-    if (typeof command.runId !== "string") {
-      return Response.json({
-        reason: "Invalid cancellation",
-        status: "invalid-input",
-      } satisfies PortResult<never>);
-    }
-    if (
-      !command.context ||
-      typeof command.context !== "object" ||
-      !("actor" in command.context) ||
-      !command.context.actor ||
-      !isExecutionContextActiveAt(
-        command.context as ExecutionContext,
-        command.address.organizationId,
-        Date.now()
-      )
-    ) {
-      return Response.json({
-        code: "unauthorized",
-        reason: "Canceller context is inactive",
-        status: "denied",
-      } satisfies PortResult<never>);
-    }
-    const result = this.storage().cancel(id.run(command.runId), options);
-    if (result.status === "ok") {
-      if (this.clientRunId === command.runId) {
-        this.ctx.waitUntil(
-          (async () => {
-            await this.interruptModel();
-            if (!this.modelTask) {
-              await this.closeClient();
-            }
-            await this.reconcile();
-          })()
-        );
-      } else {
-        this.ctx.waitUntil(this.reconcile());
-      }
-    }
-    return Response.json(result satisfies PortResult<RunState>);
-  }
-
-  async reconcile(): Promise<void> {
-    if (this.driveTask) {
-      await this.driveTask;
-      return;
-    }
-    this.driveTask = this.drive();
-    try {
-      await this.driveTask;
-    } finally {
-      this.driveTask = undefined;
-    }
-  }
-
-  private async drive(): Promise<void> {
-    if (this.closingClient) {
-      await this.closingClient;
-    }
-    const ledger = this.storage();
-    if (!this.modelTask) {
-      await this.resumeRequestedInvocations();
-      await recoverInterruptedInvocations(ledger, {
-        authorize: async (invocation) =>
-          await this.authorizeInvocation(invocation),
-        execute: async (invocation) => await this.performEffect(invocation),
-      });
-    }
-    const auditSink = this.env.AUDIT_SINK;
-    if (auditSink) {
-      try {
-        await drainOutbox(ledger, {
-          project: async (event) => {
-            const response = await auditSink.fetch(
-              new Request("https://audit.internal/project", {
-                body: JSON.stringify(event),
-                headers: { "Content-Type": "application/json" },
-                method: "POST",
-              })
-            );
-            if (!response.ok) {
-              throw new Error("Audit projection failed");
-            }
-          },
-        });
-        // oxlint-disable-next-line no-empty -- Recovery retries unfinished durable work.
-      } catch {}
-    }
-    const [run] = ledger
-      .runs()
-      .filter((candidate) => !terminal(candidate.state))
-      .toSorted((first, second) => first.createdAt - second.createdAt);
-    const effectPending = ledger
-      .invocations()
-      .some((invocation) => invocation.state === "running");
-    if (
-      run &&
-      run.state !== "waiting-for-approval" &&
-      !this.modelTask &&
-      !effectPending
-    ) {
-      this.modelTask = this.runModel(run);
-      this.ctx.waitUntil(this.modelTask);
-    }
-    if (
-      ledger.runs().every((candidate) => terminal(candidate.state)) &&
-      ledger.pendingOutbox().length === 0
-    ) {
-      const schedules = await this.listSchedules();
-      for (const schedule of schedules) {
-        if (schedule.callback === "reconcile") {
-          // oxlint-disable-next-line no-await-in-loop
-          await this.cancelSchedule(schedule.id);
-        }
-      }
-    }
-  }
-
-  private async resumeRequestedInvocations(): Promise<void> {
-    const ledger = this.storage();
-    for (const invocation of ledger.invocations()) {
-      if (invocation.state !== "requested") {
-        continue;
-      }
-      // oxlint-disable-next-line no-await-in-loop
-      if (!(await this.authorizeInvocation(invocation))) {
-        continue;
-      }
-      const started = ledger.startInvocation(invocation.operationId);
-      if (!started) {
-        continue;
-      }
-      // oxlint-disable-next-line no-await-in-loop
-      await this.ctx.storage.sync();
-      try {
-        // oxlint-disable-next-line no-await-in-loop
-        const result = await this.performEffect(started);
-        ledger.finishInvocation(started.operationId, result);
-      } catch {
-        if (!started.idempotent) {
-          ledger.markUnknownOutcome(started.operationId);
-        }
-      }
-      // oxlint-disable-next-line no-await-in-loop
-      await this.ctx.storage.sync();
-    }
-  }
-
-  private async authorizeInvocation(
-    invocation: StoredInvocation
-  ): Promise<boolean> {
-    const run = this.storage().run(invocation.runId);
-    if (!run || terminal(run.state)) {
-      return false;
-    }
-    const ports = await this.createRuntime(run);
-    if (ports && run) {
-      const allowed = await ports.authorization.evaluate(
-        invocation.invocation.context,
-        "execute",
-        {
-          id: invocation.invocation.tool.id,
-          kind: "tool",
-          organizationId: invocation.invocation.organizationId,
-        },
-        { deadlineAt: Date.now() + 5000 }
-      );
-      if (allowed.status !== "ok" || allowed.value.decision !== "allow") {
-        return false;
-      }
-      const dependencies = await ports.checkDependencies(
-        run,
-        run.dependencies ?? { sourceIds: [], toolIds: [] },
-        { deadlineAt: Date.now() + 5000 }
-      );
-      if (dependencies.status !== "ok") {
-        return false;
-      }
-      const entry = ports.registry.get(invocation.invocation.tool.id);
-      if (!entry) {
-        return false;
-      }
-      if (!entry.requiresApproval) {
-        return true;
-      }
-      const grant = this.storage().grant(invocation.operationId);
-      return (
-        !!grant &&
-        (await approvalMatches(
-          grant,
-          invocation.invocation,
-          allowed.value.policyVersion,
-          Date.now()
-        ))
-      );
-    }
-    const grant = this.storage().grant(invocation.operationId);
-    if (
-      !grant ||
-      !(await approvalMatches(
-        grant,
-        invocation.invocation,
-        fixturePolicyVersion,
-        Date.now()
-      ))
-    ) {
-      return false;
-    }
-    if (
-      !isExecutionContextActiveAt(
-        invocation.invocation.context,
-        invocation.invocation.organizationId,
-        Date.now()
-      )
-    ) {
-      return false;
-    }
-    if (!this.env.POLICY_GATEWAY) {
-      return this.env.DEPLOY_MODE === "fixture";
-    }
-    const response = await this.env.POLICY_GATEWAY.fetch(
-      new Request("https://policy.internal/authorize", {
-        body: JSON.stringify({
-          action: "execute",
-          context: invocation.invocation.context,
-          resource: {
-            id: invocation.invocation.tool.id,
-            kind: "tool",
-            organizationId: invocation.invocation.organizationId,
-          },
-        }),
-        headers: { "Content-Type": "application/json" },
-        method: "POST",
-      })
-    );
-    if (!response.ok) {
-      return false;
-    }
-    const result: unknown = await response.json();
-    return (
-      !!result &&
-      typeof result === "object" &&
-      "decision" in result &&
-      result.decision === "allow"
-    );
-  }
-
-  private async performEffect(
-    invocation: StoredInvocation
-  ): Promise<ToolExecution> {
-    const run = this.storage().run(invocation.runId);
-    if (!run || terminal(run.state)) {
-      throw new Error("Tool owner run is terminal.");
-    }
-    const ports = await this.createRuntime(run);
-    if (ports) {
-      await ports.prepareApproval(invocation.operationId);
-      const { invocation: call } = invocation;
-      const result = await ports.broker.invoke(
-        {
-          agentId: call.agentId,
-          arguments: call.arguments,
-          context: call.context,
-          organizationId: call.organizationId,
-          tool: call.tool,
-        },
-        {
-          deadlineAt: Date.now() + 60_000,
-          operationId: invocation.operationId,
-          requestDigest: invocation.argumentDigest,
-        }
-      );
-      if (result.status !== "ok") {
-        if (result.status === "unknown-outcome") {
-          this.storage().markUnknownOutcome(invocation.operationId);
-        }
-        throw new Error(`Tool broker returned ${result.status}.`);
-      }
-      this.storage().recordToolOutput({
-        dependencies: {
-          sourceIds: run?.dependencies?.sourceIds ?? [],
-          toolIds: [call.tool.id],
-        },
-        operationId: invocation.operationId,
-        output: result.value.output,
-        runId: invocation.runId,
-        toolId: call.tool.id,
-        type: "tool",
-      });
-      return result.value;
-    }
-    const grant = this.storage().grant(invocation.operationId);
-    if (!grant) {
-      throw new Error("Fixture effect has no approval grant");
-    }
-    const executor = createFixtureToolExecutor({
-      ...this.env,
-      TOOL_EFFECT_MODE: invocation.idempotent ? "idempotent" : "non-idempotent",
-    });
-    const result = await executor.execute(invocation.invocation, grant, {
-      deadlineAt: grant.expiresAt,
-      operationId: invocation.operationId,
-      requestDigest: invocation.argumentDigest,
-    });
-    if (result.status !== "ok") {
-      throw new Error(`Fixture effect returned ${result.status}`);
-    }
-    return result.value;
-  }
-
-  private async markModelConsumed(runId: StoredRun["runId"]): Promise<void> {
-    const [row] = this.ctx.storage.sql
-      .exec<{ result: string }>(
-        "SELECT result FROM cerebro_operation WHERE id=?",
-        `model-active:${runId}`
-      )
-      .toArray();
-    if (row) {
-      this.ctx.storage.sql.exec(
-        "INSERT OR IGNORE INTO cerebro_operation(id,result) VALUES(?,?)",
-        `model-consumed:${row.result}`,
-        "true"
-      );
-      await this.ctx.storage.sync();
-    }
-  }
-
-  private async toolReply(
-    invocation: StoredInvocation
-  ): Promise<{ content: string }> {
-    if (!invocation.result || !(await this.authorizeInvocation(invocation))) {
-      throw new Error("Current policy denies tool output.");
-    }
-    return { content: JSON.stringify(invocation.result.output) };
-  }
-
-  private async completedToolCalls(): Promise<ReadonlySet<string>> {
-    const sessionId = this.storage().openCodeSessionId();
-    if (!sessionId || !this.client) {
-      return new Set();
-    }
-    const client = await this.client;
-    const messages = await client.message.list({ sessionID: sessionId });
-    const completed = new Set<string>();
-    for (const message of messages.data) {
-      if (message.type !== "assistant") {
-        continue;
-      }
-      for (const part of message.content) {
-        if (part.type === "tool" && part.state.status === "completed") {
-          completed.add(sdkCallKey({ callId: part.id, messageId: message.id }));
-        }
-      }
-    }
-    return completed;
-  }
-
-  // oxlint-disable-next-line complexity
-  private async executeTool(call: ModelToolCall): Promise<{ content: string }> {
-    if (
-      !this.activeRunId ||
-      !this.modelAttemptId ||
-      (!this.runtimePorts && !isFixtureInput(call.input))
-    ) {
-      throw new Error("Invalid fixture tool call");
-    }
-    const ledger = this.storage();
-    const run = ledger.run(this.activeRunId);
-    const address = ledger.address();
-    const entry = call.toolId
-      ? this.runtimePorts?.registry.get(id.tool(call.toolId))
-      : undefined;
-    const tool = entry?.definition ?? fixtureTool;
-    if (
-      !run ||
-      !address ||
-      terminal(run.state) ||
-      !run.agent.enabledToolIds.includes(tool.id)
-    ) {
-      throw new Error("Run is not active");
-    }
-    if (ledger.hasRetryableInvocation(run.runId)) {
-      throw new Error("Previous fixture effect is pending retry");
-    }
-    if (this.runtimePorts) {
-      await this.markModelConsumed(run.runId);
-    }
-    const digest = await digestToolArguments(call.input);
-    const callKey = sdkCallKey(call);
-    const encoded = new TextEncoder().encode(
-      `${run.runId}:${call.messageId}:${call.callId}`
-    );
-    const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", encoded));
-    const suffix = [...hash]
-      .map((byte) => byte.toString(16).padStart(2, "0"))
-      .join("")
-      .slice(0, 32);
-    const candidates = ledger
-      .invocations()
-      .filter(
-        (record) =>
-          record.runId === run.runId &&
-          record.argumentDigest === digest &&
-          record.invocation.tool.id === tool.id
-      );
-    const prior = priorInvocationForCall(
-      candidates,
-      callKey,
-      this.modelAttemptId,
-      await this.completedToolCalls()
-    );
-    const operationId =
-      prior?.operationId ?? id.operation(`${run.operationId}:${suffix}`);
-    const invocation: ToolInvocation = {
-      agentId: address.agentId,
-      argumentDigest: digest,
-      arguments: structuredClone(call.input),
-      context: structuredClone(run.context),
-      operationId,
-      organizationId: address.organizationId,
-      state: "requested",
-      tool,
-    };
-    let policyVersion = fixturePolicyVersion;
-    if (this.runtimePorts) {
-      const authorized = await this.runtimePorts.authorization.evaluate(
-        run.context,
-        "execute",
-        { id: tool.id, kind: "tool", organizationId: run.agent.organizationId },
-        { deadlineAt: Date.now() + 5000 }
-      );
-      if (authorized.status !== "ok" || authorized.value.decision !== "allow") {
-        throw new Error("Current policy denies the tool.");
-      }
-      ({ policyVersion } = authorized.value);
-    }
-    const approval: StoredApprovalRequest | undefined =
-      entry && !entry.requiresApproval
-        ? undefined
-        : {
-            actorPrincipalId: run.context.actor.id,
-            agentId: address.agentId,
-            argumentDigest: digest,
-            connectorId: invocation.tool.connectorId,
-            delegationId: run.context.delegation?.id,
-            effect: invocation.tool.effect,
-            expiresAt: Date.now() + 300_000,
-            id: `approval:${operationId}`,
-            operationId,
-            organizationId: address.organizationId,
-            policyVersion,
-            principalId: run.context.represented?.id ?? run.context.actor.id,
-            toolId: invocation.tool.id,
-            toolVersion: invocation.tool.version,
-          };
-    if (this.runtimePorts) {
-      ledger.updateRun(run.runId, (current) => ({
-        ...current,
-        dependencies: {
-          sourceIds: current.dependencies?.sourceIds ?? [],
-          toolIds: [
-            ...new Set([...(current.dependencies?.toolIds ?? []), tool.id]),
-          ],
-        },
-      }));
-    }
-    const claim = ledger.claimInvocation(
-      invocation,
-      run.runId,
-      entry
-        ? entry.retryMode === "idempotent"
-        : this.env.TOOL_EFFECT_MODE === "idempotent",
-      callKey,
-      this.modelAttemptId,
-      approval
-    );
-    if (claim.kind === "conflict") {
-      throw new Error("Tool operation ID has different arguments");
-    }
-    if (claim.kind === "result" && claim.record?.result) {
-      if (!(await this.authorizeInvocation(claim.record))) {
-        throw new Error("Current grant denies cached tool result");
-      }
-      return await this.toolReply(claim.record);
-    }
-    if (claim.kind === "unknown") {
-      throw new Error("Tool outcome needs reconciliation");
-    }
-    const deadline = Date.now() + 300_000;
-    while (Date.now() < deadline) {
-      const current = ledger.invocation(operationId);
-      const latestRun = ledger.run(run.runId);
-      if (!current || !latestRun || terminal(latestRun.state)) {
-        throw new Error("Run ended before fixture tool completion");
-      }
-      if (current.state === "succeeded" && current.result) {
-        return await this.toolReply(current);
-      }
-      if (current.state === "unknown-outcome") {
-        throw new Error("Tool outcome needs reconciliation");
-      }
-      if (current.state === "requested") {
-        // oxlint-disable-next-line no-await-in-loop
-        if (!(await this.authorizeInvocation(current))) {
-          throw new Error("Current grant denies fixture effect");
-        }
-        const started = ledger.startInvocation(operationId);
-        if (!started) {
-          continue;
-        }
-        // oxlint-disable-next-line no-await-in-loop
-        await this.ctx.storage.sync();
-        try {
-          // oxlint-disable-next-line no-await-in-loop
-          const result = await this.performEffect(started);
-          ledger.finishInvocation(operationId, result);
-          // oxlint-disable-next-line no-await-in-loop
-          await this.ctx.storage.sync();
-          const completed = ledger.invocation(operationId);
-          if (!completed) {
-            throw new Error("Completed tool record is missing.");
-          }
-          return await this.toolReply(completed);
-        } catch (error) {
-          if (!started.idempotent) {
-            ledger.markUnknownOutcome(operationId);
-            throw error;
-          }
-          // oxlint-disable-next-line no-await-in-loop
-          await recoverInterruptedInvocation(ledger, started, {
-            authorize: async (record) => await this.authorizeInvocation(record),
-            execute: async (record) => await this.performEffect(record),
+    const result = await Effect.runPromise(
+      Effect.result(
+        Effect.gen({ self: this }, function* handleRequest() {
+          const runtime = yield* Effect.tryPromise({
+            catch: () =>
+              new Unavailable({ reason: "Session host is unavailable" }),
+            try: () => this.ready(),
           });
-          const recovered = ledger.invocation(operationId);
-          if (recovered?.state === "succeeded" && recovered.result) {
-            // oxlint-disable-next-line no-await-in-loop
-            await this.ctx.storage.sync();
-            return await this.toolReply(recovered);
-          }
-          throw error;
-        }
-      }
-      // oxlint-disable-next-line no-await-in-loop
-      await delay(200);
-    }
-    throw new Error("Fixture approval timed out");
-  }
-
-  private async interruptModel(): Promise<void> {
-    if (!this.client) {
-      return;
-    }
-    const sessionId = this.storage().openCodeSessionId();
-    if (!sessionId) {
-      return;
-    }
-    try {
-      const client = await this.client;
-      await client.session.interrupt(
-        { continue: false, sessionID: sessionId },
-        { signal: AbortSignal.timeout(5000) }
-      );
-      // oxlint-disable-next-line no-empty -- Recovery retries unfinished durable work.
-    } catch {}
-  }
-
-  private async closeClient(): Promise<void> {
-    if (this.closingClient) {
-      await this.closingClient;
-      return;
-    }
-    this.closingClient = this.releaseClient();
-    try {
-      await this.closingClient;
-    } finally {
-      this.closingClient = undefined;
-    }
-  }
-
-  private async releaseClient(): Promise<void> {
-    const pending = this.client;
-    this.client = undefined;
-    this.clientRunId = undefined;
-    this.runtimePorts = undefined;
-    this.activeRunId = undefined;
-    this.modelAttemptId = undefined;
-    if (pending) {
-      try {
-        const client = await pending;
-        await this.ctx.storage.sync();
-        await client.close();
-        // oxlint-disable-next-line no-empty -- Recovery retries unfinished durable work.
-      } catch {}
-    }
-  }
-
-  private async recoverModelRequests(
-    run: StoredRun,
-    ports: RuntimePorts
-  ): Promise<void> {
-    const key = `model-sequence:${run.runId}`;
-    const [row] = this.ctx.storage.sql
-      .exec<{ result: string }>(
-        "SELECT result FROM cerebro_operation WHERE id=?",
-        key
-      )
-      .toArray();
-    const count = Number(row?.result ?? "0");
-    for (let ordinal = 1; ordinal <= count; ordinal += 1) {
-      const operationId = id.operation(`${run.operationId}:model:${ordinal}`);
-      const record = await ports.modelJournal.read(
-        run.agent.organizationId,
-        operationId,
-        { deadlineAt: Date.now() + 5000 }
-      );
-      if (record.status !== "ok") {
-        continue;
-      }
-      if (record.value.state === "completed") {
-        if (record.value.result.status === "ok") {
-          const receipt = record.value.result.value;
-          this.storage().recordUsage(
-            run.runId,
-            operationId,
-            receipt.units,
-            receipt.unit
-          );
-          const [consumed] = this.ctx.storage.sql
-            .exec(
-              "SELECT id FROM cerebro_operation WHERE id=?",
-              `model-consumed:${operationId}`
-            )
-            .toArray();
-          if (!consumed) {
-            this.storage().updateRun(run.runId, (current) => ({
-              ...current,
-              endedAt: Date.now(),
-              state: "unknown-outcome",
-            }));
-            await this.ctx.storage.sync();
-            return;
-          }
-        }
-        continue;
-      }
-      if (
-        record.value.state === "outcome-recorded" ||
-        record.value.state === "release-intent"
-      ) {
-        const request = record.value.intent.request as PaidWorkRequest;
-        const result = await ports.paidModel.run(
-          request,
-          {
-            deadlineAt: Date.now() + 15_000,
-            operationId,
-            requestDigest: record.value.intent.requestDigest,
-          },
-          () =>
-            Promise.reject(
-              new Error("A recovered model request cannot dispatch again.")
-            )
-        );
-        if (result.status === "ok") {
-          const receipt: ModelHttpReceipt = result.value;
-          this.storage().recordUsage(
-            run.runId,
-            operationId,
-            receipt.units,
-            receipt.unit
-          );
-          const [consumed] = this.ctx.storage.sql
-            .exec(
-              "SELECT id FROM cerebro_operation WHERE id=?",
-              `model-consumed:${operationId}`
-            )
-            .toArray();
-          if (consumed) {
-            continue;
-          }
-        }
-      }
-      this.storage().updateRun(run.runId, (current) => ({
-        ...current,
-        endedAt: Date.now(),
-        state: "unknown-outcome",
-      }));
-      await this.ctx.storage.sync();
-      return;
-    }
-  }
-
-  // oxlint-disable-next-line complexity
-  private async runModel(initial: StoredRun): Promise<void> {
-    const textAbort = new AbortController();
-    let textTask: Promise<void> | undefined;
-    let phase = "runtime-composition";
-    if (this.closingClient) {
-      await this.closingClient;
-    }
-    const ledger = this.storage();
-    if (this.client && this.clientRunId !== initial.runId) {
-      await this.closeClient();
-    }
-    this.activeRunId = initial.runId;
-    this.modelAttemptId ??= crypto.randomUUID();
-    try {
-      let run = ledger.run(initial.runId);
-      if (!run || terminal(run.state)) {
-        return;
-      }
-      this.runtimePorts ??= await this.createRuntime(run);
-      const ports = this.runtimePorts;
-      let modelPlugin;
-      if (ports) {
-        const current = await ports.authorization.evaluate(
-          run.context,
-          "execute",
-          {
-            id: run.agent.agentId,
-            kind: "agent",
-            organizationId: run.agent.organizationId,
-          },
-          { deadlineAt: Date.now() + 5000 }
-        );
-        if (current.status !== "ok" || current.value.decision !== "allow") {
-          ledger.recordFailure(
-            run.runId,
-            "authorization",
-            current.status === "ok"
-              ? {
-                  code: "unauthorized",
-                  reason: "Current policy denies the run.",
-                  status: "denied",
-                }
-              : current
-          );
-          throw new Error("Current policy denies the run.");
-        }
-        const historical = {
-          sourceIds: new Set<SourceId>(),
-          toolIds: new Set<string>(),
-        };
-        for (const previous of ledger.runs()) {
-          if (previous.modelPrompt || previous.output) {
-            if (!previous.dependencies) {
-              throw new Error("Historical model content has no dependencies.");
-            }
-            const allowed = await ports.checkDependencies(
-              run,
-              previous.dependencies,
-              { deadlineAt: Date.now() + 5000 }
+          const context = yield* runtime.configuration.authenticate(request);
+          const { address } = runtime.configuration;
+          const path = new URL(request.url).pathname;
+          const body = yield* Effect.tryPromise({
+            catch: () => new InvalidInput({ reason: "Invalid command JSON" }),
+            try: async () => (await request.json()) as Record<string, unknown>,
+          });
+          if (!body || typeof body !== "object" || Array.isArray(body)) {
+            return yield* Effect.fail(
+              new InvalidInput({ reason: "Command must be an object" })
             );
-            if (allowed.status !== "ok") {
-              ledger.recordFailure(run.runId, "historical-context", allowed);
-              throw new Error(
-                "Current policy denies historical model context."
+          }
+          const options = yield* attempt(() => requestOptions(body.options));
+          if (path === "/inspect") {
+            return Response.json({
+              status: "ok",
+              value: yield* runtime.service.inspect(address, context, options),
+            });
+          }
+          if (path === "/stream") {
+            yield* runtime.service.inspect(address, context, options);
+            const stream = runtime.service.stream(
+              address,
+              context,
+              {
+                accessGeneration:
+                  typeof body.accessGeneration === "number"
+                    ? body.accessGeneration
+                    : 0,
+              },
+              options
+            );
+            const bytes = Stream.map(Stream.scoped(stream), (frame) =>
+              new TextEncoder().encode(`${JSON.stringify(frame)}\n`)
+            );
+            return new Response(Stream.toReadableStream(bytes), {
+              headers: {
+                "Cache-Control": "no-store",
+                "Content-Type": "application/x-ndjson",
+              },
+            });
+          }
+          if (path === "/submit") {
+            const submitted = body.command as SubmitCommand;
+            if (submitted?.type !== "submit" || !submitted.event?.event) {
+              return yield* Effect.fail(
+                new InvalidInput({ reason: "Invalid submission" })
               );
             }
-            for (const sourceId of previous.dependencies.sourceIds) {
-              historical.sourceIds.add(sourceId);
-            }
-            for (const toolId of previous.dependencies.toolIds) {
-              historical.toolIds.add(toolId);
-            }
-          }
-        }
-        if (!this.client || this.clientRunId !== run.runId) {
-          await this.recoverModelRequests(run, ports);
-        }
-        const recovered = ledger.run(run.runId);
-        if (!recovered || terminal(recovered.state)) {
-          return;
-        }
-        if (!run.modelPrompt) {
-          const memory = await ports.retrieve(run, {
-            deadlineAt: Date.now() + 10_000,
-          });
-          if (memory.status !== "ok") {
-            ledger.recordFailure(run.runId, "retrieval", memory);
-            throw new Error(`Memory retrieval returned ${memory.status}.`);
-          }
-          const dependencies = {
-            sourceIds: [
-              ...new Set([
-                ...historical.sourceIds,
-                ...memory.value.flatMap((hit) => [
-                  hit.citation.sourceId,
-                  ...(hit.record.kind === "conversation-summary"
-                    ? hit.record.dependentSourceIds
-                    : []),
-                ]),
-              ]),
-            ],
-            toolIds: [...historical.toolIds],
-          };
-          const sourceText = memory.value
-            .map(
-              (hit) =>
-                `[source ${hit.citation.sourceId} version ${hit.citation.sourceVersion}] ${hit.record.text}`
-            )
-            .join("\n");
-          const modelPrompt = `${run.agent.instructions}\noperationId=${run.operationId}\n${run.prompt}\n${sourceText}`;
-          run = ledger.updateRun(run.runId, (currentRun) => ({
-            ...currentRun,
-            dependencies,
-            modelPrompt,
-          }));
-          for (const hit of memory.value) {
-            ledger.append(run.runId, {
-              citation: hit.citation,
-              dependencies,
-              runId: run.runId,
-              type: "citation",
+            const command: SubmitCommand = {
+              ...submitted,
+              event: { ...submitted.event, ...address, context },
+            };
+            return Response.json({
+              status: "ok",
+              value: yield* runtime.service.submit(command, options),
             });
           }
-          await this.ctx.storage.sync();
-        }
-        modelPlugin = createModelHttpPlugin({
-          failed: (result, transportPhase) => {
-            ledger.recordFailure(
-              initial.runId,
-              transportPhase ? `model:${transportPhase}` : "model",
-              result
-            );
-            const currentRun = ledger.run(initial.runId);
-            if (currentRun && !terminal(currentRun.state)) {
-              ledger.updateRun(initial.runId, (record) => ({
-                ...record,
-                endedAt: Date.now(),
-                state:
-                  result.status === "unknown-outcome"
-                    ? "unknown-outcome"
-                    : "failed",
-              }));
+          if (path === "/approve") {
+            const command = body.command as ApprovalCommand;
+            if (!validApproval(command)) {
+              return yield* Effect.fail(
+                new InvalidInput({ reason: "Invalid approval" })
+              );
             }
-          },
-          ports,
-          recorded: (operationId, receipt) =>
-            ledger.recordUsage(
-              initial.runId,
-              id.operation(operationId),
-              receipt.units,
-              receipt.unit
-            ),
-          run: () => {
-            const active = ledger.run(initial.runId);
-            if (!active) {
-              throw new Error("Model run is missing.");
-            }
-            return active;
-          },
-          storage: this.ctx.storage,
-        });
-      }
-      if (!this.client) {
-        this.chatText.clear();
-      }
-      this.clientRunId = run.runId;
-      phase = "sdk-bootstrap";
-      this.client ??= createOpenCodeClient(
-        this.ctx.storage,
-        this.env,
-        run.agent,
-        async (call) => await this.executeTool(call),
-        ports && modelPlugin ? { modelPlugin, ports } : undefined
-      );
-      const client = await this.client;
-      if (run.state === "queued") {
-        run = ledger.updateRun(run.runId, (current) => ({
-          ...current,
-          state: "running",
-        }));
-      }
-      let sessionId = ledger.openCodeSessionId();
-      if (!sessionId) {
-        const session = await client.session.create(
-          this.runtimePorts ? { title: "Cerebro conversation" } : {}
-        );
-        sessionId = session.id;
-        ledger.saveOpenCodeSessionId(sessionId);
-      }
-      const messageId = run.messageId ?? `msg_${run.eventId}`;
-      phase = "event-subscription";
-      const observation = this.observeOpenCodeText(
-        client,
-        run,
-        sessionId,
-        textAbort.signal
-      );
-      textTask = (async () => {
-        try {
-          await observation.closed;
-        } catch {
-          textAbort.abort();
-        }
-      })();
-      await observation.ready;
-      phase = "sdk-prompt";
-      if (!run.messageId) {
-        run = ledger.updateRun(run.runId, (current) => ({
-          ...current,
-          messageId,
-          opencodeSessionId: sessionId,
-        }));
-      }
-      const messages = await client.message.list({ sessionID: sessionId });
-      const inbox = await client.session.inbox.list({ sessionID: sessionId });
-      if (
-        !messages.data.some((message) => message.id === messageId) &&
-        !inbox.some((message) => message.id === messageId)
-      ) {
-        await client.session.prompt({
-          id: messageId,
-          sessionID: sessionId,
-          text: run.modelPrompt ?? fixturePrompt(run),
-        });
-      } else {
-        const active = await client.session.active();
-        const assistant = messages.data.findLast(
-          (message) => message.type === "assistant"
-        );
-        if (
-          !active[sessionId] &&
-          assistant &&
-          !assistant.error &&
-          (assistant.finish === undefined || assistant.finish === "tool-calls")
-        ) {
-          const resumeId = `msg_resume_${run.eventId}_${this.modelAttemptId}`;
-          if (
-            !messages.data.some((message) => message.id === resumeId) &&
-            !inbox.some((message) => message.id === resumeId)
-          ) {
-            await client.session.synthetic({
-              description: "Resume the interrupted run.",
-              id: resumeId,
-              sessionID: sessionId,
-              text: "Continue the interrupted turn. Use the existing tool results.",
+            return Response.json({
+              status: "ok",
+              value: yield* runtime.service.approve(
+                { ...command, address, context, type: "approve" },
+                options
+              ),
             });
           }
-        }
-      }
-      try {
-        phase = "sdk-wait";
-        await client.session.wait(
-          { sessionID: sessionId },
-          { signal: AbortSignal.timeout(60_000) }
-        );
-      } catch (error) {
-        if (
-          error instanceof Error &&
-          (error.name === "TimeoutError" || error.name === "AbortError")
-        ) {
-          return;
-        }
-        throw error;
-      }
-      phase = "sdk-final-response";
-      const reply = await readFinalReply(client, sessionId);
-      const latest = ledger.run(run.runId);
-      const effectNeedsRetry = ledger.hasRetryableInvocation(run.runId);
-      if (
-        !latest ||
-        terminal(latest.state) ||
-        latest.state === "waiting-for-approval" ||
-        effectNeedsRetry
-      ) {
-        return;
-      }
-      if (reply.kind === "pending") {
-        return;
-      }
-      if (reply.kind === "invalid") {
-        ledger.recordFailure(run.runId, "model-response", {
-          reason: reply.reason,
-          status: "invalid-input",
-        });
-        ledger.updateRun(run.runId, (current) => ({
-          ...current,
-          endedAt: Date.now(),
-          state: "failed",
-        }));
-        return;
-      }
-      const confirmedEffect = ledger
-        .invocations()
-        .some(
-          (invocation) =>
-            invocation.runId === run.runId && invocation.state === "succeeded"
-        );
-      if (
-        !this.runtimePorts &&
-        (!confirmedEffect || !fixtureReplyMatches(reply.text))
-      ) {
-        ledger.updateRun(run.runId, (current) => ({
-          ...current,
-          endedAt: Date.now(),
-          state: "failed",
-        }));
-        return;
-      }
-      if (this.runtimePorts) {
-        await this.markModelConsumed(run.runId);
-        const allowed = await this.runtimePorts.checkDependencies(
-          latest,
-          latest.dependencies ?? { sourceIds: [], toolIds: [] },
-          { deadlineAt: Date.now() + 5000 }
-        );
-        if (allowed.status !== "ok") {
-          throw new Error("Current policy denies completed output.");
-        }
-      }
-      ledger.updateRun(run.runId, (current) => ({
-        ...current,
-        endedAt: Date.now(),
-        output: reply.text,
-        state: "completed",
-      }));
-      if (!this.runtimePorts) {
-        ledger.recordUsage(run.runId, run.operationId, 0, "fixture-credits");
-      }
-    } catch {
-      const current = ledger.run(initial.runId);
-      const effectNeedsRetry = ledger.hasRetryableInvocation(initial.runId);
-      if (
-        current &&
-        !terminal(current.state) &&
-        current.state !== "waiting-for-approval" &&
-        !effectNeedsRetry
-      ) {
-        ledger.recordFailure(current.runId, `model-runtime:${phase}`, {
-          code: "provider-unavailable",
-          reason: `Model runtime failed during ${phase}.`,
-          status: "unavailable",
-        });
-        ledger.updateRun(current.runId, (run) => ({
-          ...run,
-          endedAt: Date.now(),
-          output: run.output,
-          state: "failed",
-        }));
-      }
-    } finally {
-      textAbort.abort();
-      await textTask;
-      const latest = ledger.run(initial.runId);
-      const effectNeedsRetry = ledger.hasRetryableInvocation(initial.runId);
-      if (
-        (latest && terminal(latest.state)) ||
-        effectNeedsRetry ||
-        !this.client
-      ) {
-        await this.closeClient();
-      }
-      this.modelTask = undefined;
-      this.notifyChat();
+          if (path === "/cancel") {
+            const command = body.command as { readonly runId?: string };
+            if (typeof command?.runId !== "string") {
+              return yield* Effect.fail(
+                new InvalidInput({ reason: "Invalid cancel" })
+              );
+            }
+            return Response.json({
+              status: "ok",
+              value: yield* runtime.service.cancel(
+                {
+                  address,
+                  context,
+                  runId: id.run(command.runId),
+                  type: "cancel",
+                },
+                options
+              ),
+            });
+          }
+          return yield* Effect.fail(
+            new NotFound({ resource: "Session route" })
+          );
+        })
+      )
+    );
+    if (Result.isFailure(result)) {
+      const response = failureToHttp(result.failure);
+      return Response.json(response.body, { status: response.status });
     }
+    return result.success;
   }
 }
