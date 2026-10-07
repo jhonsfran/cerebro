@@ -1,0 +1,99 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
+
+const root = '/tmp/celld-recovery-probe-GHenL1';
+const fixture = '/tmp/cerebro-s1-0-icdIHB/wrapper';
+const environment = { ...process.env };
+for (const key of ['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_TLS', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH']) delete environment[key];
+const cases = [
+  { id: 'v060-default', image: 'ghcr.io/denoland/celld:0.6.0@sha256:e188a7f2bb0b8cec9fb04ee4c3d1ed7cca0ea0419519ae2a9ba36e5b6fe5161b', window: 90_000 },
+  { id: 'v061-default', image: 'ghcr.io/denoland/celld:0.6.1@sha256:acb0bc2dca628f0dac7c6b43eea42615a79f4943f316f6df7c1da0b86d52150b', window: 90_000 },
+  { id: 'v061-http-wake', image: 'ghcr.io/denoland/celld:0.6.1@sha256:acb0bc2dca628f0dac7c6b43eea42615a79f4943f316f6df7c1da0b86d52150b', window: 30_000, httpWake: true },
+];
+const owned = [];
+const timeline = [];
+const results = [];
+function note(data) { const event = { at: new Date().toISOString(), ...data }; timeline.push(event); process.stdout.write(JSON.stringify(event) + '\n'); }
+function docker(args) {
+  const r = spawnSync('docker', ['--host=unix:///var/run/docker.sock', ...args], { env: environment, encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
+  if (r.status !== 0) throw new Error(JSON.stringify({ args, status: r.status, error: r.error?.message, stderr: r.stderr }));
+  return r.stdout;
+}
+async function request(c, route, body, conversation = 'restart') {
+  const url = new URL(route, c.base);
+  url.searchParams.set('conversation', conversation);
+  const response = await fetch(url, { method: body ? 'POST' : 'GET', ...(body ? { body: JSON.stringify(body), headers: { 'content-type': 'application/json' } } : {}), signal: AbortSignal.timeout(20_000) });
+  assert.equal(response.status, 200);
+  const value = await response.json();
+  note({ id: c.id, route, value });
+  return value;
+}
+async function start(c) {
+  c.name = 'celld-review-ghenl1-' + c.id;
+  c.project = root + '/' + c.id;
+  await mkdir(c.project);
+  await copyFile(fixture + '/bundle.mjs', c.project + '/bundle.mjs');
+  await copyFile(fixture + '/wrangler.json', c.project + '/wrangler.json');
+  owned.push(c.name);
+  docker(['run', '-d', '--name', c.name, '--mount', 'type=bind,src=' + c.project + ',dst=/proof', '--mount', 'type=bind,src=/tmp/cerebro-s1-0-icdIHB/node_modules/@esbuild/linux-x64/bin/esbuild,dst=/esbuild,readonly', '-w', '/proof', '-e', 'CELLD_ESBUILD=/esbuild', '-e', 'CELLD_TELEMETRY=0', '-e', 'CELLD_IDLE_EVICT_S=2', '-p', '127.0.0.1::9876', c.image, 'dev', '.', '--host', '0.0.0.0', '--port', '9876', '--logs', '--no-watch']);
+  c.base = 'http://127.0.0.1:' + docker(['port', c.name, '9876']).trim().split(':').at(-1);
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try { await request(c, '/', undefined, 'readiness'); return; } catch (e) { if (attempt === 39) throw e; await delay(500); }
+  }
+}
+async function probe(c) {
+  await request(c, '/submit', { requestId: 'run-A', text: 'first' });
+  await request(c, '/submit', { requestId: 'run-B', text: 'second' });
+  const pending = await request(c, '/pending');
+  const before = await request(c, '/');
+  assert.equal(pending.find(x => x.operationId === 'run-A').status, 'running');
+  assert.equal(pending.find(x => x.operationId === 'run-B').status, 'queued');
+  assert.ok(before.alarm);
+  const killedAt = Date.now();
+  assert.ok(Math.floor(before.alarm / 60_000) > Math.floor(killedAt / 60_000), 'Alarm minute must be after restart minute');
+  docker(['kill', c.name]);
+  docker(['start', c.name]);
+  c.base = 'http://127.0.0.1:' + docker(['port', c.name, '9876']).trim().split(':').at(-1);
+  note({ id: c.id, event: 'restarted', alarm: before.alarm, killedAt, defaultWakerTickMs: 60_000 });
+  let wakeSnapshot;
+  if (c.httpWake) { await delay(6000); wakeSnapshot = await request(c, '/snapshot'); }
+  await delay(c.window);
+  const preRequestLogs = docker(['logs', c.name]);
+  await writeFile(c.project + '/logs-before-observation.txt', preRequestLogs);
+  const snapshot = await request(c, '/snapshot');
+  assert.equal(snapshot.run, undefined);
+  assert.deepEqual(snapshot.inbox, []);
+  const a = await request(c, '/wait?requestId=run-A');
+  const b = await request(c, '/wait?requestId=run-B');
+  assert.equal(a.status, 'done');
+  assert.equal(b.status, 'done');
+  const after = await request(c, '/');
+  const result = { id: c.id, status: 'PASS', image: c.image, alarm: before.alarm, killedAt, observedAt: Date.now(), noHttpWindowMs: c.window, wakeSnapshot, snapshot, results: [a, b], beforeCounters: before.counters, afterCounters: after.counters, logsBeforeObservation: c.project + '/logs-before-observation.txt' };
+  results.push(result);
+  note({ id: c.id, status: result.status, elapsedMs: result.observedAt - killedAt });
+}
+try {
+  note({ event: 'fixture', bundleSha256: createHash('sha256').update(await readFile(fixture + '/bundle.mjs')).digest('hex'), note: 'Unmodified S1-0 official PiHarness fixture; isolated fresh local stores; no production resources' });
+  await Promise.all(cases.map(start));
+  while (new Date().getUTCSeconds() < 32 || new Date().getUTCSeconds() > 48) await delay(500);
+  note({ event: 'starting-aligned-probes' });
+  const settled = await Promise.allSettled(cases.map(probe));
+  for (let i = 0; i < settled.length; i++) if (settled[i].status === 'rejected') {
+    results.push({ id: cases[i].id, status: 'FAIL', error: String(settled[i].reason), stack: settled[i].reason?.stack });
+    note(results.at(-1));
+  }
+  if (settled.some(x => x.status === 'rejected')) process.exitCode = 1;
+} catch (error) {
+  note({ event: 'runner-error', error: String(error), stack: error.stack });
+  process.exitCode = 1;
+} finally {
+  for (const c of cases) if (owned.includes(c.name)) {
+    try { await writeFile(c.project + '/logs-final.txt', docker(['logs', c.name])); } catch {}
+    try { docker(['rm', '-f', c.name]); } catch {}
+  }
+  await writeFile(root + '/evidence.json', JSON.stringify({ results, timeline }, null, 2) + '\n');
+  note({ evidence: root + '/evidence.json' });
+}

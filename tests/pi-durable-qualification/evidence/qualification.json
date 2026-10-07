@@ -1,6 +1,6 @@
 {
   "contractStatus": "ready for coordinator review; qualification incomplete",
-  "hostImage": "ghcr.io/denoland/celld:0.6.0@sha256:e188a7f2bb0b8cec9fb04ee4c3d1ed7cca0ea0419519ae2a9ba36e5b6fe5161b",
+  "hostImage": "ghcr.io/denoland/celld:0.6.1@sha256:acb0bc2dca628f0dac7c6b43eea42615a79f4943f316f6df7c1da0b86d52150b",
   "lockSha256": "0ac9a7fa2fa226f88dda36f1125bf148aab41f2d9beea360b8d9ef8ef8ddac4f",
   "mode": "celld dev with persistent local storage and nodejs_compat; not production bucket",
   "results": [
@@ -139,7 +139,7 @@
                 {
                   "role": "user",
                   "content": "first",
-                  "timestamp": 1791341945572
+                  "timestamp": 1791344010661
                 }
               ],
               "kind": "pi.user",
@@ -161,7 +161,7 @@
                       }
                     }
                   ],
-                  "timestamp": 1791341945577
+                  "timestamp": 1791344010667
                 }
               ],
               "kind": "pi.system",
@@ -271,7 +271,7 @@
                 {
                   "role": "user",
                   "content": "tool-before-steer",
-                  "timestamp": 1791341953210
+                  "timestamp": 1791344018299
                 }
               ],
               "kind": "pi.user",
@@ -293,7 +293,7 @@
                       }
                     }
                   ],
-                  "timestamp": 1791341953216
+                  "timestamp": 1791344018307
                 }
               ],
               "kind": "pi.system",
@@ -345,7 +345,7 @@
                 {
                   "role": "user",
                   "content": "tool-before-steer",
-                  "timestamp": 1791341953210
+                  "timestamp": 1791344018299
                 }
               ],
               "kind": "pi.user",
@@ -367,7 +367,7 @@
                       }
                     }
                   ],
-                  "timestamp": 1791341953216
+                  "timestamp": 1791344018307
                 }
               ],
               "kind": "pi.system",
@@ -387,7 +387,7 @@
                       "arguments": {}
                     }
                   ],
-                  "api": "faux:1791341953210:y7dmn0thhua",
+                  "api": "faux:1791344018299:nmkhz0ekg0k",
                   "provider": "faux",
                   "model": "faux-1",
                   "usage": {
@@ -405,7 +405,7 @@
                     }
                   },
                   "stopReason": "toolUse",
-                  "timestamp": 1791341956218
+                  "timestamp": 1791344021311
                 }
               ],
               "kind": "pi.assistant",
@@ -426,7 +426,7 @@
                     }
                   ],
                   "isError": false,
-                  "timestamp": 1791341956427
+                  "timestamp": 1791344021518
                 }
               ],
               "data": {
@@ -442,7 +442,7 @@
                 {
                   "role": "user",
                   "content": "use the corrected instructions",
-                  "timestamp": 1791341956429
+                  "timestamp": 1791344021521
                 }
               ],
               "kind": "pi.user",
@@ -574,7 +574,38 @@
     },
     {
       "details": {
-        "noHttpWindowMs": 45000,
+        "before": [
+          {
+            "operationId": "run-A",
+            "session": "1",
+            "status": "running"
+          },
+          {
+            "operationId": "run-B",
+            "session": "1",
+            "status": "queued"
+          }
+        ],
+        "counters": [
+          {
+            "name": "model_calls",
+            "value": 3
+          }
+        ],
+        "recovered": [
+          {
+            "operationId": "run-A",
+            "session": "1",
+            "status": "done",
+            "text": "qualified answer"
+          },
+          {
+            "operationId": "run-B",
+            "session": "1",
+            "status": "done",
+            "text": "qualified answer"
+          }
+        ],
         "snapshot": {
           "type": "snapshot",
           "entries": [
@@ -583,7 +614,7 @@
                 {
                   "role": "user",
                   "content": "first",
-                  "timestamp": 1791341970928
+                  "timestamp": 1791344036034
                 }
               ],
               "kind": "pi.user",
@@ -605,29 +636,103 @@
                       }
                     }
                   ],
-                  "timestamp": 1791341970936
+                  "timestamp": 1791344036040
                 }
               ],
               "kind": "pi.system",
               "id": 10,
               "conversationId": 1,
               "byTaskId": 9
+            },
+            {
+              "model": [
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "qualified answer"
+                    }
+                  ],
+                  "api": "faux:1791344096560:4f5igqlhsso",
+                  "provider": "faux",
+                  "model": "faux-1",
+                  "usage": {
+                    "input": 46,
+                    "output": 4,
+                    "cacheRead": 0,
+                    "cacheWrite": 46,
+                    "totalTokens": 96,
+                    "cost": {
+                      "input": 0,
+                      "output": 0,
+                      "cacheRead": 0,
+                      "cacheWrite": 0,
+                      "total": 0
+                    }
+                  },
+                  "stopReason": "stop",
+                  "timestamp": 1791344099581
+                }
+              ],
+              "kind": "pi.assistant",
+              "id": 12,
+              "conversationId": 1,
+              "byTaskId": 9
+            },
+            {
+              "model": [
+                {
+                  "role": "user",
+                  "content": "second",
+                  "timestamp": 1791344100385
+                }
+              ],
+              "kind": "pi.user",
+              "id": 13,
+              "conversationId": 1,
+              "byTaskId": 9
+            },
+            {
+              "model": [
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "qualified answer"
+                    }
+                  ],
+                  "api": "faux:1791344096560:4f5igqlhsso",
+                  "provider": "faux",
+                  "model": "faux-1",
+                  "usage": {
+                    "input": 10,
+                    "output": 4,
+                    "cacheRead": 46,
+                    "cacheWrite": 11,
+                    "totalTokens": 71,
+                    "cost": {
+                      "input": 0,
+                      "output": 0,
+                      "cacheRead": 0,
+                      "cacheWrite": 0,
+                      "total": 0
+                    }
+                  },
+                  "stopReason": "stop",
+                  "timestamp": 1791344103396
+                }
+              ],
+              "kind": "pi.assistant",
+              "id": 15,
+              "conversationId": 1,
+              "byTaskId": 14
             }
           ],
-          "run": {
-            "inputs": [8]
-          },
-          "generation": {
-            "attempt": 1
-          },
           "tools": [],
           "compactions": [],
-          "inbox": [
-            {
-              "id": 11,
-              "mode": "followUp"
-            }
-          ],
+          "inbox": [],
           "agent": {
             "model": {
               "provider": "faux",
@@ -635,24 +740,208 @@
             }
           },
           "usage": {
-            "models": {},
+            "models": {
+              "faux/faux-1": {
+                "input": 56,
+                "output": 8,
+                "cacheRead": 46,
+                "cacheWrite": 57,
+                "totalTokens": 167,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              }
+            },
             "tools": {}
           }
-        }
+        },
+        "wakeBefore": 1791344066050
       },
-      "disposition": "deferred-host-qualification",
-      "name": "alarm-only completion",
-      "status": "FAIL"
-    },
-    {
-      "details": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ {\n+   inputs: [\n+     8\n+   ]\n+ }\n- undefined\n",
-      "name": "qualification runner",
-      "status": "FAIL"
-    },
-    {
-      "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
       "name": "native process restart recovers Pi-queued B",
-      "status": "NOT_RUN"
+      "status": "PASS"
+    },
+    {
+      "details": {
+        "answerTimestamps": [1791344099581, 1791344103396],
+        "defaultWakerTickMs": 60000,
+        "mode": "celld dev local storage; no HTTP request for ninety seconds after process restart",
+        "noHttpWindowMs": 90000,
+        "observationStartedAt": 1791344126318,
+        "recovered": [
+          {
+            "operationId": "run-A",
+            "session": "1",
+            "status": "done",
+            "text": "qualified answer"
+          },
+          {
+            "operationId": "run-B",
+            "session": "1",
+            "status": "done",
+            "text": "qualified answer"
+          }
+        ],
+        "snapshot": {
+          "type": "snapshot",
+          "entries": [
+            {
+              "model": [
+                {
+                  "role": "user",
+                  "content": "first",
+                  "timestamp": 1791344036034
+                }
+              ],
+              "kind": "pi.user",
+              "id": 7,
+              "conversationId": 1
+            },
+            {
+              "model": [
+                {
+                  "role": "system",
+                  "content": "",
+                  "toolsAdded": [
+                    {
+                      "name": "qualification_round",
+                      "description": "Controlled harmless tool round for native steering qualification",
+                      "parameters": {
+                        "type": "object",
+                        "properties": {}
+                      }
+                    }
+                  ],
+                  "timestamp": 1791344036040
+                }
+              ],
+              "kind": "pi.system",
+              "id": 10,
+              "conversationId": 1,
+              "byTaskId": 9
+            },
+            {
+              "model": [
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "qualified answer"
+                    }
+                  ],
+                  "api": "faux:1791344096560:4f5igqlhsso",
+                  "provider": "faux",
+                  "model": "faux-1",
+                  "usage": {
+                    "input": 46,
+                    "output": 4,
+                    "cacheRead": 0,
+                    "cacheWrite": 46,
+                    "totalTokens": 96,
+                    "cost": {
+                      "input": 0,
+                      "output": 0,
+                      "cacheRead": 0,
+                      "cacheWrite": 0,
+                      "total": 0
+                    }
+                  },
+                  "stopReason": "stop",
+                  "timestamp": 1791344099581
+                }
+              ],
+              "kind": "pi.assistant",
+              "id": 12,
+              "conversationId": 1,
+              "byTaskId": 9
+            },
+            {
+              "model": [
+                {
+                  "role": "user",
+                  "content": "second",
+                  "timestamp": 1791344100385
+                }
+              ],
+              "kind": "pi.user",
+              "id": 13,
+              "conversationId": 1,
+              "byTaskId": 9
+            },
+            {
+              "model": [
+                {
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "qualified answer"
+                    }
+                  ],
+                  "api": "faux:1791344096560:4f5igqlhsso",
+                  "provider": "faux",
+                  "model": "faux-1",
+                  "usage": {
+                    "input": 10,
+                    "output": 4,
+                    "cacheRead": 46,
+                    "cacheWrite": 11,
+                    "totalTokens": 71,
+                    "cost": {
+                      "input": 0,
+                      "output": 0,
+                      "cacheRead": 0,
+                      "cacheWrite": 0,
+                      "total": 0
+                    }
+                  },
+                  "stopReason": "stop",
+                  "timestamp": 1791344103396
+                }
+              ],
+              "kind": "pi.assistant",
+              "id": 15,
+              "conversationId": 1,
+              "byTaskId": 14
+            }
+          ],
+          "tools": [],
+          "compactions": [],
+          "inbox": [],
+          "agent": {
+            "model": {
+              "provider": "faux",
+              "modelId": "faux-1"
+            }
+          },
+          "usage": {
+            "models": {
+              "faux/faux-1": {
+                "input": 56,
+                "output": 8,
+                "cacheRead": 46,
+                "cacheWrite": 57,
+                "totalTokens": 167,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              }
+            },
+            "tools": {}
+          }
+        },
+        "timeline": "wrapper-alarm-only-timeline.txt"
+      },
+      "name": "alarm-only completion",
+      "status": "PASS"
     },
     {
       "details": "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed",
@@ -726,5 +1015,5 @@
     }
   ],
   "selectedImplementation": "official PiHarness + Lifecycle; native inbox, steering and stop; thin Effect adapter",
-  "sourceSha": "8886b934ae0e75a5948d91a5310cb468b8495903"
+  "sourceSha": "7984e12712deb2b9f93d9e1a5ff4f341060c5a02"
 }

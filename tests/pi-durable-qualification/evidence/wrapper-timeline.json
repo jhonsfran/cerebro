@@ -1,6 +1,6 @@
 [
   {
-    "at": "2026-10-07T02:58:58.725Z",
+    "at": "2026-10-07T03:33:23.816Z",
     "conversation": "abort-scope",
     "path": "/submit",
     "value": {
@@ -10,7 +10,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:58:58.736Z",
+    "at": "2026-10-07T03:33:23.827Z",
     "conversation": "abort-scope",
     "path": "/submit",
     "value": {
@@ -20,7 +20,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:58:58.740Z",
+    "at": "2026-10-07T03:33:23.831Z",
     "conversation": "abort-scope",
     "path": "/pending",
     "value": [
@@ -37,7 +37,7 @@
     ]
   },
   {
-    "at": "2026-10-07T02:59:01.735Z",
+    "at": "2026-10-07T03:33:26.824Z",
     "conversation": "abort-scope",
     "path": "/cancel",
     "value": {
@@ -45,13 +45,13 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:01.739Z",
+    "at": "2026-10-07T03:33:26.828Z",
     "conversation": "abort-scope",
     "path": "/pending",
     "value": []
   },
   {
-    "at": "2026-10-07T02:59:01.757Z",
+    "at": "2026-10-07T03:33:26.844Z",
     "conversation": "duplicate",
     "path": "/submit",
     "value": {
@@ -61,7 +61,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:01.762Z",
+    "at": "2026-10-07T03:33:26.854Z",
     "conversation": "duplicate",
     "path": "/submit",
     "value": {
@@ -71,7 +71,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:01.767Z",
+    "at": "2026-10-07T03:33:26.861Z",
     "conversation": "duplicate",
     "path": "/submit",
     "value": {
@@ -81,7 +81,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:05.563Z",
+    "at": "2026-10-07T03:33:30.653Z",
     "conversation": "duplicate",
     "path": "/wait?requestId=run-A",
     "value": {
@@ -92,7 +92,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:05.567Z",
+    "at": "2026-10-07T03:33:30.656Z",
     "conversation": "duplicate",
     "path": "/",
     "value": {
@@ -100,7 +100,7 @@
       "calls": [
         {
           "position": 1,
-          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791341941744},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341941749}]"
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791344006833},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344006838}]"
         }
       ],
       "counters": [
@@ -175,7 +175,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:05.582Z",
+    "at": "2026-10-07T03:33:30.671Z",
     "conversation": "follow-up",
     "path": "/submit",
     "value": {
@@ -185,7 +185,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:05.590Z",
+    "at": "2026-10-07T03:33:30.682Z",
     "conversation": "follow-up",
     "path": "/submit",
     "value": {
@@ -195,7 +195,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:05.593Z",
+    "at": "2026-10-07T03:33:30.685Z",
     "conversation": "follow-up",
     "path": "/pending",
     "value": [
@@ -212,7 +212,7 @@
     ]
   },
   {
-    "at": "2026-10-07T02:59:05.597Z",
+    "at": "2026-10-07T03:33:30.689Z",
     "conversation": "follow-up",
     "path": "/snapshot",
     "value": {
@@ -223,7 +223,7 @@
             {
               "role": "user",
               "content": "first",
-              "timestamp": 1791341945572
+              "timestamp": 1791344010661
             }
           ],
           "kind": "pi.user",
@@ -245,7 +245,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341945577
+              "timestamp": 1791344010667
             }
           ],
           "kind": "pi.system",
@@ -281,7 +281,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:09.402Z",
+    "at": "2026-10-07T03:33:34.480Z",
     "conversation": "follow-up",
     "path": "/wait?requestId=run-A",
     "value": {
@@ -292,7 +292,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:13.201Z",
+    "at": "2026-10-07T03:33:38.287Z",
     "conversation": "follow-up",
     "path": "/wait?requestId=run-B",
     "value": {
@@ -303,7 +303,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:13.205Z",
+    "at": "2026-10-07T03:33:38.292Z",
     "conversation": "follow-up",
     "path": "/",
     "value": {
@@ -311,11 +311,11 @@
       "calls": [
         {
           "position": 1,
-          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791341945572},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341945577}]"
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791344010661},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344010667}]"
         },
         {
           "position": 2,
-          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791341945572},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341945577},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"qualified answer\"}],\"api\":\"faux:1791341945571:u5164v4wrej\",\"provider\":\"faux\",\"model\":\"faux-1\",\"usage\":{\"input\":46,\"output\":4,\"cacheRead\":0,\"cacheWrite\":46,\"totalTokens\":96,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1791341948582},{\"role\":\"user\",\"content\":\"second\",\"timestamp\":1791341949386}]"
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791344010661},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344010667},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"qualified answer\"}],\"api\":\"faux:1791344010661:9bh8cxzp2e7\",\"provider\":\"faux\",\"model\":\"faux-1\",\"usage\":{\"input\":46,\"output\":4,\"cacheRead\":0,\"cacheWrite\":46,\"totalTokens\":96,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1791344013671},{\"role\":\"user\",\"content\":\"second\",\"timestamp\":1791344014472}]"
         }
       ],
       "counters": [
@@ -390,7 +390,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:13.223Z",
+    "at": "2026-10-07T03:33:38.310Z",
     "conversation": "steer",
     "path": "/submit",
     "value": {
@@ -400,7 +400,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:13.232Z",
+    "at": "2026-10-07T03:33:38.321Z",
     "conversation": "steer",
     "path": "/steer",
     "value": {
@@ -410,7 +410,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:13.235Z",
+    "at": "2026-10-07T03:33:38.324Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -421,7 +421,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -443,7 +443,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -479,7 +479,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:13.238Z",
+    "at": "2026-10-07T03:33:38.327Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -490,7 +490,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -512,7 +512,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -548,7 +548,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:13.493Z",
+    "at": "2026-10-07T03:33:38.582Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -559,7 +559,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -581,7 +581,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -617,7 +617,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:13.748Z",
+    "at": "2026-10-07T03:33:38.838Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -628,7 +628,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -650,7 +650,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -686,7 +686,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:14.003Z",
+    "at": "2026-10-07T03:33:39.092Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -697,7 +697,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -719,7 +719,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -755,7 +755,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:14.256Z",
+    "at": "2026-10-07T03:33:39.347Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -766,7 +766,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -788,7 +788,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -824,7 +824,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:14.513Z",
+    "at": "2026-10-07T03:33:39.600Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -835,7 +835,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -857,7 +857,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -893,7 +893,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:14.768Z",
+    "at": "2026-10-07T03:33:39.855Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -904,7 +904,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -926,7 +926,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -962,7 +962,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:15.023Z",
+    "at": "2026-10-07T03:33:40.108Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -973,7 +973,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -995,7 +995,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -1031,7 +1031,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:15.279Z",
+    "at": "2026-10-07T03:33:40.362Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -1042,7 +1042,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -1064,7 +1064,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -1100,7 +1100,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:15.533Z",
+    "at": "2026-10-07T03:33:40.616Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -1111,7 +1111,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -1133,7 +1133,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -1169,7 +1169,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:15.787Z",
+    "at": "2026-10-07T03:33:40.870Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -1180,7 +1180,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -1202,7 +1202,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -1238,7 +1238,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:16.042Z",
+    "at": "2026-10-07T03:33:41.125Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -1249,7 +1249,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -1271,7 +1271,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -1307,7 +1307,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:16.298Z",
+    "at": "2026-10-07T03:33:41.380Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -1318,7 +1318,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -1340,7 +1340,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -1376,7 +1376,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:16.555Z",
+    "at": "2026-10-07T03:33:41.637Z",
     "conversation": "steer",
     "path": "/snapshot",
     "value": {
@@ -1387,7 +1387,7 @@
             {
               "role": "user",
               "content": "tool-before-steer",
-              "timestamp": 1791341953210
+              "timestamp": 1791344018299
             }
           ],
           "kind": "pi.user",
@@ -1409,7 +1409,7 @@
                   }
                 }
               ],
-              "timestamp": 1791341953216
+              "timestamp": 1791344018307
             }
           ],
           "kind": "pi.system",
@@ -1429,7 +1429,7 @@
                   "arguments": {}
                 }
               ],
-              "api": "faux:1791341953210:y7dmn0thhua",
+              "api": "faux:1791344018299:nmkhz0ekg0k",
               "provider": "faux",
               "model": "faux-1",
               "usage": {
@@ -1447,7 +1447,7 @@
                 }
               },
               "stopReason": "toolUse",
-              "timestamp": 1791341956218
+              "timestamp": 1791344021311
             }
           ],
           "kind": "pi.assistant",
@@ -1468,7 +1468,7 @@
                 }
               ],
               "isError": false,
-              "timestamp": 1791341956427
+              "timestamp": 1791344021518
             }
           ],
           "data": {
@@ -1484,7 +1484,7 @@
             {
               "role": "user",
               "content": "use the corrected instructions",
-              "timestamp": 1791341956429
+              "timestamp": 1791344021521
             }
           ],
           "kind": "pi.user",
@@ -1530,7 +1530,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:20.247Z",
+    "at": "2026-10-07T03:33:45.338Z",
     "conversation": "steer",
     "path": "/wait?requestId=run-A",
     "value": {
@@ -1541,7 +1541,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:20.250Z",
+    "at": "2026-10-07T03:33:45.344Z",
     "conversation": "steer",
     "path": "/wait?requestId=run-B",
     "value": {
@@ -1552,7 +1552,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:20.253Z",
+    "at": "2026-10-07T03:33:45.347Z",
     "conversation": "steer",
     "path": "/",
     "value": {
@@ -1560,11 +1560,11 @@
       "calls": [
         {
           "position": 1,
-          "messages": "[{\"role\":\"user\",\"content\":\"tool-before-steer\",\"timestamp\":1791341953210},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341953216}]"
+          "messages": "[{\"role\":\"user\",\"content\":\"tool-before-steer\",\"timestamp\":1791344018299},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344018307}]"
         },
         {
           "position": 2,
-          "messages": "[{\"role\":\"user\",\"content\":\"tool-before-steer\",\"timestamp\":1791341953210},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341953216},{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"probe-tool-call\",\"name\":\"qualification_round\",\"arguments\":{}}],\"api\":\"faux:1791341953210:y7dmn0thhua\",\"provider\":\"faux\",\"model\":\"faux-1\",\"usage\":{\"input\":49,\"output\":6,\"cacheRead\":0,\"cacheWrite\":49,\"totalTokens\":104,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"toolUse\",\"timestamp\":1791341956218},{\"role\":\"toolResult\",\"toolCallId\":\"probe-tool-call\",\"toolName\":\"qualification_round\",\"content\":[{\"text\":\"controlled result\",\"type\":\"text\"}],\"isError\":false,\"timestamp\":1791341956427},{\"role\":\"user\",\"content\":\"use the corrected instructions\",\"timestamp\":1791341956429}]"
+          "messages": "[{\"role\":\"user\",\"content\":\"tool-before-steer\",\"timestamp\":1791344018299},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344018307},{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"probe-tool-call\",\"name\":\"qualification_round\",\"arguments\":{}}],\"api\":\"faux:1791344018299:nmkhz0ekg0k\",\"provider\":\"faux\",\"model\":\"faux-1\",\"usage\":{\"input\":49,\"output\":6,\"cacheRead\":0,\"cacheWrite\":49,\"totalTokens\":104,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"toolUse\",\"timestamp\":1791344021311},{\"role\":\"toolResult\",\"toolCallId\":\"probe-tool-call\",\"toolName\":\"qualification_round\",\"content\":[{\"text\":\"controlled result\",\"type\":\"text\"}],\"isError\":false,\"timestamp\":1791344021518},{\"role\":\"user\",\"content\":\"use the corrected instructions\",\"timestamp\":1791344021521}]"
         }
       ],
       "counters": [
@@ -1643,7 +1643,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:20.268Z",
+    "at": "2026-10-07T03:33:45.377Z",
     "conversation": "queued-cancel",
     "path": "/submit",
     "value": {
@@ -1653,7 +1653,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:20.276Z",
+    "at": "2026-10-07T03:33:45.385Z",
     "conversation": "queued-cancel",
     "path": "/submit",
     "value": {
@@ -1663,7 +1663,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:20.282Z",
+    "at": "2026-10-07T03:33:45.392Z",
     "conversation": "queued-cancel",
     "path": "/cancel",
     "value": {
@@ -1671,7 +1671,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:24.074Z",
+    "at": "2026-10-07T03:33:49.181Z",
     "conversation": "queued-cancel",
     "path": "/wait?requestId=run-A",
     "value": {
@@ -1682,7 +1682,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:24.080Z",
+    "at": "2026-10-07T03:33:49.185Z",
     "conversation": "queued-cancel",
     "path": "/wait?requestId=run-B",
     "value": {
@@ -1693,7 +1693,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:24.082Z",
+    "at": "2026-10-07T03:33:49.189Z",
     "conversation": "queued-cancel",
     "path": "/",
     "value": {
@@ -1701,7 +1701,7 @@
       "calls": [
         {
           "position": 1,
-          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791341960258},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341960263}]"
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791344025356},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344025362}]"
         }
       ],
       "counters": [
@@ -1776,7 +1776,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:24.101Z",
+    "at": "2026-10-07T03:33:49.210Z",
     "conversation": "replace",
     "path": "/submit",
     "value": {
@@ -1786,7 +1786,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:24.105Z",
+    "at": "2026-10-07T03:33:49.217Z",
     "conversation": "replace",
     "path": "/pending",
     "value": [
@@ -1798,7 +1798,7 @@
     ]
   },
   {
-    "at": "2026-10-07T02:59:30.109Z",
+    "at": "2026-10-07T03:33:55.219Z",
     "conversation": "replace",
     "path": "/replace",
     "value": {
@@ -1808,7 +1808,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:30.149Z",
+    "at": "2026-10-07T03:33:55.263Z",
     "conversation": "replace",
     "path": "/wait?requestId=run-A",
     "value": {
@@ -1819,7 +1819,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:30.915Z",
+    "at": "2026-10-07T03:33:56.025Z",
     "conversation": "replace",
     "path": "/wait?requestId=run-B",
     "value": {
@@ -1830,7 +1830,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:30.921Z",
+    "at": "2026-10-07T03:33:56.029Z",
     "conversation": "replace",
     "path": "/",
     "value": {
@@ -1838,11 +1838,11 @@
       "calls": [
         {
           "position": 1,
-          "messages": "[{\"role\":\"user\",\"content\":\"original task\",\"timestamp\":1791341964088},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341964093}]"
+          "messages": "[{\"role\":\"user\",\"content\":\"original task\",\"timestamp\":1791344029194},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344029201}]"
         },
         {
           "position": 2,
-          "messages": "[{\"role\":\"user\",\"content\":\"original task\",\"timestamp\":1791341964088},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341964093},{\"role\":\"user\",\"content\":\"replacement task\",\"timestamp\":1791341967100}]"
+          "messages": "[{\"role\":\"user\",\"content\":\"original task\",\"timestamp\":1791344029194},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344029201},{\"role\":\"user\",\"content\":\"replacement task\",\"timestamp\":1791344032205}]"
         }
       ],
       "counters": [
@@ -1917,7 +1917,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:30.945Z",
+    "at": "2026-10-07T03:33:56.045Z",
     "conversation": "restart",
     "path": "/submit",
     "value": {
@@ -1927,7 +1927,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:30.955Z",
+    "at": "2026-10-07T03:33:56.051Z",
     "conversation": "restart",
     "path": "/submit",
     "value": {
@@ -1937,7 +1937,7 @@
     }
   },
   {
-    "at": "2026-10-07T02:59:30.958Z",
+    "at": "2026-10-07T03:33:56.054Z",
     "conversation": "restart",
     "path": "/pending",
     "value": [
@@ -1954,15 +1954,15 @@
     ]
   },
   {
-    "at": "2026-10-07T02:59:30.960Z",
+    "at": "2026-10-07T03:33:56.057Z",
     "conversation": "restart",
     "path": "/",
     "value": {
-      "alarm": 1791342000950,
+      "alarm": 1791344066050,
       "calls": [
         {
           "position": 1,
-          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791341970928},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341970936}]"
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791344036034},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344036040}]"
         }
       ],
       "counters": [
@@ -2037,7 +2037,7 @@
     }
   },
   {
-    "at": "2026-10-07T03:00:16.380Z",
+    "at": "2026-10-07T03:35:26.382Z",
     "conversation": "restart",
     "path": "/snapshot",
     "value": {
@@ -2048,7 +2048,7 @@
             {
               "role": "user",
               "content": "first",
-              "timestamp": 1791341970928
+              "timestamp": 1791344036034
             }
           ],
           "kind": "pi.user",
@@ -2070,29 +2070,103 @@
                   }
                 }
               ],
-              "timestamp": 1791341970936
+              "timestamp": 1791344036040
             }
           ],
           "kind": "pi.system",
           "id": 10,
           "conversationId": 1,
           "byTaskId": 9
+        },
+        {
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "qualified answer"
+                }
+              ],
+              "api": "faux:1791344096560:4f5igqlhsso",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 46,
+                "output": 4,
+                "cacheRead": 0,
+                "cacheWrite": 46,
+                "totalTokens": 96,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1791344099581
+            }
+          ],
+          "kind": "pi.assistant",
+          "id": 12,
+          "conversationId": 1,
+          "byTaskId": 9
+        },
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "second",
+              "timestamp": 1791344100385
+            }
+          ],
+          "kind": "pi.user",
+          "id": 13,
+          "conversationId": 1,
+          "byTaskId": 9
+        },
+        {
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "qualified answer"
+                }
+              ],
+              "api": "faux:1791344096560:4f5igqlhsso",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 10,
+                "output": 4,
+                "cacheRead": 46,
+                "cacheWrite": 11,
+                "totalTokens": 71,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "stop",
+              "timestamp": 1791344103396
+            }
+          ],
+          "kind": "pi.assistant",
+          "id": 15,
+          "conversationId": 1,
+          "byTaskId": 14
         }
       ],
-      "run": {
-        "inputs": [8]
-      },
-      "generation": {
-        "attempt": 1
-      },
       "tools": [],
       "compactions": [],
-      "inbox": [
-        {
-          "id": 11,
-          "mode": "followUp"
-        }
-      ],
+      "inbox": [],
       "agent": {
         "model": {
           "provider": "faux",
@@ -2100,9 +2174,143 @@
         }
       },
       "usage": {
-        "models": {},
+        "models": {
+          "faux/faux-1": {
+            "input": 56,
+            "output": 8,
+            "cacheRead": 46,
+            "cacheWrite": 57,
+            "totalTokens": 167,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          }
+        },
         "tools": {}
       }
+    }
+  },
+  {
+    "at": "2026-10-07T03:35:26.388Z",
+    "conversation": "restart",
+    "path": "/wait?requestId=run-A",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "status": "done",
+      "text": "qualified answer"
+    }
+  },
+  {
+    "at": "2026-10-07T03:35:26.391Z",
+    "conversation": "restart",
+    "path": "/wait?requestId=run-B",
+    "value": {
+      "operationId": "run-B",
+      "session": "1",
+      "status": "done",
+      "text": "qualified answer"
+    }
+  },
+  {
+    "at": "2026-10-07T03:35:26.395Z",
+    "conversation": "restart",
+    "path": "/pending",
+    "value": []
+  },
+  {
+    "at": "2026-10-07T03:35:26.398Z",
+    "conversation": "restart",
+    "path": "/",
+    "value": {
+      "alarm": null,
+      "calls": [
+        {
+          "position": 1,
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791344036034},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344036040}]"
+        },
+        {
+          "position": 2,
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791344036034},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344036040}]"
+        },
+        {
+          "position": 3,
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791344036034},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791344036040},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"qualified answer\"}],\"api\":\"faux:1791344096560:4f5igqlhsso\",\"provider\":\"faux\",\"model\":\"faux-1\",\"usage\":{\"input\":46,\"output\":4,\"cacheRead\":0,\"cacheWrite\":46,\"totalTokens\":96,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1791344099581},{\"role\":\"user\",\"content\":\"second\",\"timestamp\":1791344100385}]"
+        }
+      ],
+      "counters": [
+        {
+          "name": "model_calls",
+          "value": 3
+        }
+      ],
+      "ready": true,
+      "tables": [
+        {
+          "name": "_litestream_seq"
+        },
+        {
+          "name": "_litestream_lock"
+        },
+        {
+          "name": "_cf_KV"
+        },
+        {
+          "name": "_cf_ALARM"
+        },
+        {
+          "name": "_cf_METADATA"
+        },
+        {
+          "name": "_cf_FACETS"
+        },
+        {
+          "name": "_cf_WAKE"
+        },
+        {
+          "name": "pi_durable_schema"
+        },
+        {
+          "name": "pi_durable_metadata"
+        },
+        {
+          "name": "pi_record_ids"
+        },
+        {
+          "name": "pi_conversations"
+        },
+        {
+          "name": "pi_entries"
+        },
+        {
+          "name": "pi_tasks"
+        },
+        {
+          "name": "pi_submissions"
+        },
+        {
+          "name": "pi_documents"
+        },
+        {
+          "name": "pi_document_revisions"
+        },
+        {
+          "name": "cerebro_probe"
+        },
+        {
+          "name": "cerebro_probe_calls"
+        },
+        {
+          "name": "sqlite_sequence"
+        },
+        {
+          "name": "cf_agents_jobs"
+        }
+      ]
     }
   }
 ]

@@ -1,6 +1,6 @@
 # ADR 0001 keeps application behavior independent of replaceable components
 
-Status is proposed. Revised on 2026-10-06. This record does not describe a completed migration.
+Status is proposed. Revised on 2026-10-07. This record does not describe a completed migration.
 
 ## Context
 
@@ -55,7 +55,9 @@ This proposal rejects a generic plugin framework, a broad rewrite of existing co
 
 ## S1-0 qualification status
 
-The [S1-0 contract proposal](2026-10-05-cerebro-slice-1-contracts.md) selects official PiHarness + Lifecycle on retained celld 0.6.0 with `nodejs_compat`, following the operator's 2026-10-06 instruction to proceed with inexpensive fixes and recorded TODOs. This overrides the preparation stop gate; qualification remains partial and ADR status remains proposed. The coordinator can review and publish the contracts for later implementation packets.
+The [S1-0 contract proposal](2026-10-05-cerebro-slice-1-contracts.md) selects official PiHarness + Lifecycle on retained celld 0.6.1 with `nodejs_compat`, following the operator's latest-version direction and instruction to proceed with inexpensive fixes and recorded TODOs. This overrides the preparation stop gate; qualification remains partial and ADR status remains proposed. The coordinator can review and publish the contracts for later implementation packets.
+
+The recovery investigation found celld's default sixty-second cold-alarm discovery scan exceeds the earlier forty-five-second test window. Default automatic recovery passed in separate local-store process-restart probes on 0.6.0 and 0.6.1, and request-triggered resume passed on 0.6.1. The functional fixture now allows ninety seconds without HTTP and checks saved answers before blocking waits. Previous failed results remain archived. This does not qualify production durability, separate idle eviction or the plan's sixty-second performance budget. Pi and Lifecycle still own recovery; no Cerebro scheduler is introduced.
 
 The operator subsequently chose a thin adapter that reuses Pi's native follow-up queue, steering and Stop semantics. Follow-ups enter Pi's inbox; steering joins current work after its tool round. Active Stop withdraws queued inputs as Pi defines. Replace composes native Stop and submission in the same conversation. The prior requirement to preserve already-queued inputs across active Stop is superseded; its executed failed case remains visible. Cerebro's custom admission queue and host admission job are removed. The direct storage/wake prototype remains historical only.
 

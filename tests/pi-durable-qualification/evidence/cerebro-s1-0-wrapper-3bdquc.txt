@@ -1,0 +1,299 @@
+celld dev
+  Project  /proof/wrangler.json
+  State    /proof/.celld/dev
+  Watch    disabled
+  ● opening the local storage
+  ● building the application
+ celld 0.6.1
+───────────────────────────────────────────────
+Total Upload: 912.78 KiB / gzip: 172.67 KiB
+Your Worker has access to the following bindings:
+Binding                                Resource
+env.QUALIFICATION (Qualification)      Durable Object (SQLite)
+Bundled cerebro-qualification-wrapper (0.07 sec)
+2026-10-07T03:33:23.637957Z  INFO celld: host runtime initialized event="host_runtime" worker_count=5
+2026-10-07T03:33:23.705111Z  INFO celld::pool: isolate started isolate=1 slot=0 total=1
+2026-10-07T03:33:23.717366Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="acquire" prior_authority_headroom_ms=0
+2026-10-07T03:33:23.718879Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="acquire" outcome="applied" elapsed_ms=2 prior_authority_headroom_ms=0 candidate_headroom_ms=9998
+2026-10-07T03:33:23.720277Z  INFO celld::node_log: fleet durability requested and no peer is available; writes wait for the bucket. A second node acknowledges a write when its follower holds it on disk, which is much faster live_peers=0
+2026-10-07T03:33:23.722186Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=3
+2026-10-07T03:33:23.722216Z  INFO celld: every live lease reads a paged epoch, or one does not event="paged_gate" open=true format=2 live_leases=1 view_age_ms=0
+celld listening on 0.0.0.0:9876 (ownership=dev)
+celld internal listening on 127.0.0.1:34453 (advertise=127.0.0.1:34453)
+2026-10-07T03:33:23.762941Z  INFO celld::pool: isolate started isolate=2 slot=0 total=1
+2026-10-07T03:33:23.764338Z  INFO celld::runtime: cell isolate startup completed event="cell_isolate_startup_timing" outcome="ready" failure_phase="" scope=Qualification:7e1c9b2b44dd093a747f87b4caf1e4b0a0b9060d964573ce222e636258031a80 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 fresh=true total_us=32044
+2026-10-07T03:33:23.764496Z  INFO celld::runtime: cell runtime published event="cell_runtime_publication" outcome="published" scope=Qualification:7e1c9b2b44dd093a747f87b4caf1e4b0a0b9060d964573ce222e636258031a80 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 isolate_startup_us=32044
+2026-10-07T03:33:23.799708Z  INFO celld::runtime: cell isolate startup completed event="cell_isolate_startup_timing" outcome="ready" failure_phase="" scope=Qualification:24a5e7ea1fcf48567eae231a68f37398830163d8afb9d79b37b65b1dc8d314f8 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 fresh=true total_us=819
+2026-10-07T03:33:23.799752Z  INFO celld::runtime: cell runtime published event="cell_runtime_publication" outcome="published" scope=Qualification:24a5e7ea1fcf48567eae231a68f37398830163d8afb9d79b37b65b1dc8d314f8 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 isolate_startup_us=819
+2026-10-07T03:33:24.665654Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019744 idle_us=1019410 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:24.719415Z  INFO celld: the fleet is settled; serving readiness is open event="ready_gate_open" readiness_reason="fleet_settled" waited_ms=1002
+  ready  http://0.0.0.0:9876
+2026-10-07T03:33:25.683996Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018316 idle_us=1018213 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:26.707011Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1022982 idle_us=1022909 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:26.724007Z  INFO celld::ltx_repl: published authoritative handoff snapshot event="ltx_handoff_snapshot" cell="Qualification:7e1c9b2b44dd093a747f87b4caf1e4b0a0b9060d964573ce222e636258031a80" epoch=1 max_txid=1 bytes=9232 elapsed_ms=0
+2026-10-07T03:33:26.724419Z  INFO celld::ltx_repl: final durability barrier passed event="eviction_durability_barrier" cell="Qualification:7e1c9b2b44dd093a747f87b4caf1e4b0a0b9060d964573ce222e636258031a80" epoch=1 artifact=Snapshot elapsed_ms=1
+2026-10-07T03:33:26.832728Z  INFO celld::runtime: cell isolate startup completed event="cell_isolate_startup_timing" outcome="ready" failure_phase="" scope=Qualification:bea40789a61a61f636e4e7d3a833cda58263633198de77b416c128e80cf0e315 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 fresh=true total_us=689
+2026-10-07T03:33:26.832756Z  INFO celld::runtime: cell runtime published event="cell_runtime_publication" outcome="published" scope=Qualification:bea40789a61a61f636e4e7d3a833cda58263633198de77b416c128e80cf0e315 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 isolate_startup_us=689
+2026-10-07T03:33:27.051921Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:33:27.052498Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=0 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:33:27.725018Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017983 idle_us=1017896 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:28.744475Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019435 idle_us=1019343 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:29.725248Z  INFO celld::ltx_repl: published authoritative handoff snapshot event="ltx_handoff_snapshot" cell="Qualification:24a5e7ea1fcf48567eae231a68f37398830163d8afb9d79b37b65b1dc8d314f8" epoch=1 max_txid=7 bytes=11174 elapsed_ms=0
+2026-10-07T03:33:29.725953Z  INFO celld::ltx_repl: final durability barrier passed event="eviction_durability_barrier" cell="Qualification:24a5e7ea1fcf48567eae231a68f37398830163d8afb9d79b37b65b1dc8d314f8" epoch=1 artifact=Snapshot elapsed_ms=2
+2026-10-07T03:33:29.748314Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1003820 idle_us=1003725 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:30.386082Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:33:30.386646Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6665 candidate_headroom_ms=10000
+2026-10-07T03:33:30.661396Z  INFO celld::runtime: cell isolate startup completed event="cell_isolate_startup_timing" outcome="ready" failure_phase="" scope=Qualification:568fc762cd377e24552b3c3b1ac1e117103988ded4a75558a8c85c93a459ae64 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 fresh=true total_us=691
+2026-10-07T03:33:30.661435Z  INFO celld::runtime: cell runtime published event="cell_runtime_publication" outcome="published" scope=Qualification:568fc762cd377e24552b3c3b1ac1e117103988ded4a75558a8c85c93a459ae64 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 isolate_startup_us=691
+2026-10-07T03:33:30.762655Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1014323 idle_us=1014249 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:31.779968Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017289 idle_us=1017214 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:32.729011Z  INFO celld::ltx_repl: published authoritative handoff snapshot event="ltx_handoff_snapshot" cell="Qualification:bea40789a61a61f636e4e7d3a833cda58263633198de77b416c128e80cf0e315" epoch=1 max_txid=10 bytes=11519 elapsed_ms=0
+2026-10-07T03:33:32.729511Z  INFO celld::ltx_repl: final durability barrier passed event="eviction_durability_barrier" cell="Qualification:bea40789a61a61f636e4e7d3a833cda58263633198de77b416c128e80cf0e315" epoch=1 artifact=Snapshot elapsed_ms=2
+2026-10-07T03:33:32.804575Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1024585 idle_us=1024513 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:33.720270Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6666
+2026-10-07T03:33:33.720985Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6666 candidate_headroom_ms=10000
+2026-10-07T03:33:33.721405Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=2
+2026-10-07T03:33:33.822688Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018094 idle_us=1018025 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:34.845341Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1022635 idle_us=1022569 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:35.867142Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1021784 idle_us=1021711 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:36.886602Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019438 idle_us=1019382 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:37.055056Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:33:37.055736Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6665 candidate_headroom_ms=10000
+2026-10-07T03:33:37.903032Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1016398 idle_us=1016335 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:38.299074Z  INFO celld::runtime: cell isolate startup completed event="cell_isolate_startup_timing" outcome="ready" failure_phase="" scope=Qualification:30162c6c7915f4ae9f82b737510a2f6488673d7dbde15c0bfb13327156d3c0c6 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 fresh=true total_us=775
+2026-10-07T03:33:38.299115Z  INFO celld::runtime: cell runtime published event="cell_runtime_publication" outcome="published" scope=Qualification:30162c6c7915f4ae9f82b737510a2f6488673d7dbde15c0bfb13327156d3c0c6 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 isolate_startup_us=775
+2026-10-07T03:33:38.918281Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1015224 idle_us=1015137 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:39.937578Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019278 idle_us=1019221 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:40.389129Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6666
+2026-10-07T03:33:40.389653Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6666 candidate_headroom_ms=10000
+2026-10-07T03:33:40.738151Z  INFO celld::ltx_repl: published authoritative handoff snapshot event="ltx_handoff_snapshot" cell="Qualification:568fc762cd377e24552b3c3b1ac1e117103988ded4a75558a8c85c93a459ae64" epoch=1 max_txid=12 bytes=12245 elapsed_ms=0
+2026-10-07T03:33:40.738916Z  INFO celld::ltx_repl: final durability barrier passed event="eviction_durability_barrier" cell="Qualification:568fc762cd377e24552b3c3b1ac1e117103988ded4a75558a8c85c93a459ae64" epoch=1 artifact=Snapshot elapsed_ms=2
+2026-10-07T03:33:40.945791Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1008192 idle_us=1008137 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:41.950346Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1004534 idle_us=1004474 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:42.967983Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017619 idle_us=1017547 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:43.720148Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=2
+2026-10-07T03:33:43.723262Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6666
+2026-10-07T03:33:43.723675Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6666 candidate_headroom_ms=10000
+2026-10-07T03:33:43.987698Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019698 idle_us=1017588 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:45.005489Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017774 idle_us=1017704 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:45.355008Z  INFO celld::runtime: cell isolate startup completed event="cell_isolate_startup_timing" outcome="ready" failure_phase="" scope=Qualification:2672f5ee5063935c5496fc986a57694806d2e3e1b972b13388e07cd5a0c89822 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 fresh=true total_us=3744
+2026-10-07T03:33:45.355180Z  INFO celld::runtime: cell runtime published event="cell_runtime_publication" outcome="published" scope=Qualification:2672f5ee5063935c5496fc986a57694806d2e3e1b972b13388e07cd5a0c89822 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 isolate_startup_us=3744
+2026-10-07T03:33:46.015987Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1010479 idle_us=1010399 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:47.034806Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018801 idle_us=1018750 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:47.056931Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6667
+2026-10-07T03:33:47.057615Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6666 candidate_headroom_ms=9999
+2026-10-07T03:33:47.747083Z  INFO celld::ltx_repl: published authoritative handoff snapshot event="ltx_handoff_snapshot" cell="Qualification:30162c6c7915f4ae9f82b737510a2f6488673d7dbde15c0bfb13327156d3c0c6" epoch=1 max_txid=11 bytes=12991 elapsed_ms=0
+2026-10-07T03:33:47.747616Z  INFO celld::ltx_repl: final durability barrier passed event="eviction_durability_barrier" cell="Qualification:30162c6c7915f4ae9f82b737510a2f6488673d7dbde15c0bfb13327156d3c0c6" epoch=1 artifact=Snapshot elapsed_ms=2
+2026-10-07T03:33:48.057916Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1023087 idle_us=1023032 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:48.720787Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=2
+2026-10-07T03:33:49.075162Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017230 idle_us=1017179 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:49.194095Z  INFO celld::runtime: cell isolate startup completed event="cell_isolate_startup_timing" outcome="ready" failure_phase="" scope=Qualification:b14d58248168dee8fb2099ddb531ee4b873214a650078b7924f86f983c596526 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 fresh=true total_us=1754
+2026-10-07T03:33:49.194129Z  INFO celld::runtime: cell runtime published event="cell_runtime_publication" outcome="published" scope=Qualification:b14d58248168dee8fb2099ddb531ee4b873214a650078b7924f86f983c596526 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 isolate_startup_us=1754
+2026-10-07T03:33:50.077685Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1002501 idle_us=1002390 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:50.391247Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:33:50.392029Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:33:51.093931Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1016207 idle_us=1016137 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:51.749523Z  INFO celld::ltx_repl: published authoritative handoff snapshot event="ltx_handoff_snapshot" cell="Qualification:2672f5ee5063935c5496fc986a57694806d2e3e1b972b13388e07cd5a0c89822" epoch=1 max_txid=9 bytes=11661 elapsed_ms=1
+2026-10-07T03:33:51.750014Z  INFO celld::ltx_repl: final durability barrier passed event="eviction_durability_barrier" cell="Qualification:2672f5ee5063935c5496fc986a57694806d2e3e1b972b13388e07cd5a0c89822" epoch=1 artifact=Snapshot elapsed_ms=1
+2026-10-07T03:33:52.111889Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017935 idle_us=1017863 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:53.133116Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1021204 idle_us=1021077 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:53.707176Z  INFO celld::pool: isolate retiring isolate=1 slot=0
+2026-10-07T03:33:53.722130Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=4
+2026-10-07T03:33:53.726301Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:33:53.726728Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6665 candidate_headroom_ms=10000
+2026-10-07T03:33:54.150483Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017340 idle_us=1017244 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:55.167050Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1016544 idle_us=1016461 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:55.222896Z  INFO celld::pool: isolate freed isolate=1 slot=0
+2026-10-07T03:33:55.260794Z  INFO celld::pool: isolate started isolate=3 slot=0 total=1
+2026-10-07T03:33:56.033806Z  INFO celld::runtime: cell isolate startup completed event="cell_isolate_startup_timing" outcome="ready" failure_phase="" scope=Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 fresh=true total_us=764
+2026-10-07T03:33:56.033843Z  INFO celld::runtime: cell runtime published event="cell_runtime_publication" outcome="published" scope=Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=1 isolate_startup_us=764
+celld dev
+  Project  /proof/wrangler.json
+  State    /proof/.celld/dev
+  Watch    disabled
+  ● opening the local storage
+  ● building the application
+ celld 0.6.1
+───────────────────────────────────────────────
+Total Upload: 912.78 KiB / gzip: 172.67 KiB
+Your Worker has access to the following bindings:
+Binding                                Resource
+env.QUALIFICATION (Qualification)      Durable Object (SQLite)
+Bundled cerebro-qualification-wrapper (0.07 sec)
+2026-10-07T03:33:56.401180Z  INFO celld: host runtime initialized event="host_runtime" worker_count=5
+2026-10-07T03:33:56.469991Z  INFO celld::pool: isolate started isolate=1 slot=0 total=1
+2026-10-07T03:33:56.482093Z  INFO celld: every live lease reads a paged epoch, or one does not event="paged_gate" open=true format=2 live_leases=1 view_age_ms=2763
+2026-10-07T03:33:56.482247Z  INFO celld::node_log: fleet durability requested and no peer is available; writes wait for the bucket. A second node acknowledges a write when its follower holds it on disk, which is much faster live_peers=0
+2026-10-07T03:33:56.483431Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="acquire" prior_authority_headroom_ms=0
+2026-10-07T03:33:56.484630Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="acquire" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=0 candidate_headroom_ms=9996
+2026-10-07T03:33:56.487306Z  INFO celld: the fleet is settled; serving readiness is open event="ready_gate_open" readiness_reason="fleet_settled" waited_ms=7
+celld listening on 0.0.0.0:9876 (ownership=dev)
+celld internal listening on 127.0.0.1:42007 (advertise=127.0.0.1:42007)
+  ready  http://0.0.0.0:9876
+2026-10-07T03:33:57.419909Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1009117 idle_us=1009039 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:58.436882Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1016906 idle_us=1016840 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:59.454021Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017071 idle_us=1017016 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:33:59.815653Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:33:59.816263Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:34:00.472913Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018840 idle_us=1018789 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:01.483190Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=2
+2026-10-07T03:34:01.488719Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1015781 idle_us=1015700 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:02.508119Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019380 idle_us=1019316 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:03.150541Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:34:03.151096Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:34:03.529355Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1021211 idle_us=1021146 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:04.547642Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018263 idle_us=1018193 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:05.564630Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1016961 idle_us=1016896 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:06.483472Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=1
+2026-10-07T03:34:06.485688Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:34:06.486064Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:34:06.583396Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018740 idle_us=1018683 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:07.603696Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020274 idle_us=1020211 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:08.619313Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1015587 idle_us=1015529 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:09.635372Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1016032 idle_us=1015984 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:09.820764Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:34:09.821320Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:34:10.655312Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019911 idle_us=1019854 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:11.485657Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=1
+2026-10-07T03:34:11.673042Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017702 idle_us=1017644 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:12.691011Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017932 idle_us=1017871 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:13.155555Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:34:13.156079Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:34:13.708022Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1016985 idle_us=1016892 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:14.728753Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020697 idle_us=1020634 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:15.748805Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020012 idle_us=1019953 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:16.491086Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6664
+2026-10-07T03:34:16.491670Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=0 prior_authority_headroom_ms=6664 candidate_headroom_ms=10000
+2026-10-07T03:34:16.767228Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018398 idle_us=1018338 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:17.785698Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018444 idle_us=1018394 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:18.802834Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017106 idle_us=1017063 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:19.821467Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018578 idle_us=1018533 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:19.826419Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:34:19.826975Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6665 candidate_headroom_ms=10000
+2026-10-07T03:34:20.838897Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017404 idle_us=1017349 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:21.483382Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=1
+2026-10-07T03:34:21.857544Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018617 idle_us=1018565 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:22.876456Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018872 idle_us=1018814 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:23.160357Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6666
+2026-10-07T03:34:23.160870Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=0 prior_authority_headroom_ms=6666 candidate_headroom_ms=10000
+2026-10-07T03:34:23.895298Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018816 idle_us=1018745 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:24.912254Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1016926 idle_us=1016776 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:25.933612Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1021326 idle_us=1021246 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:26.471031Z  INFO celld::pool: isolate retiring isolate=1 slot=0
+2026-10-07T03:34:26.472277Z  INFO celld::pool: isolate freed isolate=1 slot=0
+2026-10-07T03:34:26.494804Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6666
+2026-10-07T03:34:26.495275Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6665 candidate_headroom_ms=9999
+2026-10-07T03:34:26.952939Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019300 idle_us=1019222 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:27.972573Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019599 idle_us=1019519 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:28.991160Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018536 idle_us=1018462 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:29.829576Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:34:29.830174Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:34:30.012181Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020994 idle_us=1020925 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:31.031786Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019576 idle_us=1019478 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:31.483953Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=1
+2026-10-07T03:34:32.049210Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017395 idle_us=1017287 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:33.068229Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018986 idle_us=1018912 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:33.164712Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:34:33.165358Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:34:34.086403Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018146 idle_us=1018072 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:35.108165Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1021734 idle_us=1021661 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:36.134333Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1026138 idle_us=1026062 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:36.485046Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=3
+2026-10-07T03:34:36.499257Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:34:36.499966Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6665 candidate_headroom_ms=10000
+2026-10-07T03:34:37.154598Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020150 idle_us=1020072 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:38.173606Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018976 idle_us=1018888 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:39.192655Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018993 idle_us=1018914 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:39.834009Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:34:39.834865Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=0 prior_authority_headroom_ms=6665 candidate_headroom_ms=9999
+2026-10-07T03:34:40.209238Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1016515 idle_us=1016455 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:41.228071Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018802 idle_us=1018725 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:41.484946Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=2
+2026-10-07T03:34:42.248322Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020218 idle_us=1020142 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:43.169152Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6664
+2026-10-07T03:34:43.169883Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6664 candidate_headroom_ms=10000
+2026-10-07T03:34:43.265989Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017638 idle_us=1017557 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:44.284142Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017994 idle_us=1017918 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:45.304344Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020171 idle_us=1020050 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:46.324507Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020109 idle_us=1020035 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:46.485021Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=3
+2026-10-07T03:34:46.503252Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6666
+2026-10-07T03:34:46.504063Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6665 candidate_headroom_ms=9999
+2026-10-07T03:34:47.346096Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1021485 idle_us=1021414 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:48.365493Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019369 idle_us=1019295 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:49.385691Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020172 idle_us=1020082 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:49.839000Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:34:49.839851Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=0 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:34:50.406282Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020563 idle_us=1020466 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:51.426876Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020561 idle_us=1020483 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:51.484371Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=2
+2026-10-07T03:34:52.446587Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019680 idle_us=1019596 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:53.174058Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6664
+2026-10-07T03:34:53.174703Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=0 prior_authority_headroom_ms=6664 candidate_headroom_ms=10000
+2026-10-07T03:34:53.463516Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1016864 idle_us=1016766 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:54.485713Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1022163 idle_us=1022072 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:55.505593Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019853 idle_us=1019771 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:56.505192Z  INFO celld::ltx_repl: cloned below the paged threshold cell="Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4" from=1 to=2 bytes=27930 min=268435456
+2026-10-07T03:34:56.508081Z  INFO celld::ltx_repl: restored remote replica cell="Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4" from=1 to=2
+2026-10-07T03:34:56.509003Z  INFO celld::ltx_repl: computed restore plan event="restore_plan" cell="Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4" epoch=1 to=2 objects=6 bytes=27930 levels=L0:6 total_us=10000 source_lookup_us=6000 plan_us=3 map_us=0 download_us=1016 apply_us=1800 paged=false db_open_us=1000
+2026-10-07T03:34:56.509537Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:34:56.509922Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6665 candidate_headroom_ms=10000
+2026-10-07T03:34:56.524890Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019250 idle_us=1019179 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:56.557120Z  INFO celld::pool: isolate started isolate=2 slot=0 total=1
+2026-10-07T03:34:56.558250Z  INFO celld::runtime: cell isolate startup completed event="cell_isolate_startup_timing" outcome="ready" failure_phase="" scope=Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=2 fresh=false total_us=48748
+2026-10-07T03:34:56.558312Z  INFO celld::runtime: cell runtime published event="cell_runtime_publication" outcome="published" scope=Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=2 isolate_startup_us=48748
+2026-10-07T03:34:57.547865Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1022948 idle_us=1022857 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:58.566973Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019084 idle_us=1019001 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:59.584568Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017568 idle_us=1017487 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:34:59.843626Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6666
+2026-10-07T03:34:59.844183Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6665 candidate_headroom_ms=9999
+2026-10-07T03:35:00.604775Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020181 idle_us=1020103 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:01.483771Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=1
+2026-10-07T03:35:01.622937Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018136 idle_us=1018050 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:02.642283Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019312 idle_us=1019065 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:03.178898Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:35:03.180441Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6663 candidate_headroom_ms=9998
+2026-10-07T03:35:03.660361Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018052 idle_us=1017957 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:04.562823Z  INFO celld::ltx_repl: published authoritative handoff snapshot event="ltx_handoff_snapshot" cell="Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4" epoch=2 max_txid=4 bytes=12273 elapsed_ms=0
+2026-10-07T03:35:04.563841Z  INFO celld::ltx_repl: final durability barrier passed event="eviction_durability_barrier" cell="Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4" epoch=2 artifact=Snapshot elapsed_ms=2
+2026-10-07T03:35:04.663616Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1003229 idle_us=1003149 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:05.681379Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017731 idle_us=1017660 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:06.513940Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:35:06.514663Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=0 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:35:06.701188Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019788 idle_us=1019733 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:07.718012Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1016800 idle_us=1016734 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:08.737928Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019892 idle_us=1019736 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:09.760258Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1022306 idle_us=1022198 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:09.849975Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6664
+2026-10-07T03:35:09.850545Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=0 prior_authority_headroom_ms=6663 candidate_headroom_ms=9999
+2026-10-07T03:35:10.778094Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017810 idle_us=1017647 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:11.483360Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=2
+2026-10-07T03:35:11.798507Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020387 idle_us=1020320 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:12.816732Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018203 idle_us=1018145 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:13.185625Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6664
+2026-10-07T03:35:13.186153Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6663 candidate_headroom_ms=9999
+2026-10-07T03:35:13.834976Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018222 idle_us=1018175 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:14.853677Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018675 idle_us=1018625 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:15.874466Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020764 idle_us=1020718 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:16.483028Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=2
+2026-10-07T03:35:16.520232Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:35:16.520723Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=0 prior_authority_headroom_ms=6665 candidate_headroom_ms=10000
+2026-10-07T03:35:16.892084Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017593 idle_us=1017537 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:17.910143Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1018036 idle_us=1017978 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:18.931186Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1021017 idle_us=1020966 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:19.855383Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:35:19.855814Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=0 prior_authority_headroom_ms=6665 candidate_headroom_ms=10000
+2026-10-07T03:35:19.951404Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020167 idle_us=1020111 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:20.971187Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019754 idle_us=1019695 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:21.484572Z  INFO celld::ownership_store: refreshed the shared fleet sample event="fleet_sample_refreshed" leases=1 elapsed_ms=2
+2026-10-07T03:35:21.991625Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020392 idle_us=1020338 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:23.011689Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1020035 idle_us=1019974 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:23.190693Z  INFO celld::actor::effects: node lease attempt started event="node_lease_attempt_started" node=dev-db6de41e2dda attempt="renew" prior_authority_headroom_ms=6665
+2026-10-07T03:35:23.191300Z  INFO celld::actor::effects: node lease attempt completed event="node_lease_attempt" node=dev-db6de41e2dda attempt="renew" outcome="applied" elapsed_ms=1 prior_authority_headroom_ms=6664 candidate_headroom_ms=9999
+2026-10-07T03:35:24.034051Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1022340 idle_us=1022268 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:25.053749Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1019675 idle_us=1019547 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:26.071596Z  INFO celld::ltx_repl: ship loop time ledger event="log_ship_loop" wall_us=1017821 idle_us=1017739 stall_us=0 apply_us=0 scan_us=0 group_us=0 capture_us=0 submit_us=0 rounds=0
+2026-10-07T03:35:26.368357Z  INFO celld::pool: isolate started isolate=3 slot=0 total=1
+2026-10-07T03:35:26.371309Z  INFO celld::ltx_repl: reused local eviction snapshot cell="Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4" epoch=3
+2026-10-07T03:35:26.373764Z  INFO celld::runtime: cell isolate startup completed event="cell_isolate_startup_timing" outcome="ready" failure_phase="" scope=Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=3 fresh=false total_us=649
+2026-10-07T03:35:26.373785Z  INFO celld::runtime: cell runtime published event="cell_runtime_publication" outcome="published" scope=Qualification:b0e29333b91c8805fb9b523184a2a21b6fba55fc965d0c4fb501ce5b46e2deb4 node=dev-db6de41e2dda region=us-east-1 runtime_version="0.6.1" epoch=3 isolate_startup_us=649

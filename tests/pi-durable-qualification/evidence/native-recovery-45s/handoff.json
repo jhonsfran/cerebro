@@ -1,0 +1,303 @@
+{
+  "testedSourceSha": "8886b934ae0e75a5948d91a5310cb468b8495903",
+  "baselineSha": "1855fed13aafee0e7a3369f3e684564f35715086",
+  "branch": "codex/cerebro-slice-1-contracts",
+  "recordedAt": "2026-10-07T03:03:14.337015+00:00",
+  "status": "READY FOR COORDINATOR REVIEW; thin official adapter selected; host recovery and remaining qualification open",
+  "operatorDecision": {
+    "date": "2026-10-06",
+    "instruction": "Simplify the adapter and reuse Pi Durable native inbox, steering, Stop and recovery; keep unresolved checks as TODOs",
+    "supersedes": [
+      "S1-0 stop/fallback gate for preparation",
+      "Preserve already-Pi-queued follow-ups through active Stop",
+      "Separate Cerebro execution admission queue/dispatcher/host alarm"
+    ],
+    "scope": "S1-0 only; no S1-A through S1-D implementation, merge or deployment"
+  },
+  "selectedImplementation": "official PiHarness + Lifecycle; native inbox, steering and stop; thin Effect adapter",
+  "contractStatus": "ready for coordinator review; qualification incomplete",
+  "hostImage": "ghcr.io/denoland/celld:0.6.0@sha256:e188a7f2bb0b8cec9fb04ee4c3d1ed7cca0ea0419519ae2a9ba36e5b6fe5161b",
+  "compatibilityFlags": ["nodejs_compat"],
+  "pins": {
+    "agents": "0.26.0",
+    "@earendil-works/pi-durable": "1.0.4",
+    "@earendil-works/pi-ai": "1.0.4",
+    "effect": "4.0.1",
+    "@tanstack/ai": "0.65.0",
+    "@tanstack/ai-client": "0.37.0",
+    "@tanstack/ai-react": "0.29.5",
+    "@ag-ui/core": "1.0.2",
+    "react": "19.3.0",
+    "@types/react": "19.3.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2",
+    "react-dom": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/node": "26.6.4"
+  },
+  "registryEvidence": [
+    "registry-latest.json",
+    "latest-tag-recheck.json",
+    "native-api-references.json"
+  ],
+  "qualificationCounts": {
+    "PASS": 10,
+    "FAIL": 4,
+    "NOT_RUN": 15
+  },
+  "countExplanation": "Four FAIL records: two original constraints with accepted dispositions, one strict alarm-only recovery failure, and the runner assertion from that same recovery failure. The runner is not a fourth independent framework behavior.",
+  "verifiedBehavior": [
+    "Native stable operation IDs deduplicate submission; original payload is retained on changed-ID reuse",
+    "Pi-native follow-ups execute in order with two physical controlled model calls",
+    "Native steering joins two input operations to one physical run after one controlled tool round; two model calls, one tool call",
+    "Withdrawing queued B leaves A running; one physical model call",
+    "Native Stop then submit ends A as unanswered/aborted and completes replacement B; two physical model calls",
+    "Twelve proposed Effect 4 contract tests and isolated TypeScript 7 signatures pass",
+    "Headless public TanStack lifecycle passes with zero submissions and zero leaked observers",
+    "Isolated resolved graph contains zero ai or @ai-sdk/* packages"
+  ],
+  "nativeBoundary": {
+    "PiOwns": [
+      "durable inbox",
+      "steering",
+      "model/tool loop",
+      "submission ID deduplication",
+      "native Stop scope",
+      "private checkpoints",
+      "Lifecycle wake integration"
+    ],
+    "CerebroOwns": [
+      "trusted commands and input/mode conflicts",
+      "current company authority",
+      "approval binding",
+      "controlled tool receipts and unknown-effect reconciliation",
+      "authorized history and product projection",
+      "repair of command handoff/projection"
+    ],
+    "removed": [
+      "cerebro_admissions",
+      "pump/drive dispatcher",
+      "host admission Lifecycle job",
+      "separate wake-registration transition/timestamp"
+    ],
+    "acknowledgment": "Official PiHarness submission must return before recording engine acceptance and acknowledging queued or active work",
+    "replacement": "Coordinator composes native session Stop then submission; immutable command journal retains replacement phase and prevents replay from stopping its accepted replacement. Host crash/retry qualification remains NOT_RUN."
+  },
+  "knownFailedChecks": [
+    {
+      "details": {
+        "evidence": "wrapper-strict-browser-bundle.txt",
+        "exitCode": 1,
+        "note": "Operator selected the official wrapper with nodejs_compat; the strict Node-free constraint is an accepted deviation, not a passed check."
+      },
+      "disposition": "accepted-deviation",
+      "name": "wrapper worker path without Node imports",
+      "status": "FAIL"
+    },
+    {
+      "details": {
+        "after": [],
+        "before": [
+          {
+            "operationId": "run-A",
+            "session": "1",
+            "status": "running"
+          },
+          {
+            "operationId": "run-B",
+            "session": "1",
+            "status": "queued"
+          }
+        ],
+        "note": "Original plan requirement superseded by operator: use native Stop semantics, which withdraw queued inputs. This is expected framework behavior, not a queue defect."
+      },
+      "disposition": "operator-approved-semantics-change",
+      "name": "native active abort preserves already-queued follow-up",
+      "status": "FAIL"
+    },
+    {
+      "details": {
+        "noHttpWindowMs": 45000,
+        "snapshot": {
+          "type": "snapshot",
+          "entries": [
+            {
+              "model": [
+                {
+                  "role": "user",
+                  "content": "first",
+                  "timestamp": 1791341970928
+                }
+              ],
+              "kind": "pi.user",
+              "id": 7,
+              "conversationId": 1
+            },
+            {
+              "model": [
+                {
+                  "role": "system",
+                  "content": "",
+                  "toolsAdded": [
+                    {
+                      "name": "qualification_round",
+                      "description": "Controlled harmless tool round for native steering qualification",
+                      "parameters": {
+                        "type": "object",
+                        "properties": {}
+                      }
+                    }
+                  ],
+                  "timestamp": 1791341970936
+                }
+              ],
+              "kind": "pi.system",
+              "id": 10,
+              "conversationId": 1,
+              "byTaskId": 9
+            }
+          ],
+          "run": {
+            "inputs": [8]
+          },
+          "generation": {
+            "attempt": 1
+          },
+          "tools": [],
+          "compactions": [],
+          "inbox": [
+            {
+              "id": 11,
+              "mode": "followUp"
+            }
+          ],
+          "agent": {
+            "model": {
+              "provider": "faux",
+              "modelId": "faux-1"
+            }
+          },
+          "usage": {
+            "models": {},
+            "tools": {}
+          }
+        }
+      },
+      "disposition": "deferred-host-qualification",
+      "name": "alarm-only completion",
+      "status": "FAIL"
+    },
+    {
+      "details": "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n\n+ {\n+   inputs: [\n+     8\n+   ]\n+ }\n- undefined\n",
+      "name": "qualification runner",
+      "status": "FAIL"
+    }
+  ],
+  "notRunCases": [
+    "native process restart recovers Pi-queued B",
+    "idle eviction mid-turn",
+    "snapshot attachment race",
+    "observer overflow",
+    "Cerebro intent/engine/projection crash boundaries",
+    "replace interruption and retry between abort and submit",
+    "Cerebro changed-input conflict on real host",
+    "controlled provider retries and compaction",
+    "current model permission at physical dispatch",
+    "approval across eviction",
+    "denied or revoked approval zero physical tool dispatches",
+    "uncertain write reconciliation",
+    "Effect interruption reaches provider and tool",
+    "real browser page load / approval / reconnect",
+    "production bucket durability / flush before acknowledgment"
+  ],
+  "recoveryEvidence": {
+    "defaultHeartbeatMs": 30000,
+    "strictNoHttpWindowMs": 45000,
+    "result": "FAIL: first snapshot before blocking HTTP waits still has a live Pi run",
+    "hostTodo": "S1-0-T11",
+    "earlierStrict20SecondProbe": "native-recovery-20s/",
+    "correction": "Development source 6bb3dd2 used blocking HTTP waits after twenty seconds and could not prove alarm-only completion; those development results are not reused as current recovery passes. The strict checks preserve the failed evidence."
+  },
+  "commands": [
+    {
+      "command": "S1_0_NPM_CACHE=/tmp/cerebro-s1-0-latest/npm-cache S1_0_EVIDENCE_DIR=/tmp/cerebro-s1-0-native/review-45 node tests/pi-durable-qualification/run.mjs",
+      "sha": "8886b934ae0e75a5948d91a5310cb468b8495903",
+      "exitCode": 1,
+      "evidence": "qualification.json",
+      "result": "10 PASS, 4 FAIL records, 15 NOT_RUN. Qualification partial; operator-authorized coordinator preparation proceeds."
+    },
+    {
+      "command": "pnpm test:contracts",
+      "sha": "6bb3dd2d17350da7a8057903ad29fac665c0fd48",
+      "exitCode": 0,
+      "evidence": "existing-contracts.txt",
+      "result": "35 existing cases passed. All tested contracts are unchanged at the current tested source; the isolated runner also runs the twelve proposed cases."
+    },
+    {
+      "command": "pnpm exec ultracite check <all thirteen proposed source files>",
+      "sha": "6bb3dd2d17350da7a8057903ad29fac665c0fd48",
+      "exitCode": 0,
+      "evidence": "focused-check.txt",
+      "result": "Thirteen source files passed using temporary isolated Effect 4 link. Only runner code changed later; its final delta check below passed. The link is removed."
+    },
+    {
+      "command": "pnpm exec ultracite check tests/pi-durable-qualification/run.mjs",
+      "sha": "8886b934ae0e75a5948d91a5310cb468b8495903",
+      "exitCode": 0,
+      "evidence": "runner-check-final.txt",
+      "result": "Final runner delta passed; other twelve linted files are byte-identical to source 6bb3dd2."
+    },
+    {
+      "command": "pnpm --config.cache-dir=/tmp/cerebro-s1-0/pnpm-cache --config.store-dir=/tmp/cerebro-s1-0/pnpm-store dlx ultracite@7.11.0 fix <changed source files>",
+      "status": "PASS",
+      "phase": "Before source commits, with enabled commit hooks",
+      "evidence": [
+        "preparation-format.txt",
+        "preparation-format-final.txt",
+        "preparation-format-recovery.txt",
+        "preparation-format-recovery-status.txt"
+      ]
+    },
+    {
+      "command": "pnpm exec turbo run check-types --force",
+      "sha": "6bb3dd2d17350da7a8057903ad29fac665c0fd48",
+      "exitCode": 1,
+      "evidence": "review-workspace-check-types.txt",
+      "result": "Missing Effect module and cascading errors while coordinator dependency request remains unapplied. Type-checked source files are unchanged; failure is not labelled pre-existing. Isolated contracts pass."
+    },
+    {
+      "command": "pnpm build",
+      "status": "NOT_RUN",
+      "reason": "Workspace build awaits coordinator dependency manifest/catalog/lock commit; no pass claimed."
+    }
+  ],
+  "inventorySummary": {
+    "installed": 274,
+    "optionalNotInstalled": 57,
+    "installedWithoutLicense": [],
+    "forbiddenAiSdkPackages": [],
+    "lockSha256": "0ac9a7fa2fa226f88dda36f1125bf148aab41f2d9beea360b8d9ef8ef8ddac4f"
+  },
+  "todoFile": "../todos.json",
+  "coordinatorNextStep": "Review the thin native semantics and Effect ports, apply dependency-requests.json in one owner manifest/catalog/lock commit, and publish the shared baseline. Carry open host/replace/approval/observation checks forward; this task does not start later packets.",
+  "prStatus": "No remote codex/cerebro-slice-1 integration branch; no packet PR target",
+  "metering": "Unbound external port; spend control through it inactive",
+  "nativePython": "Outside this slice",
+  "sourceFileSha256": {
+    "packages/contracts/src/authority-service.ts": "d8f3356a5e29dd575706d068bf7f74270e41f212a5ee81a9a64c38031b752dd2",
+    "packages/contracts/src/execution.ts": "a1d82dd06f5e0acef24d940e6a2018ff92b2fab39b40a5607ba549c44e5df5bf",
+    "packages/contracts/src/failures.ts": "2976323c92788ef0efc65c88a91914f8fa9909c4bc2f8fd7903c91c9f60d7635",
+    "packages/contracts/src/metering.ts": "5a1fb07d09600342ec913334354f8227af1460aa24dca0bacb94d656d1b13ec9",
+    "packages/contracts/src/receipt-service.ts": "e15b589a6eb09fba4585c88942d4fe76c0d82e9009f34fa5612ef549d603edd0",
+    "packages/contracts/src/session-service.ts": "aafc247f5a0b939a0a6b69ec4b9d9e59ab3f9d1bc0c5ad5fb230dbb6989b3e0c",
+    "packages/contracts/src/testing/effect-fakes.ts": "9a50d0508a4b843e6531f3eed6f1ec59d01d33279f18595acb2cbe662cbcd2ef",
+    "packages/contracts/src/testing/session-fakes.ts": "bac1b65d793d8ecd06f6c849a98fc26e8d7487168c219799c317698d23e9d370",
+    "packages/contracts/src/tool-service.ts": "827d2e392176e5444e493f60181c8c76eff36a041851b9ecdc3131115d6aec5b",
+    "tests/pi-durable-qualification/contracts.test.ts": "874639c91528572e64d1fe2fd785ee56ef6fe8e0ae14b4e37d85d9eea1291264",
+    "tests/pi-durable-qualification/run.mjs": "c32e422859c3ced3916af668069610f6b133ad467a1544935effecfdf5f164f1",
+    "tests/pi-durable-qualification/tanstack.test.mjs": "10f958d09796e094256a4c9d7d5f5ace49ac21ca6a2e90d1fa65055640b85762",
+    "tests/pi-durable-qualification/wrapper-worker.mjs": "e9bbd163b6b772c5774b0f95e70c535cbe8194505f04de344ed799edc417670c"
+  },
+  "historicalEvidence": "previous-admission contains the retired queue strategy; previous-effect3/previous-effect4 and native-recovery-20s retain earlier results. None qualifies current code.",
+  "note": "The successor handoff commit adds evidence and corrects qualification documentation/TODOs only. Verify source file hashes before reusing results. No application manifests/catalog/lock were changed."
+}

@@ -1,0 +1,2108 @@
+[
+  {
+    "at": "2026-10-07T02:58:58.725Z",
+    "conversation": "abort-scope",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:58:58.736Z",
+    "conversation": "abort-scope",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-B",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:58:58.740Z",
+    "conversation": "abort-scope",
+    "path": "/pending",
+    "value": [
+      {
+        "operationId": "run-A",
+        "session": "1",
+        "status": "running"
+      },
+      {
+        "operationId": "run-B",
+        "session": "1",
+        "status": "queued"
+      }
+    ]
+  },
+  {
+    "at": "2026-10-07T02:59:01.735Z",
+    "conversation": "abort-scope",
+    "path": "/cancel",
+    "value": {
+      "cancelled": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:01.739Z",
+    "conversation": "abort-scope",
+    "path": "/pending",
+    "value": []
+  },
+  {
+    "at": "2026-10-07T02:59:01.757Z",
+    "conversation": "duplicate",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:01.762Z",
+    "conversation": "duplicate",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "accepted": false
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:01.767Z",
+    "conversation": "duplicate",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "accepted": false
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:05.563Z",
+    "conversation": "duplicate",
+    "path": "/wait?requestId=run-A",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "status": "done",
+      "text": "qualified answer"
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:05.567Z",
+    "conversation": "duplicate",
+    "path": "/",
+    "value": {
+      "alarm": null,
+      "calls": [
+        {
+          "position": 1,
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791341941744},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341941749}]"
+        }
+      ],
+      "counters": [
+        {
+          "name": "model_calls",
+          "value": 1
+        }
+      ],
+      "ready": true,
+      "tables": [
+        {
+          "name": "_litestream_seq"
+        },
+        {
+          "name": "_litestream_lock"
+        },
+        {
+          "name": "_cf_KV"
+        },
+        {
+          "name": "_cf_ALARM"
+        },
+        {
+          "name": "_cf_METADATA"
+        },
+        {
+          "name": "_cf_FACETS"
+        },
+        {
+          "name": "_cf_WAKE"
+        },
+        {
+          "name": "pi_durable_schema"
+        },
+        {
+          "name": "pi_durable_metadata"
+        },
+        {
+          "name": "pi_record_ids"
+        },
+        {
+          "name": "pi_conversations"
+        },
+        {
+          "name": "pi_entries"
+        },
+        {
+          "name": "pi_tasks"
+        },
+        {
+          "name": "pi_submissions"
+        },
+        {
+          "name": "pi_documents"
+        },
+        {
+          "name": "pi_document_revisions"
+        },
+        {
+          "name": "cerebro_probe"
+        },
+        {
+          "name": "cerebro_probe_calls"
+        },
+        {
+          "name": "sqlite_sequence"
+        },
+        {
+          "name": "cf_agents_jobs"
+        }
+      ]
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:05.582Z",
+    "conversation": "follow-up",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:05.590Z",
+    "conversation": "follow-up",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-B",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:05.593Z",
+    "conversation": "follow-up",
+    "path": "/pending",
+    "value": [
+      {
+        "operationId": "run-A",
+        "session": "1",
+        "status": "running"
+      },
+      {
+        "operationId": "run-B",
+        "session": "1",
+        "status": "queued"
+      }
+    ]
+  },
+  {
+    "at": "2026-10-07T02:59:05.597Z",
+    "conversation": "follow-up",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "first",
+              "timestamp": 1791341945572
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341945577
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "followUp"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:09.402Z",
+    "conversation": "follow-up",
+    "path": "/wait?requestId=run-A",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "status": "done",
+      "text": "qualified answer"
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:13.201Z",
+    "conversation": "follow-up",
+    "path": "/wait?requestId=run-B",
+    "value": {
+      "operationId": "run-B",
+      "session": "1",
+      "status": "done",
+      "text": "qualified answer"
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:13.205Z",
+    "conversation": "follow-up",
+    "path": "/",
+    "value": {
+      "alarm": null,
+      "calls": [
+        {
+          "position": 1,
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791341945572},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341945577}]"
+        },
+        {
+          "position": 2,
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791341945572},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341945577},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"qualified answer\"}],\"api\":\"faux:1791341945571:u5164v4wrej\",\"provider\":\"faux\",\"model\":\"faux-1\",\"usage\":{\"input\":46,\"output\":4,\"cacheRead\":0,\"cacheWrite\":46,\"totalTokens\":96,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1791341948582},{\"role\":\"user\",\"content\":\"second\",\"timestamp\":1791341949386}]"
+        }
+      ],
+      "counters": [
+        {
+          "name": "model_calls",
+          "value": 2
+        }
+      ],
+      "ready": true,
+      "tables": [
+        {
+          "name": "_litestream_seq"
+        },
+        {
+          "name": "_litestream_lock"
+        },
+        {
+          "name": "_cf_KV"
+        },
+        {
+          "name": "_cf_ALARM"
+        },
+        {
+          "name": "_cf_METADATA"
+        },
+        {
+          "name": "_cf_FACETS"
+        },
+        {
+          "name": "_cf_WAKE"
+        },
+        {
+          "name": "pi_durable_schema"
+        },
+        {
+          "name": "pi_durable_metadata"
+        },
+        {
+          "name": "pi_record_ids"
+        },
+        {
+          "name": "pi_conversations"
+        },
+        {
+          "name": "pi_entries"
+        },
+        {
+          "name": "pi_tasks"
+        },
+        {
+          "name": "pi_submissions"
+        },
+        {
+          "name": "pi_documents"
+        },
+        {
+          "name": "pi_document_revisions"
+        },
+        {
+          "name": "cerebro_probe"
+        },
+        {
+          "name": "cerebro_probe_calls"
+        },
+        {
+          "name": "sqlite_sequence"
+        },
+        {
+          "name": "cf_agents_jobs"
+        }
+      ]
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:13.223Z",
+    "conversation": "steer",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:13.232Z",
+    "conversation": "steer",
+    "path": "/steer",
+    "value": {
+      "operationId": "run-B",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:13.235Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:13.238Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:13.493Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:13.748Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:14.003Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:14.256Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:14.513Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:14.768Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:15.023Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:15.279Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:15.533Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:15.787Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:16.042Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:16.298Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "steer"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:16.555Z",
+    "conversation": "steer",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "tool-before-steer",
+              "timestamp": 1791341953210
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341953216
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        },
+        {
+          "model": [
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "toolCall",
+                  "id": "probe-tool-call",
+                  "name": "qualification_round",
+                  "arguments": {}
+                }
+              ],
+              "api": "faux:1791341953210:y7dmn0thhua",
+              "provider": "faux",
+              "model": "faux-1",
+              "usage": {
+                "input": 49,
+                "output": 6,
+                "cacheRead": 0,
+                "cacheWrite": 49,
+                "totalTokens": 104,
+                "cost": {
+                  "input": 0,
+                  "output": 0,
+                  "cacheRead": 0,
+                  "cacheWrite": 0,
+                  "total": 0
+                }
+              },
+              "stopReason": "toolUse",
+              "timestamp": 1791341956218
+            }
+          ],
+          "kind": "pi.assistant",
+          "id": 12,
+          "conversationId": 1,
+          "byTaskId": 9
+        },
+        {
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "probe-tool-call",
+              "toolName": "qualification_round",
+              "content": [
+                {
+                  "text": "controlled result",
+                  "type": "text"
+                }
+              ],
+              "isError": false,
+              "timestamp": 1791341956427
+            }
+          ],
+          "data": {
+            "diagnostics": []
+          },
+          "kind": "pi.tool-result",
+          "id": 14,
+          "conversationId": 1,
+          "byTaskId": 13
+        },
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "use the corrected instructions",
+              "timestamp": 1791341956429
+            }
+          ],
+          "kind": "pi.user",
+          "id": 15,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8, 11]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {
+          "faux/faux-1": {
+            "input": 49,
+            "output": 6,
+            "cacheRead": 0,
+            "cacheWrite": 49,
+            "totalTokens": 104,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          }
+        },
+        "tools": {}
+      }
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:20.247Z",
+    "conversation": "steer",
+    "path": "/wait?requestId=run-A",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "status": "done",
+      "text": "qualified answer"
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:20.250Z",
+    "conversation": "steer",
+    "path": "/wait?requestId=run-B",
+    "value": {
+      "operationId": "run-B",
+      "session": "1",
+      "status": "done",
+      "text": "qualified answer"
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:20.253Z",
+    "conversation": "steer",
+    "path": "/",
+    "value": {
+      "alarm": null,
+      "calls": [
+        {
+          "position": 1,
+          "messages": "[{\"role\":\"user\",\"content\":\"tool-before-steer\",\"timestamp\":1791341953210},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341953216}]"
+        },
+        {
+          "position": 2,
+          "messages": "[{\"role\":\"user\",\"content\":\"tool-before-steer\",\"timestamp\":1791341953210},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341953216},{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"probe-tool-call\",\"name\":\"qualification_round\",\"arguments\":{}}],\"api\":\"faux:1791341953210:y7dmn0thhua\",\"provider\":\"faux\",\"model\":\"faux-1\",\"usage\":{\"input\":49,\"output\":6,\"cacheRead\":0,\"cacheWrite\":49,\"totalTokens\":104,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"toolUse\",\"timestamp\":1791341956218},{\"role\":\"toolResult\",\"toolCallId\":\"probe-tool-call\",\"toolName\":\"qualification_round\",\"content\":[{\"text\":\"controlled result\",\"type\":\"text\"}],\"isError\":false,\"timestamp\":1791341956427},{\"role\":\"user\",\"content\":\"use the corrected instructions\",\"timestamp\":1791341956429}]"
+        }
+      ],
+      "counters": [
+        {
+          "name": "model_calls",
+          "value": 2
+        },
+        {
+          "name": "tool_calls",
+          "value": 1
+        }
+      ],
+      "ready": true,
+      "tables": [
+        {
+          "name": "_litestream_seq"
+        },
+        {
+          "name": "_litestream_lock"
+        },
+        {
+          "name": "_cf_KV"
+        },
+        {
+          "name": "_cf_ALARM"
+        },
+        {
+          "name": "_cf_METADATA"
+        },
+        {
+          "name": "_cf_FACETS"
+        },
+        {
+          "name": "_cf_WAKE"
+        },
+        {
+          "name": "pi_durable_schema"
+        },
+        {
+          "name": "pi_durable_metadata"
+        },
+        {
+          "name": "pi_record_ids"
+        },
+        {
+          "name": "pi_conversations"
+        },
+        {
+          "name": "pi_entries"
+        },
+        {
+          "name": "pi_tasks"
+        },
+        {
+          "name": "pi_submissions"
+        },
+        {
+          "name": "pi_documents"
+        },
+        {
+          "name": "pi_document_revisions"
+        },
+        {
+          "name": "cerebro_probe"
+        },
+        {
+          "name": "cerebro_probe_calls"
+        },
+        {
+          "name": "sqlite_sequence"
+        },
+        {
+          "name": "cf_agents_jobs"
+        }
+      ]
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:20.268Z",
+    "conversation": "queued-cancel",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:20.276Z",
+    "conversation": "queued-cancel",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-B",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:20.282Z",
+    "conversation": "queued-cancel",
+    "path": "/cancel",
+    "value": {
+      "cancelled": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:24.074Z",
+    "conversation": "queued-cancel",
+    "path": "/wait?requestId=run-A",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "status": "done",
+      "text": "qualified answer"
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:24.080Z",
+    "conversation": "queued-cancel",
+    "path": "/wait?requestId=run-B",
+    "value": {
+      "operationId": "run-B",
+      "session": "1",
+      "status": "unanswered",
+      "reason": "aborted"
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:24.082Z",
+    "conversation": "queued-cancel",
+    "path": "/",
+    "value": {
+      "alarm": null,
+      "calls": [
+        {
+          "position": 1,
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791341960258},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341960263}]"
+        }
+      ],
+      "counters": [
+        {
+          "name": "model_calls",
+          "value": 1
+        }
+      ],
+      "ready": true,
+      "tables": [
+        {
+          "name": "_litestream_seq"
+        },
+        {
+          "name": "_litestream_lock"
+        },
+        {
+          "name": "_cf_KV"
+        },
+        {
+          "name": "_cf_ALARM"
+        },
+        {
+          "name": "_cf_METADATA"
+        },
+        {
+          "name": "_cf_FACETS"
+        },
+        {
+          "name": "_cf_WAKE"
+        },
+        {
+          "name": "pi_durable_schema"
+        },
+        {
+          "name": "pi_durable_metadata"
+        },
+        {
+          "name": "pi_record_ids"
+        },
+        {
+          "name": "pi_conversations"
+        },
+        {
+          "name": "pi_entries"
+        },
+        {
+          "name": "pi_tasks"
+        },
+        {
+          "name": "pi_submissions"
+        },
+        {
+          "name": "pi_documents"
+        },
+        {
+          "name": "pi_document_revisions"
+        },
+        {
+          "name": "cerebro_probe"
+        },
+        {
+          "name": "cerebro_probe_calls"
+        },
+        {
+          "name": "sqlite_sequence"
+        },
+        {
+          "name": "cf_agents_jobs"
+        }
+      ]
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:24.101Z",
+    "conversation": "replace",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:24.105Z",
+    "conversation": "replace",
+    "path": "/pending",
+    "value": [
+      {
+        "operationId": "run-A",
+        "session": "1",
+        "status": "running"
+      }
+    ]
+  },
+  {
+    "at": "2026-10-07T02:59:30.109Z",
+    "conversation": "replace",
+    "path": "/replace",
+    "value": {
+      "operationId": "run-B",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:30.149Z",
+    "conversation": "replace",
+    "path": "/wait?requestId=run-A",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "status": "unanswered",
+      "reason": "aborted"
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:30.915Z",
+    "conversation": "replace",
+    "path": "/wait?requestId=run-B",
+    "value": {
+      "operationId": "run-B",
+      "session": "1",
+      "status": "done",
+      "text": "qualified answer"
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:30.921Z",
+    "conversation": "replace",
+    "path": "/",
+    "value": {
+      "alarm": null,
+      "calls": [
+        {
+          "position": 1,
+          "messages": "[{\"role\":\"user\",\"content\":\"original task\",\"timestamp\":1791341964088},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341964093}]"
+        },
+        {
+          "position": 2,
+          "messages": "[{\"role\":\"user\",\"content\":\"original task\",\"timestamp\":1791341964088},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341964093},{\"role\":\"user\",\"content\":\"replacement task\",\"timestamp\":1791341967100}]"
+        }
+      ],
+      "counters": [
+        {
+          "name": "model_calls",
+          "value": 2
+        }
+      ],
+      "ready": true,
+      "tables": [
+        {
+          "name": "_litestream_seq"
+        },
+        {
+          "name": "_litestream_lock"
+        },
+        {
+          "name": "_cf_KV"
+        },
+        {
+          "name": "_cf_ALARM"
+        },
+        {
+          "name": "_cf_METADATA"
+        },
+        {
+          "name": "_cf_FACETS"
+        },
+        {
+          "name": "_cf_WAKE"
+        },
+        {
+          "name": "pi_durable_schema"
+        },
+        {
+          "name": "pi_durable_metadata"
+        },
+        {
+          "name": "pi_record_ids"
+        },
+        {
+          "name": "pi_conversations"
+        },
+        {
+          "name": "pi_entries"
+        },
+        {
+          "name": "pi_tasks"
+        },
+        {
+          "name": "pi_submissions"
+        },
+        {
+          "name": "pi_documents"
+        },
+        {
+          "name": "pi_document_revisions"
+        },
+        {
+          "name": "cerebro_probe"
+        },
+        {
+          "name": "cerebro_probe_calls"
+        },
+        {
+          "name": "sqlite_sequence"
+        },
+        {
+          "name": "cf_agents_jobs"
+        }
+      ]
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:30.945Z",
+    "conversation": "restart",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-A",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:30.955Z",
+    "conversation": "restart",
+    "path": "/submit",
+    "value": {
+      "operationId": "run-B",
+      "session": "1",
+      "accepted": true
+    }
+  },
+  {
+    "at": "2026-10-07T02:59:30.958Z",
+    "conversation": "restart",
+    "path": "/pending",
+    "value": [
+      {
+        "operationId": "run-A",
+        "session": "1",
+        "status": "running"
+      },
+      {
+        "operationId": "run-B",
+        "session": "1",
+        "status": "queued"
+      }
+    ]
+  },
+  {
+    "at": "2026-10-07T02:59:30.960Z",
+    "conversation": "restart",
+    "path": "/",
+    "value": {
+      "alarm": 1791342000950,
+      "calls": [
+        {
+          "position": 1,
+          "messages": "[{\"role\":\"user\",\"content\":\"first\",\"timestamp\":1791341970928},{\"role\":\"system\",\"content\":\"\",\"toolsAdded\":[{\"name\":\"qualification_round\",\"description\":\"Controlled harmless tool round for native steering qualification\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":1791341970936}]"
+        }
+      ],
+      "counters": [
+        {
+          "name": "model_calls",
+          "value": 1
+        }
+      ],
+      "ready": true,
+      "tables": [
+        {
+          "name": "_litestream_seq"
+        },
+        {
+          "name": "_litestream_lock"
+        },
+        {
+          "name": "_cf_KV"
+        },
+        {
+          "name": "_cf_ALARM"
+        },
+        {
+          "name": "_cf_METADATA"
+        },
+        {
+          "name": "_cf_FACETS"
+        },
+        {
+          "name": "_cf_WAKE"
+        },
+        {
+          "name": "pi_durable_schema"
+        },
+        {
+          "name": "pi_durable_metadata"
+        },
+        {
+          "name": "pi_record_ids"
+        },
+        {
+          "name": "pi_conversations"
+        },
+        {
+          "name": "pi_entries"
+        },
+        {
+          "name": "pi_tasks"
+        },
+        {
+          "name": "pi_submissions"
+        },
+        {
+          "name": "pi_documents"
+        },
+        {
+          "name": "pi_document_revisions"
+        },
+        {
+          "name": "cerebro_probe"
+        },
+        {
+          "name": "cerebro_probe_calls"
+        },
+        {
+          "name": "sqlite_sequence"
+        },
+        {
+          "name": "cf_agents_jobs"
+        }
+      ]
+    }
+  },
+  {
+    "at": "2026-10-07T03:00:16.380Z",
+    "conversation": "restart",
+    "path": "/snapshot",
+    "value": {
+      "type": "snapshot",
+      "entries": [
+        {
+          "model": [
+            {
+              "role": "user",
+              "content": "first",
+              "timestamp": 1791341970928
+            }
+          ],
+          "kind": "pi.user",
+          "id": 7,
+          "conversationId": 1
+        },
+        {
+          "model": [
+            {
+              "role": "system",
+              "content": "",
+              "toolsAdded": [
+                {
+                  "name": "qualification_round",
+                  "description": "Controlled harmless tool round for native steering qualification",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {}
+                  }
+                }
+              ],
+              "timestamp": 1791341970936
+            }
+          ],
+          "kind": "pi.system",
+          "id": 10,
+          "conversationId": 1,
+          "byTaskId": 9
+        }
+      ],
+      "run": {
+        "inputs": [8]
+      },
+      "generation": {
+        "attempt": 1
+      },
+      "tools": [],
+      "compactions": [],
+      "inbox": [
+        {
+          "id": 11,
+          "mode": "followUp"
+        }
+      ],
+      "agent": {
+        "model": {
+          "provider": "faux",
+          "modelId": "faux-1"
+        }
+      },
+      "usage": {
+        "models": {},
+        "tools": {}
+      }
+    }
+  }
+]

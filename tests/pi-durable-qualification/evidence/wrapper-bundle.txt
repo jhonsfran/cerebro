@@ -1,4 +1,4 @@
 
   wrapper/bundle.mjs  948.9kb
 
-⚡ Done in 70ms
+⚡ Done in 54ms

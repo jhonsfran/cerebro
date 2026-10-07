@@ -6,7 +6,7 @@
     "scope": "S1-0 preparation only; no S1-A through S1-D execution, merge or deployment",
     "supersedes": "Active cancel must preserve Pi-queued follow-ups. Native active Stop withdraws queued inputs; submit replacement only after Stop."
   },
-  "selectedImplementation": "PiHarness + Lifecycle; retained celld 0.6.0; nodejs_compat; native inbox, steering and Stop",
+  "selectedImplementation": "PiHarness + Lifecycle; retained celld 0.6.1; nodejs_compat; native inbox, steering and Stop",
   "items": [
     {
       "id": "S1-0-T01",
@@ -84,10 +84,18 @@
     {
       "id": "S1-0-T11",
       "owner": "host/runtime packets",
-      "status": "open; development proceeds with official wrapper",
-      "issue": "Strict native PiHarness/Lifecycle alarm-only recovery on celld remains incomplete after a forty-five-second no-HTTP window",
-      "approach": "Investigate official Lifecycle wake-job recovery and celld alarm handling. Keep Pi native execution/inbox/recovery ownership; do not add a second Cerebro execution queue. Rerun the idle-snapshot-before-wait proof and then verify settled results. The native wrapper heartbeat is thirty seconds; increasing the observation window from twenty to forty-five seconds did not resolve the case.",
-      "evidence": "evidence/qualification.json and wrapper-timeline.json at the tested source; native-recovery-20s preserves the earlier strict failure. The runner assertion is from this same failed case; dependent process-restart completion remains NOT_RUN."
+      "status": "resolved for local-store process restart",
+      "issue": "Earlier 45-second functional test ended before celld default 60-second cold-alarm discovery scan",
+      "approach": "Use a 90-second no-HTTP functional window with the default host scan; require an idle snapshot and saved answers before observation, then verify both operations settled. Retain official PiHarness startup/resume and Lifecycle alarms. Production storage and separate idle eviction remain T04/T03; the S1-F 60-second performance budget remains NOT_RUN.",
+      "evidence": "evidence/recovery-investigation/summary.json: separate executed PASS on 0.6.0 and 0.6.1 automatic recovery and 0.6.1 request-triggered resume. Current fixture results in evidence/qualification.json; native-recovery-45s/native-recovery-20s preserve their original FAIL."
     }
-  ]
+  ],
+  "recoveryDecision": {
+    "date": "2026-10-07",
+    "instruction": "Fix inexpensive remaining S1-0 issues and finish coordinator preparation",
+    "defaultWakerTickMs": 60000,
+    "functionalNoHttpWindowMs": 90000,
+    "productionSixtySecondBudget": "Unchanged; NOT_RUN",
+    "applicationHostUpgrade": "Coordinator dependency request only"
+  }
 }
