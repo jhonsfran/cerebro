@@ -69,17 +69,67 @@ const output = Schema.Struct({
   runId,
   text: Schema.String,
 });
+export const UserMessage = Schema.Struct({
+  eventId: identifier<"EventId">(),
+  mode: Schema.Literals(["follow-up", "steer", "replace"]),
+  occurredAt: Schema.Number.check(Schema.isFinite()),
+  runId,
+  text: Schema.String,
+});
+export type UserMessage = typeof UserMessage.Type;
+
+// Public approval state is a projection, not the private BoundApproval permit.
+export const ApprovalState = Schema.Struct({
+  approvalId: Schema.NonEmptyString,
+  expiresAt: Schema.Number.check(Schema.isFinite()),
+  operationId,
+  runId,
+  state: Schema.Literals([
+    "pending",
+    "allowed",
+    "denied",
+    "expired",
+    "cancelled",
+  ]),
+});
+export type ApprovalState = typeof ApprovalState.Type;
+
+export const ToolState = Schema.Struct({
+  arguments: jsonValue,
+  dependencies,
+  effect: Schema.Literals(["read", "write"]),
+  operationId,
+  output: jsonValue,
+  runId,
+  state: Schema.Literals([
+    "requested",
+    "waiting-for-approval",
+    "running",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "unknown-outcome",
+  ]),
+  toolId: identifier<"ToolId">(),
+  toolVersion: Schema.NonEmptyString,
+});
+export type ToolState = typeof ToolState.Type;
+
 export const DomainSnapshot = Schema.Struct({
   address,
   agentVersion: Schema.Int.check(Schema.isGreaterThan(0)),
+  approvals: Schema.Array(ApprovalState),
   outputs: Schema.Array(output),
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   runs: Schema.Array(run),
+  tools: Schema.Array(ToolState),
+  userMessages: Schema.Array(UserMessage),
 });
 export type DomainSnapshot = typeof DomainSnapshot.Type;
 
 export const DomainUpdate = Schema.Union([
   Schema.Struct({ run, type: Schema.Literal("run") }),
+  Schema.Struct({ message: UserMessage, type: Schema.Literal("user-message") }),
   Schema.Struct({
     runId,
     text: Schema.String,
@@ -87,26 +137,11 @@ export const DomainUpdate = Schema.Union([
   }),
   Schema.Struct({ output, type: Schema.Literal("canonical-output") }),
   Schema.Struct({
-    approvalId: Schema.String,
-    operationId,
-    runId,
+    ...ApprovalState.fields,
     type: Schema.Literal("approval"),
   }),
   Schema.Struct({
-    dependencies,
-    operationId,
-    output: jsonValue,
-    runId,
-    state: Schema.Literals([
-      "requested",
-      "waiting-for-approval",
-      "running",
-      "succeeded",
-      "failed",
-      "cancelled",
-      "unknown-outcome",
-    ]),
-    toolId: identifier<"ToolId">(),
+    ...ToolState.fields,
     type: Schema.Literal("tool"),
   }),
   Schema.Struct({

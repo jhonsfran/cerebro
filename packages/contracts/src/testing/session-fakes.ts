@@ -148,7 +148,8 @@ const sameAddress = (
   first.conversationId === second.conversationId &&
   first.agentId === second.agentId &&
   first.sessionId === second.sessionId;
-export const createStoreFake = (initial: DomainSnapshot) => {
+export const createStoreFake = (seed: DomainSnapshot) => {
+  const initial = structuredClone(seed);
   const handoffs = new Map<string, DurableHandoff>();
   let { revision } = initial;
   const access = (
@@ -343,6 +344,7 @@ export const createSessionFake = (
   initial: DomainSnapshot,
   frames: readonly Observation[] = []
 ) => {
+  const counts = { submit: 0 };
   const receipts = new Map<
     string,
     {
@@ -373,13 +375,53 @@ export const createSessionFake = (
     approve: (command, options) =>
       attempt(() => {
         authorize(options, command.context);
-        const run = snapshot.runs.find(
+        const prior = snapshot.runs.find(
           (value) => value.runId === command.runId
         );
-        if (!run) {
+        if (!prior) {
           throw new NotFound({ resource: "run" });
         }
-        return run;
+        const approval = snapshot.approvals.find(
+          (value) =>
+            value.approvalId === command.approvalId &&
+            value.runId === command.runId
+        );
+        if (!approval) {
+          throw new NotFound({ resource: "approval" });
+        }
+        if (approval.state !== "pending") {
+          return structuredClone(prior);
+        }
+        const run: RunState =
+          command.decision === "allow"
+            ? { runId: command.runId, state: "running" }
+            : cancelledRun(command.runId);
+        snapshot = {
+          ...snapshot,
+          approvals: snapshot.approvals.map((value) =>
+            value.approvalId === approval.approvalId
+              ? {
+                  ...value,
+                  state: command.decision === "allow" ? "allowed" : "denied",
+                }
+              : value
+          ),
+          revision: snapshot.revision + 1,
+          runs: snapshot.runs.map((value) =>
+            value.runId === run.runId ? run : value
+          ),
+          tools: snapshot.tools.map((value) =>
+            value.operationId === approval.operationId &&
+            value.state === "waiting-for-approval"
+              ? {
+                  ...value,
+                  state:
+                    command.decision === "allow" ? "requested" : "cancelled",
+                }
+              : value
+          ),
+        };
+        return structuredClone(run);
       }),
     cancel: (command, options) =>
       attempt(() => {
@@ -458,6 +500,7 @@ export const createSessionFake = (
           mode,
           receipt,
         });
+        counts.submit += 1;
         const runs = snapshot.runs.map((run) =>
           mode === "replace" && isPending(run) ? cancelledRun(run.runId) : run
         );
@@ -469,11 +512,25 @@ export const createSessionFake = (
             ...runs,
             { runId, state: busy && mode !== "steer" ? "queued" : "running" },
           ],
+          userMessages:
+            command.event.event.type === "user.message"
+              ? [
+                  ...snapshot.userMessages,
+                  {
+                    eventId: command.event.eventId,
+                    mode,
+                    occurredAt: command.event.occurredAt,
+                    runId,
+                    text: command.event.event.payload.text,
+                  },
+                ]
+              : snapshot.userMessages,
         };
         return receipt;
       }),
   };
   return {
+    counts,
     layer: Layer.succeed(SessionService, service),
     service,
     setAllowed: (value: boolean) => {

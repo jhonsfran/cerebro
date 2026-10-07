@@ -263,7 +263,7 @@ try {
   record(
     "proposed Effect contract fakes",
     "PASS",
-    "Twelve focused tests on Effect 4; no durability inference"
+    "Fifteen focused tests on Effect 4; no durability inference"
   );
   await command("proposed-types", [
     join(work, "node_modules/.bin/tsc"),

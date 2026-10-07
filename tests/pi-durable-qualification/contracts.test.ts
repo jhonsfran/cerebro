@@ -15,7 +15,11 @@ import {
   UnknownOutcome,
 } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
-import { Observation } from "../../packages/contracts/src/session-service.ts";
+import {
+  DomainSnapshot,
+  DomainUpdate,
+  Observation,
+} from "../../packages/contracts/src/session-service.ts";
 import {
   createAuthorityFake,
   createReceiptFake,
@@ -90,7 +94,7 @@ const authorityRequest: AuthorityRequest = {
   },
   tool: invocation.tool,
 };
-const failureTag = async (effect: Effect.Effect<unknown, unknown>) => {
+const failureTag = async <E>(effect: Effect.Effect<unknown, E>) => {
   const result = await Effect.runPromise(Effect.result(effect));
   assert.ok(Result.isFailure(result));
   return result.failure;
@@ -383,6 +387,7 @@ test("Effect 4 observation schemas preserve run variants, revision checks and ca
   const snapshot = {
     address,
     agentVersion: 1,
+    approvals: [],
     outputs: [],
     revision: 0,
     runs: [
@@ -398,6 +403,8 @@ test("Effect 4 observation schemas preserve run variants, revision checks and ca
         state: "unknown-outcome",
       },
     ],
+    tools: [],
+    userMessages: [],
   };
   const frame = { ...metadata, reason: "attach", snapshot, type: "snapshot" };
   assert.deepEqual(Schema.decodeUnknownSync(Observation)(frame), frame);
@@ -423,12 +430,15 @@ test("Effect 4 observation schemas preserve run variants, revision checks and ca
     revision: 1,
     type: "update",
     update: {
+      arguments: invocation.arguments,
       dependencies: { sourceIds: [], toolIds: [] },
+      effect: invocation.tool.effect,
       operationId: invocation.operationId,
       output: { result: [null, true, 1, "ok"] },
       runId: invocation.runId,
       state: "succeeded",
       toolId: invocation.tool.id,
+      toolVersion: invocation.tool.version,
       type: "tool",
     },
   };
@@ -448,6 +458,242 @@ const submitCommand = (name: string) =>
     event: { ...userEvent, eventId: id.event(name) },
     type: "submit",
   }) as const;
+
+const reloadSnapshot = (): DomainSnapshot => ({
+  address: {
+    agentId: userEvent.agentId,
+    conversationId: userEvent.conversationId,
+    organizationId: userEvent.organizationId,
+    sessionId: userEvent.sessionId,
+  },
+  agentVersion: 1,
+  approvals: [
+    {
+      approvalId: "approval-A",
+      expiresAt: now + 1000,
+      operationId: invocation.operationId,
+      runId: invocation.runId,
+      state: "pending",
+    },
+  ],
+  outputs: [
+    {
+      citations: [],
+      dependencies: { sourceIds: [], toolIds: [] },
+      runId: id.run("completed-run"),
+      text: "Previous canonical answer",
+    },
+  ],
+  revision: 7,
+  runs: [
+    {
+      completedAt: now - 1,
+      runId: id.run("completed-run"),
+      state: "completed",
+    },
+    { runId: invocation.runId, state: "waiting-for-approval" },
+  ],
+  tools: [
+    {
+      arguments: { ticket: "support-1" },
+      dependencies: { sourceIds: [], toolIds: [invocation.tool.id] },
+      effect: "write",
+      operationId: invocation.operationId,
+      output: null,
+      runId: invocation.runId,
+      state: "waiting-for-approval",
+      toolId: invocation.tool.id,
+      toolVersion: invocation.tool.version,
+    },
+    {
+      arguments: { ticket: "previous-ticket" },
+      dependencies: { sourceIds: [], toolIds: [invocation.tool.id] },
+      effect: "read",
+      operationId: id.operation("completed-tool"),
+      output: { title: "Previous result" },
+      runId: id.run("completed-run"),
+      state: "succeeded",
+      toolId: invocation.tool.id,
+      toolVersion: invocation.tool.version,
+    },
+  ],
+  userMessages: [
+    {
+      eventId: id.event("previous-message"),
+      mode: "follow-up",
+      occurredAt: now - 10,
+      runId: id.run("completed-run"),
+      text: "Previous question",
+    },
+    {
+      eventId: userEvent.eventId,
+      mode: "steer",
+      occurredAt: userEvent.occurredAt,
+      runId: invocation.runId,
+      text: "Update the ticket",
+    },
+  ],
+});
+
+const decodeReloadSnapshot = (snapshot: DomainSnapshot): DomainSnapshot => {
+  const persisted = JSON.stringify(snapshot);
+  return Schema.decodeUnknownSync(DomainSnapshot)(JSON.parse(persisted));
+};
+
+test("reload snapshots retain messages, pending approvals and tool state; partial snapshots fail", () => {
+  const snapshot = reloadSnapshot();
+  const decoded = decodeReloadSnapshot(snapshot);
+  assert.deepEqual(decoded, snapshot);
+  for (const key of ["userMessages", "approvals", "tools"]) {
+    const partial = { ...snapshot };
+    Reflect.deleteProperty(partial, key);
+    assert.throws(() => Schema.decodeUnknownSync(DomainSnapshot)(partial));
+  }
+  for (const change of [
+    { userMessages: [{ ...snapshot.userMessages[0], eventId: "" }] },
+    { userMessages: [{ ...snapshot.userMessages[0], occurredAt: Number.NaN }] },
+    { approvals: [{ ...snapshot.approvals[0], approvalId: "" }] },
+    {
+      approvals: [
+        { ...snapshot.approvals[0], expiresAt: Number.POSITIVE_INFINITY },
+      ],
+    },
+    { approvals: [{ ...snapshot.approvals[0], state: "approved-maybe" }] },
+    { tools: [{ ...snapshot.tools[0], arguments: { ticket: 1n } }] },
+    { tools: [{ ...snapshot.tools[0], output: undefined }] },
+    { tools: [{ ...snapshot.tools[0], toolVersion: "" }] },
+  ]) {
+    assert.throws(() =>
+      Schema.decodeUnknownSync(DomainSnapshot)({ ...snapshot, ...change })
+    );
+  }
+});
+
+test("live message, approval and tool updates use the same records as canonical snapshots", () => {
+  const snapshot = reloadSnapshot();
+  const [message] = snapshot.userMessages;
+  assert.deepEqual(
+    Schema.decodeUnknownSync(DomainUpdate)({ message, type: "user-message" }),
+    { message, type: "user-message" }
+  );
+  for (const state of [
+    "pending",
+    "allowed",
+    "denied",
+    "expired",
+    "cancelled",
+  ] as const) {
+    const approvalState = { ...snapshot.approvals[0], state };
+    assert.deepEqual(
+      Schema.decodeUnknownSync(DomainSnapshot)({
+        ...snapshot,
+        approvals: [approvalState],
+      }).approvals[0],
+      approvalState
+    );
+    assert.deepEqual(
+      Schema.decodeUnknownSync(DomainUpdate)({
+        ...approvalState,
+        type: "approval",
+      }),
+      { ...approvalState, type: "approval" }
+    );
+  }
+  for (const state of [
+    "requested",
+    "waiting-for-approval",
+    "running",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "unknown-outcome",
+  ] as const) {
+    const tool = { ...snapshot.tools[0], state };
+    assert.deepEqual(
+      Schema.decodeUnknownSync(DomainSnapshot)({ ...snapshot, tools: [tool] })
+        .tools[0],
+      tool
+    );
+    assert.deepEqual(
+      Schema.decodeUnknownSync(DomainUpdate)({ ...tool, type: "tool" }),
+      { ...tool, type: "tool" }
+    );
+  }
+});
+
+test("fresh inspect and attachment restore full authorized state without submitting or reusing caller objects", async () => {
+  const { Stream } = await import("effect");
+  const { createSessionFake, createStoreFake } =
+    await import("../../packages/contracts/src/testing/session-fakes.ts");
+  const snapshot = decodeReloadSnapshot(reloadSnapshot());
+  const session = createSessionFake(snapshot);
+  const store = createStoreFake(snapshot);
+  const expected = structuredClone(snapshot);
+  Reflect.set(snapshot.userMessages[0], "text", "Mutated caller input");
+  const future = { deadlineAt: Date.now() + 60_000 };
+  for (const service of [session.service, store.service]) {
+    const restored =
+      "inspect" in service
+        ? await Effect.runPromise(
+            service.inspect(expected.address, allowedContext, future)
+          )
+        : await Effect.runPromise(
+            service.snapshot(expected.address, allowedContext, future)
+          );
+    assert.deepEqual(restored, expected);
+    const observation =
+      "stream" in service
+        ? service.stream(
+            expected.address,
+            allowedContext,
+            { accessGeneration: 2 },
+            future
+          )
+        : service.attach(
+            expected.address,
+            allowedContext,
+            { accessGeneration: 2 },
+            future
+          );
+    const frames = await Effect.runPromise(
+      Effect.scoped(Stream.runCollect(observation))
+    );
+    assert.equal(frames.length, 1);
+    const frame = Schema.decodeUnknownSync(Observation)(frames[0]);
+    assert.equal(frame.type, "snapshot");
+    if (frame.type === "snapshot") {
+      assert.deepEqual(frame.snapshot, expected);
+    }
+  }
+  assert.equal(session.counts.submit, 0);
+  await Effect.runPromise(
+    session.service.approve(
+      {
+        address: expected.address,
+        approvalId: expected.approvals[0].approvalId,
+        context: allowedContext,
+        decision: "allow",
+        runId: invocation.runId,
+        type: "approve",
+      },
+      { ...options, ...future }
+    )
+  );
+  const resolved = await Effect.runPromise(
+    session.service.inspect(expected.address, allowedContext, future)
+  );
+  assert.equal(resolved.approvals[0].state, "allowed");
+  assert.equal(resolved.tools[0].state, "requested");
+  const reloaded = createSessionFake(decodeReloadSnapshot(resolved));
+  assert.deepEqual(
+    await Effect.runPromise(
+      reloaded.service.inspect(expected.address, allowedContext, future)
+    ),
+    resolved
+  );
+  assert.equal(session.counts.submit, 0);
+  assert.equal(reloaded.counts.submit, 0);
+});
 
 test("Effect scope releases resources; native cancellation withdraws active work and queued inputs", async () => {
   const { createEngineFake } =
@@ -510,9 +756,12 @@ test("handoff acknowledgment requires Pi acceptance for queued work; observer cl
   const snapshot = {
     address: userEvent,
     agentVersion: 1,
+    approvals: [],
     outputs: [],
     revision: 0,
     runs: [],
+    tools: [],
+    userMessages: [],
   };
   const fake = createStoreFake(snapshot);
   const future = { ...options, deadlineAt: Date.now() + 60_000 };
@@ -588,9 +837,12 @@ test("replacement cancels previous pending work once; replay preserves later req
   const fake = createSessionFake({
     address: userEvent,
     agentVersion: 1,
+    approvals: [],
     outputs: [],
     revision: 0,
     runs: [],
+    tools: [],
+    userMessages: [],
   });
   const future = { ...options, deadlineAt: Date.now() + 60_000 };
   await Effect.runPromise(fake.service.submit(submitCommand("A"), future));
@@ -605,6 +857,14 @@ test("replacement cancels previous pending work once; replay preserves later req
     beforeReplay.runs.map((run) => run.state),
     ["cancelled", "cancelled", "running", "queued"]
   );
+  assert.deepEqual(
+    beforeReplay.userMessages.map((message) => message.eventId),
+    ["A", "B", "C", "D"]
+  );
+  assert.deepEqual(
+    beforeReplay.userMessages.map((message) => message.mode),
+    ["follow-up", "follow-up", "replace", "follow-up"]
+  );
   assert.equal(
     (await Effect.runPromise(fake.service.submit(replacement, future)))
       .replayed,
@@ -616,6 +876,7 @@ test("replacement cancels previous pending work once; replay preserves later req
     ),
     beforeReplay
   );
+  assert.equal(fake.counts.submit, 4);
   assert.equal(
     (
       await failureTag(
@@ -632,9 +893,12 @@ test("replacement intent records mode and stop before engine acceptance; changed
   const fake = createStoreFake({
     address: userEvent,
     agentVersion: 1,
+    approvals: [],
     outputs: [],
     revision: 0,
     runs: [],
+    tools: [],
+    userMessages: [],
   });
   const future = { ...options, deadlineAt: Date.now() + 60_000 };
   const command = {
