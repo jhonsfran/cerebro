@@ -22,7 +22,7 @@ The native cases verify:
 - Withdrawing queued B leaves active A running.
 - Active Stop withdraws queued inputs. The original stronger preservation case remains an executed FAIL with an operator-approved semantics change, not a vendor queue defect.
 - Native abort followed by submit stops A and completes replacement B in the same conversation. This route has no durable replacement retry protocol; crash/retry between the two calls remains NOT_RUN.
-- Pi's own Lifecycle wake recovers accepted follow-ups after process kill/restart during twenty seconds without worker HTTP requests. This is local celld-dev storage evidence, not production bucket durability or exactly-once physical model dispatch.
+- Pi's own Lifecycle wake recovers accepted follow-ups after process kill/restart during forty-five seconds without worker HTTP requests. This is local celld-dev storage evidence, not production bucket durability or exactly-once physical model dispatch.
 
 The strict Node-free bundle remains FAIL; the selected host uses `nodejs_compat`. The runner intentionally exits nonzero while original failed constraints and unrun checks remain. Operator-authorized preparation proceeds with the limitations listed in `todos.json`. No complete qualification PASS is claimed.
 

@@ -18,6 +18,7 @@ const evidence = process.env.S1_0_EVIDENCE_DIR ?? join(work, "evidence");
 await mkdir(evidence, { recursive: true });
 const containers = [];
 const results = [];
+const timeline = [];
 const pendingCases = [
   "idle eviction mid-turn",
   "snapshot attachment race",
@@ -326,7 +327,6 @@ try {
     "accepted-deviation"
   );
   const wrapper = await start("wrapper", "wrapper-worker.mjs");
-  const timeline = [];
   const probe = async (conversation, path, body) => {
     const separator = path.includes("?") ? "&" : "?";
     const value = await http(
@@ -525,7 +525,7 @@ try {
   ]);
   wrapper.base = `http://127.0.0.1:${restartedPort.trim().split(":").at(-1)}`;
   // No worker request is sent during the alarm recovery window.
-  await delay(20_000);
+  await delay(45_000);
   await command("wrapper-alarm-only-timeline", [
     "docker",
     "logs",
@@ -552,7 +552,7 @@ try {
     wakeBefore: wakeBefore.alarm,
   });
   record("alarm-only completion", "PASS", {
-    mode: "celld dev local storage; no HTTP request for twenty seconds after process restart",
+    mode: "celld dev local storage; no HTTP request for forty-five seconds after process restart",
     recovered,
     snapshot: recoveredSnapshot,
     timeline: "wrapper-alarm-only-timeline.txt",
@@ -564,6 +564,10 @@ try {
 } catch (error) {
   record("qualification runner", "FAIL", String(error));
 } finally {
+  await writeFile(
+    join(evidence, "wrapper-timeline.json"),
+    `${JSON.stringify(timeline, null, 2)}\n`
+  );
   for (const name of plannedChecks) {
     if (results.some((result) => result.name === name)) {
       continue;
