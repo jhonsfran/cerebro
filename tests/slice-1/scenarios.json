@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "fixture": {
+    "model": "fixture/slice-1",
+    "modelKey": "fixture-model-key",
+    "connectorKey": "fixture-connector-key",
+    "controlToken": "slice-1-control"
+  },
+  "seed": {
+    "company": "organization-1",
+    "otherCompany": "organization-2",
+    "user": "user-allowed",
+    "agent": "agent-1",
+    "readTool": "fixture-read",
+    "writeTool": "fixture_effect"
+  },
+  "scenarios": [
+    {
+      "id": "fixture",
+      "scope": "infrastructure",
+      "assertions": [
+        "delayed-text-before-eof",
+        "physical-retry-count",
+        "compaction-count",
+        "tool-request",
+        "changed-input-conflict",
+        "read-only-reconciliation",
+        "checkpoint-hold-release"
+      ]
+    },
+    {
+      "id": "cross-company-denial",
+      "scope": "application",
+      "expectedEffects": 0
+    },
+    {
+      "id": "access-revocation",
+      "scope": "application",
+      "revocationBudgetMs": 1000
+    },
+    {
+      "id": "changed-approval-input",
+      "scope": "application",
+      "expectedEffects": 0
+    },
+    {
+      "id": "queued-run-cancellation",
+      "scope": "application",
+      "semantics": "native queued operation withdrawal; Stop also withdraws pending inputs"
+    },
+    {
+      "id": "retired-opencode-work",
+      "scope": "application",
+      "expectedModelCalls": 0,
+      "expectedEffects": 0,
+      "expectedReplies": 0
+    },
+    {
+      "id": "recovery-restore",
+      "scope": "application",
+      "stores": ["postgres", "celld", "minio-runtime", "minio-artifacts"],
+      "requiredState": [
+        "Cerebro command records",
+        "approvals",
+        "receipts",
+        "canonical projections",
+        "Pi private checkpoints",
+        "Lifecycle jobs",
+        "retirement fence"
+      ]
+    },
+    {
+      "id": "performance",
+      "scope": "application",
+      "warmup": 1,
+      "alternatingRunsPerRevision": 5,
+      "attachDetachCycles": 100,
+      "concurrentTurns": 10,
+      "budgets": {
+        "admissionP95Ms": 2000,
+        "firstTextAdapterP95Ms": 500,
+        "historyP95Ms": 5000,
+        "alarmRecoveryMs": 60000,
+        "concurrentTerminalMs": 90000,
+        "liveObserversAfterDetach": 0
+      },
+      "requiredMeasurements": [
+        "permissionAdapterMs",
+        "projectionAdapterMs",
+        "idleMemoryBytes"
+      ]
+    }
+  ]
+}

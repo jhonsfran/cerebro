@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { createHmac } from "node:crypto";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -90,167 +89,10 @@ const organizationId =
   channelConfig?.organizationId ??
   enterpriseIdentity?.organizationId ??
   "local-company";
-const objectSchema = (properties, required) => ({
-  additionalProperties: false,
-  properties,
-  required,
-  type: "object",
-});
-const toolOutput = objectSchema(
-  {
-    operationId: { type: "string" },
-    receipt: { type: "string" },
-    value: { type: "string" },
-  },
-  ["value", "operationId", "receipt"]
+const runtimeConfiguration = parseRuntimeConfiguration(
+  await readFile(path.join(directory, "runtime.json"), "utf-8"),
+  mode
 );
-let runtimeConfiguration;
-try {
-  runtimeConfiguration = parseRuntimeConfiguration(
-    await readFile(path.join(directory, "runtime.json"), "utf-8"),
-    mode
-  );
-} catch (error) {
-  if (error.code !== "ENOENT" || mode === "production") {
-    throw new Error(
-      "An explicit valid runtime.json is required for this deployment.",
-      { cause: error }
-    );
-  }
-  if (mode === "local") {
-    const bootstrapToken = await readFile(
-      path.join(directory, "bootstrap-token"),
-      "utf-8"
-    );
-    runtimeConfiguration = parseRuntimeConfiguration(
-      JSON.stringify({
-        artifacts: {
-          accessKeyId: "cerebro",
-          bucket: "cerebro-artifacts",
-          endpoint: "http://minio-artifacts:9000",
-          region: "us-east-1",
-          secretAccessKey: minioPassword,
-        },
-        bootstrapToken: bootstrapToken.trim(),
-        budget: { initialUnits: 0, kind: "local", unit: "usd-micro" },
-        gatewaySigningKey: createHmac("sha256", authSecret)
-          .update("cerebro-pilot-tool-gateway-v1")
-          .digest("hex"),
-        mode,
-        models: ["space-bunny-free"].map((model) => ({
-          apiKey: "public",
-          baseUrl: "https://opencode.ai/zen/v1",
-          deadlineMs: 90_000,
-          id: `opencode/${model}`,
-          maxInputBytes: 65_536,
-          maxOutputTokens: 8192,
-          maxRequestsPerRun: 8,
-          maxResponseBytes: 1_048_576,
-          model,
-          pricing: {
-            inputPerToken: 0,
-            outputPerToken: 0,
-            unit: "usd-micro",
-            version: "opencode-free-2026-09-30",
-          },
-          provider: "opencode",
-        })),
-        retrievalMode: "full-text",
-        tools: [],
-      }),
-      mode
-    );
-  }
-  if (mode === "fixture") {
-    runtimeConfiguration = parseRuntimeConfiguration(
-      JSON.stringify({
-        artifacts: {
-          accessKeyId: "cerebro",
-          bucket: "cerebro-artifacts",
-          endpoint: "http://minio-artifacts:9000",
-          region: "us-east-1",
-          secretAccessKey: minioPassword,
-        },
-        budget: { initialUnits: 1_000_000, kind: "local", unit: "pilot-units" },
-        gatewaySigningKey: createHmac("sha256", authSecret)
-          .update("cerebro-pilot-tool-gateway-v1")
-          .digest("hex"),
-        mode,
-        models: [
-          {
-            apiKey: "fixture-model-key",
-            baseUrl: "http://fixture:8090/v1",
-            deadlineMs: 30_000,
-            id: "fixture/pilot",
-            maxInputBytes: 16_384,
-            maxOutputTokens: 2048,
-            maxRequestsPerRun: 16,
-            maxResponseBytes: 65_536,
-            model: "pilot",
-            pricing: {
-              inputPerToken: 1,
-              outputPerToken: 1,
-              unit: "pilot-units",
-              version: "fixture-pricing-v1",
-            },
-            provider: "fixture",
-          },
-        ],
-        retrievalMode: "full-text",
-        tools: [
-          {
-            connectorId: "fixture-connector",
-            credentials: {
-              headers: { Authorization: "Bearer fixture-connector-key" },
-              secrets: ["fixture-connector-key"],
-            },
-            description: "Read the controlled pilot connector.",
-            effect: "read",
-            id: "fixture-read",
-            inputSchema: objectSchema({ query: { type: "string" } }, ["query"]),
-            maxInputBytes: 4096,
-            maxOutputBytes: 8192,
-            outputSchema: toolOutput,
-            requiresApproval: false,
-            retryMode: "reconcile-only",
-            target: {
-              kind: "mcp-read",
-              method: "pilot_read",
-              url: "https://fixture.invalid/mcp",
-            },
-            version: "1",
-          },
-          {
-            connectorId: "fixture-connector",
-            credentials: {
-              headers: { Authorization: "Bearer fixture-connector-key" },
-              secrets: ["fixture-connector-key"],
-            },
-            description: "Apply one controlled pilot effect after approval.",
-            effect: "write",
-            id: "fixture_effect",
-            inputSchema: objectSchema(
-              { value: { const: "approved-fixture", type: "string" } },
-              ["value"]
-            ),
-            maxInputBytes: 4096,
-            maxOutputBytes: 8192,
-            outputSchema: toolOutput,
-            requiresApproval: true,
-            retryMode: "reconcile-only",
-            target: {
-              kind: "fixture-write",
-              method: "fixture_effect",
-              url: "https://fixture.invalid/effects",
-            },
-            version: "1",
-          },
-        ],
-      }),
-      mode
-    );
-  }
-}
 const runtimeConfigurationJson = JSON.stringify(runtimeConfiguration);
 
 const aws = new AwsClient({
@@ -290,7 +132,6 @@ try {
       .pathname,
   });
   await client`INSERT INTO organization (id, name) VALUES (${organizationId}, ${organizationId}) ON CONFLICT (id) DO NOTHING`;
-  await client`INSERT INTO usage_account (organization_id, unit, total, available) VALUES (${organizationId}, ${runtimeConfiguration.budget.unit}, ${runtimeConfiguration.budget.initialUnits}, ${runtimeConfiguration.budget.initialUnits}) ON CONFLICT (organization_id, unit) DO NOTHING`;
   if (mode === "fixture") {
     const seederId = `pilot-source-seeder:${organizationId}`;
     await client`INSERT INTO identity_principal (id, organization_id, kind, state) VALUES (${seederId}, ${organizationId}, 'service', 'active') ON CONFLICT (id) DO NOTHING`;
