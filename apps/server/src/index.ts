@@ -146,11 +146,11 @@ app.on(["POST", "GET", "PUT", "PATCH", "DELETE"], "/api/auth/*", (context) =>
   )
 );
 
-app.post("/api/fixture/runtime/isolation", (context) => {
+app.post("/api/fixture/runtime/isolation", async (context) => {
   if (context.env.DEPLOY_MODE !== "fixture") {
     return context.json({ error: "Not found" }, 404);
   }
-  return withDatabase(context.env, async (database) => {
+  return await withDatabase(context.env, async (database) => {
     const session = await createAuth(context.env, database).api.getSession({
       headers: context.req.raw.headers,
     });
@@ -199,7 +199,7 @@ const auditReplayInput = z.strictObject({
   changed: z.boolean().default(false),
   eventId: z.string().min(1).max(512),
 });
-app.post("/api/fixture/audit/replay", (context) => {
+app.post("/api/fixture/audit/replay", async (context) => {
   if (context.env.DEPLOY_MODE !== "fixture") {
     return context.json({ error: "Not found" }, 404);
   }
@@ -207,7 +207,7 @@ app.post("/api/fixture/audit/replay", (context) => {
   if (origin && origin !== context.env.CORS_ORIGIN) {
     return context.json({ error: "Forbidden" }, 403);
   }
-  return withDatabase(context.env, async (database) => {
+  return await withDatabase(context.env, async (database) => {
     const session = await createAuth(context.env, database).api.getSession({
       headers: context.req.raw.headers,
     });
@@ -289,11 +289,11 @@ app.post("/api/fixture/audit/replay", (context) => {
   });
 });
 
-app.on(["POST", "GET"], "/fixture/sessions/:name", (context) => {
+app.on(["POST", "GET"], "/fixture/sessions/:name", async (context) => {
   if (context.env.DEPLOY_MODE !== "fixture") {
     return context.json({ error: "Not found" }, 404);
   }
-  return withDatabase(context.env, async (database) => {
+  return await withDatabase(context.env, async (database) => {
     const auth = createAuth(context.env, database);
     const session = await auth.api.getSession({
       headers: context.req.raw.headers,

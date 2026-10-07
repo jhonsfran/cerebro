@@ -23,7 +23,7 @@
     "@orpc/openapi": "catalog:",
     "@orpc/server": "catalog:",
     "@orpc/zod": "catalog:",
-    "agents": "0.24.0",
+    "agents": "0.26.0",
     "ai": "6.0.296",
     "better-auth": "catalog:",
     "drizzle-orm": "catalog:",

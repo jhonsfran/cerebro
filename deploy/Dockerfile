@@ -10,7 +10,7 @@ COPY deploy/entrypoint.mjs /app/deploy/entrypoint.mjs
 WORKDIR /app
 ENTRYPOINT ["node", "deploy/entrypoint.mjs", "minio"]
 
-FROM ghcr.io/denoland/celld:0.6.0@sha256:e188a7f2bb0b8cec9fb04ee4c3d1ed7cca0ea0419519ae2a9ba36e5b6fe5161b AS celld-bin
+FROM ghcr.io/denoland/celld:0.6.1@sha256:acb0bc2dca628f0dac7c6b43eea42615a79f4943f316f6df7c1da0b86d52150b AS celld-bin
 
 FROM node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8 AS app
 COPY --from=celld-bin /usr/local/bin/celld /usr/local/bin/celld

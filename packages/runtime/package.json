@@ -18,11 +18,14 @@
     "@cerebro/policy": "workspace:*",
     "@cerebro/tools": "workspace:*",
     "@cloudflare/ai-chat": "0.12.0",
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/pi-durable": "1.0.4",
     "@opencode-ai/plugin": "0.0.0-dev-18697",
     "@opencode-ai/sdk": "0.0.0-dev-18697",
-    "agents": "0.24.0",
+    "agents": "0.26.0",
     "ai": "6.0.296",
     "drizzle-orm": "catalog:",
+    "effect": "4.0.1",
     "react": "catalog:"
   },
   "devDependencies": {

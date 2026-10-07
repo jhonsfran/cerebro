@@ -14,7 +14,7 @@
     "dev:server": "turbo run dev:bare -F hono --",
     "db:generate": "turbo run db:generate -F @cerebro/db --",
     "deploy": "docker compose build bootstrap && docker compose run --rm bootstrap",
-    "test:contracts": "node --test tests/contracts/contracts.test.ts",
+    "test:contracts": "node --test tests/contracts/contracts.test.ts tests/pi-durable-qualification/contracts.test.ts",
     "test:opencode": "node --test tests/live/opencode.test.ts",
     "test:chat": "node --test tests/live/chat-stream.test.ts",
     "test:boot": "node --test tests/integration/boot.test.ts",
@@ -29,7 +29,8 @@
     "fix": "ultracite fix",
     "prepare": "husky",
     "test:channels:native": "node tests/channels/native/run.mjs",
-    "test:policy:runtime": "node --test tests/policy/runtime/*.test.ts"
+    "test:policy:runtime": "node --test tests/policy/runtime/*.test.ts",
+    "test:pi-durable:qualification": "node tests/pi-durable-qualification/run.mjs"
   },
   "dependencies": {
     "aws4fetch": "1.0.20",
@@ -38,9 +39,12 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@ai-sdk/provider": "3.0.8",
     "@cerebro/config": "workspace:*",
     "@cloudflare/workers-types": "catalog:",
+    "@opentelemetry/api": "1.9.1",
     "@types/node": "catalog:",
+    "effect": "4.0.1",
     "esbuild": "0.28.2",
     "husky": "latest",
     "oxfmt": "0.70.0",

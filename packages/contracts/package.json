@@ -11,6 +11,9 @@
     "build": "tsc -b",
     "test": "node --experimental-strip-types --test ../../tests/contracts/contracts.test.ts"
   },
+  "dependencies": {
+    "effect": "4.0.1"
+  },
   "devDependencies": {
     "@cerebro/config": "workspace:*",
     "typescript": "catalog:"
