@@ -27,3 +27,11 @@ Logs are `shared-identity-contracts.txt` and `shared-identity-types.txt` in `/tm
 ## Remaining integration work
 
 Adopt and review the shared identity revision in A and C. Import reviewed packets in B, A, C, D order. Complete coordinator-owned dependencies, Effect composition, authorized observation and command routes, legacy caller migration, runtime retirement fences and active dependency removal. Run the final live, browser, crash, storage and performance gates at the integrated SHA. Historical failures and deferred qualification cases retain their recorded status.
+
+## S1-B local import
+
+The coordinator imported reviewed S1-B head `d4251caf25bc5254738f947953293942dfd58ec0` in local merge `2e5c4d968682a327d7c2663d1e6d8d7bb1bd9a37`. The import has no conflicts. Its packet PR remains draft on GitHub.
+
+The coordinator adds direct Effect 4.0.1 dependencies to authorization, policy and tools, exposes the authorization Layer and service through the package entry point, and removes the tools package's dependency on its deleted OpenCode plugin. Other installed legacy runtime dependencies remain until their callers migrate in S1-F. Unrelated transitive lockfile changes are excluded.
+
+Independent checks after the import and dependency edits pass: 56 authority/tool tests, 9 identity tests, 5 forced type tasks and changed-source lint. The frozen offline install passes. Logs are `B-integrated-tests.txt`, `B-integrated-identity.txt` and `B-integrated-types.txt` in the local review directory. These checks do not qualify host composition, durable approval across eviction or remote effects.

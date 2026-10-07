@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@cerebro/contracts": "workspace:*",
-    "@cerebro/db": "workspace:*"
+    "@cerebro/db": "workspace:*",
+    "effect": "4.0.1"
   },
   "devDependencies": {
     "@cerebro/config": "workspace:*",

@@ -437,6 +437,9 @@ importers:
       '@cerebro/db':
         specifier: workspace:*
         version: link:../db
+      effect:
+        specifier: 4.0.1
+        version: 4.0.1
     devDependencies:
       '@cerebro/config':
         specifier: workspace:*
@@ -543,6 +546,9 @@ importers:
       '@unprice/api':
         specifier: 0.3.1
         version: 0.3.1
+      effect:
+        specifier: 4.0.1
+        version: 4.0.1
     devDependencies:
       '@cerebro/config':
         specifier: workspace:*
@@ -614,6 +620,9 @@ importers:
       '@cerebro/contracts':
         specifier: workspace:*
         version: link:../contracts
+      effect:
+        specifier: 4.0.1
+        version: 4.0.1
       zod:
         specifier: 4.6.5
         version: 4.6.5
@@ -621,9 +630,6 @@ importers:
       '@cerebro/config':
         specifier: workspace:*
         version: link:../config
-      '@opencode-ai/plugin':
-        specifier: 0.0.0-dev-18697
-        version: 0.0.0-dev-18697(@opentui/core@0.5.9(typescript@7.0.2)(web-tree-sitter@0.25.10))(solid-js@1.9.15)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

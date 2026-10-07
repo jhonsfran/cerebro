@@ -1,1 +1,5 @@
-export { createAuthorizationPolicy } from "./policy.ts";
+export {
+  authorizationLayer,
+  createAuthorizationPolicy,
+  createAuthorizationService,
+} from "./policy.ts";
