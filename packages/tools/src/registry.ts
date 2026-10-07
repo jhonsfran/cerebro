@@ -1,6 +1,10 @@
+import { InvalidInput } from "@cerebro/contracts/failures";
 import type { ToolId } from "@cerebro/contracts/identity";
+import { connectorFingerprint } from "@cerebro/contracts/tool-service";
+import type { RegisteredTool as BoundToolDefinition } from "@cerebro/contracts/tool-service";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import type { ToolCall, ToolDefinition } from "@cerebro/contracts/tools";
+import { Effect } from "effect";
 import { z } from "zod";
 
 import { MCP_PROTOCOL_VERSION } from "./mcp-transport.ts";
@@ -14,6 +18,7 @@ export type ConnectorTarget =
     };
 
 export interface ToolRegistration {
+  readonly connectorVersion?: string;
   readonly definition: ToolDefinition;
   readonly description: string;
   readonly input: z.ZodType;
@@ -75,6 +80,44 @@ const validateByteBounds = (registration: ToolRegistration): void => {
   }
 };
 
+const validateTarget = (
+  target: ConnectorTarget,
+  definition: ToolDefinition,
+  requiresApproval: boolean,
+  mode: "local" | "fixture" | "production"
+) => {
+  const url = new URL(target.url);
+  if (url.username || url.password || url.hash || !target.method) {
+    throw new Error(
+      "Connector target must have no embedded credentials or fragment."
+    );
+  }
+  if (
+    target.kind === "mcp-read" &&
+    (definition.effect !== "read" || url.protocol !== "https:")
+  ) {
+    throw new Error(
+      "MCP connectors require HTTPS and read-only tool definitions."
+    );
+  }
+  if (
+    target.kind === "fixture-write" &&
+    (mode !== "fixture" || definition.effect !== "write" || !requiresApproval)
+  ) {
+    throw new Error("Write connectors require explicit fixture mode.");
+  }
+  if (
+    target.kind === "fixture-write" &&
+    !["fixture", "localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+    !url.hostname.endsWith(".invalid")
+  ) {
+    throw new Error("Write fixture targets must use a local fixture host.");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("Connector target must use HTTP or HTTPS.");
+  }
+};
+
 export const createToolRegistry = (
   registrations: readonly ToolRegistration[],
   mode: "local" | "fixture" | "production"
@@ -82,40 +125,19 @@ export const createToolRegistry = (
   const entries = new Map<ToolId, RegisteredTool>();
   for (const registration of registrations) {
     const definition = Object.freeze(structuredClone(registration.definition));
-    const target = Object.freeze(structuredClone(registration.target));
-    const url = new URL(target.url);
-    if (url.username || url.password || url.hash || !target.method) {
-      throw new Error(
-        "Connector target must have no embedded credentials or fragment."
-      );
-    }
-    if (
-      target.kind === "mcp-read" &&
-      (definition.effect !== "read" || url.protocol !== "https:")
-    ) {
-      throw new Error(
-        "MCP connectors require HTTPS and read-only tool definitions."
-      );
-    }
-    if (
-      target.kind === "fixture-write" &&
-      (mode !== "fixture" ||
-        definition.effect !== "write" ||
-        !registration.requiresApproval)
-    ) {
-      throw new Error("Write connectors require explicit fixture mode.");
-    }
-    if (
-      target.kind === "fixture-write" &&
-      !["fixture", "localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
-      !url.hostname.endsWith(".invalid")
-    ) {
-      throw new Error("Write fixture targets must use a local fixture host.");
-    }
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      throw new Error("Connector target must use HTTP or HTTPS.");
-    }
+    const url = new URL(registration.target.url);
+    const target = Object.freeze({
+      ...structuredClone(registration.target),
+      url: url.href,
+    });
+    validateTarget(target, definition, registration.requiresApproval, mode);
     validateByteBounds(registration);
+    if (
+      registration.connectorVersion !== undefined &&
+      !registration.connectorVersion.trim()
+    ) {
+      throw new Error("A configured connector version must be nonempty.");
+    }
     if (entries.has(definition.id)) {
       throw new Error("A registry cannot contain duplicate tool IDs.");
     }
@@ -127,6 +149,7 @@ export const createToolRegistry = (
     }
     freezeJson(inputJsonSchema);
     const fingerprint = canonicalToolArguments({
+      connectorVersion: registration.connectorVersion ?? definition.version,
       definition,
       input: inputJsonSchema,
       maxInputBytes,
@@ -140,6 +163,7 @@ export const createToolRegistry = (
     entries.set(
       definition.id,
       Object.freeze({
+        connectorVersion: registration.connectorVersion ?? definition.version,
         definition,
         description: registration.description,
         fingerprint,
@@ -179,10 +203,18 @@ export const createToolRegistry = (
     list: () => list,
     prepare(call: ToolCall): ToolCall {
       const entry = entries.get(call.tool.id);
+      const definition =
+        "connectorFingerprint" in call.tool
+          ? Object.fromEntries(
+              Object.entries(call.tool).filter(
+                ([key]) => key !== "connectorFingerprint"
+              )
+            )
+          : call.tool;
       if (
         !entry ||
         canonicalToolArguments(entry.definition) !==
-          canonicalToolArguments(call.tool)
+          canonicalToolArguments(definition)
       ) {
         throw new Error(
           "Tool metadata does not match the registered definition."
@@ -191,8 +223,26 @@ export const createToolRegistry = (
       return {
         ...structuredClone(call),
         arguments: entry.prepareArguments(call.arguments),
-        tool: entry.definition,
+        tool:
+          "connectorFingerprint" in call.tool ? call.tool : entry.definition,
       };
     },
   });
 };
+
+export const bindRegisteredTool = (
+  entry: RegisteredTool
+): Effect.Effect<BoundToolDefinition, InvalidInput> =>
+  connectorFingerprint({
+    connectorId: entry.definition.connectorId,
+    destination: entry.target.url,
+    version: entry.connectorVersion ?? entry.definition.version,
+  }).pipe(
+    Effect.map((fingerprint) => ({
+      ...entry.definition,
+      connectorFingerprint: fingerprint,
+    })),
+    Effect.mapError(
+      () => new InvalidInput({ reason: "Invalid connector registration." })
+    )
+  );

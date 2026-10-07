@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import { Effect } from "effect";
 import { z } from "zod";
 
 import { id } from "../../packages/contracts/src/identity.ts";
@@ -17,30 +18,51 @@ import type {
 } from "../../packages/contracts/src/policy.ts";
 import type { EffectOptions } from "../../packages/contracts/src/port.ts";
 import {
+  createAuthorityFake,
+  createReceiptFake,
+} from "../../packages/contracts/src/testing/effect-fakes.ts";
+import {
   allowedContext,
   fixtureAgentId,
   fixtureOrganizationId,
+  fixtureRunId,
+  userEvent,
 } from "../../packages/contracts/src/testing/fixtures.ts";
+import type {
+  BoundApproval,
+  BoundCapability,
+  BoundToolCall,
+} from "../../packages/contracts/src/tool-service.ts";
 import { digestToolArguments } from "../../packages/contracts/src/tools.ts";
 import type {
   Approval,
   ToolCall,
   ToolCapability,
 } from "../../packages/contracts/src/tools.ts";
+import { createAgentAuthority } from "../../packages/policy/src/agent-authority.ts";
 import { readBoundedJson } from "../../packages/tools/src/bounded-json.ts";
-import { createToolBroker } from "../../packages/tools/src/broker.ts";
+import {
+  createToolBroker,
+  createControlledToolExecutor,
+} from "../../packages/tools/src/broker.ts";
 import {
   createCapabilitySigner,
   gatewayInvocation,
 } from "../../packages/tools/src/capability.ts";
-import { createDynamicToolExecutor } from "../../packages/tools/src/dynamic-worker.ts";
+import {
+  createDynamicToolExecutor,
+  createDynamicToolExecutorService,
+} from "../../packages/tools/src/dynamic-worker.ts";
 import type { WorkerLoader } from "../../packages/tools/src/dynamic-worker.ts";
 import { createMcpGateway } from "../../packages/tools/src/mcp-gateway.ts";
 import {
   encodeMcpHeader,
   readMcpToolResult,
 } from "../../packages/tools/src/mcp-transport.ts";
-import { createToolRegistry } from "../../packages/tools/src/registry.ts";
+import {
+  createToolRegistry,
+  bindRegisteredTool,
+} from "../../packages/tools/src/registry.ts";
 import type { ToolRegistration } from "../../packages/tools/src/registry.ts";
 import { SqliteToolOperationJournal } from "./fixtures/journal.ts";
 
@@ -281,6 +303,7 @@ const fixture = async (write = false, journalPath = ":memory:") => {
     broker,
     brokerJournal,
     call,
+    capability,
     close() {
       brokerJournal.close();
       gatewayJournal.close();
@@ -289,6 +312,7 @@ const fixture = async (write = false, journalPath = ":memory:") => {
     gateway,
     gatewayDependencies,
     gatewayJournal,
+    loader,
     options,
     prepared,
     registered,
@@ -302,6 +326,256 @@ const gatewayRequest = (envelope: unknown) =>
     body: JSON.stringify(envelope),
     method: "POST",
   });
+
+const controlledFixture = async (
+  write = false,
+  gatewayApprovalRun = fixtureRunId
+) => {
+  const f = await fixture(write);
+  const tool = await Effect.runPromise(
+    bindRegisteredTool(f.registry.list()[0])
+  );
+  const call: BoundToolCall = { ...f.prepared, runId: fixtureRunId, tool };
+  const capability: BoundCapability = {
+    ...f.capability,
+    connectorFingerprint: tool.connectorFingerprint,
+    policyVersion: f.state.policy,
+    runId: fixtureRunId,
+  };
+  const approval: BoundApproval = {
+    ...f.approval,
+    connectorFingerprint: tool.connectorFingerprint,
+    runId: fixtureRunId,
+  };
+  f.brokerJournal.putApproval({ ...approval, runId: gatewayApprovalRun });
+  const pinnedAgent = {
+    agentId: call.agentId,
+    enabledToolIds: [tool.id],
+    grants: [
+      {
+        action: "execute" as const,
+        resource: {
+          id: tool.id,
+          kind: "tool" as const,
+          organizationId: call.organizationId,
+        },
+      },
+      {
+        action: "read" as const,
+        resource: {
+          id: tool.id,
+          kind: "tool" as const,
+          organizationId: call.organizationId,
+        },
+      },
+      {
+        action: "execute" as const,
+        resource: {
+          id: tool.connectorId,
+          kind: "tool" as const,
+          organizationId: call.organizationId,
+        },
+      },
+    ],
+    instructions: "Fixture",
+    model: "fixture/model",
+    organizationId: call.organizationId,
+    version: 1,
+  };
+  const current = createAuthorityFake(Date.now);
+  current.setDecision({ decision: "allow", policyVersion: f.state.policy });
+  const authority = createAgentAuthority({
+    checkSession: () => Effect.void,
+    current: current.service,
+    enabledModels: [pinnedAgent.model],
+    entitlements: f.gatewayDependencies.entitlementPolicy,
+    tools: [tool],
+  });
+  const driver = createDynamicToolExecutorService({
+    audience: f.gatewayDependencies.audience,
+    authorizationPolicy: f.gatewayDependencies.authorizationPolicy,
+    gateway: {
+      fetch: async (request) => await f.gateway.fetch(new Request(request)),
+    },
+    loader: f.loader,
+    reconcile: f.gateway.reconcile,
+    registry: f.registry,
+    signer: f.signer,
+  });
+  const receipts = createReceiptFake(Date.now);
+  const executor = createControlledToolExecutor({
+    address: userEvent,
+    approval: () => Effect.succeed(approval),
+    authority,
+    checkApprover: () => Effect.void,
+    driver,
+    pinnedAgent,
+    receipts: receipts.service,
+    registry: f.registry,
+  });
+  return {
+    ...f,
+    boundApproval: approval,
+    boundCall: call,
+    boundCapability: capability,
+    current,
+    executor,
+  };
+};
+
+test("Effect controlled executor uses the signed restricted MCP gateway and replays one redacted read", async () => {
+  const f = await controlledFixture();
+  try {
+    const started = performance.now();
+    const result = await Effect.runPromise(
+      f.executor.execute(f.boundCall, f.boundCapability, f.options)
+    );
+    assert.deepEqual(result, { output: { text: "support [redacted]" } });
+    assert.deepEqual(
+      await Effect.runPromise(
+        f.executor.execute(f.boundCall, f.boundCapability, f.options)
+      ),
+      result
+    );
+    assert.equal(f.state.posts, 1);
+    process.stdout.write(
+      `S1-B signed gateway read evidence: ${JSON.stringify({ adapterElapsedMs: performance.now() - started, physicalDispatches: f.state.posts, replayDispatches: 0 })}\n`
+    );
+    f.current.setDecision({
+      decision: "deny",
+      policyVersion: "revoked",
+      reason: "Revoked",
+    });
+    const denied = await Effect.runPromise(
+      Effect.result(
+        f.executor.execute(f.boundCall, f.boundCapability, f.options)
+      )
+    );
+    assert.equal(denied._tag, "Failure");
+    assert.equal(f.state.posts, 1);
+  } finally {
+    f.close();
+  }
+});
+
+test("Effect controlled writes keep full signed run and connector approval binding at the gateway", async () => {
+  const f = await controlledFixture(true);
+  try {
+    const result = await Effect.runPromise(
+      f.executor.execute(f.boundCall, f.boundCapability, f.options)
+    );
+    assert.deepEqual(result, { output: { text: "support [redacted]" } });
+    assert.deepEqual(
+      await Effect.runPromise(
+        f.executor.execute(f.boundCall, f.boundCapability, f.options)
+      ),
+      result
+    );
+    assert.equal(f.state.posts, 1);
+    assert.equal(f.state.effects, 1);
+    process.stdout.write(`S1-B gateway write counter: ${f.state.effects}\n`);
+  } finally {
+    f.close();
+  }
+  const g = await controlledFixture(true, id.run("wrong-run"));
+  try {
+    const denied = await Effect.runPromise(
+      Effect.result(
+        g.executor.execute(g.boundCall, g.boundCapability, g.options)
+      )
+    );
+    assert.equal(denied._tag, "Failure");
+    if (denied._tag === "Failure") {
+      assert.equal(denied.failure._tag, "Denied");
+    }
+    assert.equal(g.state.posts, 0);
+  } finally {
+    g.close();
+  }
+});
+
+test("credential lookup cannot hide a connector revocation before physical dispatch", async () => {
+  const f = await fixture();
+  try {
+    const gateway = createMcpGateway({
+      ...f.gatewayDependencies,
+      credentials: async () => {
+        f.state.connectorDenied = true;
+        return { headers: {}, secrets: [] };
+      },
+    });
+    const result = await (
+      await gateway.fetch(gatewayRequest(await f.envelope()))
+    ).json();
+    assert.equal(result.status, "denied");
+    assert.equal(f.state.posts, 0);
+  } finally {
+    f.close();
+  }
+});
+
+test("Effect gateway uncertainty blocks a new occurrence and reconciles through one provider GET", async () => {
+  const f = await controlledFixture(true);
+  try {
+    f.state.timeout = true;
+    const uncertain = await Effect.runPromise(
+      Effect.result(
+        f.executor.execute(f.boundCall, f.boundCapability, f.options)
+      )
+    );
+    assert.equal(uncertain._tag, "Failure");
+    if (uncertain._tag === "Failure") {
+      assert.equal(uncertain.failure._tag, "UnknownOutcome");
+    }
+    const nextId = id.operation("new-occurrence");
+    const repeated = await Effect.runPromise(
+      Effect.result(
+        f.executor.execute(
+          f.boundCall,
+          { ...f.boundCapability, operationId: nextId },
+          { ...f.options, operationId: nextId }
+        )
+      )
+    );
+    assert.equal(repeated._tag, "Failure");
+    if (repeated._tag === "Failure") {
+      assert.equal(repeated.failure._tag, "UnknownOutcome");
+    }
+    f.state.timeout = false;
+    const confirmed = await Effect.runPromise(
+      f.executor.reconcile(f.options.operationId, f.boundCall.context, {
+        deadlineAt: f.options.deadlineAt,
+      })
+    );
+    assert.deepEqual(confirmed, { output: { text: "receipt-confirmed" } });
+    assert.equal(f.state.posts, 1);
+    assert.equal(f.state.reads, 1);
+  } finally {
+    f.close();
+  }
+});
+
+test("bound connector fingerprints use normalized configured destinations and connector versions", async () => {
+  const original = registration();
+  const getTool = async (changes: Partial<ToolRegistration>) => {
+    const registry = createToolRegistry(
+      [{ ...original, connectorVersion: "connector-v1", ...changes }],
+      "fixture"
+    );
+    return await Effect.runPromise(bindRegisteredTool(registry.list()[0]));
+  };
+  const first = await getTool({});
+  const equivalent = await getTool({
+    target: { ...original.target, url: "HTTPS://FIXTURE.INVALID:443/mcp" },
+  });
+  const version = await getTool({ connectorVersion: "connector-v2" });
+  const destination = await getTool({
+    target: { ...original.target, url: "https://fixture.invalid/other" },
+  });
+  assert.equal(first.connectorFingerprint, equivalent.connectorFingerprint);
+  assert.notEqual(first.connectorFingerprint, version.connectorFingerprint);
+  assert.notEqual(first.connectorFingerprint, destination.connectorFingerprint);
+});
 
 test("tool broker normalizes before digest and uses fixed MCP tools/call with redacted output", async () => {
   const f = await fixture();

@@ -39,6 +39,10 @@ export const toolCallSchema = z.strictObject({
   organizationId: identifier.transform(id.organization),
   tool,
 });
+export const boundToolCallSchema = toolCallSchema.extend({
+  runId: identifier.transform(id.run),
+  tool: tool.extend({ connectorFingerprint: digestSchema }),
+});
 const capabilitySchema = z.strictObject({
   actorPrincipalId: identifier.transform(id.principal),
   agentId: identifier.transform(id.agent),
@@ -53,7 +57,12 @@ const capabilitySchema = z.strictObject({
   toolId: identifier.transform(id.tool),
   toolVersion: identifier,
 });
-export const invocationSchema = z.strictObject({
+export const boundCapabilitySchema = capabilitySchema.extend({
+  connectorFingerprint: digestSchema,
+  policyVersion: identifier,
+  runId: identifier.transform(id.run),
+});
+const legacyInvocationSchema = z.strictObject({
   audience: identifier,
   call: toolCallSchema,
   capability: capabilitySchema,
@@ -65,6 +74,13 @@ export const invocationSchema = z.strictObject({
   policyVersion: identifier,
   registryDigest: digestSchema,
 });
+export const invocationSchema = z.union([
+  legacyInvocationSchema,
+  legacyInvocationSchema.extend({
+    call: boundToolCallSchema,
+    capability: boundCapabilitySchema,
+  }),
+]);
 export type GatewayInvocation = z.infer<typeof invocationSchema>;
 export const signedInvocationSchema = z.strictObject({
   payload: z.string(),
@@ -142,15 +158,16 @@ export const gatewayInvocation = (
   options: EffectOptions,
   policyVersion: string,
   registryDigest: GatewayInvocation["registryDigest"]
-): GatewayInvocation => ({
-  audience,
-  call,
-  capability,
-  options: {
-    deadlineAt: options.deadlineAt,
-    operationId: options.operationId,
-    requestDigest: options.requestDigest,
-  },
-  policyVersion,
-  registryDigest,
-});
+): GatewayInvocation =>
+  invocationSchema.parse({
+    audience,
+    call,
+    capability,
+    options: {
+      deadlineAt: options.deadlineAt,
+      operationId: options.operationId,
+      requestDigest: options.requestDigest,
+    },
+    policyVersion,
+    registryDigest,
+  });

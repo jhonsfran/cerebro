@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { Effect } from "effect";
+
 import { createAuthorizationPolicy } from "../../packages/authorization/src/index.ts";
+import {
+  createAuthorizationService,
+  authorizationLayer,
+} from "../../packages/authorization/src/policy.ts";
+import { AuthorityService } from "../../packages/contracts/src/authority-service.ts";
 import { id } from "../../packages/contracts/src/index.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/index.ts";
 import type { Action, Resource } from "../../packages/contracts/src/policy.ts";
+import { userEvent } from "../../packages/contracts/src/testing/fixtures.ts";
 import type {
   AuthorizationSnapshot,
   IdentityGrant,
@@ -295,6 +303,50 @@ test("database failure returns unavailable and never allows", async () => {
     reason: "The identity store is unavailable.",
     status: "unavailable",
   });
+});
+
+test("Effect authorization uses current repository identity and converts denial before dispatch", async () => {
+  let snapshot = baseSnapshot();
+  const request = {
+    action: "execute" as const,
+    address: { ...userEvent, organizationId },
+    context,
+    pinnedAgent: {
+      agentId: userEvent.agentId,
+      enabledToolIds: [],
+      grants: [],
+      instructions: "Fixture",
+      model: "fixture/model",
+      organizationId,
+      version: 1,
+    },
+    resource: tool,
+  };
+  const repository = { readSnapshot: () => Promise.resolve(snapshot) };
+  const service = createAuthorizationService(repository, () => now);
+  const permit = await Effect.runPromise(
+    Effect.gen(function* requireAuthority() {
+      const authority = yield* AuthorityService;
+      return yield* authority.require(request, options);
+    }).pipe(Effect.provide(authorizationLayer(repository, () => now)))
+  );
+  assert.equal(permit.policyVersion, snapshot.policyVersion);
+  snapshot = { ...snapshot, actorGrants: [] };
+  const denied = await Effect.runPromise(
+    Effect.result(service.require(request, options))
+  );
+  assert.equal(denied._tag, "Failure");
+  if (denied._tag === "Failure") {
+    assert.equal(denied.failure._tag, "Denied");
+  }
+  snapshot = baseSnapshot();
+  const forged = await Effect.runPromise(
+    service.evaluate(
+      { ...request, context: { actor: { ...actor, kind: "service" } } },
+      options
+    )
+  );
+  assert.equal(forged.decision, "deny");
 });
 
 test(

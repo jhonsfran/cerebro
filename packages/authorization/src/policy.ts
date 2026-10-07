@@ -3,13 +3,20 @@ import type {
   ExecutionContext,
   Resource,
 } from "@cerebro/contracts";
-import type { Action } from "@cerebro/contracts/policy";
+import {
+  AuthorityService,
+  enforceDecision,
+} from "@cerebro/contracts/authority-service";
+import { InvalidInput, Unavailable } from "@cerebro/contracts/failures";
+import { isExecutionContextActiveAt } from "@cerebro/contracts/identity";
+import type { Action, AuthorizationDecision } from "@cerebro/contracts/policy";
 import type { ReadOptions } from "@cerebro/contracts/port";
 import type {
   AuthorizationSnapshot,
   IdentityGrant,
   IdentityRepository,
 } from "@cerebro/db/repositories/identity";
+import { Effect, Layer, Result } from "effect";
 
 const allows = (
   grants: readonly IdentityGrant[],
@@ -84,6 +91,7 @@ const assess = (
   if (
     !actor ||
     actor.id !== context.actor.id ||
+    actor.kind !== context.actor.kind ||
     actor.organizationId !== resource.organizationId ||
     actor.state !== "active" ||
     !snapshot.actorDirectoryActive
@@ -119,6 +127,8 @@ const assess = (
   }
   if (
     !represented ||
+    represented.id !== context.represented.id ||
+    represented.kind !== context.represented.kind ||
     represented.state !== "active" ||
     !snapshot.representedDirectoryActive ||
     represented.organizationId !== resource.organizationId ||
@@ -141,80 +151,164 @@ const assess = (
   };
 };
 
+const evaluateIdentity = (
+  repository: Pick<IdentityRepository, "readSnapshot">,
+  now: () => number,
+  context: ExecutionContext,
+  action: Action,
+  resource: Resource,
+  options: ReadOptions
+): Effect.Effect<AuthorizationDecision, InvalidInput | Unavailable> =>
+  Effect.tryPromise({
+    catch: (cause) =>
+      cause instanceof InvalidInput || cause instanceof Unavailable
+        ? cause
+        : new Unavailable({ reason: "The identity store is unavailable." }),
+    async try(effectSignal) {
+      const currentTime = now();
+      if (!resource.id || !resource.organizationId || !context.actor.id) {
+        throw new InvalidInput({
+          reason: "Authorization identifiers are required.",
+        });
+      }
+      if (options.signal?.aborted) {
+        throw new Unavailable({
+          reason: "The authorization request was cancelled.",
+        });
+      }
+      if (
+        !Number.isFinite(options.deadlineAt) ||
+        options.deadlineAt <= currentTime
+      ) {
+        throw new Unavailable({
+          reason: "The authorization deadline has passed.",
+        });
+      }
+      const interrupted = Symbol("authorization-interrupted");
+      const { promise: interruption, resolve } =
+        Promise.withResolvers<typeof interrupted>();
+      const interrupt = () => resolve(interrupted);
+      const timeout = setTimeout(
+        interrupt,
+        Math.min(options.deadlineAt - currentTime, 2_147_483_647)
+      );
+      options.signal?.addEventListener("abort", interrupt, { once: true });
+      effectSignal.addEventListener("abort", interrupt, { once: true });
+      if (options.signal?.aborted) {
+        interrupt();
+      }
+      try {
+        const snapshot = await Promise.race([
+          repository.readSnapshot(
+            context.actor.organizationId,
+            context.actor.id,
+            context.delegation?.id
+          ),
+          interruption,
+        ]);
+        const afterRead = now();
+        if (options.signal?.aborted) {
+          throw new Unavailable({
+            reason: "The authorization request was cancelled.",
+          });
+        }
+        if (snapshot === interrupted || options.deadlineAt <= afterRead) {
+          throw new Unavailable({
+            reason: "The authorization deadline has passed.",
+          });
+        }
+        if (
+          !isExecutionContextActiveAt(
+            context,
+            resource.organizationId,
+            afterRead
+          )
+        ) {
+          return deny(
+            snapshot.policyVersion,
+            "The execution context is inactive."
+          ).value;
+        }
+        return assess(snapshot, context, action, resource, afterRead).value;
+      } finally {
+        clearTimeout(timeout);
+        options.signal?.removeEventListener("abort", interrupt);
+        effectSignal.removeEventListener("abort", interrupt);
+      }
+    },
+  });
+
+export const createAuthorizationService = (
+  repository: Pick<IdentityRepository, "readSnapshot">,
+  now: () => number = Date.now
+): AuthorityService => {
+  const service: AuthorityService = {
+    evaluate: (request, options) =>
+      request.address.organizationId === request.resource.organizationId
+        ? evaluateIdentity(
+            repository,
+            now,
+            request.context,
+            request.action,
+            request.resource,
+            options
+          )
+        : Effect.succeed(
+            deny(
+              "identity:foreign",
+              "The resource belongs to a different session company."
+            ).value
+          ),
+    require: (request, options) =>
+      Effect.flatMap(service.evaluate(request, options), (decision) =>
+        enforceDecision(request, now(), decision)
+      ),
+  };
+  return service;
+};
+
+export const authorizationLayer = (
+  repository: Pick<IdentityRepository, "readSnapshot">,
+  now: () => number = Date.now
+) =>
+  Layer.succeed(AuthorityService, createAuthorizationService(repository, now));
+
+// Compatibility for callers that the coordinator migrates during S1-F.
 export const createAuthorizationPolicy = (
   repository: Pick<IdentityRepository, "readSnapshot">,
   now: () => number = Date.now
 ): AuthorizationPolicy => ({
-  async evaluate(
-    context: ExecutionContext,
-    action: Action,
-    resource: Resource,
-    options: ReadOptions
-  ) {
-    const currentTime = now();
-    if (options.signal?.aborted) {
+  async evaluate(context, action, resource, options) {
+    const result = await Effect.runPromise(
+      Effect.result(
+        evaluateIdentity(repository, now, context, action, resource, options)
+      )
+    );
+    if (Result.isSuccess(result)) {
+      return { status: "ok", value: result.success };
+    }
+    const { failure } = result;
+    if (failure._tag === "InvalidInput") {
+      return { reason: failure.reason, status: "invalid-input" };
+    }
+    if (failure.reason === "The authorization request was cancelled.") {
       return {
         code: "cancelled",
-        reason: "The authorization request was cancelled.",
+        reason: failure.reason,
         status: "unavailable",
       };
     }
-    if (
-      !Number.isFinite(options.deadlineAt) ||
-      options.deadlineAt <= currentTime
-    ) {
+    if (failure.reason === "The authorization deadline has passed.") {
       return {
         code: "deadline-exceeded",
-        reason: "The authorization deadline has passed.",
+        reason: failure.reason,
         status: "unavailable",
       };
     }
-    const interrupted = Symbol("authorization-interrupted");
-    const { promise: interruption, resolve } =
-      Promise.withResolvers<typeof interrupted>();
-    const interrupt = () => resolve(interrupted);
-    const timeout = setTimeout(
-      interrupt,
-      Math.min(options.deadlineAt - currentTime, 2_147_483_647)
-    );
-    options.signal?.addEventListener("abort", interrupt, { once: true });
-    if (options.signal?.aborted) {
-      interrupt();
-    }
-    try {
-      const snapshot = await Promise.race([
-        repository.readSnapshot(
-          context.actor.organizationId,
-          context.actor.id,
-          context.delegation?.id
-        ),
-        interruption,
-      ]);
-      const afterRead = now();
-      if (options.signal?.aborted) {
-        return {
-          code: "cancelled",
-          reason: "The authorization request was cancelled.",
-          status: "unavailable",
-        };
-      }
-      if (snapshot === interrupted || options.deadlineAt <= afterRead) {
-        return {
-          code: "deadline-exceeded",
-          reason: "The authorization deadline has passed.",
-          status: "unavailable",
-        };
-      }
-      return assess(snapshot, context, action, resource, afterRead);
-    } catch {
-      return {
-        code: "provider-unavailable",
-        reason: "The identity store is unavailable.",
-        status: "unavailable",
-      };
-    } finally {
-      clearTimeout(timeout);
-      options.signal?.removeEventListener("abort", interrupt);
-    }
+    return {
+      code: "provider-unavailable",
+      reason: failure.reason,
+      status: "unavailable",
+    };
   },
 });
