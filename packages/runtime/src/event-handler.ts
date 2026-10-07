@@ -58,18 +58,30 @@ export const validateEvent = (
     };
   }
   if (
-    event.event.type !== "user.message" &&
-    event.event.type !== "scheduled.run"
+    !event.event ||
+    (event.event.type !== "user.message" &&
+      event.event.type !== "scheduled.run")
   ) {
     return { reason: "Event does not start a run", status: "invalid-input" };
   }
   if (
-    !event.payloadDigest ||
-    !event.eventId ||
-    !event.sessionId ||
-    !event.conversationId
+    [
+      event.payloadDigest,
+      event.eventId,
+      event.sessionId,
+      event.conversationId,
+      event.organizationId,
+      event.agentId,
+    ].some((value) => typeof value !== "string" || !value.trim())
   ) {
     return { reason: "Event identity is incomplete", status: "invalid-input" };
+  }
+  const text =
+    event.event.type === "user.message"
+      ? event.event.payload?.text
+      : event.event.payload?.task;
+  if (typeof text !== "string" || !text.trim()) {
+    return { reason: "Event input must contain text", status: "invalid-input" };
   }
   return { status: "ok", value: undefined };
 };
