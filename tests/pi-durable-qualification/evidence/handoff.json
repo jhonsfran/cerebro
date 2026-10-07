@@ -1,9 +1,9 @@
 {
-  "testedSourceSha": "7984e12712deb2b9f93d9e1a5ff4f341060c5a02",
+  "testedSourceSha": "e0e79da0e6174c23a420d6d4c8a3e5ff9c433e4c",
   "baselineSha": "1855fed13aafee0e7a3369f3e684564f35715086",
   "branch": "codex/cerebro-slice-1-contracts",
-  "recordedAt": "2026-10-07T03:36:28.335Z",
-  "status": "READY FOR COORDINATOR REVIEW; S1-0 preparation complete; local recovery qualified; remaining checks explicitly deferred",
+  "recordedAt": "2026-10-07T04:01:29.272Z",
+  "status": "CORRECTION READY FOR COORDINATOR REVIEW; contract freeze pending; S1-0 unmerged",
   "operatorDecision": {
     "date": "2026-10-06",
     "instruction": "Simplify the adapter and reuse Pi Durable native inbox, steering, Stop and recovery; keep unresolved checks as TODOs",
@@ -15,7 +15,7 @@
     "scope": "S1-0 only; no S1-A through S1-D implementation, merge or deployment"
   },
   "selectedImplementation": "official PiHarness + Lifecycle; native inbox, steering and stop; thin Effect adapter",
-  "contractStatus": "ready for coordinator review; qualification incomplete",
+  "contractStatus": "snapshot correction tested; coordinator contract freeze pending; S1-0 remains unmerged",
   "hostImage": "ghcr.io/denoland/celld:0.6.1@sha256:acb0bc2dca628f0dac7c6b43eea42615a79f4943f316f6df7c1da0b86d52150b",
   "compatibilityFlags": ["nodejs_compat"],
   "pins": {
@@ -56,7 +56,8 @@
     "Twelve proposed Effect 4 contract tests and isolated TypeScript 7 signatures pass",
     "Headless public TanStack lifecycle passes with zero submissions and zero leaked observers",
     "Isolated resolved graph contains zero ai or @ai-sdk/* packages",
-    "Full process kill/restart on celld 0.6.1, 90 seconds without HTTP, idle snapshot with two saved answers predating observation, and both Pi operations settled done"
+    "Full process kill/restart on celld 0.6.1, 90 seconds without HTTP, idle snapshot with two saved answers predating observation, and both Pi operations settled done",
+    "Canonical JSON reload restores user messages, pending and resolved approvals, and tool state; required collections and shared live-update records validated; fake attachment submits zero work"
   ],
   "nativeBoundary": {
     "PiOwns": [
@@ -198,6 +199,48 @@
       "command": "pnpm build",
       "status": "NOT_RUN",
       "reason": "Workspace build awaits coordinator dependency manifest/catalog/lock commit; no pass claimed."
+    },
+    {
+      "name": "all contract tests",
+      "command": "node --test tests/contracts/contracts.test.ts tests/pi-durable-qualification/contracts.test.ts",
+      "status": "PASS",
+      "exitCode": 0,
+      "cases": 50,
+      "artifact": "snapshot-correction/contracts.txt",
+      "sha": "e0e79da0e6174c23a420d6d4c8a3e5ff9c433e4c"
+    },
+    {
+      "name": "strict isolated contract and proposed-test types",
+      "command": "node_modules/.bin/tsc --ignoreConfig --noEmit --strict --skipLibCheck --allowImportingTsExtensions --module ESNext --moduleResolution bundler --target ESNext --types node packages/contracts/src/session-service.ts packages/contracts/src/execution.ts packages/contracts/src/authority-service.ts packages/contracts/src/tool-service.ts packages/contracts/src/receipt-service.ts packages/contracts/src/failures.ts packages/contracts/src/metering.ts packages/contracts/src/testing/effect-fakes.ts packages/contracts/src/testing/session-fakes.ts tests/pi-durable-qualification/contracts.test.ts",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "snapshot-correction/types.txt",
+      "sha": "e0e79da0e6174c23a420d6d4c8a3e5ff9c433e4c"
+    },
+    {
+      "name": "headless TanStack lifecycle",
+      "command": "node --test tanstack.test.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "cases": 1,
+      "artifact": "snapshot-correction/tanstack.txt",
+      "sha": "e0e79da0e6174c23a420d6d4c8a3e5ff9c433e4c"
+    },
+    {
+      "name": "focused lint and formatting",
+      "command": "pnpm exec ultracite check packages/contracts/src/session-service.ts packages/contracts/src/testing/session-fakes.ts tests/pi-durable-qualification/contracts.test.ts tests/pi-durable-qualification/run.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "snapshot-correction/focused-check.txt",
+      "sha": "e0e79da0e6174c23a420d6d4c8a3e5ff9c433e4c"
+    },
+    {
+      "name": "pre-commit formatting",
+      "command": "pnpm --config.cache-dir=/tmp/cerebro-s1-0/pnpm-cache --config.store-dir=/tmp/cerebro-s1-0/pnpm-store dlx ultracite@7.11.0 fix packages/contracts/src/session-service.ts packages/contracts/src/testing/session-fakes.ts tests/pi-durable-qualification/contracts.test.ts tests/pi-durable-qualification/run.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "snapshot-correction/format.txt",
+      "sha": "e0e79da0e6174c23a420d6d4c8a3e5ff9c433e4c"
     }
   ],
   "inventorySummary": {
@@ -208,8 +251,8 @@
     "lockSha256": "0ac9a7fa2fa226f88dda36f1125bf148aab41f2d9beea360b8d9ef8ef8ddac4f"
   },
   "todoFile": "../todos.json",
-  "coordinatorNextStep": "Review the proposed Effect ports and native Pi semantics; apply dependency-requests.json in one owner manifest/catalog/lock/host-image commit; run fresh workspace checks and publish codex/cerebro-slice-1 as the shared baseline. Only then dispatch S1-A through S1-D under their file ownership. Carry the fourteen NOT_RUN cases forward.",
-  "prStatus": "No remote codex/cerebro-slice-1 integration branch; no packet PR target",
+  "coordinatorNextStep": "Review the corrected snapshot contract, freeze S1-0, then apply the coordinator dependency commit and run workspace checks on codex/cerebro-slice-1. No runtime packets or remote agents have started.",
+  "prStatus": "Coordinator baseline codex/cerebro-slice-1 published at 1855fed13aafee0e7a3369f3e684564f35715086. This correction creates no PR and performs no merge.",
   "metering": "Unbound external port; spend control through it inactive",
   "nativePython": "Outside this slice",
   "sourceFileSha256": {
@@ -218,18 +261,18 @@
     "packages/contracts/src/failures.ts": "2976323c92788ef0efc65c88a91914f8fa9909c4bc2f8fd7903c91c9f60d7635",
     "packages/contracts/src/metering.ts": "5a1fb07d09600342ec913334354f8227af1460aa24dca0bacb94d656d1b13ec9",
     "packages/contracts/src/receipt-service.ts": "e15b589a6eb09fba4585c88942d4fe76c0d82e9009f34fa5612ef549d603edd0",
-    "packages/contracts/src/session-service.ts": "aafc247f5a0b939a0a6b69ec4b9d9e59ab3f9d1bc0c5ad5fb230dbb6989b3e0c",
+    "packages/contracts/src/session-service.ts": "843b0143fb23dc62ba436d03467bcdd6a636488d15eefc9686bc153ae8ea4765",
     "packages/contracts/src/testing/effect-fakes.ts": "9a50d0508a4b843e6531f3eed6f1ec59d01d33279f18595acb2cbe662cbcd2ef",
-    "packages/contracts/src/testing/session-fakes.ts": "bac1b65d793d8ecd06f6c849a98fc26e8d7487168c219799c317698d23e9d370",
+    "packages/contracts/src/testing/session-fakes.ts": "7152af6b989314291a79d9e3467528b4a41e6a9be137b4be69e6e0ea8627bc26",
     "packages/contracts/src/tool-service.ts": "827d2e392176e5444e493f60181c8c76eff36a041851b9ecdc3131115d6aec5b",
-    "tests/pi-durable-qualification/contracts.test.ts": "874639c91528572e64d1fe2fd785ee56ef6fe8e0ae14b4e37d85d9eea1291264",
-    "tests/pi-durable-qualification/run.mjs": "24f771632aa9966287c3299b1a46563f55f137daf7f24331b9936a8437b4297d",
+    "tests/pi-durable-qualification/contracts.test.ts": "5df5e63e97c33015a3adbe6b9851180463a7e3fd06a75ec4003c4f0bbc8fb68b",
+    "tests/pi-durable-qualification/run.mjs": "7761f6966dcb9c155d5ea150b5ee79b9bc70a41062bb3dbfef3864108d260944",
     "tests/pi-durable-qualification/tanstack.test.mjs": "10f958d09796e094256a4c9d7d5f5ace49ac21ca6a2e90d1fa65055640b85762",
     "tests/pi-durable-qualification/wrapper-worker.mjs": "e9bbd163b6b772c5774b0f95e70c535cbe8194505f04de344ed799edc417670c",
     "tests/pi-durable-qualification/dependency-requests.json": "1c5ae44d4df1281af9d9b3f99883900c8f9610550e2270dd66c8830212908504"
   },
   "historicalEvidence": "native-recovery-45s and native-recovery-20s preserve their original failed tests. previous-admission contains the retired queue strategy; previous-effect3/previous-effect4 retain earlier dependency proofs. None substitutes for current source results.",
-  "note": "The successor handoff commit changes documentation/evidence/TODOs only. Thirteen executable source hashes identify the qualified source. All application manifests/catalog/lock and active host configuration remain untouched. Metering is unbound; no native Python execution.",
+  "note": "Current source hashes identify the corrected contracts. qualification.json preserves its earlier testedSourceSha; host checks were not rerun for this schema-only correction. All application manifests/catalog/lock and active host configuration remain unchanged.",
   "fileOwnership": {
     "applicationManifestsCatalogLockUnchangedFromBaseline": true,
     "applicationHostConfigurationUnchanged": true,
@@ -238,5 +281,13 @@
       "proposed contract/architecture documentation"
     ],
     "dependencyApplication": "Coordinator-owned; not applied by this task"
+  },
+  "qualificationSourceSha": "7984e12712deb2b9f93d9e1a5ff4f341060c5a02",
+  "testScope": "Current tested source qualifies snapshot contracts/fakes, all 50 contract cases, strict isolated types and headless TanStack lifecycle. qualification.json remains the previous complete local-host run at qualificationSourceSha; fourteen cases remain NOT_RUN.",
+  "snapshotCorrection": "snapshot-correction/report.json",
+  "integrationBaseline": {
+    "branch": "codex/cerebro-slice-1",
+    "sha": "1855fed13aafee0e7a3369f3e684564f35715086",
+    "verifiedWith": "git ls-remote --heads origin codex/cerebro-slice-1"
   }
 }

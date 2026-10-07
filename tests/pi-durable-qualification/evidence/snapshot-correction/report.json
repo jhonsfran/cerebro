@@ -1,0 +1,75 @@
+{
+  "status": "CORRECTION READY FOR COORDINATOR REVIEW; contract freeze pending; S1-0 unmerged",
+  "sourceSha": "e0e79da0e6174c23a420d6d4c8a3e5ff9c433e4c",
+  "reviewedSha": "13b8434823bdaba69659274b39decbb55f00a820",
+  "recordedAt": "2026-10-07T04:01:29.272Z",
+  "integrationBaseline": {
+    "branch": "codex/cerebro-slice-1",
+    "sha": "1855fed13aafee0e7a3369f3e684564f35715086",
+    "verifiedWith": "git ls-remote --heads origin codex/cerebro-slice-1"
+  },
+  "scope": "Snapshot schemas, contract fakes, contract tests and documentation only. No dependency application, runtime implementation, remote agents, merge or deployment.",
+  "changes": [
+    "Required canonical userMessages, approvals and tools collections",
+    "Shared record schemas for snapshot and live updates",
+    "Stable event/run/operation/approval identities and explicit approval phases",
+    "Authorized JSON tool arguments and outcomes with tool version, effect and dependencies",
+    "Fakes retain accepted messages and resolved approval state after reload; cloning prevents caller-object mutation",
+    "Fresh attachment restores canonical state with zero submissions"
+  ],
+  "checks": [
+    {
+      "name": "all contract tests",
+      "command": "node --test tests/contracts/contracts.test.ts tests/pi-durable-qualification/contracts.test.ts",
+      "status": "PASS",
+      "exitCode": 0,
+      "cases": 50,
+      "artifact": "contracts.txt"
+    },
+    {
+      "name": "strict isolated contract and proposed-test types",
+      "command": "node_modules/.bin/tsc --ignoreConfig --noEmit --strict --skipLibCheck --allowImportingTsExtensions --module ESNext --moduleResolution bundler --target ESNext --types node packages/contracts/src/session-service.ts packages/contracts/src/execution.ts packages/contracts/src/authority-service.ts packages/contracts/src/tool-service.ts packages/contracts/src/receipt-service.ts packages/contracts/src/failures.ts packages/contracts/src/metering.ts packages/contracts/src/testing/effect-fakes.ts packages/contracts/src/testing/session-fakes.ts tests/pi-durable-qualification/contracts.test.ts",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "types.txt"
+    },
+    {
+      "name": "headless TanStack lifecycle",
+      "command": "node --test tanstack.test.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "cases": 1,
+      "artifact": "tanstack.txt"
+    },
+    {
+      "name": "focused lint and formatting",
+      "command": "pnpm exec ultracite check packages/contracts/src/session-service.ts packages/contracts/src/testing/session-fakes.ts tests/pi-durable-qualification/contracts.test.ts tests/pi-durable-qualification/run.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "focused-check.txt"
+    },
+    {
+      "name": "pre-commit formatting",
+      "command": "pnpm --config.cache-dir=/tmp/cerebro-s1-0/pnpm-cache --config.store-dir=/tmp/cerebro-s1-0/pnpm-store dlx ultracite@7.11.0 fix packages/contracts/src/session-service.ts packages/contracts/src/testing/session-fakes.ts tests/pi-durable-qualification/contracts.test.ts tests/pi-durable-qualification/run.mjs",
+      "status": "PASS",
+      "exitCode": 0,
+      "artifact": "format.txt"
+    }
+  ],
+  "isolation": "Copied contract/test source with the existing integrity-qualified pinned install linked as node_modules. No fresh install or application manifest/lock changes. Check cwd: /tmp/cerebro-s1-0-snapshot-JDgaPw.",
+  "sourceFileSha256": {
+    "packages/contracts/src/session-service.ts": "843b0143fb23dc62ba436d03467bcdd6a636488d15eefc9686bc153ae8ea4765",
+    "packages/contracts/src/testing/session-fakes.ts": "7152af6b989314291a79d9e3467528b4a41e6a9be137b4be69e6e0ea8627bc26",
+    "tests/pi-durable-qualification/contracts.test.ts": "5df5e63e97c33015a3adbe6b9851180463a7e3fd06a75ec4003c4f0bbc8fb68b",
+    "tests/pi-durable-qualification/run.mjs": "7761f6966dcb9c155d5ea150b5ee79b9bc70a41062bb3dbfef3864108d260944"
+  },
+  "qualification": {
+    "artifact": "../qualification.json",
+    "sourceSha": "7984e12712deb2b9f93d9e1a5ff4f341060c5a02",
+    "hostChecksRerun": false,
+    "remainingNotRun": 14,
+    "note": "Earlier host qualification is preserved at its tested source. This correction does not claim production reload, attachment-race, approval durability or any other unrun host/browser check passed."
+  },
+  "metering": "Unbound external port",
+  "nativePython": "Outside this slice"
+}

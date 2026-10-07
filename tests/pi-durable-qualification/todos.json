@@ -69,9 +69,10 @@
     {
       "id": "S1-0-T09",
       "owner": "coordinator",
-      "status": "open",
-      "issue": "No codex/cerebro-slice-1 integration branch for a packet PR",
-      "approach": "Create the reviewed integration baseline when starting later packets; use this branch SHA for review now"
+      "status": "resolved by coordinator",
+      "issue": "Approved integration baseline is published on codex/cerebro-slice-1",
+      "approach": "Use baseline 1855fed13aafee0e7a3369f3e684564f35715086; snapshot correction is ready for coordinator review before contract freeze, dependency commit and workspace checks. No later packet starts here.",
+      "evidence": "git ls-remote confirmed the coordinator-published branch; evidence/snapshot-correction/report.json"
     },
     {
       "id": "S1-0-T10",
