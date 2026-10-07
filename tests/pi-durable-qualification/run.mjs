@@ -534,6 +534,14 @@ try {
   // Read a snapshot before waiting: wait() could otherwise finish work after
   // HTTP resumes and falsely look like alarm-only completion.
   const recoveredSnapshot = await probe("restart", "/snapshot");
+  if (recoveredSnapshot.run || recoveredSnapshot.inbox.length) {
+    record(
+      "alarm-only completion",
+      "FAIL",
+      { noHttpWindowMs: 45_000, snapshot: recoveredSnapshot },
+      "deferred-host-qualification"
+    );
+  }
   assert.equal(recoveredSnapshot.run, undefined);
   assert.deepEqual(recoveredSnapshot.inbox, []);
   const recoveredA = await probe("restart", "/wait?requestId=run-A");
