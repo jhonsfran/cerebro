@@ -705,9 +705,7 @@ test("browser mutations use Cerebro commands and preserve stable operation IDs a
     "approval-operation",
     { decision: "allow", runId: "run" }
   );
-  await sendRunCommand("/conversation", "runs/run/cancel", "stop-operation", {
-    runId: "run",
-  });
+  await sendRunCommand("/conversation", "runs/run/cancel", "stop-operation");
   assert.deepEqual(requests[0], requests[1]);
   assert.deepEqual(
     requests.map((value) => value.body),
@@ -715,7 +713,7 @@ test("browser mutations use Cerebro commands and preserve stable operation IDs a
       { eventId: "event", mode: "steer", operationId: "event", text: "Draft" },
       { eventId: "event", mode: "steer", operationId: "event", text: "Draft" },
       { decision: "allow", operationId: "approval-operation", runId: "run" },
-      { operationId: "stop-operation", runId: "run" },
+      { operationId: "stop-operation" },
     ]
   );
 });

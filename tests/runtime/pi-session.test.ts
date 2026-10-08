@@ -2353,7 +2353,8 @@ test("contract-fake admission adapter timing is measured separately from host pe
 // Public PiSession protocol delegates to the installed Harness APIs. Lifecycle
 // and celld alarm/eviction behavior remain separate host qualification checks.
 const joinedAdapterFixture = async (
-  prepareInput?: PiEngineConfiguration["prepareInput"]
+  prepareInput?: PiEngineConfiguration["prepareInput"],
+  content?: PiEngineConfiguration["content"]
 ) => {
   const native = await nativeSteeringFixture();
   const fixture = await setup(false, true);
@@ -2464,11 +2465,13 @@ const joinedAdapterFixture = async (
     const engine = createPiExecutionEngine({
       address,
       agent,
-      content: () =>
-        Effect.succeed({
-          citations: [],
-          dependencies: { sourceIds: [], toolIds: [] },
-        }),
+      content:
+        content ??
+        (() =>
+          Effect.succeed({
+            citations: [],
+            dependencies: { sourceIds: [], toolIds: [] },
+          })),
       handoffs: () => fixture.store.service.recover(address, options()),
       harness: {
         pi: () => Promise.resolve(native.pi),
@@ -3339,6 +3342,85 @@ test("automatic projection failure hook repairs SQLite canonical output without 
     assert.ok(Result.isSuccess(repairResult));
   } finally {
     fixture.persistence.save = save;
+    await fixture.close();
+  }
+});
+
+test("automatic repair retries Pi observer setup failure without repeating native work", async () => {
+  let contentAvailable = true;
+  const unavailable = new Unavailable({
+    reason: "The identity store is unavailable.",
+  });
+  const fixture = await joinedAdapterFixture(undefined, () =>
+    contentAvailable
+      ? Effect.succeed({
+          citations: [],
+          dependencies: { sourceIds: [], toolIds: [] },
+        })
+      : Effect.fail(unavailable)
+  );
+  try {
+    const [first, second] = await placeJoined(fixture);
+    await fixture.crashProjection();
+    fixture.native.secondGate.resolve(true);
+    await fixture.native.root.waitForIdle(fixture.native.context);
+    const native = await fixture.native.storage.submissionByRequest(
+      fixture.native.root.id,
+      event("A").eventId,
+      fixture.native.context
+    );
+    assert.ok(native?.type === "input" && native.status === "done");
+    assert.equal(fixture.store.domain().outputs.length, 0);
+    contentAvailable = false;
+    fixture.enableAutomaticProjection(() => {
+      contentAvailable = true;
+    });
+    await fixture.restartProjection(false);
+    await Effect.runPromise(fixture.runtime().recover());
+    await until(
+      () =>
+        fixture.store.domain().outputs.length === 1 &&
+        fixture.projectionRepairs.length === 1
+    );
+    const snapshot = fixture.store.domain();
+    assert.deepEqual(fixture.projectionFailures, [unavailable]);
+    assert.equal(fixture.runtime().backgroundFailure(), undefined);
+    assert.deepEqual(snapshot.executions, [
+      {
+        executionId: id.execution(`execution:${first.runId}`),
+        runIds: [first.runId, second.runId],
+      },
+    ]);
+    assert.equal(snapshot.outputs[0]?.text, "one native answer");
+    assert.deepEqual(snapshot.outputs[0]?.runIds, [first.runId, second.runId]);
+    assert.equal(
+      snapshot.outputs[0]?.answerId,
+      id.answer(
+        JSON.stringify([
+          address.organizationId,
+          address.sessionId,
+          native.answer,
+        ])
+      )
+    );
+    assert.ok(snapshot.runs.every((run) => run.state === "completed"));
+    const [repairResult] = fixture.projectionRepairs;
+    assert.ok(repairResult && Result.isSuccess(repairResult));
+    assert.equal(repairResult.success, true);
+    assert.equal(fixture.submissions(), 2);
+    assert.equal(fixture.aborts(), 0);
+    assert.equal(fixture.native.modelCalls(), 2);
+    assert.equal(fixture.native.toolCalls(), 1);
+    assert.equal(fixture.maximumObservers(), 1);
+    assert.deepEqual(
+      await fixture.native.storage.submissionByRequest(
+        fixture.native.root.id,
+        event("A").eventId,
+        fixture.native.context
+      ),
+      native
+    );
+  } finally {
     await fixture.close();
   }
 });

@@ -558,10 +558,12 @@ const ConversationSession = ({
     setBusy(true);
     setErrorMessage("");
     try {
-      await sendRunCommand(path, suffix, operationId, {
-        runId,
-        ...(decision ? { decision } : {}),
-      });
+      await sendRunCommand(
+        path,
+        suffix,
+        operationId,
+        decision ? { decision, runId } : undefined
+      );
     } catch (error) {
       setErrorMessage(messageOf(error));
     }
