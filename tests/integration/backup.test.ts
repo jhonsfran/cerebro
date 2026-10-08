@@ -116,6 +116,160 @@ test("the CLI rejects invalid projects and duplicate arguments", async () => {
 });
 
 test(
+  "Docker backup waits for cold PostgreSQL before the caller can run SQL",
+  { timeout: 240_000 },
+  async (context) => {
+    try {
+      await docker("info", "--format", "{{.ServerVersion}}");
+    } catch {
+      context.skip(
+        "Docker is unavailable. The cold PostgreSQL check did not run."
+      );
+      return;
+    }
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "cerebro-backup-cold-postgres-")
+    );
+    const project = `cerebro-backup-cold-${randomBytes(5).toString("hex")}`;
+    const composeFile = path.join(directory, "compose.json");
+    const postgresImage =
+      "pgvector/pgvector:0.8.2-pg17-bookworm@sha256:feb68f4f15446397d8cac7f4fe48fe4586de83160d1fc48b46283312d1a33966";
+    const idleCommand = [
+      "node",
+      "-e",
+      'setInterval(()=>{},1000);process.on("SIGTERM",()=>process.exit(0))',
+    ];
+    await writeFile(
+      composeFile,
+      JSON.stringify({
+        services: {
+          celld: {
+            command: idleCommand,
+            image: helperImage,
+            network_mode: "none",
+            volumes: [
+              "celld:/state",
+              "secrets:/secrets",
+              "postgres-credential:/postgres-credential",
+              "minio-credential:/minio-credential",
+            ],
+          },
+          "minio-artifacts": {
+            command: idleCommand,
+            image: helperImage,
+            network_mode: "none",
+            volumes: ["minio-artifacts:/state"],
+          },
+          "minio-runtime": {
+            command: idleCommand,
+            image: helperImage,
+            network_mode: "none",
+            volumes: ["minio-runtime:/state"],
+          },
+          postgres: {
+            entrypoint: [
+              "sh",
+              "-c",
+              "sleep 10; exec /usr/local/bin/docker-entrypoint.sh postgres",
+            ],
+            environment: {
+              POSTGRES_DB: "cerebro",
+              POSTGRES_HOST_AUTH_METHOD: "trust",
+              POSTGRES_USER: "cerebro",
+            },
+            healthcheck: {
+              interval: "1s",
+              retries: 60,
+              test: [
+                "CMD",
+                "pg_isready",
+                "-h",
+                "127.0.0.1",
+                "-U",
+                "cerebro",
+                "-d",
+                "cerebro",
+              ],
+              timeout: "5s",
+            },
+            image: postgresImage,
+            network_mode: "none",
+            volumes: ["postgres:/var/lib/postgresql/data"],
+          },
+        },
+        volumes: Object.fromEntries(names.map((name) => [name, {}])),
+      })
+    );
+    const compose = (...args: string[]) =>
+      docker("compose", "-p", project, "-f", composeFile, ...args);
+    const identities = async () => {
+      const selected = await compose("ps", "-aq");
+      const ids = selected.stdout.trim().split("\n");
+      const inspected = await docker("inspect", ...ids);
+      const containers = JSON.parse(inspected.stdout) as {
+        Config: { Labels: Record<string, string> };
+        Id: string;
+        Image: string;
+        State: { Health?: { Status: string }; Running: boolean };
+      }[];
+      return containers
+        .map((container) => ({
+          healthy: container.State.Health?.Status ?? null,
+          id: container.Id,
+          image: container.Image,
+          running: container.State.Running,
+          service: container.Config.Labels["com.docker.compose.service"],
+        }))
+        .toSorted((left, right) => left.service.localeCompare(right.service));
+    };
+    let passed = false;
+    try {
+      await docker("image", "inspect", helperImage, postgresImage);
+      await compose("up", "-d", "--wait", "--wait-timeout", "120");
+      await compose("stop", "celld");
+      const before = await identities();
+      const snapshot = await backupCli(
+        "backup",
+        "--project",
+        project,
+        "--directory",
+        path.join(directory, "snapshot"),
+        "--file",
+        composeFile
+      );
+      assert.match(snapshot.stdout, /Backup complete/u);
+      const read = await compose(
+        "exec",
+        "-T",
+        "postgres",
+        "psql",
+        "-U",
+        "cerebro",
+        "-d",
+        "cerebro",
+        "-X",
+        "-qAt",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        "SELECT 1"
+      );
+      assert.equal(read.stdout.trim(), "1");
+      assert.deepEqual(await identities(), before);
+      passed = true;
+    } finally {
+      if (passed) {
+        await compose("down", "--volumes");
+      } else {
+        process.stderr.write(
+          `Cold PostgreSQL backup fixture retained in ${directory}, project ${project}\n`
+        );
+      }
+    }
+  }
+);
+
+test(
   "Docker backup restores all seven stores and resumes only original services",
   { timeout: 240_000 },
   async (context) => {

@@ -424,7 +424,11 @@ const backup = async (options, config) => {
   } finally {
     if (running.length > 0) {
       try {
-        await run("docker", [...compose, "start", ...running], true);
+        await run(
+          "docker",
+          [...compose, "start", "--wait", "--wait-timeout", "120", ...running],
+          true
+        );
       } catch {
         failure = new Error(
           "Source services could not all resume. Inspect the source project before retrying."
