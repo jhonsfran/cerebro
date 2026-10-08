@@ -528,7 +528,11 @@ export const createPiExecutionEngine = (
               Queue.endUnsafe(queue);
             })
           );
-        })
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.sync(() => Queue.failCauseUnsafe(queue, cause))
+          )
+        )
       ),
     release: Effect.void,
     stop: (options) =>

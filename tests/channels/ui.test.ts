@@ -3,6 +3,7 @@ import { afterEach, beforeEach, mock, test } from "bun:test";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { Schema } from "effect";
 import { z } from "zod";
 
 import {
@@ -13,6 +14,14 @@ import { operationFor } from "../../apps/web/src/features/product/intent";
 import type { OperationIntent } from "../../apps/web/src/features/product/intent";
 import type { AgentDetail } from "../../apps/web/src/features/product/types";
 import { createObservationClient } from "../../packages/ag-ui/src/client.ts";
+import { DomainSnapshot } from "../../packages/contracts/src/session-service";
+import {
+  channelEffect,
+  channelFixtureRun,
+  channelInbox,
+  channelItem,
+} from "../../packages/db/src/schema/agents";
+import { createTestProduct, object, string } from "./helpers";
 
 mock.module("../../apps/web/src/env.public", () => ({
   ENV: { VITE_SERVER_URL: "http://fixture.invalid" },
@@ -580,9 +589,7 @@ test("browser mutations use Cerebro commands and preserve stable operation IDs a
     "approval-operation",
     { decision: "allow", runId: "run" }
   );
-  await sendRunCommand("/conversation", "runs/run/cancel", "stop-operation", {
-    runId: "run",
-  });
+  await sendRunCommand("/conversation", "runs/run/cancel", "stop-operation");
   assert.deepEqual(requests[0], requests[1]);
   assert.deepEqual(
     requests.map((value) => value.body),
@@ -590,9 +597,85 @@ test("browser mutations use Cerebro commands and preserve stable operation IDs a
       { eventId: "event", mode: "steer", operationId: "event", text: "Draft" },
       { eventId: "event", mode: "steer", operationId: "event", text: "Draft" },
       { decision: "allow", operationId: "approval-operation", runId: "run" },
-      { operationId: "stop-operation", runId: "run" },
+      { operationId: "stop-operation" },
     ]
   );
+});
+
+test("browser Stop cancels a pending product run and replays without a tool effect", async () => {
+  const app = await createTestProduct();
+  const setup = await app.install();
+  const agent = await app.createAgent();
+  const created = await app.request("/api/product/conversations", "POST", {
+    agentId: string(agent.agentId),
+    operationId: "browser-stop-conversation",
+  });
+  assert.equal(created.status, 200);
+  const conversationId = string(object(await created.json()).conversationId);
+  const path = `/api/product/conversations/${conversationId}`;
+  const submitted = await app.request(`${path}/messages`, "POST", {
+    eventId: "browser-stop-event",
+    text: "Request approval before continuing.",
+  });
+  assert.equal(submitted.status, 200);
+  const runId = string(object(object(await submitted.json()).receipt).runId);
+  const snapshot = async () => {
+    const response = await app.request(path);
+    assert.equal(response.status, 200);
+    return Schema.decodeUnknownSync(DomainSnapshot)(
+      object(await response.json()).snapshot
+    );
+  };
+  const pending = await snapshot();
+  assert.equal(pending.runs[0]?.state, "waiting-for-approval");
+  assert.equal(pending.approvals[0]?.state, "pending");
+  const statuses: number[] = [];
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      headers.set("x-test-user", "test-owner");
+      const response = await app.handler(
+        new Request(String(input), { ...init, headers })
+      );
+      statuses.push(response.status);
+      return response;
+    },
+    writable: true,
+  });
+  const suffix = `runs/${encodeURIComponent(runId)}/cancel`;
+  const operationId = "browser-stop-operation";
+  const stopped = await sendRunCommand(path, suffix, operationId);
+  assert.equal(stopped.run.runId, runId);
+  assert.equal(stopped.run.state, "cancelled");
+  assert.deepEqual(await sendRunCommand(path, suffix, operationId), stopped);
+  assert.deepEqual(statuses, [200, 200]);
+  const cancelled = await snapshot();
+  assert.equal(cancelled.runs.length, 1);
+  assert.equal(cancelled.runs[0]?.state, "cancelled");
+  assert.equal(cancelled.outputs.length, 0);
+  assert.ok(cancelled.tools.every((tool) => tool.state !== "succeeded"));
+  await app.options.withDatabase(async (db) => {
+    const runs = await db.select().from(channelFixtureRun);
+    const inbox = await db.select().from(channelInbox);
+    const effects = await db.select().from(channelEffect);
+    const items = await db.select().from(channelItem);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0]?.state.state, "cancelled");
+    assert.equal(inbox.length, 1);
+    assert.equal(effects.length, 1);
+    assert.equal(
+      effects[0]?.operationId,
+      `cancel:${string(setup.principalId)}:${operationId}`
+    );
+    assert.equal(items.filter((item) => item.item.type === "output").length, 0);
+    assert.equal(
+      items.filter(
+        (item) => item.item.type === "tool" && item.item.state === "succeeded"
+      ).length,
+      0
+    );
+  });
 });
 
 /* eslint-disable sort-keys -- These inputs deliberately change key order to test canonical retries. */

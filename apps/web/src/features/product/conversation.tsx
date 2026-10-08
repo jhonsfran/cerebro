@@ -535,10 +535,12 @@ const ConversationSession = ({
     try {
       await (toolOperationId
         ? reconcileRunCommand(path, runId, toolOperationId)
-        : sendRunCommand(path, suffix, operationId, {
-            runId,
-            ...(decision ? { decision } : {}),
-          }));
+        : sendRunCommand(
+            path,
+            suffix,
+            operationId,
+            decision ? { decision, runId } : undefined
+          ));
     } catch (error) {
       setErrorMessage(messageOf(error));
     }

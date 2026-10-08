@@ -96,7 +96,7 @@ export const sendRunCommand = (
   path: string,
   suffix: string,
   operationId: string,
-  body: { runId: string; decision?: "allow" | "deny" }
+  body?: { runId: string; decision: "allow" | "deny" }
 ) => mutate(`${path}/${suffix}`, { ...body, operationId }, stateMutationSchema);
 
 export const reconcileRunCommand = (
