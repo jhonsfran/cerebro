@@ -7,12 +7,15 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
 export const boundaries = [
-  "admission",
-  "approval",
-  "tool-dispatch",
-  "result-persistence",
-  "projection",
-].flatMap((name) => [`before-${name}`, `after-${name}`]);
+  ...[
+    "admission",
+    "approval",
+    "tool-dispatch",
+    "result-persistence",
+    "projection",
+  ].flatMap((name) => [`before-${name}`, `after-${name}`]),
+  "before-engine-submission",
+];
 const canonical = (value) => {
   if (Array.isArray(value)) {
     return value.map(canonical);

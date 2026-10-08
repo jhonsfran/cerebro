@@ -102,6 +102,7 @@ import {
   SessionCoordinator,
   sessionServiceLayer,
 } from "../../packages/runtime/src/session-service.ts";
+import type { SessionCoordinatorRuntime } from "../../packages/runtime/src/session-service.ts";
 
 const address = {
   agentId: userEvent.agentId,
@@ -2488,6 +2489,15 @@ const joinedAdapterFixture = async (
   const native = await nativeSteeringFixture();
   const fixture = await setup(false, true);
   let submissions = 0;
+  let aborts = 0;
+  let observers = 0;
+  let maximumObservers = 0;
+  let retainedProjections = 0;
+  const projectionFailures: ContractFailure[] = [];
+  const projectionRepairs: Result.Result<boolean, ContractFailure>[] = [];
+  let automaticProjection = false;
+  let repairCopies = 1;
+  let onProjectionFailure: ((failure: ContractFailure) => void) | undefined;
   const enqueue = async (
     text: string,
     operationId: string,
@@ -2507,6 +2517,7 @@ const joinedAdapterFixture = async (
   };
   const session = {
     abort: async (requestId?: string) => {
+      aborts += 1;
       if (!requestId) {
         await native.root.abort(native.context);
         return true;
@@ -2529,8 +2540,17 @@ const joinedAdapterFixture = async (
       }
       return result !== "settled" && result !== "not_found";
     },
-    events: (context: Parameters<typeof watchEvents>[2]) =>
-      watchEvents(native.pi, native.root.id, context),
+    events: async (context: Parameters<typeof watchEvents>[2]) => {
+      const stream = await watchEvents(native.pi, native.root.id, context);
+      observers += 1;
+      maximumObservers = Math.max(maximumObservers, observers);
+      const { stop } = stream;
+      stream.stop = async () => {
+        observers -= 1;
+        return await stop.call(stream);
+      };
+      return stream;
+    },
     steer: (text: string, input: { operationId: string }) =>
       enqueue(text, input.operationId, "steer"),
     submit: (text: string, input: { operationId: string }) =>
@@ -2570,6 +2590,7 @@ const joinedAdapterFixture = async (
     },
   };
   let hostScope = Scope.makeUnsafe();
+  let runtime: SessionCoordinatorRuntime;
   const makeRuntime = async () => {
     const engine = createPiExecutionEngine({
       address,
@@ -2590,7 +2611,30 @@ const joinedAdapterFixture = async (
     });
     const services = await Effect.runPromise(
       Layer.buildWithScope(
-        sessionServiceLayer({ address, agent }).pipe(
+        sessionServiceLayer({
+          address,
+          agent,
+          onProjectionFailure: (error) =>
+            Effect.gen(function* triggerAutomaticProjection() {
+              projectionFailures.push(error);
+              onProjectionFailure?.(error);
+              if (automaticProjection && error._tag === "Unavailable") {
+                const repair = Effect.gen(function* repairWithoutCommand() {
+                  yield* Effect.sleep(10);
+                  projectionRepairs.push(
+                    yield* Effect.result(runtime.repairProjection(options()))
+                  );
+                });
+                for (let copy = 0; copy < repairCopies; copy += 1) {
+                  yield* Effect.forkIn(hostScope)(repair);
+                }
+              }
+            }),
+          retainProjection: () =>
+            Effect.sync(() => {
+              retainedProjections += 1;
+            }),
+        }).pipe(
           Layer.provide(
             Layer.mergeAll(
               engine.layer,
@@ -2604,9 +2648,10 @@ const joinedAdapterFixture = async (
     );
     return Context.get(services, SessionCoordinator);
   };
-  let runtime = await makeRuntime();
+  runtime = await makeRuntime();
   return {
     ...fixture,
+    aborts: () => aborts,
     close: async () => {
       await Effect.runPromise(Scope.close(hostScope, Exit.void));
       await native.close();
@@ -2615,7 +2660,18 @@ const joinedAdapterFixture = async (
     crashProjection: async () => {
       await Effect.runPromise(Scope.close(hostScope, Exit.void));
     },
+    enableAutomaticProjection: (
+      onFailure?: typeof onProjectionFailure,
+      copies = 1
+    ) => {
+      automaticProjection = true;
+      onProjectionFailure = onFailure;
+      repairCopies = copies;
+    },
+    maximumObservers: () => maximumObservers,
     native,
+    projectionFailures,
+    projectionRepairs,
     restartProjection: async (recover = true) => {
       await Effect.runPromise(Scope.close(hostScope, Exit.void));
       fixture.reopenDatabase();
@@ -2625,6 +2681,7 @@ const joinedAdapterFixture = async (
         await Effect.runPromise(runtime.recover());
       }
     },
+    retainedProjections: () => retainedProjections,
     runtime: () => runtime,
     submissions: () => submissions,
     submitNative: async (name: string, text: string, mode?: "steer") =>
@@ -3414,6 +3471,179 @@ test(
     }
   }
 );
+
+test("automatic projection failure hook repairs SQLite canonical output without a command or recover", async () => {
+  const fixture = await joinedAdapterFixture();
+  const { save } = fixture.persistence;
+  try {
+    const [first, second] = await placeJoined(fixture);
+    fixture.enableAutomaticProjection(() => {
+      fixture.persistence.save = save;
+    });
+    fixture.persistence.save = (json: string) => {
+      if (JSON.parse(json).snapshot.outputs.length) {
+        throw new Error("Injected canonical persistence failure");
+      }
+      save(json);
+    };
+    fixture.native.secondGate.resolve(true);
+    await until(
+      () =>
+        fixture.store.domain().outputs.length === 1 &&
+        fixture.projectionRepairs.length === 1
+    );
+    const snapshot = fixture.store.domain();
+    assert.deepEqual(snapshot.executions, [
+      {
+        executionId: id.execution(`execution:${first.runId}`),
+        runIds: [first.runId, second.runId],
+      },
+    ]);
+    assert.equal(snapshot.outputs[0]?.text, "one native answer");
+    assert.deepEqual(snapshot.outputs[0]?.runIds, [first.runId, second.runId]);
+    assert.equal(
+      snapshot.outputs[0]?.executionId,
+      snapshot.executions[0]?.executionId
+    );
+    const native = await fixture.native.storage.submissionByRequest(
+      fixture.native.root.id,
+      event("A").eventId,
+      fixture.native.context
+    );
+    assert.ok(native?.type === "input" && native.status === "done");
+    assert.equal(
+      snapshot.outputs[0]?.answerId,
+      id.answer(
+        JSON.stringify([
+          address.organizationId,
+          address.sessionId,
+          native.answer,
+        ])
+      )
+    );
+    assert.ok(snapshot.runs.every((run) => run.state === "completed"));
+    assert.equal(fixture.projectionFailures[0]?._tag, "Unavailable");
+    assert.equal(fixture.runtime().backgroundFailure(), undefined);
+    assert.equal(fixture.retainedProjections(), 2);
+    assert.equal(fixture.submissions(), 2);
+    assert.equal(fixture.aborts(), 0);
+    assert.equal(fixture.native.modelCalls(), 2);
+    assert.equal(fixture.native.toolCalls(), 1);
+    assert.equal(fixture.maximumObservers(), 1);
+    const [repairResult] = fixture.projectionRepairs;
+    assert.ok(repairResult);
+    assert.ok(Result.isSuccess(repairResult));
+  } finally {
+    fixture.persistence.save = save;
+    await fixture.close();
+  }
+});
+
+test("repeated automatic projection failure and overlapping repair preserve one observer and exact membership", async () => {
+  const fixture = await joinedAdapterFixture();
+  const { save } = fixture.persistence;
+  let failures = 0;
+  try {
+    const [first, second] = await placeJoined(fixture);
+    fixture.enableAutomaticProjection(() => {
+      failures += 1;
+      if (failures === 2) {
+        fixture.persistence.save = save;
+      }
+    }, 2);
+    fixture.persistence.save = (json: string) => {
+      if (JSON.parse(json).snapshot.outputs.length) {
+        throw new Error("Injected repeated canonical persistence failure");
+      }
+      save(json);
+    };
+    fixture.native.secondGate.resolve(true);
+    await until(
+      () =>
+        fixture.store.domain().outputs.length === 1 &&
+        fixture.projectionRepairs.length === 4
+    );
+    assert.equal(failures, 2);
+    assert.deepEqual(fixture.store.domain().outputs[0]?.runIds, [
+      first.runId,
+      second.runId,
+    ]);
+    assert.deepEqual(fixture.store.domain().executions[0]?.runIds, [
+      first.runId,
+      second.runId,
+    ]);
+    assert.ok(
+      fixture.store.domain().runs.every((run) => run.state === "completed")
+    );
+    assert.equal(fixture.maximumObservers(), 1);
+    assert.equal(fixture.runtime().backgroundFailure(), undefined);
+    assert.equal(fixture.submissions(), 2);
+    assert.equal(fixture.aborts(), 0);
+    assert.equal(fixture.native.modelCalls(), 2);
+    assert.equal(fixture.native.toolCalls(), 1);
+  } finally {
+    fixture.persistence.save = save;
+    await fixture.close();
+  }
+});
+
+test("pure projection repair bounds a healthy native wait without dispatch or a false failure", async () => {
+  const fixture = await joinedAdapterFixture();
+  try {
+    await fixture.submitNative("A", "initial instructions");
+    await fixture.native.firstStarted.promise;
+    assert.equal(
+      await Effect.runPromise(
+        fixture.runtime().repairProjection({ deadlineAt: Date.now() + 30 })
+      ),
+      false
+    );
+    assert.equal(fixture.runtime().backgroundFailure(), undefined);
+    assert.equal(fixture.submissions(), 1);
+    assert.equal(fixture.aborts(), 0);
+    assert.equal(fixture.native.modelCalls(), 1);
+    assert.equal(fixture.native.toolCalls(), 0);
+    assert.equal(fixture.maximumObservers(), 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("pure projection repair preserves terminal Denied and does not automatically retry it", async () => {
+  const fixture = await joinedAdapterFixture();
+  const { save } = fixture.persistence;
+  try {
+    await placeJoined(fixture);
+    fixture.enableAutomaticProjection();
+    fixture.persistence.save = (json: string) => {
+      if (JSON.parse(json).snapshot.outputs.length) {
+        throw new Denied({
+          code: "revoked",
+          reason: "Injected projection authorization denial",
+        });
+      }
+      save(json);
+    };
+    fixture.native.secondGate.resolve(true);
+    await until(() => Boolean(fixture.runtime().backgroundFailure()));
+    const original = fixture.runtime().backgroundFailure();
+    assert.equal(
+      (await failure(fixture.runtime().repairProjection(options())))._tag,
+      "Denied"
+    );
+    await Effect.runPromise(Effect.sleep(30));
+    assert.equal(fixture.runtime().backgroundFailure(), original);
+    assert.equal(fixture.projectionRepairs.length, 0);
+    assert.equal(fixture.store.domain().outputs.length, 0);
+    assert.equal(fixture.submissions(), 2);
+    assert.equal(fixture.aborts(), 0);
+    assert.equal(fixture.native.modelCalls(), 2);
+    assert.equal(fixture.native.toolCalls(), 1);
+  } finally {
+    fixture.persistence.save = save;
+    await fixture.close();
+  }
+});
 
 test("recovery restarts failed canonical projection on the same host without resubmission", async () => {
   const fixture = await joinedAdapterFixture();

@@ -11,7 +11,9 @@ import type { ReadOptions } from "@cerebro/contracts/port";
 import { Effect } from "effect";
 
 export type HostCheckpoint = (
-  boundary: `${"before" | "after"}-${"admission" | "approval" | "projection" | "result-persistence"}`,
+  boundary:
+    | "before-engine-submission"
+    | `${"before" | "after"}-${"admission" | "approval" | "projection" | "result-persistence"}`,
   operationId: string
 ) => Effect.Effect<void, ContractFailure>;
 

@@ -79,6 +79,20 @@ export const inspectFixtureObservers = async (
             recordedAt: z.number().int().nonnegative(),
           })
         ),
+        firstProjectionFailure: z
+          .object({
+            code: z.string().nullable(),
+            reasonSHA256: z.string().regex(/^[a-f0-9]{64}$/u),
+            tag: z.enum([
+              "Denied",
+              "InvalidInput",
+              "Conflict",
+              "Unavailable",
+              "NotFound",
+              "UnknownOutcome",
+            ]),
+          })
+          .nullable(),
         observerCount: z.number().int().nonnegative(),
         projectionFailure: z
           .object({

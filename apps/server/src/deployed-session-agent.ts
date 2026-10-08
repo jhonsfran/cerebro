@@ -35,6 +35,7 @@ export class SessionAgent extends NativeSessionAgent<WorkerEnv> {
       ...z.record(z.string(), z.unknown()).parse(await response.json()),
       diagnostics: {
         adapterMeasurements: readFixtureMetrics(this.ctx.storage),
+        firstProjectionFailure: await this.firstProjectionFailure(),
         observerCount: await this.observerCount(),
         projectionFailure: await this.projectionFailure(),
       },

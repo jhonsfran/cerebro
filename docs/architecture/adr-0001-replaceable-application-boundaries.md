@@ -63,7 +63,15 @@ The operator subsequently chose a thin adapter that reuses Pi's native follow-up
 
 Proposed ports distinguish durable domain revision, ephemeral observation epoch and client access generation. Every acknowledgement requires PiHarness acceptance, which includes its inbox and Lifecycle wake, plus the Cerebro acceptance marker. The product command journal retains immutable input/mode, replacement phase and projection state; it is not another execution queue. Replacement retry/crash repair remains an explicit TODO. Approvals bind run identity and connector-registration fingerprint. Effect contract fakes and local host probes do not establish production bucket durability, tool interruption or crash-handoff guarantees. Deferred cases remain in `tests/pi-durable-qualification/todos.json`.
 
-External metering stays unbound, spend control through it is inactive, and native Python remains outside this slice. Manifests and locks remain coordinator-owned requests. This branch prepares S1-0 only; no S1-A through S1-D work, merge or deployment is included.
+External metering stays unbound, spend control through it is inactive, and native Python remains outside this slice. Manifests and locks remain coordinator-owned. These paragraphs record the S1-0 selection and its limits.
+
+## S1-F integration status
+
+The coordinator imported the reviewed packets locally in B, A, C, D order and completed the shared application composition and caller migration. Active OpenCode, AI SDK and local-budget execution paths are removed. Historical usage, audit, authentication and company records remain. The [integration record](2026-10-07-cerebro-slice-1-integration.md) identifies the exact packet heads and executed candidate evidence.
+
+Official Lifecycle jobs also retain product projection repair. This repair observes existing native work and commits missing canonical product state. It must not submit another input, call Stop or weaken execution membership checks. A typed transient projection failure can retry; a terminal failure retains a safe diagnostic. This is product-state repair under the selected host lifecycle, not a second execution queue.
+
+The ADR remains proposed until all required final-candidate unit, host, browser, dependency, credentialed live and performance gates pass. A passing packet or earlier candidate does not establish that verdict. Deployment and customer-data cutover remain outside the local integration operation.
 
 ## Acceptance and maintenance
 

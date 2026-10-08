@@ -48,6 +48,7 @@ import {
   modelAuthority,
   piContext,
 } from "./pi-harness.ts";
+import { pendingRun } from "./pi-projection.ts";
 import { createControlledProvider } from "./pi-provider.ts";
 import type { ControlledProviderConfiguration } from "./pi-provider.ts";
 import { createPiTools } from "./pi-tools.ts";
@@ -55,6 +56,15 @@ import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
 import { attempt, checkOptions } from "./runtime-ports.ts";
 import type { HostCheckpoint } from "./runtime-ports.ts";
 import { SessionCoordinator, sessionServiceLayer } from "./session-service.ts";
+
+interface ProjectionFailureDiagnostic {
+  readonly tag: ContractFailure["_tag"];
+  readonly code: string | null;
+  readonly reasonSHA256: string;
+}
+const projectionFailureKey = "cerebro:projection:first-failure";
+const lastProjectionFailureKey = "cerebro:projection:last-failure";
+const projectionBlockedKey = "cerebro:projection:blocked";
 
 export type SessionEnvironment = Readonly<Record<string, unknown>>;
 export interface SessionHostConfiguration {
@@ -129,6 +139,7 @@ export class SessionAgent<
   private readonly hostScope = Scope.makeUnsafe();
   private piStorage: Storage | undefined;
   private auditWork: Promise<void> | undefined;
+  private projectionWork: Promise<LifecycleJobOutcome> | undefined;
   private initialized:
     | Promise<
         Effect.Success<ReturnType<SessionAgent<Environment>["initialize"]>>
@@ -170,7 +181,9 @@ export class SessionAgent<
       this.ctx.waitUntil(
         (async () => {
           try {
-            await Effect.runPromise(runtime.recover());
+            if (!(await this.ctx.storage.get(projectionBlockedKey))) {
+              await Effect.runPromise(runtime.recover());
+            }
           } finally {
             const root = await pi.root(context);
             await root.waitForIdle(context);
@@ -271,6 +284,19 @@ export class SessionAgent<
       const services = yield* Layer.buildWithScope(
         sessionServiceLayer({
           ...configuration,
+          onProjectionFailure: (failure) =>
+            Effect.tryPromise({
+              catch: () =>
+                new Unavailable({
+                  reason: "Projection recovery intent could not be persisted",
+                }),
+              try: async () => {
+                await this.recordProjectionFailure(failure);
+                if (failure._tag === "Unavailable") {
+                  await this.scheduleProjection(5000);
+                }
+              },
+            }),
           retainDurableWork: (completion) => {
             this.ctx.waitUntil(
               (async () => {
@@ -279,6 +305,17 @@ export class SessionAgent<
               })()
             );
           },
+          retainProjection: () =>
+            Effect.tryPromise({
+              catch: () =>
+                new Unavailable({
+                  reason: "Projection recovery intent could not be persisted",
+                }),
+              try: async () => {
+                await this.ctx.storage.delete(projectionBlockedKey);
+                await this.scheduleProjection();
+              },
+            }),
         }).pipe(
           Layer.provide(
             Layer.mergeAll(
@@ -470,12 +507,21 @@ export class SessionAgent<
 
   async onStart(): Promise<void> {
     const runtime = await this.ready();
+    if (
+      runtime.store.domain().runs.some(pendingRun) &&
+      !(await this.ctx.storage.get(projectionBlockedKey))
+    ) {
+      await this.scheduleProjection();
+    }
     if (runtime.configuration.projectAudit && runtime.store.outbox().length) {
       await this.scheduleAudit();
     }
   }
 
   async onJob({ job }: LifecycleJobContext): Promise<LifecycleJobOutcome> {
+    if (job.fn === "cerebro-projection") {
+      return this.repairProjection();
+    }
     if (job.fn !== "cerebro-audit") {
       return;
     }
@@ -490,21 +536,93 @@ export class SessionAgent<
     }
   }
 
-  protected async observerCount(): Promise<number> {
-    const runtime = await this.ready();
-    return runtime.store.observerCount();
+  private async scheduleProjection(delayMs = 1000): Promise<void> {
+    await this.lifecycle.jobs.push({
+      fn: "cerebro-projection",
+      id: "cerebro-projection",
+      recoveryLoop: true,
+      singleflight: true,
+      time: Date.now() + delayMs,
+    });
+    await this.ctx.storage.sync();
   }
 
-  protected async projectionFailure(): Promise<{
-    readonly tag: ContractFailure["_tag"];
-    readonly code: string | null;
-    readonly reasonSHA256: string;
-  } | null> {
-    const runtime = await this.ready();
-    const failure = runtime.backgroundFailure();
-    if (!failure) {
-      return null;
-    }
+  private repairProjection(): Promise<LifecycleJobOutcome> {
+    this.projectionWork ??= (async () => {
+      try {
+        if (await this.ctx.storage.get(projectionBlockedKey)) {
+          return;
+        }
+        const runtime = await this.ready();
+        const failure = runtime.backgroundFailure();
+        if (failure) {
+          const recorded = await Effect.runPromise(
+            Effect.result(
+              Effect.tryPromise({
+                catch: () =>
+                  new Unavailable({
+                    reason:
+                      "Projection failure diagnostic could not be persisted",
+                  }),
+                try: () => this.recordProjectionFailure(failure),
+              })
+            )
+          );
+          if (Result.isFailure(recorded)) {
+            return { rescheduleAt: Date.now() + 5000 };
+          }
+        }
+        const result = await Effect.runPromise(
+          Effect.result(runtime.repairProjection(hostOptions()))
+        );
+        if (Result.isFailure(result)) {
+          const recorded = await Effect.runPromise(
+            Effect.result(
+              Effect.tryPromise({
+                catch: () =>
+                  new Unavailable({
+                    reason:
+                      "Projection failure diagnostic could not be persisted",
+                  }),
+                try: () => this.recordProjectionFailure(result.failure),
+              })
+            )
+          );
+          if (
+            Result.isFailure(recorded) ||
+            result.failure._tag === "Unavailable"
+          ) {
+            return { rescheduleAt: Date.now() + 5000 };
+          }
+        } else if (!result.success) {
+          return { rescheduleAt: Date.now() + 5000 };
+        }
+      } finally {
+        this.projectionWork = undefined;
+      }
+    })();
+    return this.projectionWork;
+  }
+
+  private async recordProjectionFailure(
+    failure: ContractFailure
+  ): Promise<void> {
+    const diagnostic = await SessionAgent.safeProjectionFailure(failure);
+    await this.ctx.storage.transaction(async (transaction) => {
+      if (!(await transaction.get(projectionFailureKey))) {
+        await transaction.put(projectionFailureKey, diagnostic);
+      }
+      await transaction.put(lastProjectionFailureKey, diagnostic);
+      if (failure._tag !== "Unavailable") {
+        await transaction.put(projectionBlockedKey, true);
+      }
+    });
+    await this.ctx.storage.sync();
+  }
+
+  private static async safeProjectionFailure(
+    failure: ContractFailure
+  ): Promise<ProjectionFailureDiagnostic> {
     const reason = "reason" in failure ? failure.reason : failure.resource;
     const digest = await crypto.subtle.digest(
       "SHA-256",
@@ -519,12 +637,40 @@ export class SessionAgent<
     };
   }
 
+  protected async observerCount(): Promise<number> {
+    const runtime = await this.ready();
+    return runtime.store.observerCount();
+  }
+
+  protected async projectionFailure(): Promise<ProjectionFailureDiagnostic | null> {
+    const runtime = await this.ready();
+    const failure = runtime.backgroundFailure();
+    if (failure) {
+      return SessionAgent.safeProjectionFailure(failure);
+    }
+    return (await this.ctx.storage.get(projectionBlockedKey))
+      ? ((await this.ctx.storage.get<ProjectionFailureDiagnostic>(
+          lastProjectionFailureKey
+        )) ?? null)
+      : null;
+  }
+
+  protected async firstProjectionFailure(): Promise<ProjectionFailureDiagnostic | null> {
+    return (
+      (await this.ctx.storage.get<ProjectionFailureDiagnostic>(
+        projectionFailureKey
+      )) ?? null
+    );
+  }
+
   // Called by the coordinator's host startup hook. Official Lifecycle resumes Pi;
   // this only repairs Cerebro command markers and product projection.
   async recover(): Promise<void> {
     const runtime = await this.ready();
     try {
-      await Effect.runPromise(runtime.recover());
+      if (!(await this.ctx.storage.get(projectionBlockedKey))) {
+        await Effect.runPromise(runtime.recover());
+      }
     } finally {
       this.ctx.waitUntil(this.retainNativeWork());
     }

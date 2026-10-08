@@ -52,6 +52,10 @@ export interface SessionServiceDependencies {
   readonly receipts?: ToolReceiptStore;
   readonly checkpoint?: HostCheckpoint;
   readonly retainDurableWork?: (completion: Promise<void>) => void;
+  readonly retainProjection?: () => Effect.Effect<void, ContractFailure>;
+  readonly onProjectionFailure?: (
+    failure: ContractFailure
+  ) => Effect.Effect<void, ContractFailure>;
 }
 
 const hostOptions = (): ReadOptions => ({
@@ -289,6 +293,11 @@ export const createSessionService = (
             "execute",
             hostOptions()
           );
+          yield* dependencies.retainProjection?.() ?? Effect.void;
+          yield* checkpoint(
+            "before-engine-submission",
+            handoff.submission.runId
+          );
           yield* engine.submit(handoff.submission, hostOptions());
         }
         handoff = yield* commit(handoff, {
@@ -310,6 +319,18 @@ export const createSessionService = (
     const mutations = yield* Semaphore.make(1);
     let conversation: EngineConversation | undefined;
     let observationFailure: ContractFailure | undefined;
+    const recordObservationFailure = (error: ContractFailure) =>
+      Semaphore.withPermits(
+        mutations,
+        1
+      )(
+        Effect.gen(function* recordFailure() {
+          observationFailure = error;
+          yield* (
+            dependencies.onProjectionFailure?.(error) ?? Effect.void
+          ).pipe(Effect.ignore);
+        })
+      );
     const open = (): Effect.Effect<EngineConversation, ContractFailure> =>
       Effect.gen(function* openConversation() {
         if (conversation && !observationFailure) {
@@ -332,16 +353,68 @@ export const createSessionService = (
               opened.observe({ deadlineAt: Number.MAX_SAFE_INTEGER }),
               (update) => Semaphore.withPermits(mutations, 1)(project(update))
             )
-          ).pipe(
-            Effect.catch((error) =>
-              Effect.sync(() => {
-                observationFailure = error;
-              })
-            )
-          )
+          ).pipe(Effect.catch(recordObservationFailure))
         );
         return opened;
       });
+    const restartProjection = () =>
+      Semaphore.withPermits(
+        mutations,
+        1
+      )(
+        Effect.gen(function* restartCanonicalObserver() {
+          if (observationFailure && observationFailure._tag !== "Unavailable") {
+            return yield* Effect.fail(observationFailure);
+          }
+          yield* open();
+        })
+      );
+    const projectionPending = (options: ReadOptions) =>
+      Semaphore.withPermits(
+        mutations,
+        1
+      )(
+        Effect.gen(function* inspectProjectionGap() {
+          yield* attempt(() => checkOptions(options));
+          if (observationFailure) {
+            return yield* Effect.fail(observationFailure);
+          }
+          const values = yield* dependencies.store.recover(
+            dependencies.address,
+            options
+          );
+          if (!conversation) {
+            return values.some(
+              (value) => value.engineAccepted && pendingRun(value.run)
+            );
+          }
+          const states = yield* conversation.inspect(options);
+          return states.some((run) => {
+            const stored = values.find(
+              (value) => value.submission.runId === run.runId
+            );
+            return (
+              pendingRun(run) ||
+              Boolean(stored && stored.run.state !== run.state)
+            );
+          });
+        })
+      );
+    const repairProjection = (options: ReadOptions) =>
+      Effect.suspend(() =>
+        Effect.gen(function* awaitCanonicalRepair() {
+          yield* restartProjection();
+          while (yield* projectionPending(options)) {
+            yield* Effect.sleep(100);
+          }
+          return true;
+        }).pipe(
+          Effect.timeoutOrElse({
+            duration: Math.max(0, options.deadlineAt - Date.now()),
+            orElse: () => Effect.succeed(false),
+          })
+        )
+      );
     const recover = () =>
       Semaphore.withPermits(
         mutations,
@@ -452,6 +525,7 @@ export const createSessionService = (
                 );
               }
               if (command.decision === "allow") {
+                yield* dependencies.retainProjection?.() ?? Effect.void;
                 yield* commit(handoff, {
                   approval: { ...bound, approverId: command.context.actor.id },
                   runId: command.runId,
@@ -635,6 +709,9 @@ export const createSessionService = (
                   value.state === "unknown-outcome"
               );
             const toolUpdate: DomainUpdate = { ...resolved, type: "tool" };
+            if (resumes) {
+              yield* dependencies.retainProjection?.() ?? Effect.void;
+            }
             yield* commit(handoff, {
               runId: command.runId,
               type: "projected-batch",
@@ -662,13 +739,7 @@ export const createSessionService = (
                     (update) =>
                       Semaphore.withPermits(mutations, 1)(project(update))
                   )
-                ).pipe(
-                  Effect.catch((error) =>
-                    Effect.sync(() => {
-                      observationFailure = error;
-                    })
-                  )
-                )
+                ).pipe(Effect.catch(recordObservationFailure))
               );
             }
             return resolved;
@@ -794,7 +865,10 @@ export const createSessionService = (
     return {
       backgroundFailure: () => observationFailure,
       project,
+      projectionPending,
       recover,
+      repairProjection,
+      restartProjection,
       service,
     };
   });
@@ -816,6 +890,8 @@ export const sessionServiceLayer = (
     | "receipts"
     | "checkpoint"
     | "retainDurableWork"
+    | "retainProjection"
+    | "onProjectionFailure"
   >
 ) =>
   Layer.effectContext(

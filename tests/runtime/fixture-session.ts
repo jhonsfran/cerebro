@@ -11,6 +11,7 @@ import type { AuthorityService } from "../../packages/contracts/src/authority-se
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import type { DurableHandoff } from "../../packages/contracts/src/execution.ts";
 import {
+  Conflict,
   Denied,
   InvalidInput,
   Unavailable,
@@ -54,8 +55,14 @@ const receiptOutput = z.object({
 const addressTuple = z.tuple([z.string(), z.string(), z.string(), z.string()]);
 const checkpointControl = z.object({
   action: z.enum(["fail", "delay"]),
-  boundary: z.enum(["after-admission", "before-approval"]),
+  boundary: z.enum([
+    "after-admission",
+    "before-approval",
+    "before-engine-submission",
+    "before-projection",
+  ]),
   delayMs: z.number().int().min(0).max(10_000).optional(),
+  failureTag: z.enum(["Denied", "Conflict"]).optional(),
 });
 const fixtureInput = z.object({
   checkpoint: checkpointControl.nullable().optional(),
@@ -637,11 +644,18 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
               try: () => this.ctx.storage.sync(),
             });
             if (control.action === "fail") {
-              return yield* Effect.fail(
-                new Unavailable({
-                  reason: `Injected fixture checkpoint failure at ${boundary}`,
-                })
-              );
+              const reason = `Injected fixture checkpoint failure at ${boundary}`;
+              if (control.failureTag === "Denied") {
+                return yield* Effect.fail(
+                  new Denied({ code: "revoked", reason })
+                );
+              }
+              if (control.failureTag === "Conflict") {
+                return yield* Effect.fail(
+                  new Conflict({ code: "already-final", reason })
+                );
+              }
+              return yield* Effect.fail(new Unavailable({ reason }));
             }
           }),
         content: () =>
@@ -784,6 +798,13 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
                   "SELECT at FROM fixture_alarm_evidence ORDER BY at"
                 )
                 .toArray(),
+              firstProjectionFailure: yield* Effect.tryPromise({
+                catch: () =>
+                  new Unavailable({
+                    reason: "Fixture first projection diagnostic unavailable",
+                  }),
+                try: () => this.firstProjectionFailure(),
+              }),
               jobs: this.ctx.storage.sql
                 .exec<{
                   id: string;
@@ -802,6 +823,13 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
                     reason: `Fixture native pending metadata unavailable: ${String(error)}`,
                   }),
                 try: () => this.harness.pending(),
+              }),
+              projectionFailure: yield* Effect.tryPromise({
+                catch: () =>
+                  new Unavailable({
+                    reason: "Fixture projection diagnostic unavailable",
+                  }),
+                try: () => this.projectionFailure(),
               }),
               snapshot: this.domain(),
             };
