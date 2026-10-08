@@ -22,7 +22,6 @@ const configured = () => ({
       id: "company/model",
       maxInputBytes: 16_384,
       maxOutputTokens: 2048,
-      maxResponseBytes: 65_536,
       model: "model",
       provider: "company",
     },
@@ -62,13 +61,29 @@ const parse = (value: unknown) =>
 
 test("production accepts bounded ports and registers connector credentials for redaction", () => {
   const result = parse(configured());
-  assert.equal(result.models[0].id, "company/model");
-  assert.equal(result.models[0].maxRequestsPerRun, 16);
+  const [model] = result.models;
+  assert.ok(model);
+  assert.equal(model.id, "company/model");
+  assert.equal(model.deadlineMs, 30_000);
+  assert.equal(model.maxInputBytes, 16_384);
+  assert.equal(model.maxOutputTokens, 2048);
   assert.deepEqual(result.tools[0].credentials.secrets, [
     "Bearer private-connector-test-value",
     "private-connector-test-value",
   ]);
 });
+
+for (const field of ["maxResponseBytes", "maxRequestsPerRun"]) {
+  test(`production rejects unsupported model limit ${field}`, () => {
+    const value = configured();
+    const [model] = value.models;
+    assert.ok(model);
+    assert.throws(
+      () => parse({ ...value, models: [{ ...model, [field]: 16 }] }),
+      { message: /Runtime configuration is invalid/u }
+    );
+  });
+}
 
 test("production rejects fixture model, write connector and deployment mode selection", () => {
   const fixtureModel = configured();

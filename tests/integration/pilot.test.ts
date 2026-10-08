@@ -1212,7 +1212,39 @@ gate(
     try {
       const address = await createConversation(owner.cookie, selected.agentId);
       const sent = await submit(address, "Read the oversized pilot context.");
-      const view = await state(address, sent.receipt.runId, "failed");
+      const view = await waitForFixture(
+        async () => {
+          const started = performance.now();
+          const response = await fixture.request(route(address), owner.cookie);
+          if (response.status === 200) {
+            return viewSchema.parse(await response.json());
+          }
+          const content = await response.text();
+          const deadline =
+            content ===
+            JSON.stringify({
+              code: "Unavailable",
+              message: "Caller deadline exceeded",
+            });
+          failedRequests.push({
+            bodySha256: createHash("sha256").update(content).digest("hex"),
+            code: deadline ? "Unavailable" : publicFailureCode(content),
+            elapsedMs: Math.round(performance.now() - started),
+            gate: currentGate,
+            intent: {},
+            route: route(address),
+            status: response.status,
+          });
+          assert.equal(response.status, 503);
+          assert.equal(deadline, true);
+          return null;
+        },
+        (value) =>
+          value?.snapshot.runs.find((run) => run.runId === sent.receipt.runId)
+            ?.state === "failed",
+        60_000
+      );
+      assert.ok(view);
       assert.deepEqual(await modelCalls(), beforeProvider.model);
       assert.deepEqual(await toolCalls(), beforeProvider.tools);
       evidence.inputLimits = {
@@ -1417,9 +1449,13 @@ gate(
       "Apply write fixture with fixture_effect after approval."
     );
     const approval = await pending(address, sent.receipt.runId);
-    await fixture.sql(
-      `DELETE FROM identity_grant WHERE organization_id=${literal(organizationId)} AND principal_id=${literal(ownerPrincipal)} AND action='execute' AND resource_kind='tool' AND resource_id='fixture_effect'`
+    const grantsWhere = `organization_id=${literal(organizationId)} AND principal_id=${literal(ownerPrincipal)} AND action='execute' AND resource_kind='tool' AND resource_id='fixture_effect'`;
+    const grantsQuery = `SELECT COALESCE(jsonb_agg(to_jsonb(identity_grant) ORDER BY source),'[]'::jsonb) FROM identity_grant WHERE ${grantsWhere}`;
+    const originalGrants = await fixture.sql(grantsQuery);
+    assert.ok(
+      z.array(z.unknown()).parse(JSON.parse(originalGrants)).length > 0
     );
+    await fixture.sql(`DELETE FROM identity_grant WHERE ${grantsWhere}`);
     try {
       await expectStatus(
         await fixture.request(
@@ -1435,7 +1471,10 @@ gate(
       );
       assert.deepEqual(await toolCalls(), initial.tools);
     } finally {
-      await seedGrant(ownerPrincipal, "execute", "tool", "fixture_effect");
+      await fixture.sql(
+        `INSERT INTO identity_grant SELECT * FROM jsonb_populate_recordset(NULL::identity_grant,${literal(originalGrants)}::jsonb) WHERE true ON CONFLICT DO NOTHING`
+      );
+      assert.equal(await fixture.sql(grantsQuery), originalGrants);
     }
     await cancel(address, sent.receipt.runId);
     const cancelled = await read(address);
@@ -1500,9 +1539,13 @@ gate(
       ),
       403
     );
-    await fixture.sql(
-      `DELETE FROM identity_grant WHERE organization_id=${literal(organizationId)} AND principal_id=${literal(ownerPrincipal)} AND action='execute' AND resource_kind='tool' AND resource_id='fixture_effect'`
+    const grantsWhere = `organization_id=${literal(organizationId)} AND principal_id=${literal(ownerPrincipal)} AND action='execute' AND resource_kind='tool' AND resource_id='fixture_effect'`;
+    const grantsQuery = `SELECT COALESCE(jsonb_agg(to_jsonb(identity_grant) ORDER BY source),'[]'::jsonb) FROM identity_grant WHERE ${grantsWhere}`;
+    const originalGrants = await fixture.sql(grantsQuery);
+    assert.ok(
+      z.array(z.unknown()).parse(JSON.parse(originalGrants)).length > 0
     );
+    await fixture.sql(`DELETE FROM identity_grant WHERE ${grantsWhere}`);
     try {
       await expectStatus(
         await fixture.request(
@@ -1513,7 +1556,10 @@ gate(
         403
       );
     } finally {
-      await seedGrant(ownerPrincipal, "execute", "tool", "fixture_effect");
+      await fixture.sql(
+        `INSERT INTO identity_grant SELECT * FROM jsonb_populate_recordset(NULL::identity_grant,${literal(originalGrants)}::jsonb) WHERE true ON CONFLICT DO NOTHING`
+      );
+      assert.equal(await fixture.sql(grantsQuery), originalGrants);
     }
     assert.deepEqual(await modelCalls(), beforeReconcile.model);
     assert.deepEqual(await toolCalls(), beforeReconcile.tools);

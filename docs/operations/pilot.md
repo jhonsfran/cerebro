@@ -1,30 +1,26 @@
 # Operate the company pilot
 
-Local fixture acceptance is complete. External production qualification remains incomplete. Read [the session 7 receipt](../implementation/session-7.md) before enabling a pilot. A fixture result does not qualify an external provider.
+The Pi first slice remains under integrated acceptance. Read the [integration record](../architecture/2026-10-07-cerebro-slice-1-integration.md) and [first-slice plan](../architecture/2026-10-05-cerebro-slice-1-plan.md) before enabling it. Deterministic fixture results do not qualify external providers or customer-data cutover.
 
-## Default local models
+## Deployment modes
 
-The default Compose deployment uses `local` mode. It offers `opencode/space-bunny-free` through the native OpenCode SDK. The model uses `https://opencode.ai/zen/v1`, the SDK public key, and zero input/output prices in `usd-micro` units. [OpenCode lists the model as free](https://opencode.ai/docs/en/zen/). The native live check completed and settled one operation with zero charge. Big Pickle returned no authoritative usage receipt in the native check and is excluded from the default catalog. There is no paid fallback. The provider can remove free access. Check the current model terms before using company data.
+`local` and `production` require a protected `runtime.json` with an explicit real HTTPS model provider and trusted installation setup credentials. They disable fixture routes, grants, sources, and tools. There is no default free model. Configure read-only MCP tools explicitly. Existing agents must select a registered model and start a new conversation after a model change.
 
-Local mode creates a persistent `bootstrap-token` alongside the other local secrets. Installation setup requires this token. It uses real policy, PostgreSQL, artifact storage, and durable usage accounting. Fixture routes, test grants, sources, and tools are disabled. Configure read-only MCP tools explicitly if needed. Existing agents must select a registered model and start a new conversation after a model change.
-
-Local model limits are 65,536 input bytes, 2,048 output tokens, 262,144 response bytes, 90 seconds per request, and eight requests per run. Usage must still have an authoritative token receipt. Unknown outcomes stop for reconciliation even when the charge is zero. Local HTTP origins and local PostgreSQL are permitted; production retains HTTPS and verified PostgreSQL TLS requirements.
-
-Use `CEREBRO_DEPLOY_MODE=fixture COMPOSE_PROFILES=fixture` for deterministic testing. Use `production` with the production Compose override and explicit runtime configuration for an external deployment. A protected runtime file with a different mode is rejected rather than silently reused.
+`fixture` selects deterministic providers. Bootstrap generates fixture configuration and ingests the fixed pilot source. Use `rtk proxy node tests/slice-1/boot.mjs --project cerebro-s1-NAME` for a fresh disposable fixture. Fixture bootstrap uses its generated configuration and does not read a protected runtime file. Real-provider modes reject a file with a different mode.
 
 ## Configure an installation
 
-Use one company per installation. Keep the public API and web origins stable. The default host ports are API `18765` and web `3001`; `CEREBRO_API_PORT` and `CEREBRO_WEB_PORT` select other loopback ports. Set `CEREBRO_PUBLIC_API_URL` and `CEREBRO_PUBLIC_WEB_URL` to the matching origins before building. The web bundle contains its public API origin, so an origin change needs a web rebuild.
+Use one company per installation. Keep API and web origins stable. Default Compose host ports are API `18765` and web `3001`. `CEREBRO_API_PORT` and `CEREBRO_WEB_PORT` select other loopback ports. Set `CEREBRO_PUBLIC_API_URL` and `CEREBRO_PUBLIC_WEB_URL` before building; the web bundle contains its API origin.
 
-Production requires HTTPS public origins, a reverse proxy, PostgreSQL with `sslmode=verify-full`, and the external secrets directory selected by `CEREBRO_PRODUCTION_SECRETS_DIR`. Preserve that directory with the data. Never generate fresh passwords for restored data.
+Production requires HTTPS public origins, a reverse proxy, PostgreSQL with `sslmode=verify-full`, and the external secrets directory selected by `CEREBRO_PRODUCTION_SECRETS_DIR`. Preserve that directory with the data. Do not generate new passwords for restored stores.
 
-`deploy/bootstrap.mjs` reads `runtime.json` from the same protected directory as the other secrets. Production requires that file. Default fixture mode generates a local configuration when the file is absent; it also ingests the fixed pilot source through PostgreSQL and artifact MinIO. A configuration change takes effect when bootstrap publishes the Worker again.
+Bootstrap reads `runtime.json` from the protected secrets directory. Supply it to the local secrets volume or production secrets directory before bootstrap runs. Its artifact password must match artifact MinIO. Local secret initialization does not create real-provider configuration. Configuration changes take effect when bootstrap publishes the Worker again.
 
-The runtime configuration is secret. It contains model credentials, fixed model prices and request limits, connector targets and credentials, the gateway signing key, artifact storage, and installation setup credentials. Supply real OpenAI-compatible model endpoints and registered read-only MCP tools in production. The current composition supports local PostgreSQL budget authority and full-text memory. Unsupported configured modes fail during configuration parsing.
+The [runtime schema](../../apps/server/src/runtime-configuration.ts) defines the accepted structure. It contains model credentials and request limits, controlled connector targets and credentials, a gateway signing key, artifact storage, full-text retrieval, and trusted setup credentials. Pricing, budget, reservation, response-byte-limit, and per-run request-count fields are rejected. External metering remains unbound; this slice does not enforce a spending balance.
 
-The exact schema is [runtime-configuration.ts](../../apps/server/src/runtime-configuration.ts). A model ID must be `provider/model`. Prices are nonnegative integer units per token. The maximum reservation is `maxInputBytes * inputPerToken + maxOutputTokens * outputPerToken` and must fit a safe integer. A response needs authoritative OpenAI-compatible token usage before it reaches the SDK. Each run permits at most maxRequestsPerRun requests, with a default of 16. The runtime disables automatic SDK compaction and assigns a session title to avoid auxiliary model calls. A conversation that exceeds the complete outbound request bound fails before dispatch; start a new conversation instead of silently summarizing its history.
+Each model ID is `provider/model`. Model endpoints must implement the OpenAI-compatible completion protocol used by the adapter. The adapter checks outbound input bytes and request duration; the native model configuration supplies the output-token limit. Response-byte and per-run request-count settings are unsupported and rejected; this slice makes no guarantee for those bounds. Pi owns the model and tool loop. Browser attachment and reload do not submit model work. Each MCP registration includes connector ID, input/output schemas, HTTPS target, credentials, byte limits, effect type, approval requirement, and retry mode. Production rejects fixture write connectors.
 
-This example shows the required production structure. Replace all example values before use. The artifact password must match that MinIO service. Add each MCP tool with its input/output schema, HTTPS target, connector ID, credentials, byte limits, and retry mode; an empty tools array enables no connector.
+This example has no tools. Replace all placeholders with private installation values:
 
 ```json
 {
@@ -38,23 +34,10 @@ This example shows the required production structure. Replace all example values
       "apiKey": "REPLACE_MODEL_KEY",
       "maxInputBytes": 16384,
       "maxOutputTokens": 2048,
-      "maxRequestsPerRun": 16,
-      "maxResponseBytes": 65536,
-      "deadlineMs": 30000,
-      "pricing": {
-        "version": "REPLACE_VERIFIED_PRICE_VERSION",
-        "unit": "company-units",
-        "inputPerToken": 1,
-        "outputPerToken": 1
-      }
+      "deadlineMs": 30000
     }
   ],
   "tools": [],
-  "budget": {
-    "kind": "local",
-    "unit": "company-units",
-    "initialUnits": 1000000
-  },
   "gatewaySigningKey": "REPLACE_WITH_A_RANDOM_SECRET_OF_AT_LEAST_32_CHARACTERS",
   "artifacts": {
     "endpoint": "http://minio-artifacts:9000",
@@ -68,45 +51,35 @@ This example shows the required production structure. Replace all example values
 }
 ```
 
-Keep this file private. Do not commit it. Local budget initialization runs once per company and unit; publishing a new initialUnits value does not reset spent or held capacity. Do not change the accounting unit while reservations remain held or unsettled.
+Keep this file private. Do not commit it. Use a trusted setup token or trusted Better Auth user ID before first setup. Public signup does not grant installation ownership. Owners still need current resource grants. Audit and historical usage exports check grants on every page and return at most 200 records.
 
-Configure a trusted setup token or trusted Better Auth user ID before the first production setup. Public signup does not grant installation ownership. The owner still needs explicit current resource grants for tools, sources, and exports. Grant audit export on the company audit resource and usage export on the company budget resource only to the principals that require them. Every export page checks the grant again and returns at most 200 records.
+## Qualify a configured provider
 
-An unconfigured optional integration is not applicable. A configured model, MCP, Entra, Unprice, Jev, or Slack integration needs a recorded live check. Do not enable a configuration that has only passed a fixture test.
+Run `rtk proxy pnpm test:pi:live` with `CEREBRO_PI_LIVE_CONFIG` set to a private local acceptance file. The [live test](../../tests/live/pi.test.ts) defines its schema. Select a registered real model and real controlled MCP read in an isolated local installation with fixture routes disabled. Keep cookies and provider credentials out of command arguments and reports.
 
-## Upgrade
+Record the tested SHA, installation identity, selected model/tool, durable output, and controlled read result. Each enabled integration requires live evidence. An unconfigured optional integration is not applicable. Fixture evidence cannot substitute for this check.
 
-1. Record the deployed Git release, exact image IDs, runtime configuration, and public origins.
-2. Complete a consistent backup. Follow [the backup guide](backup.md).
-3. Test the new release in a fresh restored project. Restore any external database separately and set a restore-specific `CEREBRO_DATABASE_URL` before bootstrap or migrations run. Preserve recorded public origins through isolated routing. Keep the original project available for recovery.
-4. Check migrations and pinned SDK patch hashes before publishing the new Worker.
-5. Run readiness and the deployed acceptance checks, including current permissions, accounting replay, and session recovery.
-6. Move traffic only after these checks pass.
+## Upgrade and retire old work
 
-Bootstrap applies ordered PostgreSQL migrations. Session 7 adds the audit table and permits null embedding metadata for full-text records. There is no automatic down migration. An older memory adapter can fail on records that have no vector. Treat rollback as a full snapshot restore with the recorded images and configuration, rather than a binary downgrade against newer stores. Keep PostgreSQL, both MinIO stores, celld state, and credentials from the same snapshot.
+1. Record the release, exact image IDs, private configuration, and public origins.
+2. Take a consistent backup using the [backup guide](backup.md).
+3. Fence old admission, execution, alarms, tools, and replies before snapshot or restore. Use the separate cutover command to snapshot unresolved work, retire old conversations, and quarantine old inbox, projection, and reply queues.
+4. Test the release in an isolated restored project after retirement. Restore external databases separately and select a restore-specific database URL before bootstrap or migrations. Keep the retirement fence active before starting any application client.
+5. Prove that retirement survives restore, old physical counters stay unchanged, historical exports work, and a fresh Pi conversation succeeds.
+6. Complete acceptance and review before a separately authorized traffic change.
 
-The OpenCode shared SQLite patch is tied to reviewed file hashes. A changed SDK release must pass the native journal-survival test before deployment. Do not remove the patch because a unit test passes.
+Do not convert old checkpoints or delete historical company, audit, usage, or receipt records. Retired conversations require a new conversation. Restore PostgreSQL, both object stores, celld, and credentials from the same snapshot. Rollback requires a full snapshot restore with its images and configuration.
 
 ## Rotate secrets
 
-Use a maintenance window. Stop admission and wait for active work to finish. Resolve uncertain operations before changing provider or gateway credentials.
+Use a maintenance window. Stop admission, finish active work, and resolve uncertain operations before changing credentials. Update model/MCP credentials in protected configuration, publish the Worker, and verify a permitted operation. Before changing the gateway signing key, stop sessions and let issued capabilities expire.
 
-For model or MCP credentials, update the protected runtime configuration, publish the Worker, and verify one permitted operation. For the gateway signing key, stop active sessions and allow issued capabilities to expire before replacing the key. Check that the restricted loader and gateway use the same new key.
+An auth-secret change invalidates sessions. Database and MinIO password changes require the service and all clients to agree. Preserve backup credentials for restore. Verify sign-in, current permissions, and a controlled read after maintenance.
 
-An auth-secret change invalidates existing auth sessions. Verify sign-in after publishing the new binding. A database password change requires the PostgreSQL credential and Worker database URL to agree. A MinIO password change requires both MinIO services and their runtime and artifact clients to agree. Update each pair during the same maintenance window. Keep the old backup credentials protected for restore.
+## Recover an uncertain write
 
-## Recover an uncertain operation
+Do not repeat a non-idempotent write with an unknown outcome. Preserve its operation identity and durable receipt. An authorized operator can reconcile it against read-only authoritative provider evidence. Current company, tool, connector, and content grants still apply. Reconciliation must not repeat the write.
 
-A dispatched model with no authoritative receipt remains uncertain. Its maximum budget reservation stays held. A non-idempotent tool with no authoritative receipt retains an uncertain operation journal. The current tool broker does not reserve paid model capacity for tools. Do not clear the journal, change its operation ID, or submit a blind retry. Read the company audit and usage records, then reconcile against the provider's authoritative receipt. An operator must establish the effect and charge before releasing or settling held capacity.
+## Capacity and measured limits
 
-A known receipt can be replayed for accounting without repeating the provider call. A current grant is still required before cached source or tool content can be read.
-
-## Tested deployment size
-
-The final acceptance ran on macOS 26.6.2 with 14 CPUs and 24 GiB host memory. Docker 29.4.0 on aarch64 had 14 CPUs and 12,599,529,472 bytes of VM memory. Existing development containers remained active. The local fixture used a 16,384-byte request bound, 2,048 output tokens, a 65,536-byte response bound, and a 30-second deadline.
-
-Two sessions competed for capacity equal to one maximum model request. One provider request remained held while the other session failed admission. During this contention, celld used 547.7 MiB and PostgreSQL used 34.31 MiB. The database had three connections, including the measurement probe. All six fixture stack containers totaled about 1.24 GiB in that sample. This is not a peak or capacity result.
-
-The first admission receipt took 105 ms. The first visible buffered answer and completion took 7,287 ms. MCP provider duration was 3 ms. Approval recovery after SIGKILL took 15,028 ms. The seven-volume backup, fresh restore, and application checks took 97,216 ms. Output polling adds a 400 ms interval plus request time. Resource sampling added 2,633 ms within the 4,684 ms contention duration. These values describe application acceptance with local fixtures, not external provider performance.
-
-The default celld settings are 256 MiB V8 heap, 16 resident cells, and 10 seconds idle eviction. These are configured limits. See [the receipt](../implementation/session-7.md) for the focused comparison and per-container samples. A production sizing decision needs a representative provider, workload, and load test.
+Use the final first-slice report for current measurements. The [session 7 receipt](../implementation/session-7.md) records historical measurements and does not establish Pi performance. The first-slice budgets require measured admission, browser text, canonical history, alarms, detach cleanup, and ten concurrent conversations. Heap and cell limits are not a capacity guarantee. Use a representative workload before production sizing.

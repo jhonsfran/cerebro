@@ -10,8 +10,6 @@ const modelSchema = z.strictObject({
   id: z.string().min(1),
   maxInputBytes: positive,
   maxOutputTokens: positive,
-  maxRequestsPerRun: positive.default(16),
-  maxResponseBytes: positive,
   model: z.string().min(1),
   provider: z.string().min(1),
 });

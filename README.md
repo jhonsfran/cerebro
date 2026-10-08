@@ -1,70 +1,60 @@
 # Cerebro
 
-Cerebro is a self-hosted company assistant. It includes company identity and policy, durable conversations, budget admission, controlled tools, cited memory, web chat, and optional Slack direct messages. Session 7 connects these subsystems in the native celld deployment.
+Cerebro is a self-hosted company assistant with company permissions, durable conversations, controlled tools, cited memory, web chat, and optional Slack direct messages. The first slice uses Pi Durable on celld, Effect application services, and TanStack AI for browser observation. Integrated acceptance remains in progress; see the [integration record](docs/architecture/2026-10-07-cerebro-slice-1-integration.md).
 
-## Start the local stack
+## Start a disposable local fixture
 
-Docker is the host prerequisite for the application stack. From a fresh checkout, run:
-
-```sh
-docker compose up --build -d --wait
-```
-
-Open [the web app](http://localhost:3001). Readiness is available at [the API](http://localhost:18765/ready). The default local mode uses the free `opencode/space-bunny-free` model. Calls use the pinned OpenCode SDK and its public provider key. No paid model fallback is configured. The native live check passed with one settled zero-cost usage receipt. Big Pickle did not pass that check and is excluded from the default catalog. Free model availability can change. Read [OpenCode pricing and privacy](https://opencode.ai/docs/en/zen/) before sending company data.
-
-Local setup requires the generated installation token. Read it from the protected secret volume, then enter it in the setup form:
+Docker is required. Install frozen development dependencies with pnpm 11.9.0, then start a fresh isolated project:
 
 ```sh
-docker compose run --rm --no-deps bootstrap node --input-type=module -e 'import {readFile} from "node:fs/promises";process.stdout.write(await readFile("/run/cerebro-secrets/bootstrap-token","utf8"))'
+rtk proxy pnpm install --frozen-lockfile
+rtk proxy node tests/slice-1/boot.mjs --project cerebro-s1-demo
 ```
 
-Local mode uses real PostgreSQL, MinIO, authorization, and usage records. Model charges are zero `usd-micro` units. No fixture model, source, or tool is enabled. For an existing agent, select an OpenCode model in the editor, remove obsolete fixture tools, and start a new conversation. Existing data stays in its volumes.
+The fixture web app is at [localhost:4001](http://localhost:4001); API readiness is at [localhost:28765/ready](http://localhost:28765/ready). Boot evidence records the source SHA, project, ports, and immutable images under `artifacts/slice-1/`. The deterministic model and tool providers count effects. This mode does not establish live-provider acceptance.
 
-Compose generates local secrets once. PostgreSQL, both MinIO services, celld, and credentials use seven named volumes. `docker compose down` preserves that state. `docker compose down --volumes` deletes it.
+Remove only this disposable project's containers and volumes with:
 
-The bootstrap service creates MinIO buckets, applies PostgreSQL migrations, and publishes the API Worker with native `celld deploy`. Run `pnpm deploy` after changing the Worker in an existing local stack.
+```sh
+rtk proxy node tests/slice-1/boot.mjs --project cerebro-s1-demo --down
+```
+
+Use a different project name and free ports for another fixture. Boot rejects existing projects and volumes.
+
+## Configure real providers
+
+The default Compose mode is `local`. It requires a protected `runtime.json` with an explicitly configured HTTPS model provider. There is no built-in free model or billing authority. Local and production modes disable fixture routes and require trusted installation setup credentials. Read the [pilot operations guide](docs/operations/pilot.md) before starting a real-provider installation.
+
+Compose preserves seven named volumes for PostgreSQL, both MinIO stores, celld, and credentials. `docker compose down` preserves them; `docker compose down --volumes` deletes them. Bootstrap creates buckets, applies migrations, and publishes the Worker through native celld deployment. Preserve old stores and use the separate retirement procedure before enabling the new engine on existing conversations.
 
 ## Run checks
 
-Install pnpm 11.9.0 for repository development.
-
 ```sh
-pnpm install --frozen-lockfile
-pnpm test:contracts
-pnpm test:runtime
-pnpm test:identity
-pnpm test:policy
-pnpm test:memory
-pnpm test:channels
-pnpm test:integration
-pnpm test:opencode
-pnpm check-types
-pnpm check
-pnpm build
+rtk proxy pnpm test:contracts
+rtk proxy pnpm test:identity
+rtk proxy pnpm test:policy
+rtk proxy pnpm test:memory
+rtk proxy pnpm test:channels
+rtk proxy pnpm test:pi-durable:qualification
+rtk proxy pnpm test:runtime
+rtk proxy pnpm test:policy:runtime
+rtk proxy pnpm test:channels:native
+rtk proxy pnpm test:boot
+rtk proxy pnpm test:chat
+rtk proxy pnpm test:integration
+rtk proxy pnpm check-types
+rtk proxy pnpm check
+rtk proxy pnpm build
 ```
 
-Integration tests explicitly select deterministic fixture mode in isolated Compose projects. `pnpm test:opencode` separately calls the live free provider through the native deployment and verifies a zero-cost usage receipt.
+The qualification report distinguishes passed, failed, superseded, and unrun cases. Its exit status alone is not an acceptance verdict. Deterministic tests use isolated local stacks. The separate `rtk proxy pnpm test:pi:live` command requires `CEREBRO_PI_LIVE_CONFIG`, a path to a private local acceptance configuration. It must exercise a real model and one real controlled MCP read.
 
-To run the local demonstration with controlled providers instead, use:
+## Data ownership and operations
 
-```sh
-CEREBRO_DEPLOY_MODE=fixture COMPOSE_PROFILES=fixture docker compose up --build -d --wait
-```
+PostgreSQL owns company identity, current grants, memory metadata, audit projections, and preserved historical usage. Cerebro session SQLite owns product history and tool receipts. Pi owns private engine checkpoints, its inbox, and execution recovery. Runtime MinIO preserves celld state; artifact MinIO holds source and application objects. No transaction spans these stores.
 
-Use separate Compose project names for local and fixture deployments. A protected `runtime.json` must match its deployment mode.
+Commands, history, and observation require current company and content access. The tool loader receives a restricted gateway capability. An uncertain non-idempotent write stops for authorized reconciliation. External metering remains unbound in this slice.
 
-The backup tests restore all seven stores into fresh volumes and start the recorded source images. Read [the session 7 receipt](docs/implementation/session-7.md) for current deployed acceptance evidence and known check limits.
+Production requires HTTPS public origins, verified PostgreSQL TLS, a reverse proxy, and a protected secrets directory. The current [runtime schema](apps/server/src/runtime-configuration.ts) rejects obsolete pricing and local-budget configuration. Read the [backup procedure](docs/operations/backup.md) before maintenance.
 
-## Data ownership
-
-Session Durable Objects own execution, conversation state, and replay receipts. PostgreSQL owns company identity, current grants, shared budget, memory metadata, and audit projections. Runtime MinIO preserves celld state. Artifact MinIO holds source and application objects. No transaction spans these stores.
-
-The tool loader has no general outbound network access. It receives the named tool gateway as its capability. Each paid operation needs current authorization and a budget reservation before dispatch. An uncertain model dispatch retains its budget reservation. An uncertain non-idempotent tool stops for reconciliation.
-
-## Production settings
-
-`compose.production.yaml` requires an external directory with `auth-secret`, `postgres-password`, `minio-password`, and the protected `runtime.json` configuration. Set a PostgreSQL URL with `sslmode=verify-full` and HTTPS public origins. Put a TLS reverse proxy in front of the loopback API and web ports. Production rejects fixture providers and policies. Read [the pilot operations guide](docs/operations/pilot.md) for the runtime schema and trusted installation setup.
-
-Read [the backup procedure](docs/operations/backup.md) before maintenance. The automated backup command supports named volumes. Production bind-mounted secrets require the separate procedure in that guide.
-
-A pilot requires live results for every configured model, MCP, identity, budget, telemetry, and Slack integration. Publicly trusted Worker PostgreSQL TLS also requires a live result. The [delivery plan](docs/superpowers/plans/2026-09-28-cerebro-delivery.md) and [session 7 receipt](docs/implementation/session-7.md) identify incomplete qualification checks.
+The [first-slice plan](docs/architecture/2026-10-05-cerebro-slice-1-plan.md) defines the required acceptance and review gates. Historical session receipts describe earlier implementations; they do not qualify this release. Deployment and customer-data cutover require separate authorization.

@@ -243,6 +243,17 @@ const transitionHandoff = (
   run: update?.type === "run" ? update.run : prior.run,
 });
 
+const ignoredRunningUpdate = (
+  snapshot: DomainSnapshot,
+  update: DomainUpdate
+): boolean =>
+  update.type === "run" &&
+  update.run.state === "running" &&
+  snapshot.runs.some(
+    (run) =>
+      run.runId === update.run.runId && run.state === "waiting-for-approval"
+  );
+
 export const createSessionStore = (
   persistence: SessionPersistence,
   configuration: SessionStoreConfiguration
@@ -360,6 +371,7 @@ export const createSessionStore = (
       }
     }
     const affected = new Set<RunId>();
+    const applied: DomainUpdate[] = [];
     let projected = state.snapshot;
     for (const update of settled) {
       Schema.decodeUnknownSync(DomainUpdate)(update);
@@ -372,9 +384,15 @@ export const createSessionStore = (
         if (!state.handoffs.some((value) => value.submission.runId === runId)) {
           throw new NotFound({ resource: "Projection member admission" });
         }
-        affected.add(runId);
       }
       projected = projectUpdate(projected, update);
+      if (ignoredRunningUpdate(projected, update)) {
+        continue;
+      }
+      applied.push(update);
+      for (const runId of updateRunIds(update)) {
+        affected.add(runId);
+      }
     }
     // A final answer cannot escape independently of any linked terminal transition.
     for (const output of projected.outputs) {
@@ -406,8 +424,8 @@ export const createSessionStore = (
     ) {
       return { next: prior, records: [] };
     }
-    const revision = state.snapshot.revision + settled.length;
-    const records = settled.map((update, index) => ({
+    const revision = state.snapshot.revision + applied.length;
+    const records = applied.map((update, index) => ({
       id: `${configuration.address.sessionId}:${state.snapshot.revision + index + 1}`,
       occurredAt: Date.now(),
       revision: state.snapshot.revision + index + 1,

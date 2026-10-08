@@ -58,6 +58,16 @@ const projectRun = (
   update: Extract<DomainUpdate, { type: "run" }>
 ): DomainSnapshot => {
   const previous = snapshot.runs.find((run) => run.runId === update.run.runId);
+  if (
+    previous?.state === "waiting-for-approval" &&
+    update.run.state === "running" &&
+    snapshot.approvals.some(
+      (approval) =>
+        approval.runId === previous.runId && approval.state === "pending"
+    )
+  ) {
+    return snapshot;
+  }
   const reconciled =
     previous?.state === "unknown-outcome" &&
     update.run.state === "running" &&

@@ -62,7 +62,11 @@ export const submitInbox = async (
             .where(eq(channelInbox.eventKey, eventKey));
           return { receipt, submitted: true };
         } catch (error) {
-          if (error instanceof ChannelError && error.status === 403) {
+          if (
+            error instanceof ChannelError &&
+            (error.status === 403 ||
+              (error.status === 409 && error.code === "UnknownOutcome"))
+          ) {
             await connection
               .update(channelInbox)
               .set({ state: "denied" })

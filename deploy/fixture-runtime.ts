@@ -20,8 +20,6 @@ export const fixtureRuntimeConfiguration = (secret: string) =>
           id: "fixture/slice-1",
           maxInputBytes: 131_072,
           maxOutputTokens: 2048,
-          maxRequestsPerRun: 16,
-          maxResponseBytes: 1_048_576,
           model: "slice-1",
           provider: "fixture",
         },

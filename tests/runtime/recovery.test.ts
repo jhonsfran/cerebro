@@ -98,7 +98,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 const hash = (value) => createHash("sha256").update(value).digest("hex");
-const root = "/var/lib/celld/state";
+const root = process.env.CELLD_WATCH ?? "/tmp/celld-1";
 const sessionId = process.argv[1];
 const values = [];
 for (const scope of existsSync(root) ? readdirSync(root) : []) {
@@ -106,7 +106,8 @@ for (const scope of existsSync(root) ? readdirSync(root) : []) {
   const ltx = join(root, scope, "ltx");
   if (!existsSync(ltx)) continue;
   for (const epoch of readdirSync(ltx)) {
-    const file = join(ltx, epoch, "db.sqlite");
+    const live = join(ltx, epoch, "db.sqlite");
+    const file = existsSync(live) ? live : join(ltx, epoch, "db.evicted");
     if (!existsSync(file)) continue;
     const database = new DatabaseSync(file, { readOnly: true });
     try {
@@ -269,7 +270,7 @@ test(
         receipt,
       });
       const restartedAt = Date.now();
-      compose(stack, ["up", "-d", "--wait", "celld"]);
+      compose(stack, ["start", "--wait", "celld"]);
       // The provider and physical SQLite are read without a session host request.
       const restored = await waitFor(
         () => physicalProjections(stack, address),
@@ -452,7 +453,7 @@ test(
       });
       compose(stack, ["kill", "-s", "SIGKILL", "celld"]);
       const restartedAt = Date.now();
-      compose(stack, ["up", "-d", "--wait", "celld"]);
+      compose(stack, ["start", "--wait", "celld"]);
       // A blocked actor need not have an alarm. The first read below forces cold
       // initialization without an explicit recovery command.
       await delay(6000);
@@ -668,7 +669,7 @@ test(
         responseOutcome.kind !== "response" || responseOutcome.status !== 200
       );
       const restartedAt = Date.now();
-      compose(stack, ["up", "-d", "--wait", "celld"]);
+      compose(stack, ["start", "--wait", "celld"]);
       const recovered = await waitFor(
         () => physicalProjections(stack, address),
         (values) =>

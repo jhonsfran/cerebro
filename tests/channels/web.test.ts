@@ -8,7 +8,11 @@ import { drainChannelWork } from "../../packages/channels/src/drain";
 import { createFixtureSessionService } from "../../packages/channels/src/fixture-session";
 import { runEffect } from "../../packages/channels/src/security";
 import { createChannelService } from "../../packages/channels/src/service";
-import { Denied, Unavailable } from "../../packages/contracts/src/failures";
+import {
+  Denied,
+  Unavailable,
+  UnknownOutcome,
+} from "../../packages/contracts/src/failures";
 import { id } from "../../packages/contracts/src/index";
 import { and, eq } from "../../packages/db/node_modules/drizzle-orm";
 import { createAgentRepository } from "../../packages/db/src/repositories/agents";
@@ -419,131 +423,174 @@ test("one unavailable pending submission does not stop another admitted session"
   });
 });
 
-test("a stale drain selection cannot submit a denied event after access returns", async () => {
-  const app = await createTestProduct();
-  await app.install();
-  const created = await app.createAgent();
-  const agentId = string(created.agentId);
-  const response = await app.request("/api/product/conversations", "POST", {
-    agentId,
-    operationId: "stale-drain-conversation",
-  });
-  const conversationId = string(object(await response.json()).conversationId);
-  const selected = Promise.withResolvers<undefined>();
-  const release = Promise.withResolvers<undefined>();
-  let available = false;
-  let denied = false;
-  const submissions: string[] = [];
-  const options = {
-    ...app.options,
-    sessions: (db: Parameters<typeof createFixtureSessionService>[0]) => {
-      const fixture = createFixtureSessionService(db, app.options);
-      return {
-        ...fixture,
-        submit: (
-          command: Parameters<typeof fixture.submit>[0],
-          effect: Parameters<typeof fixture.submit>[1]
-        ) =>
-          Effect.gen(function* submit() {
-            if (!available) {
-              return yield* Effect.fail(
-                new Unavailable({ reason: "Seed pending admission." })
-              );
-            }
-            const text =
-              command.event.event.type === "user.message"
-                ? command.event.event.payload.text
-                : "";
-            if (text === "First pending event") {
-              selected.resolve();
-              yield* Effect.promise(() => release.promise);
-            }
-            if (denied && text === "Denied pending event") {
-              return yield* Effect.fail(
-                new Denied({
-                  code: "unauthorized",
-                  reason: "Source access changed.",
-                })
-              );
-            }
-            submissions.push(text);
-            return yield* fixture.submit(command, effect);
-          }),
-      };
-    },
-  };
-  const handler = createProductHandler(options);
-  const submit = (eventId: string, text: string) =>
-    handler(
-      new Request(
-        `http://cerebro.test/api/product/conversations/${conversationId}/messages`,
-        {
-          body: JSON.stringify({ eventId, text }),
-          headers: {
-            "Content-Type": "application/json",
-            "x-test-user": "test-owner",
-          },
-          method: "POST",
-        }
-      )
-    );
-  const first = await submit("first", "First pending event");
-  assert.equal(first.status, 503);
-  const second = await submit("second", "Denied pending event");
-  assert.equal(second.status, 503);
-  await app.options.withDatabase(async (db) => {
-    const rows = await db.select().from(channelInbox);
-    const firstEntry = rows.find(
-      (entry) =>
-        entry.envelope.event.type === "user.message" &&
-        entry.envelope.event.payload.text === "First pending event"
-    );
-    assert.ok(firstEntry);
-    await db
-      .update(channelInbox)
-      .set({ lastAttemptAt: new Date(1) })
-      .where(eq(channelInbox.eventKey, firstEntry.eventKey));
-  });
-  available = true;
-  const draining = drainChannelWork(options);
-  try {
-    await selected.promise;
-    denied = true;
-    const rejection = await submit("second", "Denied pending event");
-    assert.equal(rejection.status, 403);
-    const before = await app.options.withDatabase((db) =>
+for (const rejectionCase of [
+  {
+    cleared: "access returns",
+    code: "unauthorized",
+    failure: new Denied({
+      code: "unauthorized",
+      reason: "Source access changed.",
+    }),
+    status: 403,
+  },
+  {
+    cleared: "an unknown outcome is reconciled",
+    code: "UnknownOutcome",
+    failure: new UnknownOutcome({
+      operationId: id.operation("unknown-pending-write"),
+      reason: "An earlier write has no durable outcome.",
+    }),
+    status: 409,
+  },
+]) {
+  test(`a stale drain selection cannot submit a denied event after ${rejectionCase.cleared}`, async () => {
+    const app = await createTestProduct();
+    await app.install();
+    const created = await app.createAgent();
+    const agentId = string(created.agentId);
+    const response = await app.request("/api/product/conversations", "POST", {
+      agentId,
+      operationId: "stale-drain-conversation",
+    });
+    const conversationId = string(object(await response.json()).conversationId);
+    const selected = Promise.withResolvers<undefined>();
+    const release = Promise.withResolvers<undefined>();
+    let available = false;
+    let denied = false;
+    const submissions: string[] = [];
+    const options = {
+      ...app.options,
+      sessions: (db: Parameters<typeof createFixtureSessionService>[0]) => {
+        const fixture = createFixtureSessionService(db, app.options);
+        return {
+          ...fixture,
+          submit: (
+            command: Parameters<typeof fixture.submit>[0],
+            effect: Parameters<typeof fixture.submit>[1]
+          ) =>
+            Effect.gen(function* submit() {
+              if (!available) {
+                return yield* Effect.fail(
+                  new Unavailable({ reason: "Seed pending admission." })
+                );
+              }
+              const text =
+                command.event.event.type === "user.message"
+                  ? command.event.event.payload.text
+                  : "";
+              if (text === "First pending event") {
+                selected.resolve();
+                yield* Effect.promise(() => release.promise);
+              }
+              if (denied && text === "Denied pending event") {
+                return yield* Effect.fail(rejectionCase.failure);
+              }
+              submissions.push(text);
+              return yield* fixture.submit(command, effect);
+            }),
+        };
+      },
+    };
+    const handler = createProductHandler(options);
+    const submit = (eventId: string, text: string) =>
+      handler(
+        new Request(
+          `http://cerebro.test/api/product/conversations/${conversationId}/messages`,
+          {
+            body: JSON.stringify({ eventId, text }),
+            headers: {
+              "Content-Type": "application/json",
+              "x-test-user": "test-owner",
+            },
+            method: "POST",
+          }
+        )
+      );
+    const first = await submit("first", "First pending event");
+    assert.equal(first.status, 503);
+    const second = await submit("second", "Denied pending event");
+    assert.equal(second.status, 503);
+    const changed = await submit("second", "Changed pending event");
+    assert.equal(changed.status, 409);
+    assert.equal(object(await changed.json()).code, "digest-mismatch");
+    await app.options.withDatabase(async (db) => {
+      const rows = await db.select().from(channelInbox);
+      assert.deepEqual(
+        rows.map((entry) => entry.state),
+        ["pending", "pending"]
+      );
+      const firstEntry = rows.find(
+        (entry) =>
+          entry.envelope.event.type === "user.message" &&
+          entry.envelope.event.payload.text === "First pending event"
+      );
+      assert.ok(firstEntry);
+      await db
+        .update(channelInbox)
+        .set({ lastAttemptAt: new Date(1) })
+        .where(eq(channelInbox.eventKey, firstEntry.eventKey));
+    });
+    available = true;
+    const draining = drainChannelWork(options);
+    try {
+      await selected.promise;
+      denied = true;
+      const rejection = await submit("second", "Denied pending event");
+      assert.equal(rejection.status, rejectionCase.status);
+      assert.equal(object(await rejection.json()).code, rejectionCase.code);
+      const before = await app.options.withDatabase((db) =>
+        db.select().from(channelInbox)
+      );
+      assert.equal(
+        before.find(
+          (entry) =>
+            entry.envelope.event.type === "user.message" &&
+            entry.envelope.event.payload.text === "Denied pending event"
+        )?.state,
+        "denied"
+      );
+      denied = false;
+    } finally {
+      release.resolve();
+    }
+    const drained = await draining;
+    assert.equal(drained.submitted, 1);
+    assert.deepEqual(submissions, ["First pending event"]);
+    const after = await app.options.withDatabase((db) =>
       db.select().from(channelInbox)
     );
     assert.equal(
-      before.find(
+      after.find(
         (entry) =>
           entry.envelope.event.type === "user.message" &&
           entry.envelope.event.payload.text === "Denied pending event"
       )?.state,
       "denied"
     );
-    denied = false;
-  } finally {
-    release.resolve();
-  }
-  const drained = await draining;
-  assert.equal(drained.submitted, 1);
-  assert.deepEqual(submissions, ["First pending event"]);
-  const after = await app.options.withDatabase((db) =>
-    db.select().from(channelInbox)
-  );
-  assert.equal(
-    after.find(
-      (entry) =>
-        entry.envelope.event.type === "user.message" &&
-        entry.envelope.event.payload.text === "Denied pending event"
-    )?.state,
-    "denied"
-  );
-  const replay = await submit("second", "Denied pending event");
-  assert.equal(replay.status, 403);
-  assert.deepEqual(submissions, ["First pending event"]);
-});
+    const replay = await submit("second", "Denied pending event");
+    assert.equal(replay.status, 403);
+    assert.deepEqual(submissions, ["First pending event"]);
+    const emptyDrain = await drainChannelWork(options);
+    assert.equal(emptyDrain.submitted, 0);
+    assert.deepEqual(submissions, ["First pending event"]);
+    const fresh = await submit("fresh", "Fresh event after condition clears");
+    assert.equal(fresh.status, 200);
+    assert.deepEqual(submissions, [
+      "First pending event",
+      "Fresh event after condition clears",
+    ]);
+    await app.options.withDatabase(async (db) => {
+      const rows = await db.select().from(channelInbox);
+      assert.deepEqual(rows.map((entry) => entry.state).toSorted(), [
+        "accepted",
+        "accepted",
+        "denied",
+      ]);
+      const runs = await db.select().from(channelFixtureRun);
+      assert.equal(runs.length, 2);
+    });
+  });
+}
 
 test("audit reads require current company audit permission as well as conversation access", async () => {
   const app = await createTestProduct();
