@@ -1,13 +1,20 @@
-# Session 4 runtime proof
+# Native policy host proof
 
-Run `pnpm test:policy:runtime` from the repository root. Docker must be running. The test builds the pinned experiment and MinIO images from the committed experiment Dockerfile. It creates a unique `cerebro-s4-tools-*` Compose project, dynamic localhost ports, and owned volumes. It removes them after success or failure. A cold Docker build can exceed the 300 second test deadline. Build the prerequisite targets first if needed.
+Run `rtk proxy pnpm test:policy:runtime` from the repository root with Docker available. The gate builds the selected dependency and MinIO image targets from `tests/runtime/Dockerfile`. It uses a fresh `cerebro-s1-policy-native-*` project, dynamic loopback ports, and owned volumes. Successful runs remove their containers and volumes. Failed runs preserve their project for diagnosis.
 
-The bootstrap verifies celld 0.6.0, OpenCode SDK and plugin 0.0.0-dev-18697, and Agents 0.24.0. It compiles the current tools and contracts source with `celld deploy`. The experiment image supplies its reviewed SDK shared-storage patch. No provider credentials or live providers are used.
+The bootstrap checks the installed Agents, PiAI, PiDurable, and Effect versions against the isolated runtime manifest. It checks celld against the selected image pin, copies the production runtime, tools, contracts, and database packages, then bundles the Worker with `celld deploy`. It saves actual versions and the source identity. The host uses the production `SessionAgent`, official PiHarness and Lifecycle, production Effect coordinator, controlled executor, and celld receipt store. It uses an injected local caller proof and persisted fixture grants. Product HTTP authentication remains a separate application check.
 
-The deployed Worker imports the new tools registry, broker, dynamic executor, signed MCP gateway, and OpenCode plugin. The test proves reachable parent egress, denied global fetch from a restricted dynamic Worker, successful registered gateway calls with required MCP 2026-07-28 metadata and SSE replies, tampered and widened connector rejection, bound write approval, SDK tool error records, and replay after celld restart. A separate provider stores its own SQLite effect count and deliberately has no effect deduplication. A duplicate dispatch therefore fails the count assertion.
+The gate preserves these assertions:
 
-The read registration uses `https://fixture.invalid/mcp`. A trusted gateway fetch adapter maps that fixed URL to the isolated local HTTP provider. This fixture tests gateway routing and capability validation. It does not test TLS trust or an external MCP server.
+- The parent can reach the local provider. A restricted dynamic Worker with `globalOutbound: null` cannot use ambient network access. Its named registered gateway succeeds.
+- Unauthenticated private routes, a foreign caller, cross-company addresses, tampered signatures, changed arguments, changed tool versions, widened connectors, and another audience produce no physical read or write.
+- Real Pi calls only advertise the two registered tools. A registered read has redacted output. A write waits for an actual bound approval and creates one physical effect.
+- Exact event and controlled executor replay preserve the result before and after SIGKILL. The reopened host has a different instance ID. The production receipt and independent gateway journal remain complete.
+- Current access checks reject history, receipt reads, dispatch replay, and duplicate admission after grant revocation. The revocation survives SIGKILL. Restored access permits the existing result without a new physical effect.
+- Forced `shell`, `webfetch`, `execute`, and `mcp_unregistered` calls produce durable Pi `toolResult` errors and zero production tool receipts. They create no physical effect. The connector secret is absent from model input.
 
-The durable journals in this directory are test fixtures. Broker and gateway have separate namespaces and Durable Objects. Production session storage and application composition remain Session 7 work.
+The provider keeps independent SQLite counts and has no write deduplication. A second dispatch increments the count and fails the gate. Registered MCP reads require the selected 2026-07-28 transport metadata and SSE response parsing. A trusted gateway adapter maps the registered `https://fixture.invalid/mcp` URL to the isolated provider; this does not qualify an external MCP server or TLS trust.
 
-`pnpm test:policy` runs the host policy tests and journal reopen tests. If `POLICY_TEST_DATABASE_URL` is set, the caller must provide a migrated fixture database. Otherwise the runner creates PostgreSQL 17, waits for TCP readiness, applies committed migrations, runs tests, and removes its owned container.
+The independent gateway journal retains the selected gateway's operation and approval storage. The production SessionAgent SQLite store is the product domain and receipt authority. There is no fixture audit outbox. Application audit publication and outage checks belong to the full application gate.
+
+Each case saves source identity, actual dirty checkout state, package and host versions, owned container/image/volume IDs, domain state, receipts, native errors, and provider counts under `/tmp/cerebro-policy-native-evidence/<project>/`. The selected host explicitly uses `CELLD_WAKER_TICK_MS=1000`; alarm performance is qualified by the separate native runtime gate.

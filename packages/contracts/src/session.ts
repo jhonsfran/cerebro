@@ -99,32 +99,6 @@ export type SessionStreamItem =
       readonly cursor: string;
     };
 
-export interface SessionService {
-  readonly submit: (
-    command: Extract<SessionCommand, { type: "submit" }>,
-    options: EffectOptions
-  ) => Promise<PortResult<SessionReceipt>>;
-  readonly approve: (
-    command: Extract<SessionCommand, { type: "approve" }>,
-    options: EffectOptions
-  ) => Promise<PortResult<RunState>>;
-  readonly cancel: (
-    command: Extract<SessionCommand, { type: "cancel" }>,
-    options: EffectOptions
-  ) => Promise<PortResult<RunState>>;
-  readonly inspect: (
-    address: EventAddress,
-    context: ExecutionContext,
-    options: ReadOptions
-  ) => Promise<PortResult<SessionSnapshot>>;
-  readonly stream: (
-    address: EventAddress,
-    context: ExecutionContext,
-    cursor: string | undefined,
-    options: ReadOptions
-  ) => AsyncIterable<PortResult<SessionStreamItem>>;
-}
-
 export interface AgentGrant {
   readonly action: Action;
   readonly resource: Resource;

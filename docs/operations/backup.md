@@ -43,7 +43,9 @@ node deploy/backup.mjs restore --project cerebro-restored --directory /secure/ba
 The tool rejects the source project, existing target containers, and existing target volumes. It verifies all archive hashes before it creates a volume. It then creates seven volumes and restores each archive into an empty volume. It never deletes existing data. If a restore fails after volume creation, retain that project for diagnosis. Retry with another fresh project.
 
 7. For an API restore rehearsal, select unused host ports and retain the recorded public origins. The recorded web image contains its compiled API origin. A new public URL environment value does not change that bundle.
-8. Start the restored project with the generated image override. Do not rebuild its images.
+8. Check `engineRetirement` before starting clients. For a retirement archive, the restore tool reapplies the retirement fence and leaves clients stopped. Keep recorded old client images offline. Start clients only from a reviewed Pi release after verifying the fence; use the recorded PostgreSQL image for the restored stores. Do not use the full-project command below for a retirement archive.
+
+For an archive without retirement, start the restored project with the generated image override. Do not rebuild its images.
 
 ```sh
 CEREBRO_API_PORT=18766 CEREBRO_WEB_PORT=3002 docker compose -p cerebro-restored -f compose.yaml -f /secure/backups/cerebro-2026-09-30/cerebro-restored.images.yaml up -d --wait

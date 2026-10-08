@@ -1,8 +1,10 @@
-import { createAuthorizationPolicy } from "@cerebro/authorization";
+import {
+  createAuthorizationPolicy,
+  createAuthorizationService,
+} from "@cerebro/authorization";
 import { id } from "@cerebro/contracts";
 import type {
   AuthorizationPolicy,
-  BudgetAuthority,
   ContentDependencies,
   EntitlementPolicy,
   ExecutionContext,
@@ -13,7 +15,6 @@ import type { Database } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import { createMemoryRepository } from "@cerebro/db/repositories/memory";
-import { createUsageRepository } from "@cerebro/db/repositories/usage";
 import { auditEvent } from "@cerebro/db/schema/audit";
 import { memoryArtifact } from "@cerebro/db/schema/memory";
 import {
@@ -23,7 +24,6 @@ import {
 } from "@cerebro/memory";
 import { accessView } from "@cerebro/memory/access";
 import { artifactRef } from "@cerebro/memory/artifact-store";
-import { createLocalBudget } from "@cerebro/policy/local-budget";
 import { and, asc, eq, like } from "drizzle-orm";
 
 import type { WorkerEnv } from "./env.server";
@@ -98,31 +98,6 @@ export const createCurrentEntitlements = (
       };
     }),
 });
-export const createCurrentBudget = (env: WorkerEnv): BudgetAuthority => {
-  const budget = (database: Database) =>
-    createLocalBudget(
-      createUsageRepository(database),
-      runtimeConfiguration(env).budget.unit
-    );
-  return {
-    inspect: (organizationId, options) =>
-      withDatabase(env, (database) =>
-        budget(database).inspect(organizationId, options)
-      ),
-    release: (reservationId, options) =>
-      withDatabase(env, (database) =>
-        budget(database).release(reservationId, options)
-      ),
-    reserve: (organizationId, maximum, options) =>
-      withDatabase(env, (database) =>
-        budget(database).reserve(organizationId, maximum, options)
-      ),
-    settle: (reservationId, incurred, options, outcome) =>
-      withDatabase(env, (database) =>
-        budget(database).settle(reservationId, incurred, options, outcome)
-      ),
-  };
-};
 export const checkContentDependencies = async (
   env: WorkerEnv,
   database: Database,
@@ -301,3 +276,15 @@ export const readAudit = async (
     },
   };
 };
+
+export const createCurrentAuthority = (env: WorkerEnv) =>
+  createAuthorizationService({
+    readSnapshot: (organizationId, actorId, delegationId) =>
+      withDatabase(env, (database) =>
+        createIdentityRepository(database).readSnapshot(
+          organizationId,
+          actorId,
+          delegationId
+        )
+      ),
+  });

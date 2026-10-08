@@ -8,6 +8,7 @@ import type {
   ExecutionContext,
   SessionReceipt,
 } from "@cerebro/contracts";
+import type { SubmissionMode } from "@cerebro/contracts/session-service";
 import type { Database } from "@cerebro/db";
 import {
   createAgentRepository,
@@ -33,6 +34,7 @@ import {
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 
 import { sessionServiceFor } from "./fixture-session";
+import { submitInbox } from "./inbox-submission";
 import {
   authorize,
   authorizeContent,
@@ -40,6 +42,7 @@ import {
   digest,
   trustedSetupCredential,
   principalContext,
+  runEffect,
   unwrap,
 } from "./security";
 import {
@@ -80,6 +83,15 @@ const same = (
   row.organizationId === options.organizationId &&
   row.ownerPrincipalId === context.actor.id;
 
+const requireActive = (row: Conversation): void => {
+  if (row.engine !== "pi-v1" || row.retiredAt) {
+    throw new ChannelError(
+      409,
+      "retired",
+      "This conversation is retired. Start a new conversation."
+    );
+  }
+};
 export const createChannelService = (
   database: Database,
   options: ChannelOptions
@@ -107,6 +119,7 @@ export const createChannelService = (
     await authorize(database, options, context, action, "agent", row.agentId);
     return row;
   };
+
   const setup = async (userId: string) => {
     const [record] = await database
       .select()
@@ -222,6 +235,16 @@ export const createChannelService = (
         },
         ...(options.mode === "fixture"
           ? [
+              ...(["read", "execute", "write", "approve"] as const).map(
+                (action) => ({
+                  action,
+                  organizationId: options.organizationId,
+                  principalId,
+                  resourceId: "fixture_effect",
+                  resourceKind: "tool" as const,
+                  source: "fixture-owner",
+                })
+              ),
               {
                 action: "read" as const,
                 organizationId: options.organizationId,
@@ -625,7 +648,7 @@ export const createChannelService = (
         readOptions()
       )
     );
-    const bindingKey = `web:${await digest({ operationId, organizationId: options.organizationId, principalId: context.actor.id })}`;
+    const bindingKey = `pi-v1:web:${await digest({ operationId, organizationId: options.organizationId, principalId: context.actor.id })}`;
     const conversationId = `conversation:${await digest(bindingKey)}`;
     await database
       .insert(channelConversation)
@@ -633,6 +656,7 @@ export const createChannelService = (
         agentId,
         bindingKey,
         conversationId,
+        engine: "pi-v1",
         kind: "web",
         organizationId: options.organizationId,
         ownerPrincipalId: context.actor.id,
@@ -640,6 +664,7 @@ export const createChannelService = (
       })
       .onConflictDoNothing();
     const row = await requireConversation(conversationId, context, "execute");
+    requireActive(row);
     if (row.agentId !== agentId) {
       throw new ChannelError(
         409,
@@ -657,8 +682,10 @@ export const createChannelService = (
     conversation: Conversation,
     context: ExecutionContext,
     eventKey: string,
-    text: string
+    text: string,
+    mode: SubmissionMode = "follow-up"
   ): Promise<SessionReceipt> => {
+    requireActive(conversation);
     await authorize(
       database,
       options,
@@ -667,8 +694,17 @@ export const createChannelService = (
       "agent",
       conversation.agentId
     );
+    const sessions = sessionServiceFor(database, options);
+    await runEffect(
+      sessions.inspect(
+        conversationAddress(conversation),
+        context,
+        readOptions()
+      )
+    );
     const contentDigest = await digest({
       address: conversationAddress(conversation),
+      mode,
       principalId: context.actor.id,
       text,
     });
@@ -683,6 +719,9 @@ export const createChannelService = (
       schemaVersion: 1 as const,
     };
     const row = await database.transaction(async (tx) => {
+      await tx.execute(
+        sql`select set_config('lock_timeout', ${`${EFFECT_DEADLINE_MS}ms`}, true)`
+      );
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtext(${eventKey}))`
       );
@@ -709,6 +748,7 @@ export const createChannelService = (
           eventKey,
           organizationId: options.organizationId,
           state: "pending",
+          submissionMode: mode,
         })
         .returning();
       if (!inserted) {
@@ -725,30 +765,26 @@ export const createChannelService = (
         );
       return inserted;
     });
-    if (row.receipt) {
-      return { ...row.receipt, replayed: true };
-    }
-    const receipt = unwrap(
-      await sessionServiceFor(database, options).submit(
-        { event: row.envelope, type: "submit" },
-        {
-          ...readOptions(),
-          operationId: id.operation(`submit:${row.envelope.eventId}`),
-          requestDigest: id.digest(row.digest),
-        }
+    const result = await submitInbox(options, row.eventKey, (entry) =>
+      runEffect(
+        sessions.submit(
+          { event: entry.envelope, mode: entry.submissionMode, type: "submit" },
+          {
+            ...readOptions(),
+            operationId: id.operation(`submit:${entry.envelope.eventId}`),
+            requestDigest: id.digest(entry.digest),
+          }
+        )
       )
     );
-    await database
-      .update(channelInbox)
-      .set({ receipt, state: "accepted" })
-      .where(eq(channelInbox.eventKey, eventKey));
-    return receipt;
+    return result.receipt;
   };
   const submit = async (
     userId: string,
     conversationId: string,
     eventId: string,
-    text: string
+    text: string,
+    mode: SubmissionMode = "follow-up"
   ) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "execute");
@@ -756,7 +792,8 @@ export const createChannelService = (
       row,
       context,
       `web:${options.organizationId}:${conversationId}:${context.actor.id}:${eventId}`,
-      text
+      text,
+      mode
     );
     const items = await database
       .select({ cursor: channelItem.cursor })
@@ -780,13 +817,6 @@ export const createChannelService = (
         "The stream cursor is invalid."
       );
     }
-    const snapshot = unwrap(
-      await sessionServiceFor(database, options).inspect(
-        conversationAddress(row),
-        context,
-        readOptions()
-      )
-    );
     const records = await database
       .select()
       .from(channelItem)
@@ -805,12 +835,50 @@ export const createChannelService = (
       await authorizeContent(database, options, context, record.item);
       items.push({ ...record.item, cursor: String(record.cursor) });
     }
+    const retired = row.engine !== "pi-v1" || Boolean(row.retiredAt);
+    const historicalRuns = retired
+      ? await database
+          .select({ item: channelItem.item })
+          .from(channelItem)
+          .where(
+            and(
+              eq(channelItem.organizationId, options.organizationId),
+              eq(channelItem.conversationId, conversationId),
+              sql`${channelItem.item}->>'type' = 'run'`
+            )
+          )
+          .orderBy(asc(channelItem.cursor))
+      : [];
+    for (const record of historicalRuns) {
+      await authorizeContent(database, options, context, record.item);
+    }
+    const snapshot = retired
+      ? {
+          address: conversationAddress(row),
+          agentVersion: 1,
+          runs: [
+            ...new Map(
+              historicalRuns.flatMap((entry) =>
+                entry.item.type === "run"
+                  ? [[entry.item.run.runId, entry.item.run] as const]
+                  : []
+              )
+            ).values(),
+          ],
+        }
+      : await runEffect(
+          sessionServiceFor(database, options).inspect(
+            conversationAddress(row),
+            context,
+            readOptions()
+          )
+        );
     return {
       agentId: row.agentId,
       conversationId,
       cursor: items.at(-1)?.cursor ?? cursor ?? "0",
       items,
-      mode: options.mode,
+      mode: retired ? "retired" : options.mode,
       sessionId: row.sessionId,
       snapshot,
     };
@@ -818,6 +886,7 @@ export const createChannelService = (
   const chatAccess = async (userId: string, conversationId: string) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "read");
+    requireActive(row);
     const records = await database
       .select({ item: channelItem.item })
       .from(channelItem)
@@ -869,19 +938,24 @@ export const createChannelService = (
     userId: string,
     conversationId: string,
     approvalId: string,
-    operationId: string
+    operationId: string,
+    runId: string,
+    decision: "allow" | "deny"
   ) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "approve");
+    requireActive(row);
     const command = {
       address: conversationAddress(row),
       approvalId,
       context,
+      decision,
+      runId: id.run(runId),
       type: "approve" as const,
     };
     return {
-      run: unwrap(
-        await sessionServiceFor(database, options).approve(command, {
+      run: await runEffect(
+        sessionServiceFor(database, options).approve(command, {
           ...readOptions(),
           operationId: id.operation(
             `approve:${context.actor.id}:${operationId}`
@@ -899,6 +973,7 @@ export const createChannelService = (
   ) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "execute");
+    requireActive(row);
     const command = {
       address: conversationAddress(row),
       context,
@@ -906,8 +981,8 @@ export const createChannelService = (
       type: "cancel" as const,
     };
     return {
-      run: unwrap(
-        await sessionServiceFor(database, options).cancel(command, {
+      run: await runEffect(
+        sessionServiceFor(database, options).cancel(command, {
           ...readOptions(),
           operationId: id.operation(
             `cancel:${context.actor.id}:${operationId}`
@@ -917,11 +992,37 @@ export const createChannelService = (
       ),
     };
   };
+  const reconcile = async (
+    userId: string,
+    conversationId: string,
+    runId: string,
+    operationId: string
+  ) => {
+    const context = await current(userId);
+    const row = await requireConversation(conversationId, context, "execute");
+    requireActive(row);
+    const command = {
+      address: conversationAddress(row),
+      context,
+      operationId: id.operation(operationId),
+      runId: id.run(runId),
+    };
+    return {
+      tool: await runEffect(
+        sessionServiceFor(database, options).reconcile(command, {
+          ...readOptions(),
+          operationId: id.operation(
+            `reconcile:${context.actor.id}:${operationId}`
+          ),
+          requestDigest: id.digest(await digest(command)),
+        })
+      ),
+    };
+  };
   const history = async (userId: string, conversationId: string) => {
     const view = await readConversation(userId, conversationId);
     return {
-      projectionStatus:
-        options.mode === "fixture" ? "fixture" : "eventually-consistent",
+      projectionStatus: view.mode === "retired" ? "retired" : options.mode,
       runs: view.snapshot.runs.map((run) => ({
         auditHref: `/api/product/conversations/${conversationId}/audit/${run.runId}`,
         runId: run.runId,
@@ -1050,41 +1151,10 @@ export const createChannelService = (
       state: record.state.state,
     };
   };
-  const budget = async (userId: string) => {
-    const context = await current(userId);
-    await authorize(
-      database,
-      options,
-      context,
-      "read",
-      "budget",
-      options.organizationId
-    );
-    if (options.budget) {
-      return {
-        mode: options.mode,
-        remaining: unwrap(
-          await options.budget.inspect(
-            id.organization(options.organizationId),
-            readOptions()
-          )
-        ),
-      };
-    }
-    if (options.mode !== "fixture" || options.sessions) {
-      throw new ChannelError(
-        503,
-        "provider-unavailable",
-        "The budget adapter is not configured."
-      );
-    }
-    return { mode: "fixture", remaining: { unit: "credits", units: 1000 } };
-  };
   return {
     admit,
     approve,
     audit,
-    budget,
     cancel,
     catalog,
     chatAccess,
@@ -1096,6 +1166,7 @@ export const createChannelService = (
     listConversations,
     publishAgent,
     readConversation,
+    reconcile,
     setAccess,
     setup,
     source,

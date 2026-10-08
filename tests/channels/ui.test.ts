@@ -170,6 +170,7 @@ test("logout rejects delayed reads and mutations but permits fresh authorized re
     mutate("/mutation", { operationId: "saved-intent" }, sourceSchema),
     accessChanged
   );
+  await delay(0);
   clearProductCache();
   await Promise.all([
     source.finish({ text: "private source" }),
@@ -181,42 +182,26 @@ test("logout rejects delayed reads and mutations but permits fresh authorized re
   });
 });
 
-test("optional budget denial retains pending messages and permitted concurrent responses", async () => {
-  const source = delayedJson();
-  let cleared = 0;
-  browser.addEventListener("cerebro:access-cleared", () => {
-    cleared += 1;
-  });
-  storage.setItem(pendingKey, "private pending message");
+test("an old HTTP denial cannot clear the current access generation or its draft", async () => {
+  const response = Promise.withResolvers<Response>();
+  installFetch(() => response.promise);
+  const oldRequest = assert.rejects(
+    request("/old/resource", sourceSchema),
+    accessChanged
+  );
+  clearProductCache();
   const generation = currentAccessGeneration();
-  installFetch((input) =>
-    String(input).endsWith("/source") ? source.response : forbidden()
-  );
-  const permittedSource = request("/source", sourceSchema);
-  await assert.rejects(
-    request("/api/product/budget", sourceSchema, undefined, "optional-budget"),
-    { status: 403 }
-  );
-  await source.finish({ text: "permitted source" });
-  assert.deepEqual(await permittedSource, { text: "permitted source" });
-  assert.equal(storage.getItem(pendingKey), "private pending message");
+  storage.setItem(pendingKey, "current private draft");
+  response.resolve(forbidden());
+  await oldRequest;
   assert.equal(currentAccessGeneration(), generation);
-  assert.equal(cleared, 0);
-  await assert.rejects(
-    request("/resource", sourceSchema, undefined, "optional-budget"),
-    { status: 403 }
-  );
-  assert.equal(storage.getItem(pendingKey), null);
-  assert.equal(cleared, 1);
+  assert.equal(storage.getItem(pendingKey), "current private draft");
 });
 
-test("unauthenticated optional budget requests still clear private state", async () => {
+test("unauthenticated requests clear private state", async () => {
   storage.setItem(pendingKey, "private pending message");
   installFetch(() => Response.json({ message: "Sign in." }, { status: 401 }));
-  await assert.rejects(
-    request("/api/product/budget", sourceSchema, undefined, "optional-budget"),
-    { status: 401 }
-  );
+  await assert.rejects(request("/resource", sourceSchema), { status: 401 });
   assert.equal(storage.getItem(pendingKey), null);
 });
 
@@ -761,9 +746,7 @@ const obsoleteAgent: AgentDetail = {
     organizationId: "company",
     version: 1,
   },
-  modelChoices: [
-    { id: "opencode/space-bunny-free", label: "Space Bunny Free" },
-  ],
+  modelChoices: [{ id: "fixture/configured-model", label: "Space Bunny Free" }],
   name: "Company assistant",
   sourceChoices: [],
 };
@@ -775,12 +758,12 @@ test("agent editor replaces obsolete fixture choices with the current catalog", 
     catalog: {
       connectorChoices: [],
       modelChoices: [
-        { id: "opencode/space-bunny-free", label: "Space Bunny Free" },
+        { id: "fixture/configured-model", label: "Space Bunny Free" },
       ],
       sourceChoices: [],
     },
     instructions: "Answer company questions.",
-    model: "opencode/space-bunny-free",
+    model: "fixture/configured-model",
     name: "Company assistant",
     sourceIds: [],
     toolIds: [],
@@ -814,7 +797,7 @@ test("agent editor preserves a valid nonfirst model and filters mixed tool and s
       model: "company/model",
     },
     modelChoices: [
-      { id: "opencode/space-bunny-free", label: "Space Bunny Free" },
+      { id: "fixture/configured-model", label: "Space Bunny Free" },
       { id: "company/model", label: "Company model" },
     ],
     sourceChoices: [{ id: "travel-source", label: "Travel policy" }],

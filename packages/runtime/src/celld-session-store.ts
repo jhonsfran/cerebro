@@ -48,9 +48,11 @@ export interface SessionPersistence {
   readonly load: () => string | undefined;
   readonly save: (json: string) => void;
   readonly transaction: <A>(run: () => A) => A;
+  readonly flush?: () => Promise<void>;
 }
-interface ProjectionRecord {
+export interface ProjectionRecord {
   readonly id: string;
+  readonly occurredAt: number;
   readonly revision: number;
   readonly update: DomainUpdate;
 }
@@ -68,8 +70,13 @@ export interface SessionStoreConfiguration {
     dependencies: ContentDependencies,
     options: ReadOptions
   ) => Effect.Effect<void, ContractFailure>;
+  readonly authorizeMetadata?: (
+    context: ExecutionContext,
+    options: ReadOptions
+  ) => Effect.Effect<void, ContractFailure>;
   readonly observerCapacity?: number;
   readonly accessIntervalMs?: number;
+  readonly onCommit?: () => Effect.Effect<void, ContractFailure>;
 }
 interface Observer {
   buffer: ProjectionRecord[];
@@ -240,7 +247,18 @@ export const createSessionStore = (
   persistence: SessionPersistence,
   configuration: SessionStoreConfiguration
 ) => {
+  const flush = () =>
+    Effect.tryPromise({
+      catch: contractFailure,
+      try: () => persistence.flush?.() ?? Promise.resolve(),
+    });
   const observers = new Set<Observer>();
+  const closeObserver = (observer: Observer) => {
+    observer.closed = true;
+    observer.buffer = [];
+    observer.wake();
+    observers.delete(observer);
+  };
   const capacity = configuration.observerCapacity ?? 64;
   const interval = configuration.accessIntervalMs ?? 250;
   if (!Number.isSafeInteger(capacity) || capacity < 1 || interval < 1) {
@@ -307,6 +325,7 @@ export const createSessionStore = (
   const save = (state: StoreState, update?: DomainUpdate) => {
     const record = update && {
       id: `${configuration.address.sessionId}:${state.snapshot.revision}`,
+      occurredAt: Date.now(),
       revision: state.snapshot.revision,
       update,
     };
@@ -326,9 +345,23 @@ export const createSessionStore = (
     if (updates.length === 0) {
       throw new InvalidInput({ reason: "Empty projection batch" });
     }
+    const settled: DomainUpdate[] = [...updates];
+    for (const update of updates) {
+      if (update.type !== "run" || update.run.state !== "cancelled") {
+        continue;
+      }
+      for (const approval of state.snapshot.approvals) {
+        if (
+          approval.runId === update.run.runId &&
+          approval.state === "pending"
+        ) {
+          settled.push({ ...approval, state: "cancelled", type: "approval" });
+        }
+      }
+    }
     const affected = new Set<RunId>();
     let projected = state.snapshot;
-    for (const update of updates) {
+    for (const update of settled) {
       Schema.decodeUnknownSync(DomainUpdate)(update);
       if (update.type === "provisional-text" || update.type === "citation") {
         throw new InvalidInput({
@@ -373,9 +406,10 @@ export const createSessionStore = (
     ) {
       return { next: prior, records: [] };
     }
-    const revision = state.snapshot.revision + updates.length;
-    const records = updates.map((update, index) => ({
+    const revision = state.snapshot.revision + settled.length;
+    const records = settled.map((update, index) => ({
       id: `${configuration.address.sessionId}:${state.snapshot.revision + index + 1}`,
+      occurredAt: Date.now(),
       revision: state.snapshot.revision + index + 1,
       update,
     }));
@@ -537,7 +571,7 @@ export const createSessionStore = (
           catch: contractFailure,
           try: () => digestToolArguments({ event: command.event, mode }),
         });
-        return yield* attempt(() => {
+        const admitted = yield* attempt(() => {
           const handoff = persistence.transaction(() => {
             const state = load();
             const prior = state.handoffs.find(
@@ -609,6 +643,9 @@ export const createSessionStore = (
             ? structuredClone(handoff.next)
             : structuredClone(handoff);
         });
+        yield* flush();
+        yield* configuration.onCommit?.() ?? Effect.void;
+        return admitted;
       }),
     attach: (address, context, request, options) =>
       Stream.unwrap(
@@ -638,94 +675,122 @@ export const createSessionStore = (
               observers.add(value);
               return value;
             }),
-            (value) =>
-              Effect.sync(() => {
-                value.closed = true;
-                value.wake();
-                observers.delete(value);
-              })
+            (value) => Effect.sync(() => closeObserver(value))
           );
+          const frames = observe(observer, address, context, request, options);
           return Stream.fromAsyncIterable(
-            observe(observer, address, context, request, options),
+            {
+              [Symbol.asyncIterator]: () => {
+                const iterator = frames[Symbol.asyncIterator]();
+                return {
+                  next: () => iterator.next(),
+                  return: async () => {
+                    closeObserver(observer);
+                    if (iterator.return) {
+                      return await iterator.return();
+                    }
+                    return { done: true, value: null };
+                  },
+                };
+              },
+            },
             contractFailure
           );
         })
       ),
     commit: (address, expectedRevision, transition, options) =>
-      attempt(() => {
-        checkOptions(options);
-        access(address);
-        const result = persistence.transaction(() => {
-          const state = load();
-          if (expectedRevision !== state.snapshot.revision) {
-            throw new Conflict({
-              code: "version-mismatch",
-              reason: "Domain revision changed",
-            });
-          }
-          const prior = state.handoffs.find(
-            (item) => item.submission.runId === transition.runId
-          );
-          if (!prior) {
-            throw new NotFound({ resource: "handoff" });
-          }
-          if (transition.type === "projected-batch") {
-            return commitBatch(state, prior, transition.updates);
-          }
-          validateTransition(prior, transition);
-          const update = transitionUpdate(prior, transition);
-          if (update?.type === "provisional-text") {
-            projectUpdate(state.snapshot, update);
-            return {
-              next: prior,
-              records: pendingRun(prior.run)
-                ? [
-                    {
-                      id: `provisional:${transition.runId}`,
-                      revision: expectedRevision,
-                      update,
-                    },
-                  ]
-                : [],
-            };
-          }
-          if (transition.type === "projected" && update) {
-            return commitBatch(state, prior, [update]);
-          }
-          const projected = update
-            ? projectUpdate(state.snapshot, update)
-            : state.snapshot;
-          if (
-            (transition.type === "projected" ||
-              transition.type === "run-state") &&
-            canonicalToolArguments(projected) ===
-              canonicalToolArguments(state.snapshot)
-          ) {
-            return { next: prior, records: [] };
-          }
-          const revision = expectedRevision + 1;
-          const snapshot = { ...projected, revision };
-          const next = transitionHandoff(prior, transition, revision, update);
-          const record = save(
-            {
-              ...state,
-              handoffs: state.handoffs.map((item) =>
-                item.submission.runId === next.submission.runId ? next : item
-              ),
-              snapshot,
-            },
-            update
-          );
-          return { next, records: record ? [record] : [] };
+      Effect.gen(function* commitDurably() {
+        const committed = yield* attempt(() => {
+          checkOptions(options);
+          access(address);
+          const result = persistence.transaction(() => {
+            const state = load();
+            if (expectedRevision !== state.snapshot.revision) {
+              throw new Conflict({
+                code: "version-mismatch",
+                reason: "Domain revision changed",
+              });
+            }
+            const prior = state.handoffs.find(
+              (item) => item.submission.runId === transition.runId
+            );
+            if (!prior) {
+              throw new NotFound({ resource: "handoff" });
+            }
+            if (transition.type === "projected-batch") {
+              return commitBatch(state, prior, transition.updates);
+            }
+            validateTransition(prior, transition);
+            const update = transitionUpdate(prior, transition);
+            if (update?.type === "provisional-text") {
+              projectUpdate(state.snapshot, update);
+              return {
+                next: prior,
+                records: pendingRun(prior.run)
+                  ? [
+                      {
+                        id: `provisional:${transition.runId}`,
+                        occurredAt: Date.now(),
+                        revision: expectedRevision,
+                        update,
+                      },
+                    ]
+                  : [],
+              };
+            }
+            if (
+              (transition.type === "projected" ||
+                transition.type === "run-state") &&
+              update
+            ) {
+              return commitBatch(state, prior, [update]);
+            }
+            const projected = update
+              ? projectUpdate(state.snapshot, update)
+              : state.snapshot;
+            const revision = expectedRevision + 1;
+            const snapshot = { ...projected, revision };
+            const next = transitionHandoff(prior, transition, revision, update);
+            const record = save(
+              {
+                ...state,
+                handoffs: state.handoffs.map((item) =>
+                  item.submission.runId === next.submission.runId ? next : item
+                ),
+                snapshot,
+              },
+              update
+            );
+            return { next, records: record ? [record] : [] };
+          });
+          return result;
         });
-        for (const record of result.records) {
+        if (
+          transition.type !== "projected" ||
+          transition.update.type !== "provisional-text"
+        ) {
+          yield* flush();
+          yield* configuration.onCommit?.() ?? Effect.void;
+        }
+        for (const record of committed.records) {
           notify(record);
         }
-        return structuredClone(result.next);
+        return structuredClone(committed.next);
       }),
     receipt: (address, requestId, context, options) =>
       Effect.gen(function* receipt() {
-        yield* service.snapshot(address, context, options);
+        yield* attempt(() => {
+          checkOptions(options);
+          access(address, context);
+        });
+        yield* (
+          configuration.authorizeMetadata?.(context, options) ??
+            configuration.authorize(
+              context,
+              { sourceIds: [], toolIds: [] },
+              options
+            )
+        );
         return yield* attempt(() => {
           const handoff = load().handoffs.find(
             (item) => item.submission.requestId === requestId
@@ -755,15 +820,18 @@ export const createSessionStore = (
 
   return {
     acknowledgeOutbox: (recordId: string) =>
-      attempt(() =>
-        persistence.transaction(() => {
-          const state = load();
-          save({
-            ...state,
-            outbox: state.outbox.filter((record) => record.id !== recordId),
-          });
-        })
-      ),
+      Effect.gen(function* acknowledgeProjection() {
+        yield* attempt(() =>
+          persistence.transaction(() => {
+            const state = load();
+            save({
+              ...state,
+              outbox: state.outbox.filter((record) => record.id !== recordId),
+            });
+          })
+        );
+        yield* flush();
+      }),
     domain: () => structuredClone(load().snapshot),
     layer: Layer.succeed(SessionStore, service),
     observerCount: () => observers.size,
@@ -784,6 +852,7 @@ export const createSessionStore = (
             projectUpdate(state.snapshot, update);
             notify({
               id: `provisional:${runId}`,
+              occurredAt: Date.now(),
               revision: state.snapshot.revision,
               update,
             });
@@ -810,6 +879,7 @@ export const createCelldSessionStore = (
   );
   return createSessionStore(
     {
+      flush: () => storage.sync(),
       load: () =>
         storage.sql
           .exec<{ state: string }>(

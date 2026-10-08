@@ -13,12 +13,6 @@ const modelSchema = z.strictObject({
   maxRequestsPerRun: positive.default(16),
   maxResponseBytes: positive,
   model: z.string().min(1),
-  pricing: z.strictObject({
-    inputPerToken: z.number().int().nonnegative(),
-    outputPerToken: z.number().int().nonnegative(),
-    unit: z.string().min(1),
-    version: z.string().min(1),
-  }),
   provider: z.string().min(1),
 });
 const jsonSchema = z.custom<Parameters<typeof z.fromJSONSchema>[0]>(
@@ -64,11 +58,6 @@ const schema = z.strictObject({
     secretAccessKey: z.string().min(1),
   }),
   bootstrapToken: z.string().min(32).optional(),
-  budget: z.strictObject({
-    initialUnits: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-    kind: z.literal("local"),
-    unit: z.string().min(1),
-  }),
   gatewaySigningKey: z.string().min(32),
   mode: z.enum(["local", "fixture", "production"]),
   models: z.array(modelSchema).min(1),
@@ -127,13 +116,7 @@ export const parseRuntimeConfiguration = (
       new Set(config.models.map((model) => model.id)).size !==
         config.models.length ||
       config.models.some(
-        (model) =>
-          model.pricing.unit !== config.budget.unit ||
-          model.id !== `${model.provider}/${model.model}` ||
-          !Number.isSafeInteger(
-            model.maxInputBytes * model.pricing.inputPerToken +
-              model.maxOutputTokens * model.pricing.outputPerToken
-          )
+        (model) => model.id !== `${model.provider}/${model.model}`
       )
     ) {
       throw new Error("Invalid runtime model configuration");
@@ -211,7 +194,7 @@ export const parseRuntimeConfiguration = (
     return normalized;
   } catch {
     throw new Error(
-      "Runtime configuration is invalid or uses an unsupported provider, budget, decision, or retrieval mode."
+      "Runtime configuration is invalid or uses an unsupported provider or retrieval mode."
     );
   }
 };

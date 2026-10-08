@@ -1,6 +1,7 @@
 /* eslint-disable max-classes-per-file -- These entrypoints share one private gateway protocol. */
 import { id } from "@cerebro/contracts";
-import type { Approval, ToolExecution } from "@cerebro/contracts";
+import type { ToolExecution } from "@cerebro/contracts";
+import type { BoundApproval } from "@cerebro/contracts/tool-service";
 import {
   AuditProjectionConflictError,
   projectAuditEvent,
@@ -38,6 +39,7 @@ const approvalSchema = z.strictObject({
   agentId: z.string(),
   approverId: z.string(),
   argumentDigest: z.string(),
+  connectorFingerprint: z.string(),
   connectorId: z.string(),
   delegationId: z.string().optional(),
   effect: z.enum(["read", "write"]),
@@ -47,6 +49,7 @@ const approvalSchema = z.strictObject({
   organizationId: z.string(),
   policyVersion: z.string(),
   principalId: z.string(),
+  runId: z.string(),
   toolId: z.string(),
   toolVersion: z.string(),
 });
@@ -122,15 +125,17 @@ export class GatewayJournal extends DurableObject<WorkerEnv> {
     if (route === "/approve") {
       const parsed = approvalSchema.parse(await request.json());
       const { delegationId, ...fields } = parsed;
-      const approval: Approval = {
+      const approval: BoundApproval = {
         ...fields,
         actorPrincipalId: id.principal(parsed.actorPrincipalId),
         agentId: id.agent(parsed.agentId),
         approverId: id.principal(parsed.approverId),
         argumentDigest: id.digest(parsed.argumentDigest),
+        connectorFingerprint: id.digest(parsed.connectorFingerprint),
         operationId: id.operation(parsed.operationId),
         organizationId: id.organization(parsed.organizationId),
         principalId: id.principal(parsed.principalId),
+        runId: id.run(parsed.runId),
         toolId: id.tool(parsed.toolId),
         ...(delegationId ? { delegationId: id.delegation(delegationId) } : {}),
       };

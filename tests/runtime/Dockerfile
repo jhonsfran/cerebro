@@ -15,7 +15,7 @@ COPY --from=celld-bin /usr/local/bin/celld /usr/local/bin/celld
 COPY --from=celld-bin /etc/ssl/certs /etc/ssl/certs
 WORKDIR /runtime
 COPY tests/runtime/package.json tests/runtime/package-lock.json ./
-RUN npm ci --ignore-scripts --workspaces=false
+RUN npm ci --ignore-scripts --workspaces=false --legacy-peer-deps
 ENV PATH="/runtime/node_modules/.bin:${PATH}"
 COPY tests/runtime/scripts/patch-dependencies.mjs ./scripts/patch-dependencies.mjs
 RUN node scripts/patch-dependencies.mjs
@@ -23,7 +23,9 @@ FROM dependencies AS app
 COPY packages/contracts ./packages/contracts
 COPY packages/db ./packages/db
 COPY packages/runtime ./packages/runtime
+COPY packages/tools ./packages/tools
 COPY tests/runtime ./tests/runtime
+COPY tests/slice-1/provider.mjs ./tests/slice-1/provider.mjs
 RUN mkdir -p node_modules/@cerebro && \
     ln -s ../../packages/contracts node_modules/@cerebro/contracts && \
     ln -s ../../packages/db node_modules/@cerebro/db

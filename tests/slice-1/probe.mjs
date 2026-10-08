@@ -9,6 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs, promisify } from "node:util";
 
+import { validatePerformance } from "./performance.mjs";
 import { boundaries, createFixture } from "./provider.mjs";
 
 const execute = promisify(execFile);
@@ -18,7 +19,10 @@ const configuration = JSON.parse(
 const { values } = parseArgs({
   options: {
     "base-url": { type: "string" },
+    "baseline-fixture-id": { type: "string" },
+    "baseline-sha": { type: "string" },
     driver: { type: "string" },
+    "fixture-id": { type: "string" },
     "fixture-url": { type: "string" },
     output: { type: "string" },
     scenario: { default: "fixture", type: "string" },
@@ -441,6 +445,22 @@ if (values["self-test"]) {
       cwd: path.resolve(import.meta.dirname, "../.."),
     })
   ).stdout.trim();
+  const sourceCheckoutDirty = Boolean(
+    (
+      await execute(
+        "git",
+        [
+          "status",
+          "--porcelain",
+          "--untracked-files=all",
+          "--",
+          ".",
+          ":(exclude)artifacts/**",
+        ],
+        { cwd: path.resolve(import.meta.dirname, "../..") }
+      )
+    ).stdout.trim()
+  );
   let report;
   if (scenario.scope === "infrastructure") {
     if (!values["fixture-url"] && !values["base-url"]) {
@@ -462,24 +482,13 @@ if (values["self-test"]) {
       process.exitCode = 2;
     }
     if (scenario.id === "performance" && report.status === "pass") {
-      assert.equal(report.attachDetachCycles, 100);
-      assert.equal(report.acceptedConcurrentTurns, 10);
-      assert.equal(report.terminalConcurrentTurns, 10);
-      for (const [key, maximum] of Object.entries(scenario.budgets)) {
-        assert.ok(
-          Number.isFinite(report.metrics[key]) &&
-            report.metrics[key] <= maximum,
-          `${key} exceeds budget or is missing`
-        );
-      }
-      for (const key of scenario.requiredMeasurements) {
-        assert.ok(Number.isFinite(report.metrics[key]), `${key} is missing`);
-      }
-      assert.equal(report.samples.length, 10);
-      for (const [index, sample] of report.samples.entries()) {
-        assert.equal(sample.revision, index % 2 === 0 ? "baseline" : "head");
-        assert.match(sample.sha, /^[a-f0-9]{40}$/u);
-      }
+      report.sourceCheckoutDirty = sourceCheckoutDirty;
+      report.metrics = validatePerformance(report, scenario, {
+        baselineFixtureId: values["baseline-fixture-id"],
+        baselineSha: values["baseline-sha"],
+        fixtureId: values["fixture-id"],
+        headSha: sha,
+      });
     }
   } else {
     report = {
@@ -494,24 +503,7 @@ if (values["self-test"]) {
   report = {
     ...report,
     scenario: scenario.id,
-    sourceCheckoutDirty: Boolean(
-      (
-        await execute(
-          "git",
-          [
-            "status",
-            "--porcelain",
-            "--untracked-files=all",
-            "--",
-            ".",
-            ":(exclude)artifacts/**",
-          ],
-          {
-            cwd: path.resolve(import.meta.dirname, "../.."),
-          }
-        )
-      ).stdout.trim()
-    ),
+    sourceCheckoutDirty,
     testedSha: sha,
   };
   if (values.output) {

@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -45,10 +44,7 @@ const waitForPostgres = async (container, deadline) => {
   await delay(200);
   await waitForPostgres(container, deadline);
 };
-const resultSnapshot1 = await readdir(new URL("./", import.meta.url));
-const files = resultSnapshot1
-  .filter((name) => name.endsWith(".test.ts"))
-  .toSorted();
+const files = ["agent-authority.test.ts", "tool-boundary.test.ts"];
 let ownedContainer;
 let databaseUrl = process.env.POLICY_TEST_DATABASE_URL;
 try {

@@ -1,171 +1,208 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
-import type { PortResult } from "../../packages/contracts/src/port.ts";
-import type {
-  RunState,
-  SessionReceipt,
-  SessionSnapshot,
-  SessionStreamItem,
-} from "../../packages/contracts/src/session.ts";
+import type { ToolReceipt } from "../../packages/contracts/src/receipt-service.ts";
 import {
-  agentFor,
   addressFor,
+  approve,
+  boot,
   compose,
-  effectOptions,
-  fixtureContext,
+  control,
+  evidence,
   getFixture,
+  inspect,
   messageEvent,
-  releaseEffect,
+  newStack,
+  pending,
+  rawRequest,
+  reconcile,
   request,
+  submit,
   waitFor,
 } from "./helpers.ts";
+import type { ProviderEvidence } from "./helpers.ts";
 
-interface EffectRecord {
-  readonly calls: number;
-  readonly effects: number;
-  readonly held: boolean;
+interface LifecycleEvidence {
+  readonly alarms: readonly { readonly at: number }[];
+  readonly alarmAt: number | null;
+  readonly jobs: readonly unknown[];
+  readonly pending: readonly unknown[];
 }
 
-const runCrashCase = async (
-  mode: "idempotent" | "non-idempotent",
-  offset: number
-): Promise<void> => {
-  const stack = {
-    apiPort: 18_865 + offset,
-    effectMode: mode,
-    fixturePort: 18_866 + offset,
-    holdAfterEffect: true,
-    project: `cerebro-runtime-${mode}`,
-  } as const;
-  const address = addressFor(`company-${mode}`, "conversation-1");
-  try {
-    compose(stack, ["up", "--build", "-d", "--wait"]);
-    const event = messageEvent(address, `event-${mode}`);
-    const options = effectOptions(
-      `operation-${mode}`,
-      `sha256:operation-${mode}`
-    );
-    const submitted = await request<PortResult<SessionReceipt>>(
-      stack,
-      "/runtime/submit",
-      {
-        agent: agentFor(address, 1),
-        event,
-        options,
-      }
-    );
-    assert.equal(submitted.status, "ok");
-    const stream = await waitFor(
-      async () =>
-        await request<PortResult<SessionStreamItem[]>>(
-          stack,
-          "/runtime/stream",
-          { address }
-        ),
-      (result) =>
-        result.status === "ok" &&
-        result.value.some((item) => item.type === "approval"),
-      120_000
-    );
-    assert.equal(stream.status, "ok");
-    if (stream.status !== "ok") {
-      return;
-    }
-    const approval = stream.value.find((item) => item.type === "approval");
-    assert.ok(approval);
-    const operationId = approval.approvalId.slice("approval:".length);
-    const command = {
-      address,
-      approvalId: approval.approvalId,
-      context: fixtureContext(address.organizationId),
-      type: "approve",
-    };
-    const approvalOptions = effectOptions(
-      `approve-${mode}`,
-      `sha256:approve-${mode}`
-    );
-    const accepted = await request<PortResult<RunState>>(
-      stack,
-      "/runtime/approve",
-      { command, options: approvalOptions }
-    );
-    assert.equal(accepted.status, "ok");
-    const replay = await request<PortResult<RunState>>(
-      stack,
-      "/runtime/approve",
-      { command, options: approvalOptions }
-    );
-    assert.deepEqual(replay, accepted);
-    const effectUrl = `http://127.0.0.1:${stack.fixturePort}/effects/${encodeURIComponent(operationId)}`;
-    await waitFor(
-      async () => {
-        const response = await fetch(effectUrl);
-        return (await response.json()) as EffectRecord;
-      },
-      (record) => record.effects === 1 && record.held,
-      60_000
-    );
-
-    compose(stack, ["kill", "-s", "SIGKILL", "celld"]);
-    const beforeRestart = await getFixture<EffectRecord>(
-      stack,
-      `/effects/${encodeURIComponent(operationId)}`
-    );
-    assert.equal(beforeRestart.effects, 1);
-    await releaseEffect(stack, operationId);
-    compose(stack, ["up", "-d", "--wait", "celld"]);
-    const expected = mode === "idempotent" ? "completed" : "unknown-outcome";
-    const final = await waitFor(
-      async () =>
-        await request<PortResult<SessionSnapshot>>(stack, "/runtime/inspect", {
-          address,
-        }),
-      (result) =>
-        result.status === "ok" && result.value.runs[0]?.state === expected,
-      340_000
-    );
-    assert.equal(final.status, "ok");
-    const afterRestart = await getFixture<EffectRecord>(
-      stack,
-      `/effects/${encodeURIComponent(operationId)}`
-    );
-    assert.equal(afterRestart.effects, 1);
-    assert.equal(afterRestart.calls, mode === "idempotent" ? 2 : 1);
-    const replayedStream = await request<PortResult<SessionStreamItem[]>>(
-      stack,
-      "/runtime/stream",
-      {
-        address,
-        cursor: approval.cursor,
-      }
-    );
-    assert.equal(replayedStream.status, "ok");
-    if (replayedStream.status === "ok") {
-      assert.equal(
-        replayedStream.value.some(
-          (item) => item.type === "run" && item.run.state === expected
-        ),
-        true
+test(
+  "a dispatched native write remains unknown across SIGKILL and reconciles without a second write",
+  { timeout: 360_000 },
+  async () => {
+    const stack = await newStack("dispatch");
+    const address = addressFor("company-dispatch", "conversation-1");
+    let passed = false;
+    try {
+      boot(stack);
+      await control(stack, {
+        arm: { boundary: "after-tool-dispatch", id: "native-dispatch" },
+      });
+      await submit(stack, messageEvent(address, "dispatch-event"));
+      const approval = await pending(stack, address);
+      await approve(stack, address, approval);
+      const dispatched = await waitFor(
+        () => getFixture<ProviderEvidence>(stack),
+        (value) =>
+          value.held === 1 &&
+          value.tools.some((tool) => tool.operationId === approval.operationId)
       );
+      const durable = await request<ToolReceipt>(
+        stack,
+        "/runtime/fixture/receipt",
+        { address, operationId: approval.operationId }
+      );
+      assert.equal(durable.state, "dispatched");
+      const beforeLifecycle = await request<LifecycleEvidence>(
+        stack,
+        "/runtime/fixture/lifecycle",
+        { address }
+      );
+      await evidence(stack, "before-kill", {
+        approval,
+        beforeLifecycle,
+        dispatched,
+        durable,
+      });
+      const killedAt = Date.now();
+      compose(stack, ["kill", "-s", "SIGKILL", "celld"]);
+      await control(stack, { arm: null, release: true });
+      const restartedAt = Date.now();
+      compose(stack, ["up", "-d", "--wait", "celld"]);
+      // No native host request is made during the documented cold-cell discovery window.
+      await delay(90_000);
+      const firstReadAt = Date.now();
+      const lifecycle = await request<LifecycleEvidence>(
+        stack,
+        "/runtime/fixture/lifecycle",
+        { address }
+      );
+      await evidence(stack, "alarm-observation", {
+        beforeLifecycle,
+        firstReadAt,
+        killedAt,
+        lifecycle,
+        restartedAt,
+      });
+      assert.ok(
+        lifecycle.alarms.some(
+          (alarm) => alarm.at >= restartedAt && alarm.at < firstReadAt
+        ),
+        "Official Lifecycle must run its alarm while every observer is closed"
+      );
+      const wakeAt = lifecycle.alarms.find(
+        (alarm) => alarm.at >= restartedAt && alarm.at < firstReadAt
+      )?.at;
+      assert.ok(wakeAt);
+      const wakeMs = wakeAt - restartedAt;
+      await evidence(stack, "alarm-wake", {
+        firstReadAt,
+        lifecycle,
+        meetsPerformanceBudget: wakeMs <= 60_000,
+        restartedAt,
+        wakeMs,
+      });
+      assert.ok(
+        wakeMs <= 60_000,
+        `Selected celld host must recover within 60 seconds; actual wake ${wakeMs} ms`
+      );
+      const unknown = await waitFor(
+        () => inspect(stack, address),
+        (value) => value.runs[0]?.state === "unknown-outcome",
+        120_000
+      );
+      const blocked = await rawRequest(stack, "/runtime/submit", {
+        address,
+        command: {
+          event: messageEvent(address, "blocked-event"),
+          mode: "follow-up",
+          type: "submit",
+        },
+        options: {
+          deadlineAt: Date.now() + 60_000,
+          operationId: "blocked-command",
+          requestDigest: "sha256:blocked",
+        },
+      });
+      assert.equal(blocked.status, 409);
+      await request(stack, "/runtime/fixture/evidence", {
+        address,
+        enabled: false,
+      });
+      const unavailable = await rawRequest(stack, "/runtime/reconcile", {
+        address,
+        command: { operationId: approval.operationId, runId: approval.runId },
+        options: {
+          deadlineAt: Date.now() + 60_000,
+          operationId: "unavailable-reconcile",
+          requestDigest: "sha256:unavailable-reconcile",
+        },
+      });
+      assert.equal(unavailable.status, 503);
+      const repeated = await rawRequest(stack, "/runtime/fixture/occurrence", {
+        address,
+        operationId: approval.operationId,
+        replacementOperationId: "new-uncertain-occurrence",
+      });
+      assert.equal(repeated.status, 409);
+      await request(stack, "/runtime/fixture/evidence", {
+        address,
+        enabled: true,
+      });
+      const reconciled = await reconcile(stack, address, approval);
+      const confirmed = await request<ToolReceipt>(
+        stack,
+        "/runtime/fixture/receipt",
+        { address, operationId: approval.operationId }
+      );
+      assert.equal(confirmed.state, "completed");
+      const final = await waitFor(
+        () => inspect(stack, address),
+        (value) => value.runs[0]?.state === "completed",
+        120_000
+      );
+      assert.equal(final.tools[0]?.state, "succeeded");
+      assert.equal(final.outputs.length, 1);
+      const provider = await getFixture<ProviderEvidence>(stack);
+      assert.equal(
+        provider.tools.filter(
+          (value) => value.operationId === approval.operationId
+        ).length,
+        1
+      );
+      await evidence(stack, "dispatch-restart", {
+        approval,
+        confirmed,
+        dispatched,
+        durable,
+        final,
+        firstReadAt,
+        lifecycle,
+        provider,
+        reconciled,
+        restartedAt,
+        unknown,
+      });
+      passed = true;
+    } finally {
+      if (passed) {
+        compose(stack, ["down", "-v"]);
+      } else {
+        await evidence(stack, "failure", {
+          containers: compose(stack, ["ps", "--all", "--format", "json"]),
+          logs: compose(stack, [
+            "logs",
+            "--no-color",
+            "--tail=100",
+            "celld",
+            "bootstrap",
+          ]),
+        });
+      }
     }
-  } finally {
-    compose(stack, ["down", "-v"]);
-  }
-};
-
-test(
-  "an idempotent effect returns its stored provider result after SIGKILL",
-  { timeout: 600_000 },
-  async () => {
-    await runCrashCase("idempotent", 0);
-  }
-);
-
-test(
-  "an uncertain non-idempotent effect enters reconciliation without a retry",
-  { timeout: 600_000 },
-  async () => {
-    await runCrashCase("non-idempotent", 20);
   }
 );

@@ -1,16 +1,23 @@
-/* oxlint-disable no-await-in-loop -- Restore checks compare each store after the previous mutation has completed. */
+/* oxlint-disable no-await-in-loop -- Cold restore and store fingerprints require ordered physical operations. */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:net";
+import { createHash, randomUUID } from "node:crypto";
+import { chmod, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
-const execute = promisify(execFile);
+import { z } from "zod";
+
+import type { ApplicationBoot } from "../slice-1/application.ts";
+import {
+  applicationFixture,
+  freeFixturePort,
+  waitForFixture,
+} from "../slice-1/application.ts";
+
+const executeFile = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "../..");
 const dataTables = [
   "usage_account",
@@ -21,157 +28,226 @@ const dataTables = [
   "memory_source",
   "memory_record",
   "memory_artifact",
-];
-const freePort = async (): Promise<number> => {
-  const server = createServer();
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  assert.ok(address && typeof address !== "string");
-  server.close();
-  await once(server, "close");
-  return address.port;
+] as const;
+const stores = [
+  "postgres",
+  "minio-runtime",
+  "minio-artifacts",
+  "celld",
+  "secrets",
+  "postgres-credential",
+  "minio-credential",
+] as const;
+const manifestSchema = z.object({
+  images: z.record(z.string(), z.object({ id: z.string() })),
+  release: z.string(),
+  sourceCheckoutDirty: z.boolean(),
+  sourceProject: z.string(),
+  volumeArchives: z.array(
+    z.object({ logicalName: z.string(), sha256: z.string() })
+  ),
+});
+const fingerprints = async (fixture: ReturnType<typeof applicationFixture>) => {
+  const rows: Record<string, string> = {};
+  for (const table of dataTables) {
+    rows[table] = await fixture.sql(
+      `SELECT count(*) || ':' || md5(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text)::text,'[]')) FROM ${table} t`
+    );
+  }
+  return rows;
 };
-const observations = async (port: string | number) => {
-  const response = await fetch(`http://localhost:${port}/observations`, {
-    signal: AbortSignal.timeout(30_000),
+const provider = async (fixtureUrl: string) => {
+  const response = await fetch(`${fixtureUrl}/observations`, {
+    signal: AbortSignal.timeout(5000),
   });
   assert.equal(response.status, 200);
-  return await response.json();
+  return z
+    .object({ model: z.array(z.unknown()), tools: z.array(z.unknown()) })
+    .parse(await response.json());
 };
-
 interface RestoreInput {
-  readonly project: string;
-  readonly environment: NodeJS.ProcessEnv;
-  readonly apiUrl: string;
-  readonly webUrl: string;
+  readonly boot: ApplicationBoot;
   readonly cookie: string;
   readonly conversationId: string;
   readonly sourceId: string;
   readonly sourceText: string;
-  readonly eventId: string;
-  readonly eventText: string;
+  readonly event: {
+    readonly eventId: string;
+    readonly text: string;
+    readonly mode: "follow-up";
+  };
+  readonly artifact: {
+    readonly artifactId: string;
+    readonly organizationId: string;
+    readonly provenance: {
+      readonly observedAt: number;
+      readonly sourceId: string;
+      readonly sourceUri: string;
+      readonly sourceVersion: string;
+    };
+    readonly visibility: { readonly kind: "grant"; readonly grantId: string };
+  };
 }
 export const verifyPilotRestore = async (input: RestoreInput) => {
   const tempDirectory = await mkdtemp(
     path.join(tmpdir(), "cerebro-pilot-snapshot-")
   );
+  await chmod(tempDirectory, 0o700);
   const directory = path.join(tempDirectory, "snapshot");
-  const target = `cerebro-restored-${randomBytes(5).toString("hex")}`;
-  const [apiPort, webPort, fixturePort] = await Promise.all([
-    freePort(),
-    freePort(),
-    freePort(),
-  ]);
+  const target = `cerebro-s1-pilot-restored-${randomUUID().slice(0, 8)}`;
+  const ports = new Set<number>();
+  while (ports.size < 3) {
+    ports.add(await freeFixturePort());
+  }
+  const [apiPort, webPort, fixturePort] = [...ports];
   const restoredApi = `http://localhost:${apiPort}`;
-  const restoreEnvironment = {
-    ...input.environment,
+  // The immutable web image and restored auth configuration retain the original public origins.
+  const sourceEnvironment = {
+    ...process.env,
+    CEREBRO_API_PORT: new URL(input.boot.apiUrl).port,
+    CEREBRO_DATABASE_URL: "",
+    CEREBRO_DEPLOY_MODE: "fixture",
+    CEREBRO_FIXTURE_ID: input.boot.fixtureId,
+    CEREBRO_FIXTURE_PORT: new URL(input.boot.fixtureUrl).port,
+    CEREBRO_FIXTURE_SHA: input.boot.sha,
+    CEREBRO_PUBLIC_API_URL: input.boot.apiUrl,
+    CEREBRO_PUBLIC_WEB_URL: input.boot.webUrl,
+    CEREBRO_WEB_PORT: new URL(input.boot.webUrl).port,
+    COMPOSE_PROFILES: "fixture",
+  };
+  const restoredEnvironment = {
+    ...sourceEnvironment,
     CEREBRO_API_PORT: String(apiPort),
     CEREBRO_FIXTURE_PORT: String(fixturePort),
     CEREBRO_WEB_PORT: String(webPort),
   };
-  const compose = async (project: string, ...args: string[]) =>
-    await execute("docker", ["compose", "-p", project, ...args], {
+  const files = [path.join(root, "compose.yaml"), input.boot.overridePath];
+  const imageOverride = path.join(directory, `${target}.images.yaml`);
+  const execute = (
+    command: string,
+    args: readonly string[],
+    restored = false
+  ) =>
+    executeFile("rtk", ["proxy", command, ...args], {
       cwd: root,
-      env: project === target ? restoreEnvironment : input.environment,
+      encoding: "utf-8",
+      env: restored ? restoredEnvironment : sourceEnvironment,
       maxBuffer: 8 * 1024 * 1024,
       timeout: 10 * 60_000,
     });
-  const fingerprints = async (project: string) => {
-    const rows: Record<string, string> = {};
-    for (const table of dataTables) {
-      const result = await compose(
-        project,
-        "exec",
-        "-T",
-        "postgres",
-        "psql",
-        "-U",
-        "cerebro",
-        "-d",
-        "cerebro",
-        "-tA",
-        "-c",
-        `SELECT count(*) || ':' || md5(coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text)::text,'[]')) FROM ${table} t`
-      );
-      rows[table] = result.stdout.trim();
-    }
-    return rows;
-  };
-  const request = async (apiUrl: string, route: string, body?: unknown) => {
+  const compose = (...args: string[]) =>
+    execute(
+      "docker",
+      [
+        "compose",
+        "--project-directory",
+        root,
+        "-p",
+        target,
+        ...[...files, imageOverride].flatMap((file) => ["-f", file]),
+        ...args,
+      ],
+      true
+    );
+  const source = applicationFixture(input.boot);
+  const restored = applicationFixture({
+    ...input.boot,
+    apiUrl: restoredApi,
+    fixtureId: target,
+    fixtureUrl: `http://localhost:${fixturePort}`,
+    webUrl: input.boot.webUrl,
+  });
+  const request = async (
+    apiUrl: string,
+    route: string,
+    body?: unknown
+  ): Promise<unknown> => {
     const response = await fetch(`${apiUrl}${route}`, {
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      body: body === undefined ? undefined : JSON.stringify(body),
       headers: {
         "Content-Type": "application/json",
         Cookie: input.cookie,
-        Origin: input.webUrl,
+        Origin: input.boot.webUrl,
       },
       method: body === undefined ? "GET" : "POST",
       signal: AbortSignal.timeout(30_000),
     });
-    const text = await response.text();
-    assert.equal(response.status, 200, `Restored ${route}: ${text}`);
-    return JSON.parse(text) as unknown;
+    assert.equal(
+      response.status,
+      200,
+      `Restored ${route}: HTTP ${response.status}`
+    );
+    return response.json();
   };
   const conversationPath = `/api/product/conversations/${encodeURIComponent(input.conversationId)}`;
-  let pendingProjections = "";
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    await request(input.apiUrl, conversationPath);
-    const pending = await compose(
-      input.project,
-      "exec",
-      "-T",
-      "postgres",
-      "psql",
-      "-U",
-      "cerebro",
-      "-d",
-      "cerebro",
-      "-tA",
-      "-c",
-      "SELECT count(*) FROM channel_conversation WHERE projection_state <> 'idle'"
-    );
-    pendingProjections = pending.stdout.trim();
-    if (pendingProjections === "0") {
-      break;
-    }
-    await delay(1000);
-  }
-  assert.equal(
-    pendingProjections,
-    "0",
-    "Source projections must settle before backup."
+  await waitForFixture(
+    async () => {
+      await request(input.boot.apiUrl, conversationPath);
+      return source.sql(
+        "SELECT count(*) FROM channel_conversation WHERE projection_state <> 'idle'"
+      );
+    },
+    (value) => value === "0",
+    60_000
   );
-  const previous = await request(input.apiUrl, conversationPath);
-  const before = await fingerprints(input.project);
+  const previous = await request(input.boot.apiUrl, conversationPath);
+  const previousHistory = await request(
+    input.boot.apiUrl,
+    `${conversationPath}/history`
+  );
+  const previousAuth = await request(
+    input.boot.apiUrl,
+    "/api/auth/get-session"
+  );
+  const previousArtifact = await request(
+    input.boot.apiUrl,
+    "/rpc/memory/readArtifact",
+    {
+      json: {
+        organizationId: input.artifact.organizationId,
+        ref: input.artifact,
+      },
+    }
+  );
+  const before = await fingerprints(source);
   for (let sample = 0; sample < 3; sample += 1) {
     await delay(1200);
-    assert.deepEqual(await fingerprints(input.project), before);
+    assert.deepEqual(
+      await fingerprints(source),
+      before,
+      "Source stores must settle before the cold snapshot"
+    );
   }
-  assert.ok(input.environment.CEREBRO_FIXTURE_PORT);
-  const providerBefore = await observations(
-    input.environment.CEREBRO_FIXTURE_PORT
-  );
+  const providerBefore = await provider(input.boot.fixtureUrl);
   let passed = false;
   const started = performance.now();
   try {
-    await execute(
-      process.execPath,
-      [
-        "deploy/backup.mjs",
-        "backup",
-        "--project",
-        input.project,
-        "--directory",
-        directory,
-      ],
-      {
-        cwd: root,
-        env: input.environment,
-        maxBuffer: 1024 * 1024,
-        timeout: 10 * 60_000,
-      }
+    // This command stops clients, then storage, and snapshots all seven Docker volumes.
+    await execute(process.execPath, [
+      "deploy/backup.mjs",
+      "backup",
+      "--project",
+      input.boot.fixtureId,
+      "--directory",
+      directory,
+      ...files.flatMap((file) => ["--file", file]),
+    ]);
+    const manifest = manifestSchema.parse(
+      JSON.parse(await readFile(path.join(directory, "manifest.json"), "utf-8"))
     );
+    assert.equal(manifest.release, input.boot.sha);
+    assert.equal(manifest.sourceProject, input.boot.fixtureId);
+    assert.equal(manifest.sourceCheckoutDirty, input.boot.sourceCheckoutDirty);
+    assert.deepEqual(
+      manifest.volumeArchives.map((store) => store.logicalName).toSorted(),
+      [...stores].toSorted()
+    );
+    const directoryMetadata = await stat(directory);
+    assert.equal(directoryMetadata.mode % 0o1000, 0o700);
+    for (const name of stores) {
+      const archiveMetadata = await stat(path.join(directory, `${name}.tar`));
+      assert.equal(archiveMetadata.mode % 0o1000, 0o600);
+    }
     await execute(
       process.execPath,
       [
@@ -181,67 +257,130 @@ export const verifyPilotRestore = async (input: RestoreInput) => {
         target,
         "--directory",
         directory,
+        ...files.flatMap((file) => ["--file", file]),
       ],
-      {
-        cwd: root,
-        env: restoreEnvironment,
-        maxBuffer: 1024 * 1024,
-        timeout: 10 * 60_000,
-      }
+      true
     );
-    const override = path.join(directory, `${target}.images.yaml`);
-    await compose(
-      target,
-      "-f",
-      "compose.yaml",
-      "-f",
-      override,
-      "up",
-      "-d",
-      "--wait",
-      "--no-build"
-    );
+    await compose("up", "-d", "--wait", "--wait-timeout", "180", "--no-build");
     const readiness = await fetch(`${restoredApi}/ready`, {
       signal: AbortSignal.timeout(30_000),
     });
     assert.equal(readiness.status, 200);
-    assert.deepEqual(await fingerprints(target), before);
+    await readiness.body?.cancel();
+    for (const [service, image] of Object.entries(manifest.images)) {
+      const container = await restored.container(service);
+      const result = await execute(
+        "docker",
+        ["inspect", "--format", "{{.Image}}", container],
+        true
+      );
+      assert.equal(
+        result.stdout.trim(),
+        image.id,
+        `Restored ${service} must use its immutable source image`
+      );
+    }
+    assert.deepEqual(await fingerprints(restored), before);
     const auth = await request(restoredApi, "/api/auth/get-session");
-    assert.ok(auth && typeof auth === "object" && "user" in auth && auth.user);
-    assert.deepEqual(await request(restoredApi, conversationPath), previous);
-    const source = await request(
-      restoredApi,
-      `${conversationPath}/sources/${encodeURIComponent(input.sourceId)}`
+    z.object({
+      session: z.unknown(),
+      user: z.object({ id: z.string() }),
+    }).parse(auth);
+    assert.equal(
+      createHash("sha256").update(JSON.stringify(auth)).digest("hex"),
+      createHash("sha256").update(JSON.stringify(previousAuth)).digest("hex"),
+      "The original cookie must restore the exact private session and user record"
     );
-    assert.ok(source && typeof source === "object" && "text" in source);
-    assert.equal(source.text, input.sourceText);
-    const replay = await request(restoredApi, `${conversationPath}/messages`, {
-      eventId: input.eventId,
-      text: input.eventText,
-    });
-    assert.ok(replay && typeof replay === "object" && "receipt" in replay);
-    const { receipt } = replay;
-    assert.ok(receipt && typeof receipt === "object" && "replayed" in receipt);
-    assert.equal(receipt.replayed, true);
+    assert.deepEqual(await request(restoredApi, conversationPath), previous);
+    assert.deepEqual(
+      await request(restoredApi, `${conversationPath}/history`),
+      previousHistory
+    );
+    const sourceDocument = z
+      .object({ text: z.string() })
+      .parse(
+        await request(
+          restoredApi,
+          `${conversationPath}/sources/${encodeURIComponent(input.sourceId)}`
+        )
+      );
+    assert.equal(sourceDocument.text, input.sourceText);
+    const restoredArtifact = await request(
+      restoredApi,
+      "/rpc/memory/readArtifact",
+      {
+        json: {
+          organizationId: input.artifact.organizationId,
+          ref: input.artifact,
+        },
+      }
+    );
+    assert.deepEqual(restoredArtifact, previousArtifact);
+    const replay = z
+      .object({
+        receipt: z.object({
+          replayed: z.literal(true),
+          runId: z.string(),
+          sessionId: z.string(),
+        }),
+      })
+      .parse(
+        await request(restoredApi, `${conversationPath}/messages`, input.event)
+      );
+    const previousSnapshot = z
+      .object({
+        sessionId: z.string(),
+        snapshot: z.object({
+          outputs: z.array(
+            z.object({ citations: z.array(z.object({ sourceId: z.string() })) })
+          ),
+          runs: z.array(z.object({ runId: z.string() })),
+        }),
+      })
+      .parse(previous);
+    assert.equal(replay.receipt.sessionId, previousSnapshot.sessionId);
+    assert.equal(
+      replay.receipt.runId,
+      previousSnapshot.snapshot.runs[0]?.runId
+    );
+    assert.ok(
+      previousSnapshot.snapshot.outputs.some((output) =>
+        output.citations.some(
+          (citation) => citation.sourceId === input.sourceId
+        )
+      )
+    );
     for (let sample = 0; sample < 3; sample += 1) {
       await delay(1200);
       assert.deepEqual(await request(restoredApi, conversationPath), previous);
-      assert.deepEqual(await fingerprints(target), before);
-      assert.deepEqual(await observations(fixturePort), providerBefore);
+      assert.deepEqual(await fingerprints(restored), before);
+      assert.deepEqual(
+        await provider(`http://localhost:${fixturePort}`),
+        providerBefore,
+        "Cold restore, authorization, and exact replay must cause zero model calls or physical effects"
+      );
     }
     passed = true;
     return {
+      apiOrigin: restoredApi,
       elapsedMs: Math.round(performance.now() - started),
+      fingerprints: before,
+      originalPublicApiOrigin: input.boot.apiUrl,
+      originalPublicWebOrigin: input.boot.webUrl,
       restoredTables: dataTables,
-      restoredVolumes: 7,
+      restoredVolumes: stores,
+      sourceCheckoutDirty: manifest.sourceCheckoutDirty,
+      sourceImages: manifest.images,
       target,
+      testedHead: manifest.release,
     };
   } finally {
     if (passed) {
-      await compose(target, "down", "--volumes");
+      // Each container was checked for the disposable ownership label before removal.
+      await compose("down", "--volumes");
       await rm(tempDirectory, { recursive: true });
     } else {
-      process.stdout.write(
+      process.stderr.write(
         `Restore evidence retained: project ${target}, private snapshot ${directory}.\n`
       );
     }

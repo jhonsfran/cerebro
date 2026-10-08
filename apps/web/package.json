@@ -9,11 +9,9 @@
     "dev:bare": "vite dev"
   },
   "dependencies": {
-    "@ai-sdk/react": "3.0.298",
     "@cerebro/ag-ui": "workspace:*",
     "@cerebro/api": "workspace:*",
     "@cerebro/ui": "workspace:*",
-    "@cloudflare/ai-chat": "0.12.0",
     "@orpc/client": "catalog:",
     "@orpc/server": "catalog:",
     "@orpc/tanstack-query": "^1.15.0",
@@ -27,7 +25,6 @@
     "@tanstack/react-router-ssr-query": "^1.167.2",
     "@tanstack/react-start": "^1.168.49",
     "agents": "0.26.0",
-    "ai": "6.0.296",
     "better-auth": "catalog:",
     "evlog": "catalog:",
     "lucide-react": "catalog:",

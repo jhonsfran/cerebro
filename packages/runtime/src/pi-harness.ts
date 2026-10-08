@@ -33,7 +33,13 @@ import { Cause, Effect, Layer, Queue, Stream } from "effect";
 
 import { sameAddress } from "./event-handler.ts";
 import { pendingRun } from "./pi-projection.ts";
-import { attempt, contractFailure, vendorEffect } from "./runtime-ports.ts";
+import { createProvisionalTextProjection } from "./pi-provisional-text.ts";
+import {
+  attempt,
+  contractFailure,
+  vendorEffect,
+  waitForCaller,
+} from "./runtime-ports.ts";
 
 export type PiContext = Parameters<Harness["root"]>[0];
 export const piContext = (signal?: AbortSignal): PiContext =>
@@ -53,6 +59,9 @@ export interface PiEngineConfiguration {
     readonly DurableHandoff[],
     ContractFailure
   >;
+  readonly prepareInput?: (
+    handoff: DurableHandoff
+  ) => Effect.Effect<string, ContractFailure>;
   readonly content: (
     handoff: DurableHandoff
   ) => Effect.Effect<
@@ -440,6 +449,7 @@ export const createPiExecutionEngine = (
               })
           );
           let activeInputs = stream.snapshot.run?.inputs ?? [];
+          const provisionalText = createProvisionalTextProjection();
           const sendCanonical = async () => {
             const values = await Effect.runPromise(updates(options));
             Queue.offerAllUnsafe(queue, values);
@@ -481,14 +491,11 @@ export const createPiExecutionEngine = (
               ) {
                 await sendMembership();
               }
-              if (event.type === "message_update") {
-                const text = event.changes
-                  .filter((change) => change.type === "text_delta")
-                  .map((change) => ("delta" in change ? change.delta : ""))
-                  .join("");
+              const text = provisionalText(event);
+              if (text) {
                 // A fast first text batch can precede the authoritative snapshot read.
                 const execution = await sendMembership();
-                if (text && execution) {
+                if (execution) {
                   Queue.offerUnsafe(queue, {
                     executionId: execution.executionId,
                     runId: execution.runIds[0],
@@ -503,6 +510,7 @@ export const createPiExecutionEngine = (
           yield* vendorEffect(options, async () => {
             // Pi's attachment atomically captures its snapshot and future event batches.
             await sendCanonical();
+            await sendBatch([stream.snapshot]);
             stream.start(async (events) => {
               try {
                 await sendBatch(events);
@@ -549,10 +557,13 @@ export const createPiExecutionEngine = (
             new InvalidInput({ reason: "Event cannot submit Pi input" })
           );
         }
-        const text =
+        const originalText =
           event.type === "user.message"
             ? event.payload.text
             : event.payload.task;
+        const text = configuration.prepareInput
+          ? yield* waitForCaller(configuration.prepareInput(prior), options)
+          : originalText;
         const receipt = yield* vendorEffect(options, () =>
           submission.mode === "steer"
             ? session.steer(text, { operationId: submission.requestId })

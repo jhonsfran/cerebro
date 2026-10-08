@@ -58,9 +58,23 @@ const projectRun = (
   update: Extract<DomainUpdate, { type: "run" }>
 ): DomainSnapshot => {
   const previous = snapshot.runs.find((run) => run.runId === update.run.runId);
+  const reconciled =
+    previous?.state === "unknown-outcome" &&
+    update.run.state === "running" &&
+    !snapshot.tools.some(
+      (tool) =>
+        tool.runId === previous.runId && tool.state === "unknown-outcome"
+    ) &&
+    snapshot.tools.some(
+      (tool) =>
+        tool.runId === previous.runId &&
+        tool.operationId === previous.operationId &&
+        (tool.state === "succeeded" || tool.state === "failed")
+    );
   if (
     previous &&
     !pendingRun(previous) &&
+    !reconciled &&
     canonicalToolArguments(previous) !== canonicalToolArguments(update.run)
   ) {
     throw new Conflict({

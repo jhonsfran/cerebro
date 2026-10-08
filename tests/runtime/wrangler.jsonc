@@ -7,20 +7,13 @@
     "DATABASE_URL": "postgres://runtime:runtime-local-only@postgres:5432/runtime",
     "DEPLOY_MODE": "fixture",
     "FIXTURE_URL": "http://fixture:8090",
-    "TOOL_EFFECT_MODE": "idempotent",
-    "HOLD_AFTER_EFFECT": "1",
     "FAIL_FIRST_EFFECT": "0",
+    "TRACE_NATIVE": "0",
   },
   "durable_objects": {
-    "bindings": [
-      { "name": "SESSION", "class_name": "SessionAgent" },
-      { "name": "MIGRATION_PROBE", "class_name": "LedgerMigrationProbe" },
-    ],
+    "bindings": [{ "name": "SESSION", "class_name": "SessionAgent" }],
   },
-  "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["SessionAgent"] },
-    { "tag": "v2", "new_sqlite_classes": ["LedgerMigrationProbe"] },
-  ],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionAgent"] }],
   "services": [
     {
       "binding": "TOOL_GATEWAY",

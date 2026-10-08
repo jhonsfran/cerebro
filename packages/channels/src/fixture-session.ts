@@ -4,34 +4,126 @@ import type {
   EventAddress,
   EventEnvelope,
   RunState,
-  SessionService,
+  SessionReceipt,
 } from "@cerebro/contracts";
+import {
+  Conflict,
+  Denied,
+  InvalidInput,
+  NotFound,
+  Unavailable,
+  UnknownOutcome,
+} from "@cerebro/contracts/failures";
+import type { ContractFailure } from "@cerebro/contracts/failures";
+import type { PortResult } from "@cerebro/contracts/port";
+import { DomainSnapshot } from "@cerebro/contracts/session-service";
+import type { SessionService } from "@cerebro/contracts/session-service";
 import type { Database } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import {
-  channelConversation,
+  channelInbox,
   channelEffect,
   channelFixtureRun,
   channelItem,
-  channelReply,
 } from "@cerebro/db/schema/agents";
 import type { ChannelItemBody } from "@cerebro/db/schema/agents";
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
+import { Effect, Schema, Stream } from "effect";
 
-import { authorize, digest, unwrap } from "./security";
+import { authorize, authorizeContent, digest, unwrap } from "./security";
 import { ChannelError, FIXTURE_SOURCE_ID, FIXTURE_TOOL_ID } from "./types";
 import type { ChannelOptions } from "./types";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+const typedResult = <Value>(
+  result: PortResult<Value>
+): Effect.Effect<Value, ContractFailure> => {
+  switch (result.status) {
+    case "ok": {
+      return Effect.succeed(result.value);
+    }
+    case "denied": {
+      return Effect.fail(
+        new Denied({ code: "unauthorized", reason: result.reason })
+      );
+    }
+    case "conflict": {
+      return Effect.fail(
+        new Conflict({ code: result.code, reason: result.reason })
+      );
+    }
+    case "invalid-input": {
+      return Effect.fail(new InvalidInput({ reason: result.reason }));
+    }
+    case "not-found": {
+      return Effect.fail(new NotFound({ resource: result.resource }));
+    }
+    case "unavailable": {
+      return Effect.fail(new Unavailable({ reason: result.reason }));
+    }
+    default: {
+      return Effect.fail(
+        new UnknownOutcome({
+          operationId: result.operationId,
+          reason: result.reason,
+        })
+      );
+    }
+  }
+};
+const fixtureFailure = (cause: unknown): ContractFailure => {
+  if (cause instanceof ChannelError && cause.status === 403) {
+    return new Denied({ code: "unauthorized", reason: cause.message });
+  }
+  return new Unavailable({
+    reason: "The isolated channel fixture is unavailable.",
+  });
+};
+const fixtureEffect = <Value>(
+  operation: () => Promise<Value>
+): Effect.Effect<Value, ContractFailure> =>
+  Effect.tryPromise({ catch: fixtureFailure, try: operation });
 const addressMatches = (event: EventEnvelope, address: EventAddress): boolean =>
   event.organizationId === address.organizationId &&
   event.agentId === address.agentId &&
   event.conversationId === address.conversationId &&
   event.sessionId === address.sessionId;
+const fixtureApprovalState = (
+  run: RunState
+): "pending" | "allowed" | "cancelled" => {
+  if (run.state === "waiting-for-approval") {
+    return "pending";
+  }
+  if (run.state === "completed") {
+    return "allowed";
+  }
+  return "cancelled";
+};
+const fixtureItemKey = (value: ChannelItemBody): string => {
+  switch (value.type) {
+    case "user": {
+      return `user:${value.eventId}`;
+    }
+    case "tool": {
+      return `tool:fixture-tool:${value.runId}`;
+    }
+    case "approval": {
+      return `approval:${value.approvalId}`;
+    }
+    case "output": {
+      return `answer:answer:${value.runId}`;
+    }
+    case "citation": {
+      return `citation:answer:${value.runId}:${value.sourceId}:${value.sourceVersion}`;
+    }
+    default: {
+      return `run:${value.runId}`;
+    }
+  }
+};
 const item = (
   tx: Transaction,
   envelope: EventEnvelope,
-  key: string,
   value: ChannelItemBody
 ) =>
   tx
@@ -39,10 +131,10 @@ const item = (
     .values({
       conversationId: envelope.conversationId,
       item: value,
-      itemKey: `${envelope.sessionId}:${key}`,
+      itemKey: `runtime:${envelope.sessionId}:${fixtureItemKey(value)}`,
       organizationId: envelope.organizationId,
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({ set: { item: value }, target: channelItem.itemKey });
 const complete = async (
   tx: Transaction,
   envelope: EventEnvelope,
@@ -54,19 +146,19 @@ const complete = async (
       ? envelope.event.payload.text
       : "Scheduled fixture request";
   const answer = `Fixture answer for "${text}". The local pilot source describes durable conversation admission.`;
-  await item(tx, envelope, `${runId}:tool:complete`, {
+  await item(tx, envelope, {
     name: "Read pilot source",
     runId,
     state: "succeeded",
     toolId: FIXTURE_TOOL_ID,
     type: "tool",
   });
-  await item(tx, envelope, `${runId}:output`, {
+  await item(tx, envelope, {
     runId,
     text: answer,
     type: "output",
   });
-  await item(tx, envelope, `${runId}:citation`, {
+  await item(tx, envelope, {
     href: `/api/product/conversations/${envelope.conversationId}/sources/${FIXTURE_SOURCE_ID}`,
     runId,
     sourceId: FIXTURE_SOURCE_ID,
@@ -79,28 +171,11 @@ const complete = async (
     runId: id.run(runId),
     state: "completed",
   };
-  await item(tx, envelope, `${runId}:completed`, {
+  await item(tx, envelope, {
     run: state,
     runId,
     type: "run",
   });
-  const [conversation] = await tx
-    .select()
-    .from(channelConversation)
-    .where(eq(channelConversation.conversationId, envelope.conversationId));
-  if (conversation?.kind === "slack") {
-    await tx
-      .insert(channelReply)
-      .values({
-        conversationId: envelope.conversationId,
-        organizationId: envelope.organizationId,
-        replyId: `reply:${runId}`,
-        runId,
-        state: "ready",
-        text: answer,
-      })
-      .onConflictDoNothing();
-  }
   return state;
 };
 
@@ -114,8 +189,11 @@ export const createFixtureSessionService = (
     );
   }
   const now = options.now ?? Date.now;
-  const service: SessionService = {
-    async approve(command, effect) {
+  const fixture = {
+    async approve(
+      command: Parameters<SessionService["approve"]>[0],
+      effect: Parameters<SessionService["approve"]>[1]
+    ): Promise<PortResult<RunState>> {
       const preflight = preflightEffect(effect, now());
       if (preflight.status !== "ok") {
         return preflight;
@@ -154,6 +232,7 @@ export const createFixtureSessionService = (
           );
         const found = rows.find(
           (row) =>
+            row.runId === command.runId &&
             `approval:${row.runId}` === command.approvalId &&
             addressMatches(row.envelope, command.address)
         );
@@ -167,7 +246,25 @@ export const createFixtureSessionService = (
             status: "conflict",
           };
         }
-        const result = await complete(tx, found.envelope, found.runId, now());
+        const result: RunState =
+          command.decision === "allow"
+            ? await complete(tx, found.envelope, found.runId, now())
+            : { endedAt: now(), runId: command.runId, state: "cancelled" };
+        await item(tx, found.envelope, {
+          approvalId: command.approvalId,
+          expiresAt: found.envelope.occurredAt + 60_000,
+          operationId: `fixture-tool:${found.runId}`,
+          runId: found.runId,
+          state: command.decision === "allow" ? "allowed" : "denied",
+          type: "approval",
+        });
+        if (command.decision === "deny") {
+          await item(tx, found.envelope, {
+            run: result,
+            runId: found.runId,
+            type: "run",
+          });
+        }
         await tx
           .update(channelFixtureRun)
           .set({ state: result })
@@ -180,7 +277,10 @@ export const createFixtureSessionService = (
         return { status: "ok", value: result };
       });
     },
-    async cancel(command, effect) {
+    async cancel(
+      command: Parameters<SessionService["cancel"]>[0],
+      effect: Parameters<SessionService["cancel"]>[1]
+    ): Promise<PortResult<RunState>> {
       const preflight = preflightEffect(effect, now());
       if (preflight.status !== "ok") {
         return preflight;
@@ -218,7 +318,11 @@ export const createFixtureSessionService = (
         if (!found || !addressMatches(found.envelope, command.address)) {
           return { resource: "run", status: "not-found" };
         }
-        if (["completed", "failed", "cancelled"].includes(found.state.state)) {
+        if (
+          ["completed", "failed", "cancelled", "unknown-outcome"].includes(
+            found.state.state
+          )
+        ) {
           return {
             code: "already-final",
             reason: "The run is already final.",
@@ -234,7 +338,7 @@ export const createFixtureSessionService = (
           .update(channelFixtureRun)
           .set({ state: result })
           .where(eq(channelFixtureRun.runId, found.runId));
-        await item(tx, found.envelope, `${found.runId}:cancelled`, {
+        await item(tx, found.envelope, {
           run: result,
           runId: found.runId,
           type: "run",
@@ -247,114 +351,10 @@ export const createFixtureSessionService = (
         return { status: "ok", value: result };
       });
     },
-    async inspect(address, context, read) {
-      if (read.signal?.aborted || read.deadlineAt <= now()) {
-        return {
-          code: "deadline-exceeded",
-          reason: "The fixture read deadline passed.",
-          status: "unavailable",
-        };
-      }
-      await authorize(
-        database,
-        options,
-        context,
-        "read",
-        "agent",
-        address.agentId
-      );
-      const runs = await database
-        .select()
-        .from(channelFixtureRun)
-        .where(
-          and(
-            eq(channelFixtureRun.organizationId, address.organizationId),
-            eq(channelFixtureRun.conversationId, address.conversationId)
-          )
-        );
-      const rows = await database
-        .select({ cursor: channelItem.cursor })
-        .from(channelItem)
-        .where(eq(channelItem.conversationId, address.conversationId))
-        .orderBy(asc(channelItem.cursor));
-      return {
-        status: "ok",
-        value: {
-          address,
-          agentVersion: runs[0]?.agentVersion ?? 1,
-          cursor: String(rows.at(-1)?.cursor ?? 0),
-          runs: runs
-            .filter((run) => addressMatches(run.envelope, address))
-            .map((run) => run.state),
-        },
-      };
-    },
-    async *stream(address, context, cursor, read) {
-      const snapshot = await service.inspect(address, context, read);
-      if (snapshot.status !== "ok") {
-        yield snapshot;
-        return;
-      }
-      const offset = cursor === undefined ? 0 : Number(cursor);
-      if (!Number.isSafeInteger(offset) || offset < 0) {
-        yield {
-          reason: "The stream cursor is invalid.",
-          status: "invalid-input",
-        };
-        return;
-      }
-      const rows = await database
-        .select()
-        .from(channelItem)
-        .where(
-          and(
-            eq(channelItem.conversationId, address.conversationId),
-            gt(channelItem.cursor, offset)
-          )
-        )
-        .orderBy(asc(channelItem.cursor));
-      for (const row of rows) {
-        await authorize(
-          database,
-          options,
-          context,
-          "read",
-          "agent",
-          address.agentId
-        );
-        if (row.item.type === "output") {
-          yield {
-            status: "ok",
-            value: {
-              cursor: String(row.cursor),
-              runId: id.run(row.item.runId),
-              text: row.item.text,
-              type: "output",
-            },
-          };
-        } else if (row.item.type === "approval") {
-          yield {
-            status: "ok",
-            value: {
-              approvalId: row.item.approvalId,
-              cursor: String(row.cursor),
-              runId: id.run(row.item.runId),
-              type: "approval",
-            },
-          };
-        } else if (row.item.type === "run") {
-          yield {
-            status: "ok",
-            value: {
-              cursor: String(row.cursor),
-              run: row.item.run,
-              type: "run",
-            },
-          };
-        }
-      }
-    },
-    async submit(command, effect) {
+    async submit(
+      command: Parameters<SessionService["submit"]>[0],
+      effect: Parameters<SessionService["submit"]>[1]
+    ): Promise<PortResult<SessionReceipt>> {
       const preflight = preflightEffect(effect, now());
       if (preflight.status !== "ok") {
         return preflight;
@@ -410,7 +410,7 @@ export const createFixtureSessionService = (
         const requiresApproval =
           envelope.event.type === "user.message" &&
           /\bapproval\b/iu.test(envelope.event.payload.text);
-        await item(tx, envelope, `${runId}:user`, {
+        await item(tx, envelope, {
           eventId: envelope.eventId,
           runId,
           text:
@@ -419,7 +419,7 @@ export const createFixtureSessionService = (
               : "Scheduled fixture request",
           type: "user",
         });
-        await item(tx, envelope, `${runId}:tool:start`, {
+        await item(tx, envelope, {
           name: "Read pilot source",
           runId,
           state: "running",
@@ -429,12 +429,12 @@ export const createFixtureSessionService = (
         let state: RunState;
         if (requiresApproval) {
           state = { runId, state: "waiting-for-approval" };
-          await item(tx, envelope, `${runId}:approval`, {
+          await item(tx, envelope, {
             approvalId: `approval:${runId}`,
             runId,
             type: "approval",
           });
-          await item(tx, envelope, `${runId}:waiting`, {
+          await item(tx, envelope, {
             run: state,
             runId,
             type: "run",
@@ -464,6 +464,192 @@ export const createFixtureSessionService = (
         };
       });
     },
+  };
+  const service: SessionService = {
+    approve: (command, effect) =>
+      Effect.flatMap(
+        fixtureEffect(() => fixture.approve(command, effect)),
+        typedResult
+      ),
+    cancel: (command, effect) =>
+      Effect.flatMap(
+        fixtureEffect(() => fixture.cancel(command, effect)),
+        typedResult
+      ),
+    inspect: (address, context, read) =>
+      fixtureEffect(async () => {
+        if (read.signal?.aborted || read.deadlineAt <= now()) {
+          throw new ChannelError(
+            503,
+            "unavailable",
+            "The fixture read deadline passed."
+          );
+        }
+        await authorize(
+          database,
+          options,
+          context,
+          "read",
+          "agent",
+          address.agentId
+        );
+        const allRuns = await database
+          .select()
+          .from(channelFixtureRun)
+          .where(
+            and(
+              eq(channelFixtureRun.organizationId, address.organizationId),
+              eq(channelFixtureRun.conversationId, address.conversationId)
+            )
+          );
+        const runs = allRuns.filter((run) =>
+          addressMatches(run.envelope, address)
+        );
+        const records = await database
+          .select()
+          .from(channelItem)
+          .where(
+            and(
+              eq(channelItem.organizationId, address.organizationId),
+              eq(channelItem.conversationId, address.conversationId)
+            )
+          )
+          .orderBy(asc(channelItem.cursor));
+        for (const record of records) {
+          await authorizeContent(database, options, context, record.item);
+        }
+        const admissions = await database
+          .select()
+          .from(channelInbox)
+          .where(eq(channelInbox.conversationId, address.conversationId));
+        const modes = new Map(
+          admissions.map((entry) => [
+            entry.envelope.eventId,
+            entry.submissionMode,
+          ])
+        );
+        const dependencies = {
+          sourceIds: [id.source(FIXTURE_SOURCE_ID)],
+          toolIds: [FIXTURE_TOOL_ID],
+        };
+        const tools = new Map(
+          records.flatMap((record) =>
+            record.item.type === "tool"
+              ? [[record.item.runId, record.item] as const]
+              : []
+          )
+        );
+        const approvalStates = new Map(
+          records.flatMap((record) =>
+            record.item.type === "approval"
+              ? [[record.item.runId, record.item.state] as const]
+              : []
+          )
+        );
+        const runStates = new Map(
+          runs.map((run) => [run.runId, run.state.state])
+        );
+        const outputs = records.flatMap((record) =>
+          record.item.type === "output" ? [record.item] : []
+        );
+        return Schema.decodeUnknownSync(DomainSnapshot)({
+          address,
+          agentVersion: runs[0]?.agentVersion ?? 1,
+          approvals: runs
+            .filter(
+              (run) =>
+                run.envelope.event.type === "user.message" &&
+                /\bapproval\b/iu.test(run.envelope.event.payload.text)
+            )
+            .map((run) => ({
+              approvalId: `approval:${run.runId}`,
+              expiresAt: run.envelope.occurredAt + 60_000,
+              operationId: `fixture-tool:${run.runId}`,
+              runId: run.runId,
+              state:
+                approvalStates.get(run.runId) ??
+                fixtureApprovalState(run.state),
+            })),
+          executions: runs.map((run) => ({
+            executionId: `execution:${run.runId}`,
+            runIds: [run.runId],
+          })),
+          outputs: outputs.map((output) => ({
+            answerId: `answer:${output.runId}`,
+            citations: records.flatMap((record) =>
+              record.item.type === "citation" &&
+              record.item.runId === output.runId
+                ? [
+                    {
+                      observedAt: 1,
+                      sourceId: record.item.sourceId,
+                      sourceUri: record.item.href,
+                      sourceVersion: record.item.sourceVersion,
+                    },
+                  ]
+                : []
+            ),
+            dependencies: output.dependencies ?? dependencies,
+            executionId: `execution:${output.runId}`,
+            runId: output.runId,
+            runIds: [output.runId],
+            text: output.text,
+          })),
+          revision: records.at(-1)?.cursor ?? 0,
+          runs: runs.map((run) => run.state),
+          tools: [...tools.values()].map((tool) => ({
+            arguments: {},
+            dependencies: tool.dependencies ?? dependencies,
+            effect: "read",
+            operationId: `fixture-tool:${tool.runId}`,
+            output: tool.output ?? null,
+            runId: tool.runId,
+            state:
+              runStates.get(tool.runId) === "cancelled"
+                ? "cancelled"
+                : tool.state,
+            toolId: tool.toolId,
+            toolVersion: "1",
+          })),
+          userMessages: runs.map((run) => ({
+            eventId: run.eventId,
+            mode: modes.get(run.envelope.eventId) ?? "follow-up",
+            occurredAt: run.envelope.occurredAt,
+            runId: run.runId,
+            text:
+              run.envelope.event.type === "user.message"
+                ? run.envelope.event.payload.text
+                : "Scheduled fixture request",
+          })),
+        });
+      }),
+    reconcile: (command) =>
+      Effect.fail(
+        new UnknownOutcome({
+          operationId: command.operationId,
+          reason:
+            "The channel contract fixture has no provider receipt. Use the native host fixture for reconciliation.",
+        })
+      ),
+    stream: (address, context, request, read) =>
+      Stream.map(
+        Stream.fromEffect(service.inspect(address, context, read)),
+        (snapshot) => ({
+          accessGeneration: request.accessGeneration,
+          address,
+          epoch: crypto.randomUUID(),
+          reason: "attach" as const,
+          schemaVersion: 1 as const,
+          sequence: 0,
+          snapshot,
+          type: "snapshot" as const,
+        })
+      ),
+    submit: (command, effect) =>
+      Effect.flatMap(
+        fixtureEffect(() => fixture.submit(command, effect)),
+        typedResult
+      ),
   };
   return service;
 };

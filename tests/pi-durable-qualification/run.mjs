@@ -14,6 +14,8 @@ const request = JSON.parse(
   await readFile(join(source, "dependency-requests.json"), "utf-8")
 );
 const work = await mkdtemp(join(tmpdir(), "cerebro-s1-0-"));
+const hostEsbuild = join(work, "node_modules/.bin/esbuild");
+const runtimeEsbuild = join(work, "linux-esbuild/package/bin/esbuild");
 const evidence = process.env.S1_0_EVIDENCE_DIR ?? join(work, "evidence");
 await mkdir(evidence, { recursive: true });
 const containers = [];
@@ -45,6 +47,7 @@ const plannedChecks = [
   "TanStack public lifecycle",
   "wrapper worker path without Node imports",
   "native active abort preserves already-queued follow-up",
+  "native active Stop withdraws pending inputs",
   "native durable duplicate submission",
   "native request ID deduplication boundary",
   "native follow-ups run in order",
@@ -59,6 +62,16 @@ const sourceSha = spawnSync("git", ["rev-parse", "HEAD"], {
   cwd: repo,
   encoding: "utf-8",
 }).stdout.trim();
+const sourceCheckoutDirty = Boolean(
+  spawnSync(
+    "git",
+    ["status", "--porcelain", "--", ".", ":(exclude)artifacts/**"],
+    {
+      cwd: repo,
+      encoding: "utf-8",
+    }
+  ).stdout.trim()
+);
 const record = (name, status, details, disposition) => {
   results.push({ details, disposition, name, status });
   process.stdout.write(`${status} ${name}\n`);
@@ -71,7 +84,7 @@ const command = async (name, args, cwd = work) => {
   });
   await writeFile(
     join(evidence, `${name}.txt`),
-    `${result.stdout ?? ""}${result.stderr ?? ""}`
+    `${result.stdout ?? ""}${result.stderr ?? ""}${result.error ? String(result.error) : ""}${result.signal ? `Signal: ${result.signal}` : ""}`
   );
   if (result.status !== 0) {
     throw new Error(`${name}: exit ${result.status}; see ${name}.txt`);
@@ -100,7 +113,7 @@ const start = async (kind, entry) => {
   const project = join(work, kind);
   await mkdir(project);
   await command(`${kind}-bundle`, [
-    join(work, "node_modules/@esbuild/linux-x64/bin/esbuild"),
+    hostEsbuild,
     join(work, entry),
     "--bundle",
     "--format=esm",
@@ -134,7 +147,7 @@ const start = async (kind, entry) => {
     "--mount",
     `type=bind,src=${project},dst=/proof`,
     "--mount",
-    `type=bind,src=${work}/node_modules/@esbuild/linux-x64/bin/esbuild,dst=/esbuild,readonly`,
+    `type=bind,src=${runtimeEsbuild},dst=/esbuild,readonly`,
     "-w",
     "/proof",
     "-e",
@@ -143,6 +156,8 @@ const start = async (kind, entry) => {
     "CELLD_TELEMETRY=0",
     "-e",
     "CELLD_IDLE_EVICT_S=2",
+    "-e",
+    "CELLD_WAKER_TICK_MS=1000",
     "-p",
     "127.0.0.1::9876",
     request.hostImage,
@@ -194,6 +209,75 @@ try {
     "--cache",
     process.env.S1_0_NPM_CACHE ?? join(work, "npm-cache"),
   ]);
+  await command("host-image-pull", ["docker", "pull", request.hostImage]);
+  const [hostImage] = JSON.parse(
+    await command("host-image", [
+      "docker",
+      "image",
+      "inspect",
+      request.hostImage,
+    ])
+  );
+  assert.equal(hostImage.Os, "linux");
+  const architecture = { amd64: "x64", arm64: "arm64" }[hostImage.Architecture];
+  assert.ok(
+    architecture,
+    "The selected celld image requires a supported Linux architecture"
+  );
+  const [bundler] = JSON.parse(
+    await command("runtime-esbuild-package", [
+      "npm",
+      "pack",
+      `@esbuild/linux-${architecture}@${request.pins.esbuild}`,
+      "--ignore-scripts",
+      "--json",
+      "--pack-destination",
+      work,
+    ])
+  );
+  const lockedRuntimeBundler = JSON.parse(
+    await readFile(join(work, "package-lock.json"), "utf-8")
+  ).packages[`node_modules/@esbuild/linux-${architecture}`];
+  assert.equal(bundler.version, lockedRuntimeBundler.version);
+  assert.equal(bundler.version, request.pins.esbuild);
+  assert.equal(bundler.integrity, lockedRuntimeBundler.integrity);
+  assert.equal(
+    `sha512-${createHash("sha512")
+      .update(await readFile(join(work, bundler.filename)))
+      .digest("base64")}`,
+    lockedRuntimeBundler.integrity
+  );
+  const runtimeBundlerDirectory = join(work, "linux-esbuild");
+  await mkdir(runtimeBundlerDirectory);
+  await command("runtime-esbuild-unpack", [
+    "tar",
+    "-xzf",
+    join(work, bundler.filename),
+    "-C",
+    runtimeBundlerDirectory,
+  ]);
+  await writeFile(
+    join(evidence, "runtime-bundler.json"),
+    `${JSON.stringify(
+      {
+        binarySha256: createHash("sha256")
+          .update(await readFile(runtimeEsbuild))
+          .digest("hex"),
+        hostImage: {
+          architecture: hostImage.Architecture,
+          id: hostImage.Id,
+          os: hostImage.Os,
+        },
+        package: {
+          integrity: bundler.integrity,
+          name: bundler.name,
+          version: bundler.version,
+        },
+      },
+      null,
+      2
+    )}\n`
+  );
   const lock = JSON.parse(
     await readFile(join(work, "package-lock.json"), "utf-8")
   );
@@ -263,7 +347,7 @@ try {
   record(
     "proposed Effect contract fakes",
     "PASS",
-    "Fifteen focused tests on Effect 4; no durability inference"
+    "Focused contract tests on Effect 4; no durability inference"
   );
   await command("proposed-types", [
     join(work, "node_modules/.bin/tsc"),
@@ -304,21 +388,44 @@ try {
     "hydrate/joinRun and ChatClient.attach/detach; zero submit; headless only"
   );
   const strictBundle = spawnSync(
-    join(work, "node_modules/@esbuild/linux-x64/bin/esbuild"),
+    hostEsbuild,
     [
       "wrapper-worker.mjs",
       "--bundle",
       "--format=esm",
       "--platform=browser",
       "--external:cloudflare:workers",
+      "--log-limit=0",
       `--outfile=${work}/strict-wrapper.mjs`,
     ],
     { cwd: work, encoding: "utf-8" }
   );
   await writeFile(
     join(evidence, "wrapper-strict-browser-bundle.txt"),
-    `${strictBundle.stdout ?? ""}${strictBundle.stderr ?? ""}`
+    `${strictBundle.stdout ?? ""}${strictBundle.stderr ?? ""}${strictBundle.error ? String(strictBundle.error) : ""}${strictBundle.signal ? `Signal: ${strictBundle.signal}` : ""}`
   );
+  assert.equal(strictBundle.error, undefined, "Strict bundler failed to start");
+  assert.equal(strictBundle.signal, null, "Strict bundler was terminated");
+  assert.notEqual(
+    strictBundle.status,
+    null,
+    "Strict bundler has no exit status"
+  );
+  if (strictBundle.status !== 0) {
+    const diagnostics = [
+      ...strictBundle.stderr.matchAll(/\[ERROR\] (?<message>[^\n]+)/gu),
+    ].map((match) => match.groups.message);
+    assert.ok(diagnostics.length > 0);
+    assert.ok(
+      diagnostics.every((message) =>
+        [
+          'Could not resolve "node:async_hooks"',
+          'Could not resolve "node:diagnostics_channel"',
+        ].includes(message)
+      ),
+      "Strict bundle failed beyond the approved Node compatibility deviation"
+    );
+  }
   record(
     "wrapper worker path without Node imports",
     strictBundle.status === 0 ? "PASS" : "FAIL",
@@ -361,6 +468,17 @@ try {
     },
     "operator-approved-semantics-change"
   );
+  const abortedA = await probe("abort-scope", "/wait?requestId=run-A");
+  const withdrawnB = await probe("abort-scope", "/wait?requestId=run-B");
+  assert.equal(abortedA.status, "unanswered");
+  assert.equal(abortedA.reason, "aborted");
+  assert.equal(withdrawnB.status, "unanswered");
+  assert.equal(withdrawnB.reason, "aborted");
+  assert.deepEqual(abortAfter, []);
+  record("native active Stop withdraws pending inputs", "PASS", {
+    abortedA,
+    withdrawnB,
+  });
 
   const first = await probe("duplicate", "/submit", {
     requestId: "run-A",
@@ -601,7 +719,18 @@ try {
     record(
       name,
       "NOT_RUN",
-      "Deferred by operator: continue with official wrapper, retain this as a TODO; no pass claimed"
+      pendingCases.includes(name)
+        ? {
+            note: "Transferred acceptance check; not executed by this public-wrapper runner",
+            owner: "S1-F coordinator",
+            suites: [
+              "tests/runtime",
+              "tests/policy/runtime",
+              "tests/channels/native",
+              "tests/slice-1",
+            ],
+          }
+        : "Required runner check did not execute; no pass claimed"
     );
   }
   for (const name of containers) {
@@ -618,14 +747,38 @@ try {
   const lockHash = createHash("sha256")
     .update(await readFile(join(source, "evidence/isolated-install-lock.json")))
     .digest("hex");
+  const acceptedHistoricalFailures = new Map([
+    ["wrapper worker path without Node imports", "accepted-deviation"],
+    [
+      "native active abort preserves already-queued follow-up",
+      "operator-approved-semantics-change",
+    ],
+  ]);
+  const executedScopePassed =
+    plannedChecks
+      .filter((name) => !pendingCases.includes(name))
+      .every((name) =>
+        results.some(
+          (result) =>
+            result.name === name &&
+            (result.status === "PASS" ||
+              (result.status === "FAIL" &&
+                acceptedHistoricalFailures.has(name) &&
+                result.disposition === acceptedHistoricalFailures.get(name)))
+        )
+      ) &&
+    results.every(
+      (result) =>
+        result.status === "PASS" ||
+        (result.status === "NOT_RUN" && pendingCases.includes(result.name)) ||
+        (result.status === "FAIL" &&
+          acceptedHistoricalFailures.has(result.name) &&
+          result.disposition === acceptedHistoricalFailures.get(result.name))
+    );
   await writeFile(
     join(evidence, "qualification.json"),
-    `${JSON.stringify({ contractStatus: "ready for coordinator review; qualification incomplete", hostImage: request.hostImage, lockSha256: lockHash, mode: "celld dev with persistent local storage and nodejs_compat; not production bucket", results, selectedImplementation: "official PiHarness + Lifecycle; native inbox, steering and stop; thin Effect adapter", sourceSha }, null, 2)}\n`
+    `${JSON.stringify({ contractStatus: "ready for coordinator review; qualification incomplete", executedScope: executedScopePassed ? "PASS" : "FAIL", finalAcceptance: "NOT_EVALUATED", hostImage: request.hostImage, lockSha256: lockHash, mode: "celld dev with persistent local storage and nodejs_compat; not production bucket", qualificationStatus: "INCOMPLETE", results, selectedImplementation: "official PiHarness + Lifecycle; native inbox, steering and stop; thin Effect adapter", sourceCheckoutDirty, sourceSha }, null, 2)}\n`
   );
   process.stdout.write(`Evidence: ${evidence}\n`);
-  process.exitCode = results.some(
-    (result) => result.status === "FAIL" || result.status === "NOT_RUN"
-  )
-    ? 1
-    : 0;
+  process.exitCode = executedScopePassed ? 0 : 1;
 }

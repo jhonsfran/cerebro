@@ -16,10 +16,38 @@ export const handleApprovalRequest = (
   }
   if (path[2] === "approvals" && path[3] && path.length === 4) {
     const input = parseInput(
-      z.object({ operationId: z.string().min(1).max(256) }),
+      z.strictObject({
+        decision: z.enum(["allow", "deny"]),
+        operationId: z.string().min(1).max(256),
+        runId: z.string().min(1).max(256),
+      }),
       body
     );
-    return service.approve(userId, conversationId, path[3], input.operationId);
+    return service.approve(
+      userId,
+      conversationId,
+      path[3],
+      input.operationId,
+      input.runId,
+      input.decision
+    );
+  }
+  if (
+    path[2] === "runs" &&
+    path[3] &&
+    path[4] === "reconcile" &&
+    path.length === 5
+  ) {
+    const input = parseInput(
+      z.strictObject({ operationId: z.string().min(1).max(512) }),
+      body
+    );
+    return service.reconcile(
+      userId,
+      conversationId,
+      path[3],
+      input.operationId
+    );
   }
   if (
     path[2] === "runs" &&
@@ -28,7 +56,7 @@ export const handleApprovalRequest = (
     path.length === 5
   ) {
     const input = parseInput(
-      z.object({ operationId: z.string().min(1).max(256) }),
+      z.strictObject({ operationId: z.string().min(1).max(256) }),
       body
     );
     return service.cancel(userId, conversationId, path[3], input.operationId);

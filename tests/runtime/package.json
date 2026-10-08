@@ -3,21 +3,21 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@cloudflare/ai-chat": "0.12.0",
-    "@opencode-ai/sdk": "0.0.0-dev-18697",
-    "agents": "0.24.0",
-    "ai": "6.0.296",
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/pi-durable": "1.0.4",
+    "agents": "0.26.0",
     "aws4fetch": "1.0.20",
     "better-auth": "1.7.6",
     "drizzle-orm": "0.45.3",
+    "effect": "4.0.1",
     "hono": "4.13.10",
     "postgres": "3.4.9",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260927.1",
-    "@types/node": "26.6.3",
+    "@types/node": "26.6.4",
     "esbuild": "0.28.2",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   }
 }

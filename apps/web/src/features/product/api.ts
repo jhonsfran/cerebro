@@ -43,8 +43,7 @@ export const cacheKey = (
 export const request = async <Value>(
   path: string,
   schema: z.ZodType<Value>,
-  init?: RequestInit,
-  access: "required" | "optional-budget" = "required"
+  init?: RequestInit
 ): Promise<Value> => {
   const generation = currentAccessGeneration();
   const response = await fetch(apiUrl(path), {
@@ -52,15 +51,12 @@ export const request = async <Value>(
     credentials: "include",
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
+  if (generation !== currentAccessGeneration()) {
+    await response.body?.cancel();
+    assertCurrentAccess(generation);
+  }
   if (!response.ok) {
-    const optionalBudgetDenial =
-      response.status === 403 &&
-      access === "optional-budget" &&
-      path === "/api/product/budget";
-    if (
-      response.status === 401 ||
-      (response.status === 403 && !optionalBudgetDenial)
-    ) {
+    if (response.status === 401 || response.status === 403) {
       clearProductCache();
     }
     let message = `The request failed (${response.status}).`;

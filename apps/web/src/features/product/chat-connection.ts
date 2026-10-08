@@ -4,6 +4,7 @@ import type { ObservationConnectionStatus } from "@cerebro/ag-ui/client";
 import { projectionMessages } from "@cerebro/ag-ui/projection";
 import type { ConversationProjection } from "@cerebro/ag-ui/projection";
 import { useEffect, useState } from "react";
+import { z } from "zod";
 
 import {
   apiUrl,
@@ -98,6 +99,23 @@ export const sendRunCommand = (
   body: { runId: string; decision?: "allow" | "deny" }
 ) => mutate(`${path}/${suffix}`, { ...body, operationId }, stateMutationSchema);
 
+export const reconcileRunCommand = (
+  path: string,
+  runId: string,
+  operationId: string
+) =>
+  mutate(
+    `${path}/runs/${encodeURIComponent(runId)}/reconcile`,
+    { operationId },
+    z.object({
+      tool: z.object({
+        operationId: z.string(),
+        runId: z.string(),
+        state: z.enum(["succeeded", "failed"]),
+      }),
+    })
+  );
+
 export const useConversationConnection = (
   conversation: Conversation | null,
   path: string,
@@ -107,7 +125,7 @@ export const useConversationConnection = (
     null
   );
   const [connection, setConnection] =
-    useState<ObservationConnectionStatus>("connecting");
+    useState<ObservationConnectionStatus>("disconnected");
   const [error, setError] = useState("");
   const agentId = conversation?.agentId;
   const conversationId = conversation?.conversationId;
@@ -139,7 +157,7 @@ export const useConversationConnection = (
     };
   }, [agentId, conversationId, sessionId, connected, path]);
   return {
-    connection,
+    connection: connected ? connection : ("disconnected" as const),
     error,
     messages: projectionMessages(projection),
     projection,

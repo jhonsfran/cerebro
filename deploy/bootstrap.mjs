@@ -10,6 +10,7 @@ import postgres from "postgres";
 
 import { parseRuntimeConfiguration } from "../apps/server/src/runtime-configuration.ts";
 import { parseEnterpriseIdentityJSON } from "../packages/auth/src/enterprise.ts";
+import { fixtureRuntimeConfiguration } from "./fixture-runtime.ts";
 
 const directory = process.env.CEREBRO_SECRETS_DIR ?? "/run/cerebro-secrets";
 const mode = process.env.DEPLOY_MODE ?? "local";
@@ -30,6 +31,9 @@ const postgresPassword = postgresPasswordFile.trim();
 const minioPassword = minioPasswordFile.trim();
 const localDatabaseUrl = `postgres://cerebro:${encodeURIComponent(postgresPassword)}@postgres:5432/cerebro`;
 const databaseUrl = process.env.CEREBRO_DATABASE_URL || localDatabaseUrl;
+if (mode === "fixture" && databaseUrl !== localDatabaseUrl) {
+  throw new Error("Fixture bootstrap requires the isolated project database.");
+}
 const authUrl = process.env.CEREBRO_PUBLIC_API_URL ?? "http://localhost:18765";
 const webUrl = process.env.CEREBRO_PUBLIC_WEB_URL ?? "http://localhost:3001";
 let enterpriseIdentityJson;
@@ -89,10 +93,13 @@ const organizationId =
   channelConfig?.organizationId ??
   enterpriseIdentity?.organizationId ??
   "local-company";
-const runtimeConfiguration = parseRuntimeConfiguration(
-  await readFile(path.join(directory, "runtime.json"), "utf-8"),
-  mode
-);
+const runtimeConfiguration =
+  mode === "fixture"
+    ? fixtureRuntimeConfiguration(minioPassword)
+    : parseRuntimeConfiguration(
+        await readFile(path.join(directory, "runtime.json"), "utf-8"),
+        mode
+      );
 const runtimeConfigurationJson = JSON.stringify(runtimeConfiguration);
 
 const aws = new AwsClient({

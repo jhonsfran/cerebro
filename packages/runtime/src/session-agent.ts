@@ -1,4 +1,4 @@
-import type { AuthorityService } from "@cerebro/contracts/authority-service";
+import { AuthorityService } from "@cerebro/contracts/authority-service";
 import type { EventAddress } from "@cerebro/contracts/events";
 import type { DurableHandoff } from "@cerebro/contracts/execution";
 import {
@@ -33,17 +33,28 @@ import { Harness, createRegistry } from "@earendil-works/pi-durable";
 import type { Storage } from "@earendil-works/pi-durable";
 import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
+import type {
+  LifecycleJobContext,
+  LifecycleJobOutcome,
+} from "agents/lifecycle";
 import { DurableObject } from "cloudflare:workers";
-import { Effect, Exit, Result, Scope, Stream } from "effect";
+import { Context, Effect, Exit, Layer, Result, Scope, Stream } from "effect";
 
+import { drainAuditProjection } from "./audit-projection.ts";
+import type { AuditProjection } from "./audit-projection.ts";
 import { createCelldSessionStore } from "./celld-session-store.ts";
-import { createPiExecutionEngine, modelAuthority } from "./pi-harness.ts";
+import {
+  createPiExecutionEngine,
+  modelAuthority,
+  piContext,
+} from "./pi-harness.ts";
 import { createControlledProvider } from "./pi-provider.ts";
 import type { ControlledProviderConfiguration } from "./pi-provider.ts";
 import { createPiTools } from "./pi-tools.ts";
 import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
 import { attempt, checkOptions } from "./runtime-ports.ts";
-import { createSessionService } from "./session-service.ts";
+import type { HostCheckpoint } from "./runtime-ports.ts";
+import { SessionCoordinator, sessionServiceLayer } from "./session-service.ts";
 
 export type SessionEnvironment = Readonly<Record<string, unknown>>;
 export interface SessionHostConfiguration {
@@ -52,11 +63,18 @@ export interface SessionHostConfiguration {
   readonly authority: AuthorityService;
   readonly executor: ToolExecutor;
   readonly receipts: ToolReceiptStore;
+  readonly checkpoint?: HostCheckpoint;
+  readonly projectAudit?: (
+    event: AuditProjection
+  ) => Effect.Effect<void, ContractFailure>;
   readonly provider: Omit<ControlledProviderConfiguration, "authorize">;
   readonly tools: readonly PiRegisteredTool[];
   readonly authenticate: (
     request: Request
   ) => Effect.Effect<ExecutionContext, ContractFailure>;
+  readonly prepareInput?: (
+    handoff: DurableHandoff
+  ) => Effect.Effect<string, ContractFailure>;
   readonly content: (
     handoff: DurableHandoff
   ) => Effect.Effect<
@@ -76,6 +94,11 @@ const validApproval = (command: ApprovalCommand): boolean =>
   typeof command?.approvalId === "string" &&
   typeof command.runId === "string" &&
   (command.decision === "allow" || command.decision === "deny");
+const validReconciliation = (command: {
+  readonly runId?: string;
+  readonly operationId?: string;
+}): command is { readonly runId: string; readonly operationId: string } =>
+  typeof command?.runId === "string" && typeof command.operationId === "string";
 const requestOptions = (value: unknown): EffectOptions => {
   const supplied = value as Partial<EffectOptions> | undefined;
   if (
@@ -105,6 +128,7 @@ export class SessionAgent<
 > extends DurableObject<Environment> {
   private readonly hostScope = Scope.makeUnsafe();
   private piStorage: Storage | undefined;
+  private auditWork: Promise<void> | undefined;
   private initialized:
     | Promise<
         Effect.Success<ReturnType<SessionAgent<Environment>["initialize"]>>
@@ -143,7 +167,16 @@ export class SessionAgent<
           },
         },
       });
-      this.ctx.waitUntil(Effect.runPromise(runtime.recover()));
+      this.ctx.waitUntil(
+        (async () => {
+          try {
+            await Effect.runPromise(runtime.recover());
+          } finally {
+            const root = await pi.root(context);
+            await root.waitForIdle(context);
+          }
+        })()
+      );
       return pi;
     },
   });
@@ -162,31 +195,49 @@ export class SessionAgent<
   private initialize() {
     return Effect.gen({ self: this }, function* initializeHost() {
       const configuration = yield* this.configure();
+      const authorizeMetadata = (
+        context: ExecutionContext,
+        options: ReadOptions
+      ) =>
+        configuration.authority
+          .require(
+            {
+              action: "read",
+              address: configuration.address,
+              context,
+              pinnedAgent: configuration.agent,
+              resource: {
+                id: configuration.address.agentId,
+                kind: "agent",
+                organizationId: configuration.address.organizationId,
+              },
+            },
+            options
+          )
+          .pipe(Effect.asVoid);
       const store = createCelldSessionStore(this.ctx.storage, {
         address: configuration.address,
         agent: configuration.agent,
         authorize: (context, dependencies, options) =>
           Effect.gen(function* authorizeProjection() {
-            yield* configuration.authority.require(
-              {
-                action: "read",
-                address: configuration.address,
-                context,
-                pinnedAgent: configuration.agent,
-                resource: {
-                  id: configuration.address.agentId,
-                  kind: "agent",
-                  organizationId: configuration.address.organizationId,
-                },
-              },
-              options
-            );
+            yield* authorizeMetadata(context, options);
             yield* configuration.checkDependencies(
               context,
               dependencies,
               options
             );
           }),
+        authorizeMetadata,
+        onCommit: configuration.projectAudit
+          ? () =>
+              Effect.tryPromise({
+                catch: () =>
+                  new Unavailable({
+                    reason: "Audit retry could not be persisted",
+                  }),
+                try: () => this.scheduleAudit(),
+              })
+          : undefined,
       });
       if (
         canonicalToolArguments(store.pinnedAgent()) !==
@@ -206,6 +257,7 @@ export class SessionAgent<
         handoffs: () =>
           store.service.recover(configuration.address, hostOptions()),
         harness: this.harness,
+        prepareInput: configuration.prepareInput,
         snapshot: store.domain,
         storage: () => {
           if (!this.piStorage) {
@@ -216,11 +268,29 @@ export class SessionAgent<
           return this.piStorage;
         },
       });
-      const runtime = yield* createSessionService({
-        ...configuration,
-        engine: engine.service,
-        store: store.service,
-      });
+      const services = yield* Layer.buildWithScope(
+        sessionServiceLayer({
+          ...configuration,
+          retainDurableWork: (completion) => {
+            this.ctx.waitUntil(
+              (async () => {
+                await completion;
+                await this.retainNativeWork();
+              })()
+            );
+          },
+        }).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              engine.layer,
+              store.layer,
+              Layer.succeed(AuthorityService, configuration.authority)
+            )
+          )
+        ),
+        this.hostScope
+      );
+      const runtime = Context.get(services, SessionCoordinator);
       const resolve = (runId?: RunId) =>
         Effect.gen(function* resolveToolRun() {
           const values = yield* store.service.recover(
@@ -356,11 +426,94 @@ export class SessionAgent<
     return this.initialized;
   }
 
+  private async scheduleAudit(): Promise<void> {
+    await this.lifecycle.jobs.push({
+      fn: "cerebro-audit",
+      id: "cerebro-audit",
+      recoveryLoop: true,
+      singleflight: true,
+      time: Date.now() + 1000,
+    });
+    await this.ctx.storage.sync();
+    this.ctx.waitUntil(
+      (async () => {
+        try {
+          await this.drainAudit();
+        } catch {
+          // The persisted Lifecycle job retries the retained outbox.
+        }
+      })()
+    );
+  }
+
+  private drainAudit(): Promise<void> {
+    this.auditWork ??= (async () => {
+      try {
+        const runtime = await this.ready();
+        if (!runtime.configuration.projectAudit) {
+          return;
+        }
+        await Effect.runPromise(
+          drainAuditProjection(
+            runtime.configuration.address,
+            runtime.store,
+            runtime.configuration.projectAudit,
+            1
+          )
+        );
+      } finally {
+        this.auditWork = undefined;
+      }
+    })();
+    return this.auditWork;
+  }
+
+  async onStart(): Promise<void> {
+    const runtime = await this.ready();
+    if (runtime.configuration.projectAudit && runtime.store.outbox().length) {
+      await this.scheduleAudit();
+    }
+  }
+
+  async onJob({ job }: LifecycleJobContext): Promise<LifecycleJobOutcome> {
+    if (job.fn !== "cerebro-audit") {
+      return;
+    }
+    try {
+      await this.drainAudit();
+      const runtime = await this.ready();
+      if (runtime.store.outbox().length) {
+        return { rescheduleAt: Date.now() + 1000 };
+      }
+    } catch {
+      return { rescheduleAt: Date.now() + 5000 };
+    }
+  }
+
+  protected async observerCount(): Promise<number> {
+    const runtime = await this.ready();
+    return runtime.store.observerCount();
+  }
+
   // Called by the coordinator's host startup hook. Official Lifecycle resumes Pi;
   // this only repairs Cerebro command markers and product projection.
   async recover(): Promise<void> {
     const runtime = await this.ready();
-    await Effect.runPromise(runtime.recover());
+    try {
+      await Effect.runPromise(runtime.recover());
+    } finally {
+      this.ctx.waitUntil(this.retainNativeWork());
+    }
+  }
+
+  private async retainNativeWork(): Promise<void> {
+    if (!this.piStorage) {
+      return;
+    }
+    const pi = await this.harness.pi();
+    const context = piContext();
+    const root = await pi.root(context);
+    await root.waitForIdle(context);
   }
 
   async dispose(): Promise<void> {
@@ -465,6 +618,29 @@ export class SessionAgent<
                   context,
                   runId: id.run(command.runId),
                   type: "cancel",
+                },
+                options
+              ),
+            });
+          }
+          if (path === "/reconcile") {
+            const command = body.command as {
+              readonly runId?: string;
+              readonly operationId?: string;
+            };
+            if (!validReconciliation(command)) {
+              return yield* Effect.fail(
+                new InvalidInput({ reason: "Invalid reconciliation" })
+              );
+            }
+            return Response.json({
+              status: "ok",
+              value: yield* runtime.service.reconcile(
+                {
+                  address,
+                  context,
+                  operationId: id.operation(command.operationId),
+                  runId: id.run(command.runId),
                 },
                 options
               ),

@@ -86,10 +86,13 @@ try {
     "bun",
     [
       "test",
+      "--timeout",
+      "30000",
       "tests/channels/web.test.ts",
       "tests/channels/production.test.ts",
       "tests/channels/slack.test.ts",
       "tests/channels/ui.test.ts",
+      "tests/channels/conversation.test.ts",
     ],
     {
       env: { ...process.env, CHANNEL_TEST_DATABASE_URL: databaseUrl },

@@ -1,15 +1,19 @@
 import { id } from "@cerebro/contracts/identity";
-import type { Approval, ToolExecution } from "@cerebro/contracts/tools";
-import { createCapabilitySigner } from "@cerebro/tools/capability";
+import type { ToolExecution } from "@cerebro/contracts/tools";
+import {
+  boundCapabilitySchema,
+  createCapabilitySigner,
+} from "@cerebro/tools/capability";
 import { createMcpGateway } from "@cerebro/tools/mcp-gateway";
-import { Agent } from "agents";
+import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 
 import { DurableOperationJournal } from "../../fixtures/journal-core.ts";
 import { DoDatabase } from "./do-database.ts";
 import {
   audience,
-  authorizationPolicy,
+  createAuthorizationPolicy,
+  gatewayProof,
   context,
   entitlementPolicy,
   organizationId,
@@ -19,7 +23,21 @@ import {
 } from "./shared.ts";
 import type { Environment } from "./shared.ts";
 
-export class GatewayJournal extends Agent<Environment> {
+export class GatewayJournal extends DurableObject<Environment> {
+  private enabled(): boolean {
+    this.ctx.storage.sql.exec(
+      "CREATE TABLE IF NOT EXISTS policy_authority(id INTEGER PRIMARY KEY, enabled INTEGER NOT NULL)"
+    );
+    this.ctx.storage.sql.exec(
+      "INSERT OR IGNORE INTO policy_authority VALUES(1,1)"
+    );
+    const [row] = this.ctx.storage.sql
+      .exec<{ enabled: number }>(
+        "SELECT enabled FROM policy_authority WHERE id=1"
+      )
+      .toArray();
+    return row?.enabled === 1;
+  }
   private journal(): DurableOperationJournal<ToolExecution> {
     return new DurableOperationJournal(
       new DoDatabase(this.ctx.storage),
@@ -30,7 +48,7 @@ export class GatewayJournal extends Agent<Environment> {
     return createMcpGateway({
       approvals: this.journal(),
       audience,
-      authorizationPolicy,
+      authorizationPolicy: createAuthorizationPolicy(() => this.enabled()),
       credentials: (company, connector) =>
         Promise.resolve(
           company === organizationId && connector === "s4-connector"
@@ -58,10 +76,58 @@ export class GatewayJournal extends Agent<Environment> {
       signer: await createCapabilitySigner(signerSecret),
     });
   }
-  async onRequest(request: Request): Promise<Response> {
+  override async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if (
+      ["/approve", "/reconcile", "/authority", "/access", "/journal"].includes(
+        path
+      ) &&
+      request.headers.get("x-fixture-private-proof") !== gatewayProof
+    ) {
+      return Response.json(
+        {
+          code: "unauthorized",
+          reason: "Private gateway control proof required",
+          status: "denied",
+        },
+        { status: 403 }
+      );
+    }
+    if (path === "/authority") {
+      return Response.json({ enabled: this.enabled() });
+    }
+    if (path === "/access") {
+      const input = z
+        .strictObject({ enabled: z.boolean() })
+        .parse(await request.json());
+      this.enabled();
+      this.ctx.storage.sql.exec(
+        "UPDATE policy_authority SET enabled=? WHERE id=1",
+        input.enabled ? 1 : 0
+      );
+      await this.ctx.storage.sync();
+      return Response.json(input);
+    }
+    if (path === "/journal") {
+      const input = z
+        .strictObject({ operationId: z.string() })
+        .parse(await request.json());
+      return Response.json(
+        await this.journal().read(
+          organizationId,
+          id.operation(input.operationId),
+          { deadlineAt: Date.now() + 30_000 }
+        )
+      );
+    }
     if (path === "/approve") {
-      this.journal().putApproval((await request.json()) as Approval);
+      const approval = boundCapabilitySchema
+        .extend({
+          approverId: z.string().transform(id.principal),
+          id: z.string(),
+        })
+        .parse(await request.json());
+      this.journal().putApproval(approval);
       await this.ctx.storage.sync();
       return Response.json({ ok: true });
     }

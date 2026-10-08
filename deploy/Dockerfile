@@ -28,15 +28,29 @@ RUN --mount=type=secret,id=proxy_ca \
     if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
     npm install --global pnpm@11.9.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json ./
+COPY apps/server/package.json ./apps/server/package.json
+COPY apps/web/package.json ./apps/web/package.json
+COPY packages/ag-ui/package.json ./packages/ag-ui/package.json
+COPY packages/api/package.json ./packages/api/package.json
+COPY packages/auth/package.json ./packages/auth/package.json
+COPY packages/authorization/package.json ./packages/authorization/package.json
+COPY packages/channels/package.json ./packages/channels/package.json
+COPY packages/config/package.json ./packages/config/package.json
+COPY packages/contracts/package.json ./packages/contracts/package.json
+COPY packages/db/package.json ./packages/db/package.json
+COPY packages/memory/package.json ./packages/memory/package.json
+COPY packages/policy/package.json ./packages/policy/package.json
+COPY packages/runtime/package.json ./packages/runtime/package.json
+COPY packages/tools/package.json ./packages/tools/package.json
+COPY packages/ui/package.json ./packages/ui/package.json
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
+    pnpm install --frozen-lockfile
 COPY apps ./apps
 COPY packages ./packages
 COPY deploy ./deploy
 COPY tests/slice-1 ./tests/slice-1
-RUN --mount=type=secret,id=proxy_ca \
-    if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
-    pnpm install --frozen-lockfile
 ENV PATH="/app/node_modules/.bin:${PATH}"
-RUN node deploy/patch-dependencies.mjs
 ARG VITE_SERVER_URL=http://localhost:18765
 ENV VITE_SERVER_URL=${VITE_SERVER_URL}
 RUN pnpm build

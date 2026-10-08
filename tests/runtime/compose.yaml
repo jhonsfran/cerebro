@@ -43,9 +43,11 @@ services:
       retries: 30
   fixture:
     <<: *runtime
-    command: [node, tests/runtime/provider.ts]
+    command: [node, tests/runtime/fixture-provider.mjs]
     environment:
       FIXTURE_DATA_DIR: /fixture-data
+      FIXTURE_ID: ${COMPOSE_PROJECT_NAME:-cerebro-runtime}
+      FIXTURE_SHA: ${RUNTIME_SOURCE_SHA:-dirty-checkout}
     volumes:
       - fixture:/fixture-data
     ports:
@@ -69,9 +71,8 @@ services:
       AWS_ACCESS_KEY_ID: runtime
       AWS_SECRET_ACCESS_KEY: runtime-local-only-storage-secret
       AWS_REGION: us-east-1
-      RUNTIME_EFFECT_MODE: ${RUNTIME_EFFECT_MODE:-idempotent}
-      RUNTIME_HOLD_AFTER_EFFECT: ${RUNTIME_HOLD_AFTER_EFFECT:-1}
       RUNTIME_FAIL_FIRST_EFFECT: ${RUNTIME_FAIL_FIRST_EFFECT:-0}
+      RUNTIME_TRACE_NATIVE: ${RUNTIME_TRACE_NATIVE:-0}
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,6 +105,7 @@ services:
       CELLD_V8_HEAP_LIMIT_MB: "256"
       CELLD_IDLE_EVICT_S: "10"
       CELLD_MAX_RESIDENT_CELLS: "16"
+      CELLD_WAKER_TICK_MS: "1000"
     ports:
       - "127.0.0.1:${RUNTIME_API_PORT:-18865}:8080"
     volumes:

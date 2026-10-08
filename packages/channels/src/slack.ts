@@ -205,7 +205,7 @@ export const receiveSlackEvent = async (
     link.principalId
   );
   const rootTimestamp = event.thread_ts ?? event.ts;
-  const bindingKey = `slack:${await digest({ agentId: configuration.agentId, channelId: event.channel, organizationId: options.organizationId, principalId: link.principalId, rootTimestamp, userId: event.user, workspaceId: configuration.workspaceId })}`;
+  const bindingKey = `pi-v1:slack:${await digest({ agentId: configuration.agentId, channelId: event.channel, organizationId: options.organizationId, principalId: link.principalId, rootTimestamp, userId: event.user, workspaceId: configuration.workspaceId })}`;
   const conversationId = `conversation:${await digest(bindingKey)}`;
   await database
     .insert(channelConversation)
@@ -214,6 +214,7 @@ export const receiveSlackEvent = async (
       bindingKey,
       channelId: event.channel,
       conversationId,
+      engine: "pi-v1",
       kind: "slack",
       organizationId: options.organizationId,
       ownerPrincipalId: link.principalId,

@@ -9,17 +9,16 @@ import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { OpenAPIReferencePlugin } from "@orpc/openapi/plugins";
 import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
-import { getAgentByName } from "agents";
 import { and, count, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
 
 import { createChannelOptions } from "./channel-services";
-import { handleChatRequest } from "./chat-routing";
 import { createContext } from "./context";
 import { assertWorkerEnv } from "./env.server";
 import type { WorkerEnv } from "./env.server";
+import { inspectFixtureObservers } from "./fixture-observers";
 import { requestRoute, logRequest } from "./request-log";
 import {
   createCurrentAuthorization,
@@ -120,9 +119,7 @@ app.get("/ready", async (context) => {
     await createS3ObjectStorage(config.artifacts).ensureBucket({
       deadlineAt: Date.now() + 5000,
     });
-    const session = await getAgentByName(context.env.SESSION, "readiness");
     const checks = await Promise.all([
-      session.fetch(new Request("https://session.internal/ready")),
       context.env.TOOL_GATEWAY.fetch(
         new Request("https://gateway.internal/ready")
       ),
@@ -194,6 +191,10 @@ app.post("/api/fixture/runtime/isolation", async (context) => {
       .fetch(new Request("https://isolation.internal/probe"));
   });
 });
+
+app.post("/api/fixture/runtime/observers", (context) =>
+  inspectFixtureObservers(context.req.raw, context.env)
+);
 
 const auditReplayInput = z.strictObject({
   changed: z.boolean().default(false),
@@ -311,19 +312,6 @@ app.on(["POST", "GET"], "/fixture/sessions/:name", async (context) => {
     return durable.fetch(request);
   });
 });
-
-for (const path of [
-  "/api/product/conversations/:conversationId/chat",
-  "/api/product/conversations/:conversationId/chat/get-messages",
-] as const) {
-  app.get(path, (context) =>
-    handleChatRequest(
-      context.req.raw,
-      context.env,
-      context.req.param("conversationId")
-    )
-  );
-}
 
 app.use("*", async (context, next) => {
   const { path } = context.req;

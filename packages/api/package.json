@@ -10,6 +10,7 @@
     "check-types": "tsc -b"
   },
   "dependencies": {
+    "@cerebro/ag-ui": "workspace:*",
     "@cerebro/auth": "workspace:*",
     "@cerebro/authorization": "workspace:*",
     "@cerebro/channels": "workspace:*",
@@ -20,6 +21,7 @@
     "@orpc/openapi": "catalog:",
     "@orpc/server": "catalog:",
     "@orpc/zod": "catalog:",
+    "effect": "4.0.1",
     "zod": "catalog:"
   },
   "devDependencies": {

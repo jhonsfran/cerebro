@@ -58,6 +58,7 @@ const overridePath = path.join(directory, "compose.fixture.json");
 const env = {
   ...process.env,
   CEREBRO_API_PORT: String(apiPort),
+  CEREBRO_DATABASE_URL: "",
   CEREBRO_DEPLOY_MODE: "fixture",
   CEREBRO_FIXTURE_ID: values.project,
   CEREBRO_FIXTURE_PORT: String(fixturePort),

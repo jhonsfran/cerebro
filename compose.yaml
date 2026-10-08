@@ -120,6 +120,7 @@ services:
       CELLD_WATCH: /var/lib/celld/state
       CELLD_DURABILITY: bucket
       CELLD_TELEMETRY: "0"
+      CELLD_WAKER_TICK_MS: "1000"
       CELLD_V8_HEAP_LIMIT_MB: "256"
       CELLD_IDLE_EVICT_S: "10"
       CELLD_MAX_RESIDENT_CELLS: "16"

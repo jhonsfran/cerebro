@@ -9,8 +9,13 @@ import {
   request,
 } from "./api";
 import { conversationItems, messageText, pendingChatSchema } from "./chat";
-import type { PendingChatMessage } from "./chat";
+import type {
+  ConversationMessage,
+  ConversationViewItem,
+  PendingChatMessage,
+} from "./chat";
 import {
+  reconcileRunCommand,
   sendRunCommand,
   submitMessage,
   useConversationConnection,
@@ -24,11 +29,72 @@ import {
 } from "./types";
 
 type Connection = "connecting" | "connected" | "disconnected" | "denied";
+const visibleConnection = (
+  connected: boolean,
+  retired: boolean,
+  connection: Connection
+): Connection => (retired || !connected ? "disconnected" : connection);
 type Detail =
   | { type: "source"; value: Source }
   | { type: "audit"; value: Audit };
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : "The request failed.";
+
+const historicalMessages = (
+  conversation: Conversation | null
+): ConversationMessage[] =>
+  (conversation?.items ?? []).flatMap<ConversationMessage>((item) => {
+    if (item.type === "user") {
+      return [
+        {
+          id: item.eventId ?? `user:${item.cursor}`,
+          parts: [{ content: item.text, type: "text" as const }],
+          role: "user" as const,
+        },
+      ];
+    }
+    if (item.type === "output") {
+      return [
+        {
+          id: `assistant:${item.answerId ?? item.cursor}`,
+          parts: [{ content: item.text, type: "text" as const }],
+          role: "assistant" as const,
+        },
+      ];
+    }
+    return [];
+  });
+const historicalItems = (
+  conversation: Conversation | null
+): ConversationViewItem[] =>
+  (conversation?.items ?? []).map((item) =>
+    item.type === "approval" ? { ...item, approvalState: item.state } : item
+  );
+const loadConversation = async (
+  path: string,
+  signal: AbortSignal,
+  generation: number
+): Promise<Conversation> => {
+  const firstPage = await request(path, conversationSchema, { signal });
+  const items = [...firstPage.items];
+  let page = firstPage;
+  while (
+    firstPage.mode === "retired" &&
+    page.items.length === 200 &&
+    !signal.aborted
+  ) {
+    // Cursor pages depend on the previous response.
+    // oxlint-disable-next-line no-await-in-loop
+    page = await request(
+      `${path}?cursor=${encoded(page.cursor)}`,
+      conversationSchema,
+      { signal }
+    );
+    assertCurrentAccess(generation);
+    items.push(...page.items);
+  }
+  return { ...firstPage, cursor: page.cursor, items };
+};
 
 const EvidenceDialog = ({
   detail,
@@ -210,15 +276,26 @@ const ConversationComposer = ({
 const ConversationNotice = ({
   retired,
   message,
+  onStartConversation,
 }: {
   retired: boolean;
   message: string;
+  onStartConversation?: () => void;
 }) => (
   <>
     {retired ? (
       <p className="error-banner">
         This conversation is retired. Start a new conversation from the agent
         list.
+        {onStartConversation ? (
+          <button
+            type="button"
+            className="quiet-button"
+            onClick={onStartConversation}
+          >
+            Start new conversation
+          </button>
+        ) : null}
       </p>
     ) : null}
     {message ? (
@@ -247,12 +324,14 @@ const ConversationSession = ({
   agentId,
   agentName,
   fixture,
+  onStartConversation,
 }: {
   conversationId: string;
   userId: string;
   agentId: string;
   agentName: string;
   fixture: boolean;
+  onStartConversation?: () => void;
 }) => {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [history, setHistory] = useState<History | null>(null);
@@ -285,16 +364,22 @@ const ConversationSession = ({
   const {
     connection,
     error: chatError,
-    messages,
+    messages: observedMessages,
     projection,
   } = useConversationConnection(
     conversation,
     path,
     connected && accessValid && !retired
   );
+  const messages = retired
+    ? historicalMessages(conversation)
+    : observedMessages;
   const items = useMemo(
-    () => conversationItems(projection, path),
-    [projection, path]
+    () =>
+      retired
+        ? historicalItems(conversation)
+        : conversationItems(projection, path),
+    [conversation, retired, projection, path]
   );
   const runs = useMemo(
     () =>
@@ -324,6 +409,9 @@ const ConversationSession = ({
     }
   }, [projection, pendingKey]);
   const historyRuns = useMemo(() => {
+    if (retired) {
+      return history?.runs ?? [];
+    }
     const result = new Map<
       string,
       { auditHref: string; runId: string; state: string }
@@ -336,12 +424,13 @@ const ConversationSession = ({
       });
     }
     return [...result.values()];
-  }, [path, runs]);
+  }, [path, runs, history, retired]);
   const sending = busy;
   const disabled = busy || retired || connection !== "connected";
   const displayedError = errorMessage || chatError;
   const online = connected && connection === "connected" && !retired;
-  const isRecovering = connection === "connecting";
+  const displayedConnection = visibleConnection(connected, retired, connection);
+  const isRecovering = displayedConnection === "connecting";
   useEffect(() => {
     const clear = () => {
       setAccessValid(false);
@@ -363,7 +452,7 @@ const ConversationSession = ({
     const load = async () => {
       try {
         const [value, executionHistory] = await Promise.all([
-          request(path, conversationSchema, { signal: controller.signal }),
+          loadConversation(path, controller.signal, generation),
           request(`${path}/history`, historySchema, {
             signal: controller.signal,
           }),
@@ -414,7 +503,11 @@ const ConversationSession = ({
     try {
       const result = await submitMessage(path, message);
       assertCurrentAccess(generation);
-      acknowledge(result.receipt.acceptedEventId);
+      if (result.receipt.sessionId === conversation?.sessionId) {
+        acknowledge(message.eventId);
+      } else {
+        setErrorMessage("The accepted message belongs to another session.");
+      }
     } catch (error) {
       setErrorMessage(messageOf(error));
     }
@@ -423,7 +516,8 @@ const ConversationSession = ({
   const act = async (
     suffix: string,
     runId: string,
-    decision?: "allow" | "deny"
+    decision?: "allow" | "deny",
+    toolOperationId?: string
   ) => {
     if (retired || !accessValid || connection !== "connected") {
       return;
@@ -439,10 +533,12 @@ const ConversationSession = ({
     setBusy(true);
     setErrorMessage("");
     try {
-      await sendRunCommand(path, suffix, operationId, {
-        runId,
-        ...(decision ? { decision } : {}),
-      });
+      await (toolOperationId
+        ? reconcileRunCommand(path, runId, toolOperationId)
+        : sendRunCommand(path, suffix, operationId, {
+            runId,
+            ...(decision ? { decision } : {}),
+          }));
     } catch (error) {
       setErrorMessage(messageOf(error));
     }
@@ -494,12 +590,16 @@ const ConversationSession = ({
         agentName={agentName}
         sessionId={conversation?.sessionId}
         connected={connected}
-        connection={connected ? connection : "disconnected"}
+        connection={displayedConnection}
         fixture={fixture}
         toggle={() => setConnected((value) => !value)}
         retired={retired}
       />
-      <ConversationNotice retired={retired} message={displayedError} />
+      <ConversationNotice
+        retired={retired}
+        message={displayedError}
+        onStartConversation={onStartConversation}
+      />
       <div
         className="transcript"
         ref={transcript}
@@ -557,6 +657,23 @@ const ConversationSession = ({
                 <div className="tool-status" key={item.cursor}>
                   <span aria-hidden="true">◇</span> {item.name}
                   <span className="status-pill">{item.state}</span>
+                  {item.state === "unknown-outcome" && item.operationId ? (
+                    <button
+                      className="text-button"
+                      type="button"
+                      disabled={disabled}
+                      onClick={() =>
+                        act(
+                          `runs/${encoded(item.runId)}/reconcile`,
+                          item.runId,
+                          undefined,
+                          item.operationId
+                        )
+                      }
+                    >
+                      Check outcome
+                    </button>
+                  ) : null}
                   <details>
                     <summary>Tool details</summary>
                     <pre>

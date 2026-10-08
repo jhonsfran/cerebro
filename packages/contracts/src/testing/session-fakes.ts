@@ -7,7 +7,13 @@ import type {
   EngineConversation,
   EngineSubmission,
 } from "../execution.ts";
-import { Conflict, Denied, NotFound, Unavailable } from "../failures.ts";
+import {
+  Conflict,
+  Denied,
+  NotFound,
+  Unavailable,
+  UnknownOutcome,
+} from "../failures.ts";
 import type { ContractFailure } from "../failures.ts";
 import { id, isExecutionContextActiveAt } from "../identity.ts";
 import type { RunId } from "../identity.ts";
@@ -26,6 +32,7 @@ const attempt = <A>(run: () => A): Effect.Effect<A, ContractFailure> =>
     catch: (cause) =>
       cause instanceof Conflict ||
       cause instanceof Denied ||
+      cause instanceof UnknownOutcome ||
       cause instanceof NotFound ||
       cause instanceof Unavailable
         ? cause
@@ -174,7 +181,14 @@ const projectionRunIds = (update: DomainUpdate): readonly RunId[] => {
 export const createEngineFake = () => {
   const submissions = new Map<string, EngineSubmission>();
   const runs = new Map<RunId, RunState>();
-  const counts = { cancel: 0, open: 0, release: 0, stop: 0, submit: 0 };
+  const counts = {
+    approve: 0,
+    cancel: 0,
+    open: 0,
+    release: 0,
+    stop: 0,
+    submit: 0,
+  };
   const stopPending = () => {
     const affected = [...runs.values()].filter(isPending).map((run) => {
       const cancelled = cancelledRun(run.runId);
@@ -187,6 +201,7 @@ export const createEngineFake = () => {
     approve: (approval, options) =>
       attempt(() => {
         deadline(options);
+        counts.approve += 1;
         const run = runs.get(approval.runId);
         if (!run) {
           throw new NotFound({ resource: "run" });
@@ -638,6 +653,25 @@ export const createSessionFake = (
       attempt(() => {
         authorize(options, context);
         return structuredClone(snapshot);
+      }),
+    reconcile: (command, options) =>
+      attempt(() => {
+        authorize(options, command.context);
+        const tool = snapshot.tools.find(
+          (value) =>
+            value.runId === command.runId &&
+            value.operationId === command.operationId
+        );
+        if (!tool) {
+          throw new NotFound({ resource: "Bound tool operation" });
+        }
+        if (tool.state !== "succeeded" && tool.state !== "failed") {
+          throw new UnknownOutcome({
+            operationId: command.operationId,
+            reason: "The fake has no confirmed provider receipt",
+          });
+        }
+        return structuredClone(tool);
       }),
     stream: (_address, context, request, options) =>
       Stream.unwrap(

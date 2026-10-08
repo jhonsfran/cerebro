@@ -1,11 +1,10 @@
 import type {
   AuthorizationPolicy,
-  BudgetAuthority,
   ContentDependencies,
   ExecutionContext,
   PortResult,
-  SessionService,
 } from "@cerebro/contracts";
+import type { SessionService } from "@cerebro/contracts/session-service";
 import type { Database } from "@cerebro/db";
 import type { ChannelItemBody } from "@cerebro/db/schema/agents";
 
@@ -85,8 +84,12 @@ export interface ChannelOptions {
     dependencies: ContentDependencies
   ) => Promise<PortResult<void>>;
   readonly sessions?: (database: Database) => SessionService;
-  readonly budget?: BudgetAuthority;
   readonly authorization?: (database: Database) => AuthorizationPolicy;
+  readonly recordAdapterTime?: (measurement: {
+    readonly adapter: "permission" | "projection";
+    readonly durationMs: number;
+    readonly resourceId: string;
+  }) => void;
   readonly now?: () => number;
   readonly fetch?: typeof fetch;
 }

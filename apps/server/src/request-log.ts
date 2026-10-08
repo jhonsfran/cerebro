@@ -20,10 +20,10 @@ const staticRoutes = new Set([
   "/api/product/catalog",
   "/api/product/agents",
   "/api/product/conversations",
-  "/api/product/budget",
   "/api/product/admin",
   "/api/channels/slack/events",
   "/api/fixture/runtime/isolation",
+  "/api/fixture/runtime/observers",
   "/api/fixture/audit/replay",
 ]);
 export const requestRoute = (pathname: string): string => {

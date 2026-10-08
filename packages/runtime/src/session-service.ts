@@ -1,12 +1,11 @@
-import type { AuthorityService } from "@cerebro/contracts/authority-service";
+import { AuthorityService } from "@cerebro/contracts/authority-service";
 import type { EventAddress } from "@cerebro/contracts/events";
 import type {
   DurableHandoff,
   EngineConversation,
-  ExecutionEngine,
   HandoffTransition,
-  SessionStore,
 } from "@cerebro/contracts/execution";
+import { ExecutionEngine, SessionStore } from "@cerebro/contracts/execution";
 import {
   Conflict,
   Denied,
@@ -19,17 +18,29 @@ import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext, RunId } from "@cerebro/contracts/identity";
 import type { EffectOptions, ReadOptions } from "@cerebro/contracts/port";
+import type { ToolReceiptStore } from "@cerebro/contracts/receipt-service";
 import type { AgentDefinition, RunState } from "@cerebro/contracts/session";
 import {
   DomainUpdate,
   SessionService,
 } from "@cerebro/contracts/session-service";
+import type { ToolExecutor } from "@cerebro/contracts/tool-service";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
-import { Effect, Fiber, Layer, Scope, Schema, Semaphore, Stream } from "effect";
+import {
+  Context,
+  Effect,
+  Fiber,
+  Layer,
+  Scope,
+  Schema,
+  Semaphore,
+  Stream,
+} from "effect";
 
 import { sameAddress, validateEvent } from "./event-handler.ts";
 import { pendingRun, updateRunId } from "./pi-projection.ts";
 import { attempt, checkOptions, waitForCaller } from "./runtime-ports.ts";
+import type { HostCheckpoint } from "./runtime-ports.ts";
 
 export interface SessionServiceDependencies {
   readonly address: EventAddress;
@@ -37,6 +48,10 @@ export interface SessionServiceDependencies {
   readonly authority: AuthorityService;
   readonly engine: ExecutionEngine;
   readonly store: SessionStore;
+  readonly executor?: ToolExecutor;
+  readonly receipts?: ToolReceiptStore;
+  readonly checkpoint?: HostCheckpoint;
+  readonly retainDurableWork?: (completion: Promise<void>) => void;
 }
 
 const hostOptions = (): ReadOptions => ({
@@ -88,6 +103,10 @@ const authorizeCommand = (
 export const createSessionService = (
   dependencies: SessionServiceDependencies
 ) => {
+  const checkpoint = (
+    boundary: Parameters<HostCheckpoint>[0],
+    operationId: string
+  ) => dependencies.checkpoint?.(boundary, operationId) ?? Effect.void;
   const findHandoff = (runId: RunId) =>
     Effect.gen(function* find() {
       const values = yield* handoffs(dependencies);
@@ -104,7 +123,13 @@ export const createSessionService = (
     Effect.gen(function* commitTransition() {
       const values = yield* handoffs(dependencies);
       const revision = Math.max(0, ...values.map((value) => value.revision));
-      return yield* dependencies.store
+      const canonical =
+        transition.type === "projected-batch" &&
+        transition.updates.some((update) => update.type === "canonical-output");
+      if (canonical) {
+        yield* checkpoint("before-projection", handoff.submission.runId);
+      }
+      const committed = yield* dependencies.store
         .commit(dependencies.address, revision, transition, optionsFor(handoff))
         .pipe(
           Effect.catchTag("Conflict", (failure) =>
@@ -113,6 +138,10 @@ export const createSessionService = (
               : Effect.fail(failure)
           )
         );
+      if (canonical) {
+        yield* checkpoint("after-projection", handoff.submission.runId);
+      }
+      return committed;
     });
   // This only assembles durable projection frames from Pi's sole execution loop.
   // A crash discards the buffer; native done records reconstruct the same batch.
@@ -126,6 +155,13 @@ export const createSessionService = (
       yield* attempt(() => Schema.decodeUnknownSync(DomainUpdate)(update));
       const runId = updateRunId(update);
       const handoff = yield* findHandoff(runId);
+      if (
+        update.type === "run" &&
+        !pendingRun(handoff.run) &&
+        pendingRun(update.run)
+      ) {
+        return;
+      }
       if (update.type === "canonical-output") {
         const prior = answers.get(runId);
         if (
@@ -276,17 +312,20 @@ export const createSessionService = (
     let observationFailure: ContractFailure | undefined;
     const open = (): Effect.Effect<EngineConversation, ContractFailure> =>
       Effect.gen(function* openConversation() {
-        if (conversation) {
+        if (conversation && !observationFailure) {
           return conversation;
         }
-        const opened = yield* Scope.provide(scope)(
-          dependencies.engine.open(
-            dependencies.address,
-            dependencies.agent,
-            hostOptions()
-          )
-        );
+        const opened =
+          conversation ??
+          (yield* Scope.provide(scope)(
+            dependencies.engine.open(
+              dependencies.address,
+              dependencies.agent,
+              hostOptions()
+            )
+          ));
         conversation = opened;
+        observationFailure = undefined;
         yield* Effect.forkIn(scope)(
           Effect.scoped(
             Stream.runForEach(
@@ -331,6 +370,13 @@ export const createSessionService = (
         const fiber = yield* Effect.forkIn(scope)(
           Semaphore.withPermits(mutations, 1)(program)
         );
+        yield* Effect.sync(() => {
+          dependencies.retainDurableWork?.(
+            (async () => {
+              await Effect.runPromise(Fiber.await(fiber));
+            })()
+          );
+        });
         return yield* waitForCaller(Fiber.join(fiber), options);
       });
     const service: SessionService = {
@@ -345,7 +391,7 @@ export const createSessionService = (
           );
           return yield* durableCommand(
             Effect.gen(function* decideApproval() {
-              const permit = yield* authorizeCommand(
+              yield* authorizeCommand(
                 dependencies,
                 command.address,
                 command.context,
@@ -386,6 +432,14 @@ export const createSessionService = (
                 }
                 return handoff.run;
               }
+              yield* checkpoint("before-approval", bound.operationId);
+              const permit = yield* authorizeCommand(
+                dependencies,
+                command.address,
+                command.context,
+                "approve",
+                hostOptions()
+              );
               if (
                 state.expiresAt <= Date.now() ||
                 bound.policyVersion !== permit.policyVersion
@@ -413,14 +467,12 @@ export const createSessionService = (
                   type: "approval",
                 },
               });
-              const engine = yield* open();
+              yield* checkpoint("after-approval", bound.operationId);
               if (command.decision !== "allow") {
-                yield* projectBeforeStop(engine, command.runId);
+                return handoff.run;
               }
-              const run =
-                command.decision === "allow"
-                  ? yield* engine.approve(bound, hostOptions())
-                  : yield* engine.cancel(command.runId, hostOptions());
+              const engine = yield* open();
+              const run = yield* engine.approve(bound, hostOptions());
               yield* projectStates(yield* engine.inspect(hostOptions()));
               return run;
             }),
@@ -478,6 +530,151 @@ export const createSessionService = (
           );
           return yield* dependencies.store.snapshot(address, context, options);
         }),
+      reconcile: (command, options) =>
+        durableCommand(
+          Effect.gen(function* reconcileTool() {
+            yield* authorizeCommand(
+              dependencies,
+              command.address,
+              command.context,
+              "execute",
+              hostOptions()
+            );
+            const snapshot = yield* dependencies.store.snapshot(
+              command.address,
+              command.context,
+              hostOptions()
+            );
+            const tool = snapshot.tools.find(
+              (value) =>
+                value.runId === command.runId &&
+                value.operationId === command.operationId
+            );
+            if (!tool) {
+              return yield* Effect.fail(
+                new NotFound({ resource: "Bound tool operation" })
+              );
+            }
+            if (tool.state === "succeeded" || tool.state === "failed") {
+              return tool;
+            }
+            if (tool.state !== "unknown-outcome") {
+              return yield* Effect.fail(
+                new Conflict({
+                  code: "already-final",
+                  reason: "Only an uncertain tool can be reconciled",
+                })
+              );
+            }
+            if (!dependencies.executor || !dependencies.receipts) {
+              return yield* Effect.fail(
+                new Unavailable({
+                  reason: "Tool reconciliation is not configured",
+                })
+              );
+            }
+            const result = yield* Effect.result(
+              dependencies.executor.reconcile(
+                command.operationId,
+                command.context,
+                hostOptions()
+              )
+            );
+            if (result._tag === "Failure" && result.failure._tag === "Denied") {
+              return yield* Effect.fail(result.failure);
+            }
+            const receipt = yield* dependencies.receipts.read(
+              {
+                operationId: command.operationId,
+                organizationId: command.address.organizationId,
+              },
+              command.context,
+              hostOptions()
+            );
+            if (receipt.state !== "completed" && receipt.state !== "outcome") {
+              if (result._tag === "Failure") {
+                return yield* Effect.fail(result.failure);
+              }
+              return yield* Effect.fail(
+                new UnknownOutcome({
+                  operationId: command.operationId,
+                  reason: "The gateway has no confirmed receipt",
+                })
+              );
+            }
+            if (receipt.intent.invocation.runId !== command.runId) {
+              return yield* Effect.fail(
+                new Conflict({
+                  code: "digest-mismatch",
+                  reason: "Receipt belongs to another run",
+                })
+              );
+            }
+            yield* authorizeCommand(
+              dependencies,
+              command.address,
+              command.context,
+              "execute",
+              hostOptions()
+            );
+            const resolved = {
+              ...tool,
+              output:
+                receipt.outcome.state === "succeeded"
+                  ? receipt.outcome.execution.output
+                  : null,
+              state: receipt.outcome.state,
+            };
+            const handoff = yield* findHandoff(command.runId);
+            const resumes =
+              handoff.run.state === "unknown-outcome" &&
+              !snapshot.tools.some(
+                (value) =>
+                  value.runId === command.runId &&
+                  value.operationId !== command.operationId &&
+                  value.state === "unknown-outcome"
+              );
+            const toolUpdate: DomainUpdate = { ...resolved, type: "tool" };
+            yield* commit(handoff, {
+              runId: command.runId,
+              type: "projected-batch",
+              updates: resumes
+                ? [
+                    toolUpdate,
+                    {
+                      run: { runId: command.runId, state: "running" },
+                      type: "run",
+                    },
+                  ]
+                : [toolUpdate],
+            });
+            if (resumes) {
+              const engine = yield* open();
+              yield* Effect.forkIn(scope)(
+                Effect.scoped(
+                  Stream.runForEach(
+                    Stream.takeUntil(
+                      engine.observe(hostOptions()),
+                      (update) =>
+                        update.type === "run" &&
+                        update.run.runId === command.runId
+                    ),
+                    (update) =>
+                      Semaphore.withPermits(mutations, 1)(project(update))
+                  )
+                ).pipe(
+                  Effect.catch((error) =>
+                    Effect.sync(() => {
+                      observationFailure = error;
+                    })
+                  )
+                )
+              );
+            }
+            return resolved;
+          }),
+          options
+        ),
       stream: (address, context, request, options) =>
         Stream.unwrap(
           Effect.gen(function* observeDomain() {
@@ -530,6 +727,26 @@ export const createSessionService = (
           });
           return yield* durableCommand(
             Effect.gen(function* handoffSubmission() {
+              const values = yield* handoffs(dependencies);
+              if (
+                !values.some(
+                  (value) =>
+                    value.submission.requestId === command.event.eventId
+                )
+              ) {
+                const unknown = values.find(
+                  (value) => value.run.state === "unknown-outcome"
+                );
+                if (unknown?.run.state === "unknown-outcome") {
+                  return yield* Effect.fail(
+                    new UnknownOutcome({
+                      operationId: unknown.run.operationId,
+                      reason:
+                        "Reconcile the uncertain effect before admitting another input",
+                    })
+                  );
+                }
+              }
               const engine = yield* open();
               for (const value of yield* handoffs(dependencies)) {
                 if (
@@ -540,6 +757,19 @@ export const createSessionService = (
                   yield* repair(value, engine);
                 }
               }
+              yield* checkpoint("before-admission", command.event.eventId);
+              yield* authorizeCommand(
+                dependencies,
+                command.event,
+                command.event.context,
+                "execute",
+                hostOptions()
+              );
+              yield* dependencies.store.snapshot(
+                dependencies.address,
+                command.event.context,
+                hostOptions()
+              );
               const admitted = yield* dependencies.store.admit(
                 command,
                 dependencies.agent,
@@ -547,6 +777,7 @@ export const createSessionService = (
               );
               const replayed = admitted.acknowledged;
               const accepted = yield* repair(admitted, engine);
+              yield* checkpoint("after-admission", accepted.submission.runId);
               yield* projectStates(yield* engine.inspect(hostOptions()));
               const receipt = yield* dependencies.store.receipt(
                 accepted.address,
@@ -569,8 +800,37 @@ export const createSessionService = (
   });
 };
 
-export const sessionServiceLayer = (dependencies: SessionServiceDependencies) =>
-  Layer.effect(
-    SessionService,
-    Effect.map(createSessionService(dependencies), (runtime) => runtime.service)
+export type SessionCoordinatorRuntime = Effect.Success<
+  ReturnType<typeof createSessionService>
+>;
+export const SessionCoordinator = Context.Service<SessionCoordinatorRuntime>(
+  "@cerebro/runtime/SessionCoordinator"
+);
+
+export const sessionServiceLayer = (
+  configuration: Pick<
+    SessionServiceDependencies,
+    | "address"
+    | "agent"
+    | "executor"
+    | "receipts"
+    | "checkpoint"
+    | "retainDurableWork"
+  >
+) =>
+  Layer.effectContext(
+    Effect.gen(function* assembleCoordinator() {
+      const authority = yield* AuthorityService;
+      const engine = yield* ExecutionEngine;
+      const store = yield* SessionStore;
+      const runtime = yield* createSessionService({
+        ...configuration,
+        authority,
+        engine,
+        store,
+      });
+      return Context.make(SessionCoordinator, runtime).pipe(
+        Context.add(SessionService, runtime.service)
+      );
+    })
   );

@@ -5,6 +5,11 @@ import type {
   RunState,
   SessionReceipt,
 } from "@cerebro/contracts";
+import type {
+  ApprovalState,
+  SubmissionMode,
+  ToolState,
+} from "@cerebro/contracts/session-service";
 import {
   integer,
   jsonb,
@@ -23,8 +28,16 @@ export type ChannelItemBody = {
       readonly eventId: string;
       readonly runId: string;
       readonly text: string;
+      readonly mode?: SubmissionMode;
     }
-  | { readonly type: "output"; readonly runId: string; readonly text: string }
+  | {
+      readonly type: "output";
+      readonly runId: string;
+      readonly text: string;
+      readonly answerId?: string;
+      readonly executionId?: string;
+      readonly runIds?: readonly string[];
+    }
   | {
       readonly type: "citation";
       readonly runId: string;
@@ -39,13 +52,17 @@ export type ChannelItemBody = {
       readonly toolId: string;
       readonly operationId?: string;
       readonly output?: unknown;
+      readonly arguments?: unknown;
       readonly name: string;
-      readonly state: "running" | "succeeded" | "failed";
+      readonly state: ToolState["state"];
     }
   | {
       readonly type: "approval";
       readonly runId: string;
       readonly approvalId: string;
+      readonly operationId?: string;
+      readonly state?: ApprovalState["state"];
+      readonly expiresAt?: number;
     }
   | { readonly type: "run"; readonly runId: string; readonly run: RunState }
 );
@@ -98,6 +115,9 @@ export const channelConversation = pgTable("channel_conversation", {
   channelId: text("channel_id"),
   conversationId: text("conversation_id").primaryKey(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  engine: text("engine", { enum: ["legacy-v1", "pi-v1"] })
+    .notNull()
+    .default("legacy-v1"),
   kind: text("kind", { enum: ["web", "slack"] }).notNull(),
   lastProjectedAt: timestamp("last_projected_at").defaultNow().notNull(),
   organizationId: text("organization_id").notNull(),
@@ -105,6 +125,7 @@ export const channelConversation = pgTable("channel_conversation", {
   projectionState: text("projection_state", { enum: ["active", "idle"] })
     .notNull()
     .default("idle"),
+  retiredAt: timestamp("retired_at"),
   rootTimestamp: text("root_timestamp"),
   sessionId: text("session_id").notNull(),
   slackUserId: text("slack_user_id"),
@@ -119,7 +140,14 @@ export const channelInbox = pgTable("channel_inbox", {
   lastAttemptAt: timestamp("last_attempt_at").defaultNow().notNull(),
   organizationId: text("organization_id").notNull(),
   receipt: jsonb("receipt").$type<SessionReceipt>(),
-  state: text("state", { enum: ["pending", "accepted", "denied"] }).notNull(),
+  state: text("state", {
+    enum: ["pending", "accepted", "denied", "quarantined"],
+  }).notNull(),
+  submissionMode: text("submission_mode", {
+    enum: ["follow-up", "steer", "replace"],
+  })
+    .notNull()
+    .default("follow-up"),
 });
 export const channelItem = pgTable("channel_item", {
   conversationId: text("conversation_id").notNull(),
@@ -153,7 +181,14 @@ export const channelReply = pgTable("channel_reply", {
   runId: text("run_id").notNull().unique(),
   startedAt: timestamp("started_at"),
   state: text("state", {
-    enum: ["ready", "sending", "sent", "unknown-outcome", "failed"],
+    enum: [
+      "ready",
+      "sending",
+      "sent",
+      "unknown-outcome",
+      "failed",
+      "quarantined",
+    ],
   }).notNull(),
   text: text("text").notNull(),
 });

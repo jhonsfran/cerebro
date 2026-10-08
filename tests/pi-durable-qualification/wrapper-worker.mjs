@@ -10,11 +10,16 @@ import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
 import { DurableObject } from "cloudflare:workers";
 
+const waitForNativeIdle = async (pi, context) => {
+  const root = await pi.root(context);
+  await root.waitForIdle(context);
+};
+
 export class Qualification extends DurableObject {
   faux = fauxProvider({ tokensPerSecond: 5 });
   harness = new PiHarness({
     defaults: { model: this.faux.getModel() },
-    harness: ({ storage, context }) => {
+    harness: async ({ storage, context }) => {
       this.ctx.storage.sql.exec(
         "CREATE TABLE IF NOT EXISTS cerebro_probe (name TEXT PRIMARY KEY, value INTEGER)"
       );
@@ -70,10 +75,21 @@ export class Qualification extends DurableObject {
       });
       const models = createModels();
       models.setProvider(this.faux.provider);
-      return Harness.open(storage, { models, registry }, context);
+      const pi = await Harness.open(storage, { models, registry }, context);
+      const model = this.faux.getModel();
+      await pi.root(context, {
+        agent: { model: { modelId: model.id, provider: model.provider } },
+      });
+      this.nativeContext = context;
+      this.ctx.waitUntil(waitForNativeIdle(pi, context));
+      return pi;
     },
   });
   lifecycle = Lifecycle.install(this).use(this.harness);
+  async retainCommandWork() {
+    const pi = await this.harness.pi();
+    this.ctx.waitUntil(waitForNativeIdle(pi, this.nativeContext));
+  }
   count(name) {
     this.ctx.storage.sql.exec(
       "INSERT INTO cerebro_probe VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value=value+1",
@@ -94,22 +110,24 @@ export class Qualification extends DurableObject {
         return Response.json({ error: "InvalidInput" }, { status: 400 });
       }
       if (route === "/steer") {
-        return Response.json(
-          await session.steer(text, { operationId: requestId })
-        );
+        const result = await session.steer(text, { operationId: requestId });
+        await this.retainCommandWork();
+        return Response.json(result);
       }
       // Qualification of the native sequence only. Durable replace retry needs the
       // Cerebro command journal; this route does not claim crash-safe replacement.
       if (route === "/replace") {
         await session.abort();
       }
-      return Response.json(
-        await session.submit(text, { operationId: requestId })
-      );
+      const result = await session.submit(text, { operationId: requestId });
+      await this.retainCommandWork();
+      return Response.json(result);
     }
     if (route === "/cancel") {
       const { requestId } = await request.json();
-      return Response.json({ cancelled: await session.abort(requestId) });
+      const cancelled = await session.abort(requestId);
+      await this.retainCommandWork();
+      return Response.json({ cancelled });
     }
     if (route === "/pending") {
       return Response.json(await this.harness.pending());

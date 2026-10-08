@@ -12,8 +12,6 @@
   "dependencies": {
     "@cerebro/contracts": "workspace:*",
     "@cerebro/db": "workspace:*",
-    "@typesafe-ai/sdk": "0.6.0",
-    "@unprice/api": "0.3.1",
     "effect": "4.0.1"
   },
   "devDependencies": {

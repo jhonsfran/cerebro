@@ -3,6 +3,7 @@ import type { WorkerLoader } from "@cerebro/tools/dynamic-worker";
 import type { SessionAgent } from "./deployed-session-agent";
 
 export interface WorkerEnv {
+  readonly [binding: string]: unknown;
   DATABASE_URL: string;
   BETTER_AUTH_URL: string;
   BETTER_AUTH_SECRET: string;

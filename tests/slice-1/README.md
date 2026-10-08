@@ -67,7 +67,7 @@ The infrastructure probe measures early text relative to EOF and asserts retry, 
 `scenarios.json` supplies stable seed identities and cases for foreign-company history, committed access revocation, changed approval arguments, queued operation withdrawal, retired OpenCode work, recovery/restore and performance. These are scenario inputs, not claims that application state has been seeded successfully. Application scenarios return `blocked` and exit 2 until S1-F supplies a driver:
 
 ```sh
-node tests/slice-1/probe.mjs --base-url http://localhost:28765 --fixture-url http://localhost:28090 --scenario performance --driver /absolute/path/to/integrated-driver.mjs --output artifacts/slice-1/performance.json
+node tests/slice-1/probe.mjs --base-url http://localhost:28765 --fixture-url http://localhost:28090 --fixture-id cerebro-s1-head --baseline-fixture-id cerebro-s1-trunk --baseline-sha TRUNK_SHA --scenario performance --driver /absolute/path/to/integrated-driver.mjs --output artifacts/slice-1/performance.json
 ```
 
 The driver exports `runScenario({baseUrl, fixtureUrl, scenario, configuration, sha})`. It seeds an authenticated fixture user/company/agent through the real adapters and drives the frozen SessionService commands, not a second model loop. The performance result must include `metrics`, ten alternating baseline/head raw `samples` with their source SHAs, `attachDetachCycles: 100`, ten accepted and ten terminal concurrent turns. The probe enforces the frozen numeric budgets and requires permission/projection timing and idle memory. Keep fixture transport timing distinct from provider-to-browser adapter delay. Warm up before samples; use identical host settings and label unavailable baseline capabilities.

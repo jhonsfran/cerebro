@@ -2,6 +2,8 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
+import { Effect } from "effect";
+
 import { requireChatSession } from "../../apps/server/src/chat-session";
 import { createProductHandler } from "../../packages/api/src/routers/conversations";
 import { createIdentityRouter } from "../../packages/api/src/routers/identity";
@@ -10,6 +12,7 @@ import { createFixtureSessionService } from "../../packages/channels/src/fixture
 import { unwrap } from "../../packages/channels/src/security";
 import { createChannelService } from "../../packages/channels/src/service";
 import type { ProductHandlerOptions } from "../../packages/channels/src/types";
+import { Unavailable } from "../../packages/contracts/src/failures";
 import { id } from "../../packages/contracts/src/index";
 import { eq } from "../../packages/db/node_modules/drizzle-orm";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
@@ -27,7 +30,13 @@ import {
   identitySlackLink,
 } from "../../packages/db/src/schema/identity";
 import { usageReservation } from "../../packages/db/src/schema/usage";
-import { array, createTestProduct, object, string } from "./helpers";
+import {
+  array,
+  createTestProduct,
+  domainSnapshot,
+  object,
+  string,
+} from "./helpers";
 
 const requireFromApi = createRequire(
   new URL("../../packages/api/package.json", import.meta.url)
@@ -173,11 +182,10 @@ test("chat access denies revoked content beyond the first transcript page", asyn
       { action: "read", resourceId: sourceId, resourceKind: "memory" },
       false
     );
-    const firstPage = await service.readConversation(
-      "test-owner",
-      conversationId
+    await assert.rejects(
+      service.readConversation("test-owner", conversationId),
+      { status: 403 }
     );
-    assert.equal(firstPage.items.length, 200);
     await assert.rejects(service.chatAccess("test-owner", conversationId), {
       status: 403,
     });
@@ -350,62 +358,44 @@ test("configured catalog, source and audit readers replace fixture views and den
     sessions: (db) => ({
       ...createFixtureSessionService(db, app.options),
       inspect: (address) =>
-        Promise.resolve({
-          status: "ok",
-          value: {
-            address,
-            agentVersion: 1,
-            cursor: "4",
+        Effect.succeed(
+          domainSnapshot(address, {
+            executions: [{ executionId: "travel-execution", runIds: [runId] }],
+            outputs: [
+              {
+                answerId: "travel-answer",
+                citations: [
+                  {
+                    observedAt: 42,
+                    sourceId,
+                    sourceUri: "company://travel",
+                    sourceVersion: "v3",
+                  },
+                ],
+                dependencies,
+                executionId: "travel-execution",
+                runId,
+                runIds: [runId],
+                text: "Rail is permitted.",
+              },
+            ],
+            revision: 4,
             runs: [{ completedAt: 42, runId, state: "completed" }],
-          },
-        }),
-      async *stream() {
-        yield {
-          status: "ok",
-          value: {
-            cursor: "1",
-            dependencies,
-            runId,
-            text: "Rail is permitted.",
-            type: "output",
-          },
-        };
-        yield {
-          status: "ok",
-          value: {
-            citation: {
-              observedAt: 42,
-              sourceId,
-              sourceUri: "company://travel",
-              sourceVersion: "v3",
-            },
-            cursor: "2",
-            dependencies,
-            runId,
-            type: "citation",
-          },
-        };
-        yield {
-          status: "ok",
-          value: {
-            cursor: "3",
-            dependencies,
-            operationId: id.operation("read-travel"),
-            output: { found: true },
-            runId,
-            toolId: "fixture-read",
-            type: "tool",
-          },
-        };
-        yield {
-          status: "ok",
-          value: {
-            cursor: "4",
-            run: { completedAt: 42, runId, state: "completed" },
-            type: "run",
-          },
-        };
-      },
+            tools: [
+              {
+                arguments: {},
+                dependencies,
+                effect: "read",
+                operationId: "read-travel",
+                output: { found: true },
+                runId,
+                state: "succeeded",
+                toolId: "fixture-read",
+                toolVersion: "1",
+              },
+            ],
+          })
+        ),
     }),
   };
   const request = configuredRequest(options);
@@ -471,9 +461,13 @@ test("configured catalog, source and audit readers replace fixture views and den
   const view = object(await transcriptResponse.json());
   assert.deepEqual(
     array(view.items).map((entry) => object(entry).type),
-    ["output", "citation", "tool", "run"]
+    ["tool", "output", "citation", "run"]
   );
-  assert.equal(object(array(view.items)[0]).text, "Rail is permitted.");
+  assert.equal(
+    object(array(view.items).find((entry) => object(entry).type === "output"))
+      .text,
+    "Rail is permitted."
+  );
   const sourceResponse = await request(
     `conversations/${conversationId}/sources/${sourceId}`
   );
@@ -558,7 +552,7 @@ test("production with missing adapters never returns fixture source, audit, budg
   const missingCatalogResponse = await request("catalog");
   assert.equal(missingCatalogResponse.status, 503);
   const missingBudgetResponse = await request("budget");
-  assert.equal(missingBudgetResponse.status, 503);
+  assert.equal(missingBudgetResponse.status, 404);
   const missingSourceResponse = await request(
     `conversations/${conversationId}/sources/pilot-source`
   );
@@ -767,13 +761,7 @@ test("unknown tool outcomes finish channel projection and remain visible for rec
     sessions: (db) => ({
       ...createFixtureSessionService(db, app.options),
       inspect: (address) =>
-        Promise.resolve({
-          status: "ok",
-          value: { address, agentVersion: 1, cursor: "1", runs: [run] },
-        }),
-      async *stream() {
-        yield { status: "ok", value: { cursor: "1", run, type: "run" } };
-      },
+        Effect.succeed(domainSnapshot(address, { revision: 1, runs: [run] })),
     }),
   });
   await app.options.withDatabase(async (db) => {
@@ -804,23 +792,9 @@ test("empty runtime sessions become idle but pending or accepted admissions rema
     ...app.options,
     sessions: (db) => ({
       ...createFixtureSessionService(db, app.options),
-      inspect: (address) =>
-        Promise.resolve({
-          status: "ok",
-          value: {
-            address,
-            agentVersion: 0,
-            cursor: "0",
-            runs: [],
-          },
-        }),
-      async *stream() {},
+      inspect: (address) => Effect.succeed(domainSnapshot(address)),
       submit: () =>
-        Promise.resolve({
-          code: "provider-unavailable",
-          reason: "Admission delayed.",
-          status: "unavailable",
-        }),
+        Effect.fail(new Unavailable({ reason: "Admission delayed." })),
     }),
   };
   await drainChannelWork(options);

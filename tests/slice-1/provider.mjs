@@ -39,8 +39,8 @@ const body = async (request) => {
   let bytes = 0;
   for await (const chunk of request) {
     bytes += chunk.length;
-    if (bytes > 65_536) {
-      throw new Error("Fixture input exceeds 64 KiB");
+    if (bytes > 1_048_576) {
+      throw new Error("Fixture input exceeds 1 MiB");
     }
     chunks.push(chunk);
   }
@@ -55,9 +55,20 @@ const identity = (value) => {
 
 const requestsTool = (input, purpose, toolName) =>
   purpose === "turn" &&
-  !input.messages.some((message) => message.role === "tool") &&
+  !input.messages
+    .slice(
+      input.messages.findLastIndex((message) => message.role === "user") + 1
+    )
+    .some((message) => message.role === "tool") &&
   ["fixture-read", "fixture_effect"].includes(toolName) &&
   input.tools?.some((item) => item.function?.name === toolName);
+
+const recordToken = (call, delta) => {
+  call.firstFrameAt ??= Date.now();
+  if (delta.content || delta.tool_calls?.length) {
+    call.firstTokenAt ??= Date.now();
+  }
+};
 
 export const createFixture = async ({
   directory,
@@ -157,9 +168,25 @@ export const createFixture = async ({
         : "turn";
     const call = {
       digest: digest(input),
+      maxTokens: input.max_completion_tokens ?? input.max_tokens ?? null,
+      messageTextDigests: input.messages.flatMap((message) => {
+        let parts = [];
+        if (typeof message.content === "string") {
+          parts = [message.content];
+        } else if (Array.isArray(message.content)) {
+          parts = message.content
+            .filter((part) => part.type === "text")
+            .map((part) => part.text);
+        }
+        return parts.map((text) =>
+          createHash("sha256").update(text).digest("hex")
+        );
+      }),
+      model: input.model,
       operationId,
       purpose,
       startedAt: Date.now(),
+      toolNames: (input.tools ?? []).map((item) => item.function?.name),
     };
     state.model.push(call);
     await save();
@@ -234,7 +261,7 @@ export const createFixture = async ({
           return;
         }
         await delay(state.controls.delayMs);
-        call.firstTokenAt ??= Date.now();
+        recordToken(call, delta);
         response.write(
           `data: ${JSON.stringify({ ...base, choices: [{ delta, finish_reason: null, index: 0 }], object: "chat.completion.chunk" })}\n\n`
         );

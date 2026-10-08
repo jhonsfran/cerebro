@@ -12,7 +12,6 @@ const configured = () => ({
     secretAccessKey: "private-artifact-test-value",
   },
   bootstrapToken: "private-setup-test-value-with-32-characters",
-  budget: { initialUnits: 1000, kind: "local", unit: "test-units" },
   gatewaySigningKey: "private-gateway-test-value-with-32-characters",
   mode: "production",
   models: [
@@ -25,12 +24,6 @@ const configured = () => ({
       maxOutputTokens: 2048,
       maxResponseBytes: 65_536,
       model: "model",
-      pricing: {
-        inputPerToken: 1,
-        outputPerToken: 1,
-        unit: "test-units",
-        version: "test-v1",
-      },
       provider: "company",
     },
   ],
@@ -113,10 +106,14 @@ test("production rejects local, insecure and credential-bearing transport target
   assert.throws(() => parse(mcp));
 });
 
-test("production rejects unsafe reservations, unsupported adapters and conflicting connector credentials", () => {
-  const overflow = configured();
-  overflow.models[0].pricing.inputPerToken = Number.MAX_SAFE_INTEGER;
-  assert.throws(() => parse(overflow));
+test("production rejects retired billing, unsupported adapters and conflicting connector credentials", () => {
+  const pricing = configured();
+  assert.throws(() =>
+    parse({
+      ...pricing,
+      models: [{ ...pricing.models[0], pricing: { inputPerToken: 1 } }],
+    })
+  );
   assert.throws(() => parse({ ...configured(), budget: { kind: "unprice" } }));
   assert.throws(() => parse({ ...configured(), decision: { kind: "jev" } }));
   assert.throws(() => parse({ ...configured(), retrievalMode: "semantic" }));
@@ -140,23 +137,15 @@ test("local mode preserves real-provider and trusted-setup boundaries", () => {
   local.models[0] = {
     ...local.models[0],
     apiKey: "public",
-    baseUrl: "https://opencode.ai/zen/v1",
-    id: "opencode/big-pickle",
-    model: "big-pickle",
-    pricing: {
-      inputPerToken: 0,
-      outputPerToken: 0,
-      unit: "test-units",
-      version: "opencode-free",
-    },
-    provider: "opencode",
+    baseUrl: "https://model.example.test/v1",
+    id: "configured/custom-model",
+    model: "custom-model",
+    provider: "configured",
   };
   local.tools = [];
 
   const result = parseLocal(local);
-  assert.equal(result.models[0].id, "opencode/big-pickle");
-  assert.equal(result.models[0].pricing.inputPerToken, 0);
-  assert.equal(result.models[0].pricing.outputPerToken, 0);
+  assert.equal(result.models[0].id, "configured/custom-model");
   assert.deepEqual(result.tools, []);
   assert.throws(() => parseLocal({ ...local, bootstrapToken: undefined }));
   assert.throws(() => parseLocal({ ...local, mode: "fixture" }));

@@ -6,7 +6,6 @@ import {
   currentAccessGeneration,
   encoded,
   mutate,
-  ProductError,
   productPath,
   request,
 } from "./api";
@@ -19,7 +18,6 @@ import type {
   AccessAction,
   AgentDetail,
   AgentSummary,
-  Budget,
   ConversationReference,
   Setup,
 } from "./types";
@@ -27,7 +25,6 @@ import {
   accessMutationSchema,
   agentDetailSchema,
   agentListSchema,
-  budgetSchema,
   catalogSchema,
   createdConversationSchema,
   conversationReferenceSchema,
@@ -35,22 +32,6 @@ import {
   setupSchema,
   slackLinkSchema,
 } from "./types";
-
-const readBudget = async (): Promise<Budget | null> => {
-  try {
-    return await request(
-      productPath("budget"),
-      budgetSchema,
-      undefined,
-      "optional-budget"
-    );
-  } catch (error) {
-    if (error instanceof ProductError && error.status === 403) {
-      return null;
-    }
-    throw error;
-  }
-};
 
 type Tab = "conversation" | "configuration" | "access";
 
@@ -597,6 +578,9 @@ const WorkspaceBody = (props: WorkspaceBodyProps) => {
         agentId={selected.agentId}
         agentName={selected.name}
         fixture={setup.mode === "fixture"}
+        onStartConversation={() => {
+          void startConversation();
+        }}
       />
     );
   }
@@ -674,7 +658,6 @@ export const ProductWorkspace = ({
   const [setup, setSetup] = useState<Setup | null>(null);
   const [bootstrapToken, setBootstrapToken] = useState("");
   const [agents, setAgents] = useState<AgentSummary[]>([]);
-  const [budget, setBudget] = useState<Budget | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [conversationReference, setConversationReference] =
     useState<ConversationReference | null>(null);
@@ -697,7 +680,6 @@ export const ProductWorkspace = ({
       setConversationReference(null);
       selectionRevision.current += 1;
       setSelectedId("");
-      setBudget(null);
       setSlackCode(null);
       setCreating(false);
       setErrorMessage(
@@ -709,13 +691,9 @@ export const ProductWorkspace = ({
   }, []);
   const loadAgents = useCallback(async () => {
     const generation = currentAccessGeneration();
-    const [list, amount] = await Promise.all([
-      request(productPath("agents"), agentListSchema),
-      readBudget(),
-    ]);
+    const list = await request(productPath("agents"), agentListSchema);
     assertCurrentAccess(generation);
     setAgents(list.agents);
-    setBudget(amount);
     setSelectedId((current) => current || list.agents[0]?.agentId || "");
   }, []);
   useEffect(() => {
@@ -958,17 +936,6 @@ export const ProductWorkspace = ({
           </p>
         ) : null}
         <div className="sidebar-footer">
-          <p className="eyebrow">Company budget</p>
-          <strong>
-            {budget
-              ? `${budget.remaining.units.toLocaleString()} ${budget.remaining.unit}`
-              : "No budget access"}
-          </strong>
-          <p>
-            {budget?.mode === "fixture"
-              ? "Local fixture balance"
-              : "Shared across conversations"}
-          </p>
           <button
             className="text-button"
             type="button"

@@ -19,6 +19,7 @@ import {
   parseEnterpriseIdentityJSON,
 } from "./enterprise";
 import type { EnterpriseIdentityConfig } from "./enterprise";
+import { hashPassword, verifyPassword } from "./password";
 
 export { enterpriseSCIM, enterpriseSSO } from "./enterprise";
 export type { EnterpriseIdentityConfig } from "./enterprise";
@@ -59,7 +60,10 @@ export const createAuth = (
       },
       transaction: true,
     }),
-    emailAndPassword: { enabled: true },
+    emailAndPassword: {
+      enabled: true,
+      password: { hash: hashPassword, verify: verifyPassword },
+    },
     plugins: enterprise
       ? [
           principalPlugin,

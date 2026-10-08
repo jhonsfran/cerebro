@@ -91,9 +91,6 @@ const handleCompanyRequest = (
   if (path[0] === "catalog" && method === "GET" && path.length === 1) {
     return service.catalog(userId);
   }
-  if (path[0] === "budget" && method === "GET") {
-    return service.budget(userId);
-  }
   return undefined;
 };
 export const handleAgentRequest = (

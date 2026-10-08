@@ -4,7 +4,7 @@ import type { Effect, Scope, Stream } from "effect";
 
 import type { EventAddress } from "./events.ts";
 import type { ContractFailure } from "./failures.ts";
-import type { ExecutionContext, RunId } from "./identity.ts";
+import type { ExecutionContext, OperationId, RunId } from "./identity.ts";
 import type { EffectOptions, ReadOptions } from "./port.ts";
 import type { SessionCommand, SessionReceipt } from "./session.ts";
 import { canonicalToolArguments } from "./tools.ts";
@@ -246,6 +246,15 @@ export type ApprovalCommand = Extract<SessionCommand, { type: "approve" }> & {
   readonly decision: "allow" | "deny";
 };
 export interface SessionService {
+  readonly reconcile: (
+    command: {
+      readonly address: EventAddress;
+      readonly context: ExecutionContext;
+      readonly operationId: OperationId;
+      readonly runId: RunId;
+    },
+    options: EffectOptions
+  ) => Effect.Effect<ToolState, ContractFailure>;
   readonly submit: (
     command: SubmitCommand,
     options: EffectOptions

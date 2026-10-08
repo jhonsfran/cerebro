@@ -57,6 +57,13 @@
       "when": 1790722364770,
       "tag": "0007_handy_meteorite",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791331200000,
+      "tag": "0008_pi_conversation_identity",
+      "breakpoints": true
     }
   ]
 }

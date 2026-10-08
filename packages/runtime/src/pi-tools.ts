@@ -3,7 +3,7 @@ import type { DurableHandoff } from "@cerebro/contracts/execution";
 import { Conflict, Denied, UnknownOutcome } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
-import type { RunId } from "@cerebro/contracts/identity";
+import type { ExecutionContext, RunId } from "@cerebro/contracts/identity";
 import type { ReadOptions } from "@cerebro/contracts/port";
 import type {
   ToolReceipt,
@@ -13,7 +13,10 @@ import type {
   AgentDefinition,
   ContentDependencies,
 } from "@cerebro/contracts/session";
-import type { DomainUpdate } from "@cerebro/contracts/session-service";
+import type {
+  DomainUpdate,
+  ToolState,
+} from "@cerebro/contracts/session-service";
 import { boundApprovalMatches } from "@cerebro/contracts/tool-service";
 import type {
   BoundApproval,
@@ -31,12 +34,16 @@ import type { TSchema } from "@earendil-works/pi-ai";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
 import { Effect } from "effect";
 
-import { vendorEffect } from "./runtime-ports.ts";
+import { vendorEffect, waitForCaller } from "./runtime-ports.ts";
 
 export interface PiRegisteredTool {
   readonly definition: RegisteredTool;
   readonly description: string;
   readonly parameters: TSchema;
+  readonly prepare?: (
+    argumentsValue: unknown
+  ) => Effect.Effect<unknown, ContractFailure>;
+  readonly requiresApproval?: boolean;
 }
 export interface PiToolConfiguration {
   readonly agent: AgentDefinition;
@@ -71,6 +78,109 @@ const hasOutcome = (
   { readonly state: "outcome" | "completed" }
 > => receipt.state === "outcome" || receipt.state === "completed";
 
+const prepareArguments = (registered: PiRegisteredTool, args: unknown) =>
+  registered.prepare?.(args) ?? Effect.succeed(args);
+
+interface PendingTool {
+  readonly toolState: Omit<ToolState, "state">;
+  readonly executionContext: ExecutionContext;
+  readonly definition: RegisteredTool;
+  executorEntered: boolean;
+  settled: boolean;
+}
+
+const settleFailure = (
+  configuration: PiToolConfiguration,
+  pending: PendingTool | undefined
+) =>
+  Effect.gen(function* settleConfirmedFailure() {
+    if (!pending || pending.settled) {
+      return false;
+    }
+    let execution: ToolExecution | undefined;
+    if (pending.executorEntered) {
+      const maintenance = { deadlineAt: Date.now() + 30_000 };
+      const result = yield* Effect.result(
+        waitForCaller(
+          configuration.receipts.read(
+            {
+              operationId: pending.toolState.operationId,
+              organizationId: configuration.agent.organizationId,
+            },
+            pending.executionContext,
+            maintenance
+          ),
+          maintenance
+        )
+      );
+      if (
+        result._tag === "Failure" ||
+        result.success.state === "dispatched" ||
+        result.success.state === "unknown"
+      ) {
+        return true;
+      }
+      if (
+        hasOutcome(result.success) &&
+        result.success.outcome.state === "succeeded"
+      ) {
+        ({ execution } = result.success.outcome);
+      }
+    }
+    yield* configuration.publish(pending.toolState.runId, {
+      ...pending.toolState,
+      ...(execution
+        ? {
+            dependencies: yield* configuration.dependencies(
+              pending.definition,
+              pending.toolState.arguments,
+              execution
+            ),
+            output: execution.output,
+          }
+        : {}),
+      state: execution ? "succeeded" : "failed",
+      type: "tool",
+    });
+    pending.settled = true;
+    return false;
+  });
+
+const blockUnknown = (
+  configuration: PiToolConfiguration,
+  boundRunId: RunId | undefined,
+  failure: UnknownOutcome,
+  pending?: PendingTool
+) =>
+  Effect.gen(function* persistUnknown() {
+    const handoff = yield* configuration.resolve(boundRunId);
+    if (pending && !pending.settled) {
+      yield* configuration.publish(handoff.submission.runId, {
+        ...pending.toolState,
+        state: "unknown-outcome",
+        type: "tool",
+      });
+      pending.settled = true;
+    }
+    yield* configuration.publish(handoff.submission.runId, {
+      run: {
+        operationId: failure.operationId,
+        runId: handoff.submission.runId,
+        state: "unknown-outcome",
+      },
+      type: "run",
+    });
+    return {
+      content: [
+        {
+          text: "Tool outcome is unknown; reconciliation is required",
+          type: "text" as const,
+        },
+      ],
+      control: { terminate: true as const },
+    };
+  });
+
 export const createPiTools = (
   configuration: PiToolConfiguration
 ): readonly ToolRegistration[] =>
@@ -86,7 +196,15 @@ export const createPiTools = (
           signal: context.abortSignal,
         };
         let boundRunId: RunId | undefined;
+        let pending: PendingTool | undefined;
         const program = Effect.gen(function* executeControlledTool() {
+          const preparedArguments = yield* waitForCaller(
+            prepareArguments(registered, args),
+            options
+          );
+          const requiresApproval =
+            registered.definition.effect === "write" ||
+            registered.requiresApproval;
           let memo = yield* vendorEffect(options, () =>
             api.memo("cerebro-run", context)
           );
@@ -117,7 +235,7 @@ export const createPiTools = (
             ])
           );
           const argumentDigest = yield* vendorEffect(options, () =>
-            digestToolArguments(args)
+            digestToolArguments(preparedArguments)
           );
           const effectOptions = {
             ...options,
@@ -141,13 +259,34 @@ export const createPiTools = (
           const invocation: BoundInvocation = {
             agentId: configuration.agent.agentId,
             argumentDigest,
-            arguments: args,
+            arguments: preparedArguments,
             context: executionContext,
             operationId,
             organizationId: handoff.address.organizationId,
             runId,
             state: "requested",
             tool,
+          };
+          const initialDependencies = yield* configuration.dependencies(
+            tool,
+            preparedArguments
+          );
+          const toolState = {
+            arguments: preparedArguments,
+            dependencies: initialDependencies,
+            effect: tool.effect,
+            operationId,
+            output: null,
+            runId,
+            toolId: tool.id,
+            toolVersion: tool.version,
+          };
+          pending = {
+            definition: tool,
+            executionContext,
+            executorEntered: false,
+            settled: false,
+            toolState,
           };
           const claim = yield* configuration.receipts.claim(
             { invocation, policyVersion: permit.policyVersion },
@@ -173,20 +312,6 @@ export const createPiTools = (
               })
             );
           }
-          const initialDependencies = yield* configuration.dependencies(
-            tool,
-            args
-          );
-          const toolState = {
-            arguments: args,
-            dependencies: initialDependencies,
-            effect: tool.effect,
-            operationId,
-            output: null,
-            runId,
-            toolId: tool.id,
-            toolVersion: tool.version,
-          };
           if (hasOutcome(claim.receipt)) {
             if (claim.receipt.outcome.state === "failed") {
               yield* configuration.publish(runId, {
@@ -194,6 +319,7 @@ export const createPiTools = (
                 state: "failed",
                 type: "tool",
               });
+              pending.settled = true;
               return {
                 content: [
                   { text: "Controlled tool failed", type: "text" as const },
@@ -206,13 +332,14 @@ export const createPiTools = (
               ...toolState,
               dependencies: yield* configuration.dependencies(
                 tool,
-                args,
+                preparedArguments,
                 execution
               ),
               output: execution.output,
               state: "succeeded",
               type: "tool",
             });
+            pending.settled = true;
             return {
               content: [
                 {
@@ -224,11 +351,10 @@ export const createPiTools = (
           }
           yield* configuration.publish(runId, {
             ...toolState,
-            state:
-              tool.effect === "write" ? "waiting-for-approval" : "requested",
+            state: requiresApproval ? "waiting-for-approval" : "requested",
             type: "tool",
           });
-          if (tool.effect === "write") {
+          if (requiresApproval) {
             const approval: BoundApproval = {
               actorPrincipalId: executionContext.actor.id,
               agentId: configuration.agent.agentId,
@@ -236,7 +362,9 @@ export const createPiTools = (
               argumentDigest,
               connectorFingerprint: tool.connectorFingerprint,
               connectorId: tool.connectorId,
-              delegationId: executionContext.delegation?.id,
+              ...(executionContext.delegation
+                ? { delegationId: executionContext.delegation.id }
+                : {}),
               effect: tool.effect,
               expiresAt: options.deadlineAt,
               id: `approval:${operationId}`,
@@ -285,7 +413,9 @@ export const createPiTools = (
             argumentDigest,
             connectorFingerprint: tool.connectorFingerprint,
             connectorId: tool.connectorId,
-            delegationId: executionContext.delegation?.id,
+            ...(executionContext.delegation
+              ? { delegationId: executionContext.delegation.id }
+              : {}),
             effect: tool.effect,
             expiresAt: options.deadlineAt,
             operationId,
@@ -302,10 +432,11 @@ export const createPiTools = (
             state: "running",
             type: "tool",
           });
+          pending.executorEntered = true;
           const execution = yield* configuration.executor.execute(
             {
               agentId: configuration.agent.agentId,
-              arguments: args,
+              arguments: preparedArguments,
               context: executionContext,
               organizationId: handoff.address.organizationId,
               runId,
@@ -332,13 +463,14 @@ export const createPiTools = (
             ...toolState,
             dependencies: yield* configuration.dependencies(
               tool,
-              args,
+              preparedArguments,
               execution
             ),
             output: receipt.outcome.execution.output,
             state: "succeeded",
             type: "tool",
           });
+          pending.settled = true;
           return {
             content: [
               {
@@ -350,26 +482,51 @@ export const createPiTools = (
         });
         return await Effect.runPromise(
           program.pipe(
-            Effect.catchTag("UnknownOutcome", (failure) =>
-              Effect.gen(function* blockUnknown() {
-                const handoff = yield* configuration.resolve(boundRunId);
-                yield* configuration.publish(handoff.submission.runId, {
-                  run: {
-                    operationId: failure.operationId,
-                    runId: handoff.submission.runId,
-                    state: "unknown-outcome",
-                  },
-                  type: "run",
-                });
-                return {
-                  content: [
-                    {
-                      text: "Tool outcome is unknown; reconciliation is required",
-                      type: "text" as const,
-                    },
-                  ],
-                  control: { terminate: true as const },
-                };
+            Effect.catch((error) =>
+              Effect.uninterruptible(
+                Effect.gen(function* persistFailure() {
+                  if (error._tag === "UnknownOutcome") {
+                    return yield* blockUnknown(
+                      configuration,
+                      boundRunId,
+                      error,
+                      pending
+                    );
+                  }
+                  if (
+                    (yield* settleFailure(configuration, pending)) &&
+                    pending
+                  ) {
+                    const unknown = new UnknownOutcome({
+                      operationId: pending.toolState.operationId,
+                      reason:
+                        "Controlled tool failure has no confirmed dispatch evidence",
+                    });
+                    return yield* blockUnknown(
+                      configuration,
+                      boundRunId,
+                      unknown,
+                      pending
+                    );
+                  }
+                  return yield* Effect.fail(error);
+                })
+              )
+            ),
+            Effect.onInterrupt(() =>
+              Effect.gen(function* persistInterruption() {
+                if (pending && (yield* settleFailure(configuration, pending))) {
+                  yield* blockUnknown(
+                    configuration,
+                    boundRunId,
+                    new UnknownOutcome({
+                      operationId: pending.toolState.operationId,
+                      reason:
+                        "Interrupted tool needs confirmed dispatch evidence",
+                    }),
+                    pending
+                  );
+                }
               })
             )
           ),

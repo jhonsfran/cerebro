@@ -7,16 +7,17 @@ import {
   channelItem,
   channelReply,
 } from "@cerebro/db/schema/agents";
-import { and, asc, eq, lt } from "drizzle-orm";
+import { and, asc, eq, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { sessionServiceFor } from "./fixture-session";
+import { submitInbox } from "./inbox-submission";
 import { projectSession } from "./projection";
 import {
   authorize,
   authorizeContent,
   contextByPrincipal,
-  unwrap,
+  runEffect,
 } from "./security";
 import { ChannelError, DELIVERY_TIMEOUT_MS, EFFECT_DEADLINE_MS } from "./types";
 import type { ChannelOptions, SlackConfiguration } from "./types";
@@ -125,45 +126,67 @@ export const drainChannelWork = async (
       .orderBy(asc(channelInbox.lastAttemptAt))
       .limit(25);
     for (const row of pending) {
-      await database
-        .update(channelInbox)
-        .set({ lastAttemptAt: new Date(now()) })
-        .where(eq(channelInbox.eventKey, row.eventKey));
       try {
-        const context = await contextByPrincipal(
-          database,
-          options.organizationId,
-          row.envelope.context.actor.id
-        );
-        await authorize(
-          database,
+        const [conversation] = await database
+          .select()
+          .from(channelConversation)
+          .where(eq(channelConversation.conversationId, row.conversationId));
+        if (
+          !conversation ||
+          conversation.engine !== "pi-v1" ||
+          conversation.retiredAt
+        ) {
+          await database
+            .update(channelInbox)
+            .set({ state: "quarantined" })
+            .where(eq(channelInbox.eventKey, row.eventKey));
+          continue;
+        }
+        const result = await submitInbox(
           options,
-          context,
-          "execute",
-          "agent",
-          row.envelope.agentId
+          row.eventKey,
+          async (entry) => {
+            const context = await contextByPrincipal(
+              database,
+              options.organizationId,
+              entry.envelope.context.actor.id
+            );
+            await authorize(
+              database,
+              options,
+              context,
+              "execute",
+              "agent",
+              entry.envelope.agentId
+            );
+            return runEffect(
+              sessionServiceFor(database, options).submit(
+                {
+                  event: entry.envelope,
+                  mode: entry.submissionMode,
+                  type: "submit",
+                },
+                {
+                  deadlineAt: now() + EFFECT_DEADLINE_MS,
+                  operationId: id.operation(`submit:${entry.envelope.eventId}`),
+                  requestDigest: id.digest(entry.digest),
+                }
+              )
+            );
+          }
         );
-        const receipt = unwrap(
-          await sessionServiceFor(database, options).submit(
-            { event: row.envelope, type: "submit" },
-            {
-              deadlineAt: now() + EFFECT_DEADLINE_MS,
-              operationId: id.operation(`submit:${row.envelope.eventId}`),
-              requestDigest: id.digest(row.digest),
-            }
-          )
-        );
-        await database
-          .update(channelInbox)
-          .set({ receipt, state: "accepted" })
-          .where(eq(channelInbox.eventKey, row.eventKey));
-        submitted += 1;
+        submitted += Number(result.submitted);
       } catch (error) {
         if (error instanceof ChannelError && error.status === 403) {
           await database
             .update(channelInbox)
             .set({ state: "denied" })
-            .where(eq(channelInbox.eventKey, row.eventKey));
+            .where(
+              and(
+                eq(channelInbox.eventKey, row.eventKey),
+                eq(channelInbox.state, "pending")
+              )
+            );
         }
       }
     }
@@ -173,7 +196,9 @@ export const drainChannelWork = async (
       .where(
         and(
           eq(channelConversation.organizationId, options.organizationId),
-          eq(channelConversation.projectionState, "active")
+          eq(channelConversation.projectionState, "active"),
+          eq(channelConversation.engine, "pi-v1"),
+          isNull(channelConversation.retiredAt)
         )
       )
       .orderBy(asc(channelConversation.lastProjectedAt))
@@ -244,6 +269,21 @@ export const drainChannelWork = async (
         .select()
         .from(channelConversation)
         .where(eq(channelConversation.conversationId, row.conversationId));
+      if (
+        conversation &&
+        (conversation.engine !== "pi-v1" || conversation.retiredAt)
+      ) {
+        await database
+          .update(channelReply)
+          .set({ state: "quarantined" })
+          .where(
+            and(
+              eq(channelReply.replyId, row.replyId),
+              eq(channelReply.state, "ready")
+            )
+          );
+        return;
+      }
       if (
         !conversation ||
         conversation.kind !== "slack" ||
@@ -332,7 +372,8 @@ export const drainChannelWork = async (
         .where(
           and(
             eq(channelReply.replyId, row.replyId),
-            eq(channelReply.state, "ready")
+            eq(channelReply.state, "ready"),
+            sql`exists (select 1 from ${channelConversation} where ${channelConversation.conversationId} = ${channelReply.conversationId} and ${channelConversation.engine} = 'pi-v1' and ${channelConversation.retiredAt} is null)`
           )
         )
         .returning();

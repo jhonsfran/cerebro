@@ -26,7 +26,7 @@ export const seedFixtureSource = async (
       },
     };
     const document =
-      "Cerebro pilot runs use current company grants before each model request and tool dispatch. The local pilot source is stored in PostgreSQL and MinIO. Source revocation removes its content from later answers and source views.";
+      "Fixture refund policy: refunds require current company authorization. Cerebro pilot runs use current company grants before each model request and tool dispatch. The local pilot source is stored in PostgreSQL and MinIO. Source revocation removes its content from later answers and source views.";
     const source = {
       chunks: [{ id: "pilot-source:1:policy", text: document }],
       document,

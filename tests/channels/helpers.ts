@@ -1,3 +1,4 @@
+import { Schema } from "effect";
 import { z } from "zod";
 
 import { createProductHandler } from "../../packages/api/src/routers/conversations";
@@ -5,6 +6,8 @@ import type {
   ProductHandlerOptions,
   SlackConfiguration,
 } from "../../packages/channels/src/types";
+import type { EventAddress } from "../../packages/contracts/src/events";
+import { DomainSnapshot } from "../../packages/contracts/src/session-service";
 import { sql } from "../../packages/db/node_modules/drizzle-orm";
 import { withDatabase } from "../../packages/db/src/index";
 import { user } from "../../packages/db/src/schema/auth";
@@ -129,3 +132,20 @@ export const signSlack = async (
     "x-slack-signature": `v0=${Array.from(signature, (byte) => byte.toString(16).padStart(2, "0")).join("")}`,
   };
 };
+
+export const domainSnapshot = (
+  address: EventAddress,
+  values: Record<string, unknown> = {}
+): DomainSnapshot =>
+  Schema.decodeUnknownSync(DomainSnapshot)({
+    address,
+    agentVersion: 1,
+    approvals: [],
+    executions: [],
+    outputs: [],
+    revision: 0,
+    runs: [],
+    tools: [],
+    userMessages: [],
+    ...values,
+  });

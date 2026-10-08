@@ -1,12 +1,11 @@
 import type {
   AgentId,
-  Digest,
   ExecutionContext,
   OperationId,
   OrganizationId,
   ReservationId,
 } from "./identity.ts";
-import type { EffectOptions, PortResult, ReadOptions } from "./port.ts";
+import type { PortResult, ReadOptions } from "./port.ts";
 
 export interface Resource {
   readonly organizationId: OrganizationId;
@@ -72,50 +71,4 @@ export interface BudgetReservation {
   readonly operationId: OperationId;
   readonly maximum: BudgetAmount;
   readonly state: "reserved" | "settled" | "released";
-}
-
-export interface BudgetAuthority {
-  readonly reserve: (
-    organizationId: OrganizationId,
-    maximum: BudgetAmount,
-    options: EffectOptions
-  ) => Promise<PortResult<BudgetReservation>>;
-  readonly inspect: (
-    organizationId: OrganizationId,
-    options: ReadOptions
-  ) => Promise<PortResult<BudgetAmount>>;
-  readonly settle: (
-    reservationId: ReservationId,
-    incurred: BudgetAmount,
-    options: EffectOptions,
-    outcome?: "completed" | "failed"
-  ) => Promise<PortResult<BudgetReservation>>;
-  readonly release: (
-    reservationId: ReservationId,
-    options: EffectOptions
-  ) => Promise<PortResult<BudgetReservation>>;
-}
-
-export type DecisionChoice = "run" | "clarify" | "defer";
-
-export interface DecisionRequest {
-  readonly organizationId: OrganizationId;
-  readonly inputDigest: Digest;
-  readonly eventSummary: string;
-  readonly allowedChoices: readonly DecisionChoice[];
-  readonly modelVersion: string;
-}
-
-export interface DecisionProposal {
-  readonly choice: DecisionChoice;
-  readonly inputDigest: Digest;
-  readonly modelVersion: string;
-  readonly usage: BudgetAmount;
-}
-
-export interface DecisionMaker {
-  readonly propose: (
-    request: DecisionRequest,
-    options: EffectOptions
-  ) => Promise<PortResult<DecisionProposal>>;
 }

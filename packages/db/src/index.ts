@@ -24,6 +24,20 @@ const createDb = (client: ReturnType<typeof postgres>) =>
 
 export type Database = ReturnType<typeof createDb>;
 
+export const withReservedDatabase = async <T>(
+  database: Database,
+  run: (connection: Database) => Promise<T>
+): Promise<T> => {
+  const connection = await database.$client.reserve();
+  try {
+    // postgres omits options on its reserved client; Drizzle reads the shared codecs.
+    connection.options = database.$client.options;
+    return await run(createDb(connection));
+  } finally {
+    connection.release();
+  }
+};
+
 export const withDatabase = async <T>(
   config: DatabaseConfig,
   run: (database: Database) => Promise<T>

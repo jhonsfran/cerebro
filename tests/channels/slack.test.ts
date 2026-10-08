@@ -1,6 +1,8 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
+import { Effect } from "effect";
+
 import { drainChannelWork } from "../../packages/channels/src/drain";
 import { createFixtureSessionService } from "../../packages/channels/src/fixture-session";
 import { digest } from "../../packages/channels/src/security";
@@ -15,7 +17,13 @@ import {
   channelLinkEvent,
   channelReply,
 } from "../../packages/db/src/schema/agents";
-import { createTestProduct, object, signSlack, string } from "./helpers";
+import {
+  createTestProduct,
+  domainSnapshot,
+  object,
+  signSlack,
+  string,
+} from "./helpers";
 
 const slackConfiguration = () => ({
   agentId: "unset",
@@ -106,7 +114,7 @@ test("signed Slack identity linking, inbox replay, thread sessions, and outbox d
     const verifiedResult4 = await db.select().from(channelFixtureRun);
     assert.equal(verifiedResult4.length, 1);
     const verifiedResult5 = await db.select().from(channelReply);
-    assert.equal(verifiedResult5.length, 1);
+    assert.equal(verifiedResult5.length, 0);
   });
   assert.deepEqual(await drainChannelWork(app.options), {
     sent: 1,
@@ -275,7 +283,7 @@ test("ambiguous Slack delivery and abandoned claims never retry automatically", 
   assert.equal(attempts, 1);
 });
 
-test("a bounded projection waits for terminal stream evidence before sending the complete reply", async () => {
+test("one snapshot projects complete canonical text without stream batching", async () => {
   const configuration = slackConfiguration();
   const sentBodies: string[] = [];
   const app = await createTestProduct(configuration, (_request, init) => {
@@ -311,6 +319,7 @@ test("a bounded projection waits for terminal stream evidence before sending the
       bindingKey: "remote-binding",
       channelId: "D-test",
       conversationId: "remote-conversation",
+      engine: "pi-v1",
       kind: "slack",
       organizationId: app.options.organizationId,
       ownerPrincipalId: principalId,
@@ -334,42 +343,29 @@ test("a bounded projection waits for terminal stream evidence before sending the
         address: Parameters<
           ReturnType<typeof createFixtureSessionService>["inspect"]
         >[0]
-      ) => ({
-        status: "ok" as const,
-        value: { address, agentVersion: 1, cursor: "106", runs: [run] },
-      }),
-      async *stream(
-        _address: unknown,
-        _context: unknown,
-        cursor: string | undefined
-      ) {
-        for (let offset = Number(cursor ?? 0); offset < 106; offset += 1) {
-          yield {
-            status: "ok" as const,
-            value:
-              offset < 105
-                ? {
-                    cursor: String(offset + 1),
-                    runId: run.runId,
-                    text: "x",
-                    type: "output" as const,
-                  }
-                : { cursor: "106", run, type: "run" as const },
-          };
-        }
-      },
+      ) =>
+        Effect.succeed(
+          domainSnapshot(address, {
+            executions: [
+              { executionId: "remote-execution", runIds: [run.runId] },
+            ],
+            outputs: [
+              {
+                answerId: "remote-answer",
+                citations: [],
+                dependencies: { sourceIds: [], toolIds: [] },
+                executionId: "remote-execution",
+                runId: run.runId,
+                runIds: [run.runId],
+                text: "x".repeat(105),
+              },
+            ],
+            revision: 106,
+            runs: [run],
+          })
+        ),
     }),
   };
-  assert.deepEqual(await drainChannelWork(options), {
-    sent: 0,
-    submitted: 0,
-    unknown: 0,
-  });
-  assert.equal(sentBodies.length, 0);
-  await app.options.withDatabase(async (db) => {
-    const verifiedResult19 = await db.select().from(channelReply);
-    assert.equal(verifiedResult19.length, 0);
-  });
   assert.deepEqual(await drainChannelWork(options), {
     sent: 1,
     submitted: 0,
@@ -381,7 +377,7 @@ test("a bounded projection waits for terminal stream evidence before sending the
   assert.equal(sentBodies.length, 1);
 });
 
-test("completion after a stream batch keeps the projection active until its terminal cursor arrives", async () => {
+test("one snapshot per pass keeps active work and then projects one joined answer", async () => {
   const configuration = slackConfiguration();
   const app = await createTestProduct(configuration, () =>
     Promise.resolve(
@@ -418,6 +414,7 @@ test("completion after a stream batch keeps the projection active until its term
       bindingKey: "race-binding",
       channelId: "D-test",
       conversationId: "race-conversation",
+      engine: "pi-v1",
       kind: "slack",
       organizationId: app.options.organizationId,
       ownerPrincipalId: principalId,
@@ -434,6 +431,8 @@ test("completion after a stream batch keeps the projection active until its term
     runId,
     state: "completed",
   };
+  let inspections = 0;
+  const joinedRunId = id.run("joined-run");
   const options = {
     ...app.options,
     sessions: (db: Parameters<typeof createFixtureSessionService>[0]) => ({
@@ -442,40 +441,49 @@ test("completion after a stream batch keeps the projection active until its term
         address: Parameters<
           ReturnType<typeof createFixtureSessionService>["inspect"]
         >[0]
-      ) =>
-        Promise.resolve({
-          status: "ok" as const,
-          value: { address, agentVersion: 1, cursor: "3", runs: [completed] },
-        }),
-      async *stream(
-        _address: unknown,
-        _context: unknown,
-        cursor: string | undefined
-      ) {
-        if (!cursor) {
-          yield {
-            status: "ok" as const,
-            value: {
-              cursor: "1",
-              run: { runId, state: "running" as const },
-              type: "run" as const,
-            },
-          };
-          return;
-        }
-        yield {
-          status: "ok" as const,
-          value: {
-            cursor: "2",
-            runId,
-            text: "Complete result",
-            type: "output" as const,
-          },
-        };
-        yield {
-          status: "ok" as const,
-          value: { cursor: "3", run: completed, type: "run" as const },
-        };
+      ) => {
+        inspections += 1;
+        return Effect.succeed(
+          domainSnapshot(address, {
+            executions: [
+              { executionId: "joined-execution", runIds: [runId, joinedRunId] },
+            ],
+            outputs:
+              inspections === 1
+                ? []
+                : [
+                    {
+                      answerId: "joined-answer",
+                      citations: [],
+                      dependencies: { sourceIds: [], toolIds: [] },
+                      executionId: "joined-execution",
+                      runId,
+                      runIds: [runId, joinedRunId],
+                      text: "Complete result",
+                    },
+                  ],
+            revision: inspections,
+            runs:
+              inspections === 1
+                ? [
+                    { runId, state: "running" },
+                    { runId: joinedRunId, state: "queued" },
+                  ]
+                : [
+                    completed,
+                    {
+                      completedAt: Date.now(),
+                      runId: joinedRunId,
+                      state: "completed",
+                    },
+                  ],
+          })
+        );
+      },
+      stream: () => {
+        throw new Error(
+          "Channel projection must not open a live observation stream."
+        );
       },
     }),
   };
@@ -499,6 +507,9 @@ test("completion after a stream batch keeps the projection active until its term
     const conversations = await db.select().from(channelConversation);
     assert.equal(conversations[0]?.projectionState, "idle");
     const replies = await db.select().from(channelReply);
+    assert.equal(replies.length, 1);
+    assert.equal(replies[0]?.replyId, "reply:joined-answer");
     assert.equal(replies[0]?.text, "Complete result");
+    assert.equal(inspections, 2);
   });
 });

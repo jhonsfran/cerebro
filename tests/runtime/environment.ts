@@ -1,13 +1,11 @@
-import type {
-  SessionEnvironment,
-  SessionAgent,
-} from "../../packages/runtime/src/session-agent.ts";
-import type { LedgerMigrationProbe } from "./migration-probe.ts";
+import type { SessionAgent } from "./fixture-session.ts";
 
-export interface TestEnvironment extends SessionEnvironment {
+export interface TestEnvironment extends Readonly<Record<string, unknown>> {
   readonly AUDIT_SINK: Fetcher;
   readonly DATABASE_URL: string;
-  readonly FAIL_FIRST_EFFECT?: "0" | "1";
-  readonly MIGRATION_PROBE: DurableObjectNamespace<LedgerMigrationProbe>;
+  readonly FAIL_FIRST_EFFECT: "0" | "1";
+  readonly FIXTURE_URL: string;
   readonly SESSION: DurableObjectNamespace<SessionAgent>;
+  readonly TOOL_GATEWAY: Fetcher;
+  readonly TRACE_NATIVE: "0" | "1";
 }

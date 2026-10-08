@@ -5,21 +5,40 @@ import { createRequire } from "node:module";
 
 const require = createRequire("/runtime/package.json");
 const { AwsClient } = require("aws4fetch");
-const versions = {
-  "@opencode-ai/plugin": "0.0.0-dev-18697",
-  "@opencode-ai/sdk": "0.0.0-dev-18697",
-  agents: "0.24.0",
-};
-await Promise.all(
-  Object.entries(versions).map(async ([name, expected]) => {
+const manifest = JSON.parse(
+  await readFile("/workspace/tests/runtime/package.json", "utf-8")
+);
+const versions = { node: process.version };
+const installed = await Promise.all(
+  [
+    "agents",
+    "@earendil-works/pi-ai",
+    "@earendil-works/pi-durable",
+    "effect",
+  ].map(async (name) => {
     const metadata = JSON.parse(
       await readFile(`/runtime/node_modules/${name}/package.json`, "utf-8")
     );
-    assert.equal(metadata.version, expected, `Pinned runtime version ${name}`);
+    assert.equal(
+      metadata.version,
+      manifest.dependencies[name],
+      `Selected runtime version ${name}`
+    );
+    return [name, metadata.version];
   })
 );
+for (const [name, installedVersion] of installed) {
+  versions[name] = installedVersion;
+}
 const version = spawnSync("celld", ["--version"], { encoding: "utf-8" });
-assert.equal(version.stdout.trim(), "celld 0.6.0");
+const dockerfile = await readFile(
+  "/workspace/tests/runtime/Dockerfile",
+  "utf-8"
+);
+const selectedCelld =
+  /FROM ghcr\.io\/denoland\/celld:(?<version>[\d.]+)@/u.exec(dockerfile)?.groups
+    ?.version;
+assert.equal(version.stdout.trim(), `celld ${selectedCelld}`);
 const aws = new AwsClient({
   accessKeyId: process.env.AWS_ACCESS_KEY_ID,
   region: "us-east-1",
@@ -41,7 +60,7 @@ await cp("/workspace/tests/policy/fixtures", "/run/s4/tests/policy/fixtures", {
   recursive: true,
 });
 await Promise.all(
-  ["tools", "contracts"].map(async (name) => {
+  ["tools", "contracts", "runtime", "db"].map(async (name) => {
     await rm(`/run/s4/packages/${name}`, { force: true, recursive: true });
     await mkdir(`/run/s4/packages/${name}`, { recursive: true });
     await cp(
@@ -66,7 +85,7 @@ try {
 }
 await mkdir("/runtime/node_modules/@cerebro", { recursive: true });
 await Promise.all(
-  ["tools", "contracts"].map(async (name) => {
+  ["tools", "contracts", "runtime", "db"].map(async (name) => {
     try {
       await symlink(
         `/run/s4/packages/${name}`,
@@ -112,7 +131,11 @@ await writeFile(
 );
 await writeFile(
   "/run/s4/versions.json",
-  JSON.stringify({ celld: version.stdout.trim(), ...versions })
+  JSON.stringify({
+    celld: version.stdout.trim(),
+    sourceIdentity: process.env.POLICY_SOURCE_ID,
+    ...versions,
+  })
 );
 const deploy = spawnSync(
   "celld",
@@ -131,4 +154,4 @@ const deploy = spawnSync(
 if (deploy.error) {
   throw deploy.error;
 }
-assert.equal(deploy.status, 0, "Actual session 4 tools deployment");
+assert.equal(deploy.status, 0, "Actual native policy tools deployment");

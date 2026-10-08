@@ -87,12 +87,16 @@ export const conversationItemSchema = z.discriminatedUnion("type", [
   z.object({
     cursor: z.string(),
     eventId: z.string().optional(),
+    mode: z.enum(["follow-up", "steer", "replace"]).optional(),
     text: z.string(),
     type: z.literal("user"),
   }),
   z.object({
+    answerId: z.string().optional(),
     cursor: z.string(),
+    executionId: z.string().optional(),
     runId: z.string(),
+    runIds: z.array(z.string()).optional(),
     text: z.string(),
     type: z.literal("output"),
   }),
@@ -106,8 +110,11 @@ export const conversationItemSchema = z.discriminatedUnion("type", [
     type: z.literal("citation"),
   }),
   z.object({
+    arguments: z.unknown().optional(),
     cursor: z.string(),
     name: z.string(),
+    operationId: z.string().optional(),
+    output: z.unknown().optional(),
     runId: z.string(),
     state: z.string(),
     toolId: z.string(),
@@ -116,7 +123,10 @@ export const conversationItemSchema = z.discriminatedUnion("type", [
   z.object({
     approvalId: z.string(),
     cursor: z.string(),
+    expiresAt: z.number().optional(),
+    operationId: z.string().optional(),
     runId: z.string(),
+    state: z.string().optional(),
     type: z.literal("approval"),
   }),
   z.object({ cursor: z.string(), run: runSchema, type: z.literal("run") }),
@@ -159,10 +169,6 @@ export const auditSchema = z.object({
   runId: z.string(),
   state: z.string(),
 });
-export const budgetSchema = z.object({
-  mode: z.string(),
-  remaining: z.object({ unit: z.string(), units: z.number() }),
-});
 export const savedAgentSchema = z.object({
   agentId: z.string(),
   version: z.number(),
@@ -196,7 +202,6 @@ export type PendingMessage = z.infer<typeof pendingSchema>;
 export type History = z.infer<typeof historySchema>;
 export type Source = z.infer<typeof sourceSchema>;
 export type Audit = z.infer<typeof auditSchema>;
-export type Budget = z.infer<typeof budgetSchema>;
 
 export const conversationReferenceSchema = conversationSchema.pick({
   agentId: true,

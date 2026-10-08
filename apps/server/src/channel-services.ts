@@ -1,22 +1,18 @@
 import type { ExecutionContext, ContentDependencies } from "@cerebro/contracts";
 import type { Database } from "@cerebro/db";
-import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { accessView } from "@cerebro/memory/access";
-import { createSessionService } from "@cerebro/runtime";
 import { z } from "zod";
 
 import type { WorkerEnv } from "./env.server";
 import {
   memoryDependencies,
   checkContentDependencies,
-  createCurrentAuthorization,
-  createCurrentBudget,
-  createCurrentEntitlements,
   readAudit,
   readSource,
   runtimeConfiguration,
 } from "./runtime-services";
 import { createAuth, withDatabase } from "./services";
+import { createSessionClient } from "./session-transport";
 
 const slackConfiguration = z
   .object({
@@ -41,7 +37,6 @@ export const createChannelOptions = (env: WorkerEnv) => {
   }
   return {
     bootstrapToken: config.bootstrapToken,
-    budget: createCurrentBudget(env),
     catalog: {
       connectorChoices: config.tools.map((tool) => ({
         connectorId: tool.connectorId,
@@ -107,23 +102,23 @@ export const createChannelOptions = (env: WorkerEnv) => {
       context: ExecutionContext,
       input: { sourceId: string }
     ) => readSource(env, database, context, input.sourceId),
-    sessions: (database: Database) =>
-      createSessionService({
-        agentRepository: createAgentRepository(database),
-        authorizationPolicy: createCurrentAuthorization(env),
-        checkContentDependencies: (context, dependencies, options) =>
-          withDatabase(env, (connection) =>
-            checkContentDependencies(
-              env,
-              connection,
-              context,
-              dependencies,
-              options
-            )
-          ),
-        entitlementPolicy: createCurrentEntitlements(env),
-        namespace: env.SESSION,
-      }),
+    recordAdapterTime:
+      env.DEPLOY_MODE === "fixture"
+        ? (measurement: {
+            readonly adapter: "permission" | "projection";
+            readonly durationMs: number;
+            readonly resourceId: string;
+          }) => {
+            console.info(
+              JSON.stringify({
+                ...measurement,
+                at: Date.now(),
+                event: "slice-1.adapter",
+              })
+            );
+          }
+        : undefined,
+    sessions: () => createSessionClient(env),
     slack,
     trustedOwnerUserId: config.trustedOwnerUserId,
     withDatabase: <T>(run: (database: Database) => Promise<T>) =>

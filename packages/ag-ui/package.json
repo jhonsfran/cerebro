@@ -3,9 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./authorized-observation": "./src/authorized-observation.ts",
     "./protocol": "./src/protocol.ts",
     "./projection": "./src/projection.ts",
     "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "check-types": "tsc -b"
   },
   "dependencies": {
     "@ag-ui/core": "1.0.2",

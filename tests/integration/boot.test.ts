@@ -50,11 +50,15 @@ test("production configuration requires verified PostgreSQL TLS", () => {
 test("fresh Compose boot preserves an auth user, session, and artifact", async () => {
   const apiPort = await freePort();
   const webPort = await freePort();
+  const fixturePort = await freePort();
   const baseUrl = `http://localhost:${apiPort}`;
   const environment = {
     ...process.env,
     CEREBRO_API_PORT: String(apiPort),
+    CEREBRO_DATABASE_URL: "",
     CEREBRO_DEPLOY_MODE: "fixture",
+    CEREBRO_FIXTURE_ID: project,
+    CEREBRO_FIXTURE_PORT: String(fixturePort),
     CEREBRO_PUBLIC_API_URL: baseUrl,
     CEREBRO_PUBLIC_WEB_URL: `http://localhost:${webPort}`,
     CEREBRO_WEB_PORT: String(webPort),

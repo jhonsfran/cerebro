@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { handleAgentRequest, parseInput } from "./agents";
 import { handleApprovalRequest } from "./approvals";
+import { observeConversation } from "./observations";
 
 const BODY_LIMIT_BYTES = 100_000;
 const readBody = async (request: Request): Promise<string> => {
@@ -105,18 +106,25 @@ const handleConversationRequest = async (
     return;
   }
   if (path.length === 2 && method === "GET") {
-    return json(await service.readConversation(userId, conversationId));
+    return json(await service.readConversation(userId, conversationId, cursor));
   }
   if (action === "messages" && method === "POST" && path.length === 3) {
     const input = parseInput(
       z.object({
         eventId: z.string().min(1).max(256),
+        mode: z.enum(["follow-up", "steer", "replace"]).default("follow-up"),
         text: z.string().trim().min(1).max(16_000),
       }),
       body
     );
     return json(
-      await service.submit(userId, conversationId, input.eventId, input.text)
+      await service.submit(
+        userId,
+        conversationId,
+        input.eventId,
+        input.text,
+        input.mode
+      )
     );
   }
   if (method !== "GET") {
@@ -167,6 +175,17 @@ export const createProductHandler =
     try {
       const url = new URL(request.url);
       const raw = request.method === "GET" ? "" : await readBody(request);
+      const observation =
+        /^\/api\/product\/conversations\/(?<conversationId>[^/]+)\/observations$/u.exec(
+          url.pathname
+        );
+      if (request.method === "GET" && observation?.[1]) {
+        return await observeConversation(
+          request,
+          options,
+          decodeURIComponent(observation[1])
+        );
+      }
       if (
         url.pathname === "/api/channels/slack/events" &&
         request.method === "POST"

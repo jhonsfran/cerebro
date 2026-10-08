@@ -1,341 +1,236 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Assertions use the preceding native response. */
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 
-import type { PortResult } from "../../packages/contracts/src/port.ts";
-import type {
-  RunState,
-  SessionReceipt,
-  SessionSnapshot,
-  SessionStreamItem,
-} from "../../packages/contracts/src/session.ts";
 import {
-  agentFor,
   addressFor,
+  approve,
+  boot,
   compose,
   effectOptions,
-  fixtureContext,
+  evidence,
+  getFixture,
+  inspect,
   messageEvent,
+  newStack,
+  observe,
+  pending,
+  rawRequest,
   request,
+  submit,
   waitFor,
 } from "./helpers.ts";
+import type { ProviderEvidence, Stack } from "./helpers.ts";
 
-const stack = {
-  apiPort: 18_875,
-  fixturePort: 18_876,
-  holdAfterEffect: false,
-  project: "cerebro-runtime-isolation",
-} as const;
+let stack: Stack;
+let failed = false;
 const companyA = addressFor("company-a", "conversation-1");
 const companyB = addressFor("company-b", "conversation-1");
-
-before(() => {
-  compose(stack, ["up", "--build", "-d", "--wait"]);
+before(async () => {
+  stack = await newStack("isolation");
+  boot(stack);
 });
-
-after(() => {
-  compose(stack, ["down", "-v"]);
+after(async () => {
+  if (failed) {
+    await evidence(stack, "failure", {
+      logs: compose(stack, [
+        "logs",
+        "--no-color",
+        "--tail=100",
+        "celld",
+        "bootstrap",
+      ]),
+    });
+  } else {
+    compose(stack, ["down", "-v"]);
+  }
 });
-
-const inspect = async (address: typeof companyA) =>
-  await request<PortResult<SessionSnapshot>>(stack, "/runtime/inspect", {
-    address,
+const hostTest = (name: string, run: () => Promise<void>) =>
+  test(name, async () => {
+    try {
+      await run();
+    } catch (error) {
+      failed = true;
+      throw error;
+    }
   });
 
-const stream = async (address: typeof companyA, cursor?: string) =>
-  await request<PortResult<SessionStreamItem[]>>(stack, "/runtime/stream", {
-    address,
-    cursor,
-  });
-
-test("duplicate delivery and operation conflict remain local to one company", async () => {
-  const eventA = messageEvent(companyA, "event-a");
-  const optionsA = effectOptions("operation-a", "sha256:operation-a");
-  const first = await request<PortResult<SessionReceipt>>(
-    stack,
-    "/runtime/submit",
-    {
-      agent: agentFor(companyA, 3),
-      event: eventA,
-      options: optionsA,
-    }
-  );
-  assert.equal(first.status, "ok");
-  if (first.status !== "ok") {
-    return;
-  }
-  assert.equal(first.value.replayed, false);
-  const duplicate = await request<PortResult<SessionReceipt>>(
-    stack,
-    "/runtime/submit",
-    {
-      agent: agentFor(companyA, 3),
-      event: eventA,
-      options: optionsA,
-    }
-  );
-  assert.equal(duplicate.status, "ok");
-  if (duplicate.status === "ok") {
-    assert.equal(duplicate.value.replayed, true);
-    assert.equal(duplicate.value.runId, first.value.runId);
-  }
-  const changed = await request<PortResult<SessionReceipt>>(
-    stack,
-    "/runtime/submit",
-    {
-      agent: agentFor(companyA, 3),
-      event: {
-        ...eventA,
-        event: { payload: { text: "Changed" }, type: "user.message" },
+hostTest(
+  "native duplicate admission and changed event conflict remain local to one company",
+  async () => {
+    const event = messageEvent(companyA, "event-a");
+    const first = await submit(stack, event, "operation-a");
+    const replay = await submit(stack, event, "operation-a");
+    assert.equal(first.replayed, false);
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.runId, first.runId);
+    const changed = await rawRequest(stack, "/runtime/submit", {
+      address: companyA,
+      command: {
+        event: {
+          ...event,
+          event: { payload: { text: "Changed" }, type: "user.message" },
+        },
+        mode: "follow-up",
+        type: "submit",
       },
-      options: optionsA,
-    }
-  );
-  assert.equal(changed.status, "conflict");
-  const digestConflict = await request<PortResult<SessionReceipt>>(
-    stack,
-    "/runtime/submit",
-    {
-      agent: agentFor(companyA, 3),
-      event: eventA,
-      options: { ...optionsA, requestDigest: "sha256:changed" },
-    }
-  );
-  assert.equal(digestConflict.status, "conflict");
-
-  const eventB = messageEvent(companyB, "event-b");
-  const second = await request<PortResult<SessionReceipt>>(
-    stack,
-    "/runtime/submit",
-    {
-      agent: agentFor(companyB, 7),
-      event: eventB,
-      options: effectOptions("operation-b", "sha256:operation-b"),
-    }
-  );
-  assert.equal(second.status, "ok");
-  const snapshotA = await inspect(companyA);
-  const snapshotB = await inspect(companyB);
-  assert.equal(snapshotA.status, "ok");
-  assert.equal(snapshotB.status, "ok");
-  if (snapshotA.status === "ok" && snapshotB.status === "ok") {
-    assert.equal(snapshotA.value.address.organizationId, "company-a");
-    assert.equal(snapshotB.value.address.organizationId, "company-b");
-    assert.equal(snapshotA.value.runs.length, 1);
-    assert.equal(snapshotB.value.runs.length, 1);
-    assert.equal(snapshotA.value.agentVersion, 3);
-    assert.equal(snapshotB.value.agentVersion, 7);
-  }
-});
-
-test("the stream cursor and cancellation survive a process restart", async () => {
-  const approvalStream = await waitFor(
-    async () => await stream(companyA),
-    (result) =>
-      result.status === "ok" &&
-      result.value.some((item) => item.type === "approval"),
-    120_000
-  );
-  assert.equal(approvalStream.status, "ok");
-  if (approvalStream.status !== "ok") {
-    return;
-  }
-  const approval = approvalStream.value.find(
-    (item) => item.type === "approval"
-  );
-  assert.ok(approval);
-  const afterApproval = await stream(companyA, approval.cursor);
-  assert.equal(afterApproval.status, "ok");
-  if (afterApproval.status === "ok") {
-    assert.equal(
-      afterApproval.value.some((item) => item.cursor === approval.cursor),
-      false
+      options: effectOptions("operation-a"),
+    });
+    assert.equal(changed.status, 409);
+    const changedMode = await rawRequest(stack, "/runtime/submit", {
+      address: companyA,
+      command: { event, mode: "steer", type: "submit" },
+      options: effectOptions("operation-a"),
+    });
+    assert.equal(changedMode.status, 409);
+    await submit(stack, messageEvent(companyB, "event-b"), "operation-b");
+    const left = await inspect(stack, companyA);
+    const right = await inspect(stack, companyB);
+    assert.equal(left.runs.length, 1);
+    assert.equal(right.runs.length, 1);
+    assert.equal(left.address.organizationId, "company-a");
+    assert.equal(right.address.organizationId, "company-b");
+    assert.notEqual(left.runs[0]?.runId, right.runs[0]?.runId);
+    const outsider = await rawRequest(
+      stack,
+      "/runtime/inspect",
+      { address: companyA, options: effectOptions("outsider") },
+      "user:company-b"
     );
+    assert.equal(outsider.status, 403);
+    await evidence(stack, "admission", { first, left, replay, right });
   }
-  const snapshot = await inspect(companyA);
-  assert.equal(snapshot.status, "ok");
-  if (snapshot.status !== "ok") {
-    return;
-  }
-  const runId = snapshot.value.runs[0]?.runId;
-  assert.ok(runId);
-  const command = {
-    address: companyA,
-    context: fixtureContext("company-a"),
-    runId,
-    type: "cancel",
-  };
-  const options = effectOptions("cancel-a", "sha256:cancel-a");
-  const cancelled = await request<PortResult<RunState>>(
-    stack,
-    "/runtime/cancel",
-    { command, options }
-  );
-  assert.equal(cancelled.status, "ok");
-  if (cancelled.status === "ok") {
-    assert.equal(cancelled.value.state, "cancelled");
-  }
-  const replay = await request<PortResult<RunState>>(stack, "/runtime/cancel", {
-    command,
-    options,
-  });
-  assert.deepEqual(replay, cancelled);
-  compose(stack, ["kill", "-s", "SIGKILL", "celld"]);
-  compose(stack, ["up", "-d", "--wait", "celld"]);
-  const afterRestart = await waitFor(
-    async () => await inspect(companyA),
-    (result) =>
-      result.status === "ok" && result.value.runs[0]?.state === "cancelled",
-    30_000
-  );
-  assert.equal(afterRestart.status, "ok");
-  if (afterRestart.status === "ok") {
-    assert.equal(afterRestart.value.runs[0]?.state, "cancelled");
-  }
-  const resumed = await stream(companyA, approval.cursor);
-  assert.equal(resumed.status, "ok");
-  if (resumed.status === "ok") {
+);
+
+hostTest(
+  "observer detach does not Stop and reattach has a new epoch",
+  async () => {
+    const approval = await pending(stack, companyA);
+    const first = await observe(stack, companyA);
+    const initial = await first.next();
+    assert.equal(initial.type, "snapshot");
+    await first.close();
     assert.equal(
-      resumed.value.some(
-        (item) => item.type === "run" && item.run.state === "cancelled"
-      ),
-      true
+      (await inspect(stack, companyA)).runs[0]?.state,
+      "waiting-for-approval"
     );
+    const second = await observe(stack, companyA);
+    const attached = await second.next();
+    assert.notEqual(attached.epoch, initial.epoch);
+    await second.close();
+    await approve(stack, companyA, approval);
+    const completed = await waitFor(
+      () => inspect(stack, companyA),
+      (value) => value.runs[0]?.state === "completed"
+    );
+    assert.equal(completed.outputs.length, 1);
+    const provider = await getFixture<ProviderEvidence>(stack);
+    assert.equal(
+      provider.tools.filter((tool) => tool.operationId === approval.operationId)
+        .length,
+      1
+    );
+    await evidence(stack, "observation", {
+      attached,
+      completed,
+      initial,
+      provider,
+    });
   }
-});
+);
 
-test("the outbox retries after PostgreSQL returns", async () => {
-  compose(stack, ["stop", "postgres"]);
-  const address = addressFor("company-c", "conversation-1");
-  const event = messageEvent(address, "event-outbox");
-  const submitted = await request<PortResult<SessionReceipt>>(
-    stack,
-    "/runtime/submit",
-    {
-      agent: agentFor(address, 1),
-      event,
-      options: effectOptions("operation-outbox", "sha256:operation-outbox"),
-    }
-  );
-  assert.equal(submitted.status, "ok");
-  compose(stack, ["up", "-d", "--wait", "postgres"]);
-  await waitFor(
-    () => {
-      const output = compose(stack, [
-        "exec",
-        "-T",
-        "postgres",
-        "psql",
-        "-U",
-        "runtime",
-        "-d",
-        "runtime",
-        "-tA",
-        "-c",
-        `select count(*) from cerebro_audit_event where organization_id='company-c'`,
-      ]);
-      return Number(output.trim());
-    },
-    (count) => count > 0,
-    120_000
-  );
-  const output = compose(stack, [
-    "exec",
-    "-T",
-    "postgres",
-    "psql",
-    "-U",
-    "runtime",
-    "-d",
-    "runtime",
-    "-tA",
-    "-c",
-    `select count(*) - count(distinct event_id) from cerebro_audit_event where organization_id='company-c'`,
-  ]);
-  assert.equal(Number(output.trim()), 0);
-});
-
-test("ledger migration preserves existing Session 0 records", async () => {
-  const name = "existing-session";
-  const seeded = await fetch(
-    `http://127.0.0.1:${stack.apiPort}/migration/${name}/seed`,
-    { method: "POST" }
-  );
-  assert.equal(seeded.status, 200);
-  const upgraded = await fetch(
-    `http://127.0.0.1:${stack.apiPort}/migration/${name}/upgrade`,
-    { method: "POST" }
-  );
-  assert.equal(upgraded.status, 200);
-  assert.deepEqual(await upgraded.json(), {
-    result: "legacy-result",
-    sessionId: "legacy-session",
-    version: "3",
-  });
-});
-
-test("PostgreSQL projection accepts a repeated event ID once", async () => {
-  const eventId = "projection-duplicate";
-  const replayed = await fetch(
-    `http://127.0.0.1:${stack.apiPort}/audit/replay`,
-    {
-      body: JSON.stringify({
-        agentId: "agent-1",
-        eventId,
-        kind: "audit",
-        name: "run.completed",
-        occurredAt: Date.now(),
-        organizationId: "company-a",
-        payload: { state: "completed" },
-        runId: "run-a",
-        sessionId: "session-a",
+hostTest(
+  "current fixture access applies to domain history and receipts after restart",
+  async () => {
+    const saved = await inspect(stack, companyA);
+    const operationId = saved.tools[0]?.operationId;
+    assert.ok(operationId);
+    const receipt = await request(stack, "/runtime/fixture/receipt", {
+      address: companyA,
+      operationId,
+    });
+    await request(stack, "/runtime/fixture/access", {
+      address: companyA,
+      enabled: false,
+    });
+    compose(stack, ["kill", "-s", "SIGKILL", "celld"]);
+    compose(stack, ["up", "-d", "--wait", "celld"]);
+    assert.equal(
+      (
+        await rawRequest(stack, "/runtime/inspect", {
+          address: companyA,
+          options: effectOptions("revoked-history"),
+        })
+      ).status,
+      403
+    );
+    assert.equal(
+      (
+        await rawRequest(stack, "/runtime/fixture/receipt", {
+          address: companyA,
+          operationId,
+        })
+      ).status,
+      403
+    );
+    await request(stack, "/runtime/fixture/access", {
+      address: companyA,
+      enabled: true,
+    });
+    const reopened = await inspect(stack, companyA);
+    assert.deepEqual(reopened.outputs, saved.outputs);
+    assert.deepEqual(reopened.userMessages, saved.userMessages);
+    await request(stack, "/runtime/fixture/replay", {
+      address: companyA,
+      operationId,
+    });
+    assert.deepEqual(
+      await request(stack, "/runtime/fixture/receipt", {
+        address: companyA,
+        operationId,
       }),
-      headers: { "Content-Type": "application/json" },
-      method: "POST",
-    }
-  );
-  assert.equal(replayed.status, 200);
-  assert.deepEqual(await replayed.json(), { statuses: [200, 200] });
-  const count = compose(stack, [
-    "exec",
-    "-T",
-    "postgres",
-    "psql",
-    "-U",
-    "runtime",
-    "-d",
-    "runtime",
-    "-tA",
-    "-c",
-    `select count(*) from cerebro_audit_event where event_id='${eventId}'`,
-  ]);
-  assert.equal(Number(count.trim()), 1);
-});
+      receipt
+    );
+    await evidence(stack, "current-access", { receipt, reopened, saved });
+  }
+);
 
-test("production operation receipt survives SDK migration and native process restart", async () => {
-  const name = "production-journal";
-  const write = await fetch(
-    `http://127.0.0.1:${stack.apiPort}/migration/${name}/journal-write`,
-    { method: "POST" }
-  );
-  assert.equal(write.status, 200);
-  const saved = await write.json();
-  assert.equal(saved.status, "ok");
-  assert.equal(saved.value.state, "outcome-recorded");
-  assert.deepEqual(saved.value.result, { status: "ok", value: { count: 1 } });
-  assert.deepEqual(saved.value.incurred, { unit: "credits", units: 3 });
-  compose(stack, ["kill", "-s", "SIGKILL", "celld"]);
-  compose(stack, ["up", "-d", "--wait", "celld"]);
-  const recovered = await waitFor(
-    async () => {
-      const response = await fetch(
-        `http://127.0.0.1:${stack.apiPort}/migration/${name}/journal-read`,
-        { method: "POST" }
-      );
-      assert.equal(response.status, 200);
-      return await response.json();
-    },
-    (result) => result.status === "ok",
-    30_000
-  );
-  assert.deepEqual(recovered, saved);
-});
+hostTest(
+  "the independent PostgreSQL audit sink stores a repeated event once",
+  async () => {
+    const response = await fetch(
+      `http://127.0.0.1:${stack.apiPort}/audit/replay`,
+      {
+        body: JSON.stringify({
+          agentId: "agent-1",
+          eventId: "projection-duplicate",
+          kind: "audit",
+          name: "run.completed",
+          occurredAt: Date.now(),
+          organizationId: "company-a",
+          payload: { state: "completed" },
+          runId: "run-a",
+          sessionId: "session-a",
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      }
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { statuses: [200, 200] });
+    const count = compose(stack, [
+      "exec",
+      "-T",
+      "postgres",
+      "psql",
+      "-U",
+      "runtime",
+      "-d",
+      "runtime",
+      "-tA",
+      "-c",
+      "select count(*) from cerebro_audit_event where event_id='projection-duplicate'",
+    ]);
+    assert.equal(Number(count.trim()), 1);
+  }
+);

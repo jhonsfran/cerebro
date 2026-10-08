@@ -4,45 +4,25 @@ import type { TestEnvironment } from "./environment.ts";
 
 export class FixtureEffectGateway extends WorkerEntrypoint<TestEnvironment> {
   async fetch(request: Request): Promise<Response> {
-    const path = new URL(request.url).pathname;
-    if (request.method === "GET" && path.startsWith("/effect/")) {
-      return await fetch(
-        `${this.env.FIXTURE_URL}/effects/${path.slice("/effect/".length)}`
-      );
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/effect") {
+      return await fetch(`${this.env.FIXTURE_URL}/effects${url.search}`);
     }
-    if (request.method !== "POST" || path !== "/effect") {
+    if (request.method !== "POST" || url.pathname !== "/effect") {
       return new Response(null, { status: 404 });
     }
-    const body = await request.text();
     const response = await fetch(`${this.env.FIXTURE_URL}/effects`, {
-      body,
+      body: await request.text(),
       headers: {
+        Authorization: "Bearer fixture-connector-key",
         "Content-Type": "application/json",
-        "x-fixture-secret": "cerebro-local-fixture-secret",
       },
       method: "POST",
+      signal: request.signal,
     });
     if (this.env.FAIL_FIRST_EFFECT === "1" && response.ok) {
-      const input: unknown = JSON.parse(body);
-      if (
-        input &&
-        typeof input === "object" &&
-        "invocationId" in input &&
-        typeof input.invocationId === "string"
-      ) {
-        const state = await fetch(
-          `${this.env.FIXTURE_URL}/effects/${encodeURIComponent(input.invocationId)}`
-        );
-        const record: unknown = await state.json();
-        if (
-          record &&
-          typeof record === "object" &&
-          "calls" in record &&
-          record.calls === 1
-        ) {
-          return new Response("Injected response failure", { status: 503 });
-        }
-      }
+      await response.text();
+      return new Response("Injected lost write response", { status: 503 });
     }
     return response;
   }

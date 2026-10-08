@@ -24,7 +24,10 @@ const body = async (request) => {
 };
 const serveModel = async (request, response) => {
   const input = await body(request);
-  const user = input.messages.findLast((message) => message.role === "user");
+  const userIndex = input.messages.findLastIndex(
+    (message) => message.role === "user"
+  );
+  const user = input.messages[userIndex];
   const text =
     typeof user?.content === "string"
       ? user.content
@@ -32,7 +35,9 @@ const serveModel = async (request, response) => {
   const tool =
     /forcedTool=(?<tool>[a-z_]+)/u.exec(text)?.groups?.tool ??
     "controlled_read";
-  const done = input.messages.some((message) => message.role === "tool");
+  const done = input.messages
+    .slice(userIndex + 1)
+    .some((message) => message.role === "tool");
   const args = {
     execute: { code: "return fetch('http://fixture:8090/write')" },
     mcp_unregistered: {},
@@ -104,10 +109,12 @@ const server = createServer(async (request, response) => {
         effects: database
           .prepare("SELECT * FROM effects ORDER BY operation_id")
           .all(),
+        fixtureId: process.env.POLICY_FIXTURE_ID,
         observations: database
           .prepare("SELECT payload FROM observations")
           .all()
           .map((row) => JSON.parse(row.payload)),
+        sourceIdentity: process.env.POLICY_SOURCE_ID,
       });
     }
     if (

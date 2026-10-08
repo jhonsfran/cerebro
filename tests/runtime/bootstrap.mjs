@@ -55,12 +55,9 @@ const configurationSource = await readFile("wrangler.jsonc", "utf-8");
 const configuration = JSON.parse(
   configurationSource.replaceAll(/,\s*(?=[}\]])/gu, "")
 );
-configuration.vars.TOOL_EFFECT_MODE =
-  process.env.RUNTIME_EFFECT_MODE ?? "idempotent";
-configuration.vars.HOLD_AFTER_EFFECT =
-  process.env.RUNTIME_HOLD_AFTER_EFFECT ?? "1";
 configuration.vars.FAIL_FIRST_EFFECT =
   process.env.RUNTIME_FAIL_FIRST_EFFECT ?? "0";
+configuration.vars.TRACE_NATIVE = process.env.RUNTIME_TRACE_NATIVE ?? "0";
 await writeFile("wrangler.jsonc", `${JSON.stringify(configuration)}\n`);
 const result = spawnSync(
   "celld",

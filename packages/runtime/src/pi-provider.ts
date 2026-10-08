@@ -1,5 +1,5 @@
 /* oxlint-disable no-await-in-loop -- The provider stream preserves the vendor event order. */
-import { Denied } from "@cerebro/contracts/failures";
+import { Denied, InvalidInput } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import type { ReadOptions } from "@cerebro/contracts/port";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
@@ -21,15 +21,53 @@ export interface ControlledProviderConfiguration {
     options: ReadOptions
   ) => Effect.Effect<void, ContractFailure>;
   readonly deadlineMs: number;
+  readonly maxInputBytes: number;
   readonly fetch?: typeof globalThis.fetch;
+  readonly beforeFetch?: (
+    options: ReadOptions
+  ) => Effect.Effect<void, ContractFailure>;
 }
 
 export const createControlledProvider = (
   configuration: ControlledProviderConfiguration
 ): Provider => {
+  if (
+    !Number.isSafeInteger(configuration.maxInputBytes) ||
+    configuration.maxInputBytes < 1
+  ) {
+    throw new RangeError("A positive model input byte limit is required");
+  }
   const physicalFetch: typeof globalThis.fetch = async (input, init) => {
+    const body = init?.body;
+    if (
+      (body !== undefined && body !== null && typeof body !== "string") ||
+      ((body === undefined || body === null) &&
+        input instanceof Request &&
+        input.body !== null)
+    ) {
+      throw new InvalidInput({
+        reason: "Controlled model requests require a serialized body",
+      });
+    }
+    if (
+      typeof body === "string" &&
+      new TextEncoder().encode(body).byteLength > configuration.maxInputBytes
+    ) {
+      throw new InvalidInput({
+        reason: "Model input exceeds the configured byte limit",
+      });
+    }
     const signal =
       init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    const options = {
+      deadlineAt: Date.now() + configuration.deadlineMs,
+      signal: signal ?? undefined,
+    };
+    if (configuration.beforeFetch) {
+      await Effect.runPromise(configuration.beforeFetch(options), {
+        signal: signal ?? undefined,
+      });
+    }
     await Effect.runPromise(
       configuration.authorize({
         deadlineAt: Date.now() + configuration.deadlineMs,

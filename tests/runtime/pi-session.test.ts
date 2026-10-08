@@ -7,11 +7,23 @@ import { performance } from "node:perf_hooks";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 
-import { Effect, Exit, Result, Schema, Scope, Stream } from "effect";
+import {
+  Context,
+  Effect,
+  Exit,
+  Layer,
+  Queue,
+  Result,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
 
 import type { SessionStore } from "../../packages/contracts/src/execution.ts";
+import { ExecutionEngine } from "../../packages/contracts/src/execution.ts";
 import {
   Denied,
+  InvalidInput,
   Unavailable,
   UnknownOutcome,
 } from "../../packages/contracts/src/failures.ts";
@@ -19,7 +31,10 @@ import type { ContractFailure } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { RunId } from "../../packages/contracts/src/identity.ts";
 import type { ReadOptions } from "../../packages/contracts/src/port.ts";
-import { Observation } from "../../packages/contracts/src/session-service.ts";
+import {
+  Observation,
+  SessionService,
+} from "../../packages/contracts/src/session-service.ts";
 import type {
   DomainUpdate,
   DomainSnapshot,
@@ -44,6 +59,7 @@ import type {
   BoundApproval,
   ToolExecutor,
 } from "../../packages/contracts/src/tool-service.ts";
+import { canonicalToolArguments } from "../../packages/contracts/src/tools.ts";
 import {
   Type,
   fauxProvider,
@@ -64,7 +80,13 @@ import type {
   AgentEvent,
   AgentEventStream,
   SubmissionRecord,
+  ToolRegistration,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
+import {
+  auditProjection,
+  drainAuditProjection,
+} from "../../packages/runtime/src/audit-projection.ts";
+import type { AuditProjection } from "../../packages/runtime/src/audit-projection.ts";
 import { createSessionStore } from "../../packages/runtime/src/celld-session-store.ts";
 import {
   createPiExecutionEngine,
@@ -74,7 +96,12 @@ import {
 import type { PiEngineConfiguration } from "../../packages/runtime/src/pi-harness.ts";
 import { createControlledProvider } from "../../packages/runtime/src/pi-provider.ts";
 import { createPiTools } from "../../packages/runtime/src/pi-tools.ts";
-import { createSessionService } from "../../packages/runtime/src/session-service.ts";
+import type { HostCheckpoint } from "../../packages/runtime/src/runtime-ports.ts";
+import {
+  createSessionService,
+  SessionCoordinator,
+  sessionServiceLayer,
+} from "../../packages/runtime/src/session-service.ts";
 
 const address = {
   agentId: userEvent.agentId,
@@ -121,8 +148,23 @@ const failure = async <E>(effect: Effect.Effect<unknown, E>) => {
   assert.ok(Result.isFailure(result));
   return result.failure;
 };
+const until = async (condition: () => boolean) => {
+  const deadline = Date.now() + 2000;
+  while (!condition()) {
+    assert.ok(
+      Date.now() < deadline,
+      "Projection did not settle within two seconds"
+    );
+    await Effect.runPromise(Effect.sleep(5));
+  }
+};
 
-const setup = async (useContractStore = false, persistent = false) => {
+const setup = async (
+  useContractStore = false,
+  persistent = false,
+  checkpoint?: HostCheckpoint,
+  retainDurableWork?: (completion: Promise<void>) => void
+) => {
   let beforeRead:
     | ((
         dependencies: ContentDependencies
@@ -204,12 +246,31 @@ const setup = async (useContractStore = false, persistent = false) => {
     address,
     agent,
     authority: authority.service,
+    checkpoint,
     engine: engine.service,
+    retainDurableWork,
     store: selected,
   };
-  const runtime = await Effect.runPromise(
-    Scope.provide(scope)(createSessionService(dependencies))
+  const services = await Effect.runPromise(
+    Layer.buildWithScope(
+      sessionServiceLayer({
+        address,
+        agent,
+        checkpoint,
+        retainDurableWork,
+      }).pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            authority.layer,
+            engine.layer,
+            useContractStore ? contractStore.layer : store.layer
+          )
+        )
+      ),
+      scope
+    )
   );
+  const runtime = Context.get(services, SessionCoordinator);
   return {
     ...runtime,
     authority,
@@ -590,6 +651,119 @@ test("observation subscribes before snapshot; detach leaves the durable run runn
   }
 });
 
+test("detach releases an idle native observer while its next frame is pending", async () => {
+  const fixture = await setup();
+  try {
+    await submit(fixture);
+    const iterator = Stream.toAsyncIterable(
+      Stream.scoped(
+        fixture.service.stream(
+          address,
+          allowedContext,
+          { accessGeneration: 1 },
+          options()
+        )
+      )
+    )[Symbol.asyncIterator]();
+    assert.equal((await iterator.next()).value?.type, "snapshot");
+    const pending = iterator.next();
+    const closed = iterator.return?.();
+    await Effect.runPromise(
+      Effect.tryPromise({
+        catch: (error) => error,
+        try: () => Promise.all([pending, closed]),
+      }).pipe(Effect.timeout(500))
+    );
+    assert.equal(fixture.store.observerCount(), 0);
+    assert.equal(fixture.engine.counts.cancel, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("provisional text bypasses storage sync while durable transitions await it", async () => {
+  const fixture = await setup();
+  const gate = Promise.withResolvers<boolean>();
+  let flushCalls = 0;
+  try {
+    const receipt = await submit(fixture);
+    await until(() => fixture.store.domain().runs[0]?.state === "running");
+    const { executionId } = answerIdentity(receipt.runId);
+    await Effect.runPromise(
+      fixture.project({
+        execution: { executionId, runIds: [receipt.runId] },
+        type: "execution",
+      })
+    );
+    const store = createSessionStore(
+      {
+        ...fixture.persistence,
+        flush: async () => {
+          flushCalls += 1;
+          await gate.promise;
+        },
+      },
+      fixture.storeConfiguration
+    );
+    const before = fixture.persistence.load();
+    const { revision } = store.domain();
+    await Effect.runPromise(
+      store.service
+        .commit(
+          address,
+          revision,
+          {
+            runId: receipt.runId,
+            type: "projected",
+            update: {
+              executionId,
+              runId: receipt.runId,
+              text: "First text",
+              type: "provisional-text",
+            },
+          },
+          options()
+        )
+        .pipe(Effect.timeout(250))
+    );
+    assert.equal(flushCalls, 0);
+    assert.equal(fixture.persistence.load(), before);
+    let acknowledged = false;
+    const durable = Effect.runPromise(
+      store.service.commit(
+        address,
+        revision,
+        {
+          runId: receipt.runId,
+          type: "projected",
+          update: {
+            run: {
+              endedAt: Date.now(),
+              runId: receipt.runId,
+              state: "cancelled",
+            },
+            type: "run",
+          },
+        },
+        options()
+      )
+    );
+    const completion = (async () => {
+      await durable;
+      acknowledged = true;
+    })();
+    await until(() => flushCalls === 1);
+    assert.equal(acknowledged, false);
+    gate.resolve(true);
+    await completion;
+    assert.equal(acknowledged, true);
+    assert.equal(store.domain().runs[0].state, "cancelled");
+  } finally {
+    gate.resolve(true);
+    await fixture.close();
+  }
+});
+
 const approvalFor = (runId: RunId): BoundApproval => ({
   actorPrincipalId: allowedContext.actor.id,
   agentId: agent.agentId,
@@ -607,6 +781,150 @@ const approvalFor = (runId: RunId): BoundApproval => ({
   runId,
   toolId: unknownOutcomeInvocation.tool.id,
   toolVersion: "1",
+});
+
+const persistPendingApproval = async (
+  fixture: Awaited<ReturnType<typeof setup>>,
+  approval: BoundApproval
+) => {
+  const handoffs = await Effect.runPromise(
+    fixture.store.service.recover(address, options())
+  );
+  await Effect.runPromise(
+    fixture.store.service.commit(
+      address,
+      Math.max(...handoffs.map((item) => item.revision)),
+      { approval, runId: approval.runId, type: "approval" },
+      options()
+    )
+  );
+  await Effect.runPromise(
+    fixture.project({
+      approvalId: approval.id,
+      expiresAt: approval.expiresAt,
+      operationId: approval.operationId,
+      runId: approval.runId,
+      state: "pending",
+      type: "approval",
+    })
+  );
+};
+
+const noHeldDecision = () => Effect.void;
+for (const change of ["revocation", "policy", "expiry"] as const) {
+  test(`approval rechecks ${change} after a held decision, before binding or dispatch`, async () => {
+    let hold: () => Effect.Effect<void, ContractFailure> = noHeldDecision;
+    const fixture = await setup(false, false, (boundary) =>
+      boundary === "before-approval" ? hold() : Effect.void
+    );
+    try {
+      const receipt = await submit(fixture);
+      const approval = {
+        ...approvalFor(receipt.runId),
+        approverId: undefined,
+        expiresAt: Date.now() + (change === "expiry" ? 200 : 10_000),
+      };
+      await persistPendingApproval(fixture, approval);
+      hold = () =>
+        change === "expiry"
+          ? Effect.sleep(250)
+          : Effect.sync(() => {
+              fixture.authority.setDecision(
+                change === "revocation"
+                  ? {
+                      decision: "deny",
+                      policyVersion: "fixture-v2",
+                      reason: "Approval access was revoked",
+                    }
+                  : { decision: "allow", policyVersion: "fixture-v2" }
+              );
+            });
+      assert.equal(
+        (
+          await failure(
+            fixture.service.approve(
+              {
+                address,
+                approvalId: approval.id,
+                context: allowedContext,
+                decision: "allow",
+                runId: receipt.runId,
+                type: "approve",
+              },
+              options()
+            )
+          )
+        )._tag,
+        "Denied"
+      );
+      assert.equal(fixture.store.domain().approvals[0]?.state, "pending");
+      const persisted = await Effect.runPromise(
+        fixture.store.service.recover(address, options())
+      );
+      assert.equal(persisted[0]?.approvals[0]?.approverId, undefined);
+      assert.equal(fixture.engine.counts.approve, 0);
+      assert.equal(fixture.store.domain().outputs.length, 0);
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
+test("queued withdrawal preserves an active approval; active Stop settles its pending controls atomically", async () => {
+  const fixture = await setup();
+  try {
+    const active = await submit(fixture, "approval-owner");
+    const queued = await submit(fixture, "queued-input");
+    const approval = approvalFor(active.runId);
+    await persistPendingApproval(fixture, approval);
+    const cancel = (runId: RunId) =>
+      fixture.service.cancel(
+        { address, context: allowedContext, runId, type: "cancel" },
+        options()
+      );
+    await Effect.runPromise(cancel(queued.runId));
+    assert.equal(fixture.store.domain().approvals[0]?.state, "pending");
+    await Effect.runPromise(cancel(active.runId));
+    const snapshot = fixture.reopen().domain();
+    assert.equal(snapshot.approvals[0]?.state, "cancelled");
+    assert.equal(
+      snapshot.runs.find((run) => run.runId === active.runId)?.state,
+      "cancelled"
+    );
+    assert.ok(
+      fixture
+        .reopen()
+        .outbox()
+        .some(
+          (record) =>
+            record.update.type === "approval" &&
+            record.update.approvalId === approval.id &&
+            record.update.state === "cancelled"
+        )
+    );
+    assert.equal(
+      (
+        await failure(
+          fixture.service.approve(
+            {
+              address,
+              approvalId: approval.id,
+              context: allowedContext,
+              decision: "allow",
+              runId: active.runId,
+              type: "approve",
+            },
+            options()
+          )
+        )
+      )._tag,
+      "Conflict"
+    );
+    assert.equal(fixture.engine.counts.approve, 0);
+    assert.equal(snapshot.outputs.length, 0);
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("durable approval waits bind run and policy; duplicate decisions do not redispatch", async () => {
@@ -693,6 +1011,8 @@ const toolFixture = async (uncertain = false) => {
     ...controlled.service,
     execute: (call, capability, effectOptions) =>
       Effect.gen(function* confirmedExecution() {
+        // Signed gateway payloads must contain only JSON values for human callers.
+        canonicalToolArguments(capability);
         const key = {
           operationId: capability.operationId,
           organizationId: call.organizationId,
@@ -787,8 +1107,87 @@ const toolFixture = async (uncertain = false) => {
     } as unknown as Parameters<typeof tool.execute>[1];
     return await tool.execute({ ticket: "support-1" }, api, piContext(signal));
   };
-  return { ...fixture, controlled, invoke, receipts, tools };
+  return { ...fixture, controlled, executor, invoke, receipt, receipts, tools };
 };
+
+test(
+  "stalled argument preparation expires before memo, receipt, approval or dispatch",
+  { timeout: 1000 },
+  async () => {
+    const fixture = await setup();
+    const receipts = createReceiptFake(Date.now);
+    const controlled = createToolFake(Date.now);
+    const controller = new AbortController();
+    const counts = { approval: 0, claim: 0, memo: 0, prepared: 0 };
+    const [registration] = createPiTools({
+      agent,
+      approval: (_invocation, approval) =>
+        Effect.sync(() => {
+          counts.approval += 1;
+          return approval;
+        }),
+      authority: fixture.authority.service,
+      deadlineMs: 10,
+      dependencies: () => Effect.succeed({ sourceIds: [], toolIds: [] }),
+      executor: controlled.service,
+      publish: fixture.store.publish,
+      receipts: {
+        ...receipts.service,
+        claim: (...args) => {
+          counts.claim += 1;
+          return receipts.service.claim(...args);
+        },
+      },
+      resolve: () =>
+        Effect.fail(
+          new InvalidInput({ reason: "Preparation must finish before binding" })
+        ),
+      tools: [
+        {
+          definition: {
+            ...unknownOutcomeInvocation.tool,
+            connectorFingerprint: id.digest("fixture-connector"),
+          },
+          description: "Stalled preparation",
+          parameters: Type.Object({}),
+          prepare: () =>
+            Effect.sync(() => {
+              counts.prepared += 1;
+            }).pipe(Effect.andThen(Effect.never)),
+        },
+      ],
+    });
+    assert.ok(registration);
+    const api = {
+      memo: () => {
+        counts.memo += 1;
+        return Promise.resolve();
+      },
+    } as unknown as Parameters<typeof registration.execute>[1];
+    const invocation = registration.execute(
+      {},
+      api,
+      piContext(controller.signal)
+    );
+    try {
+      const result = await Promise.race([
+        invocation.then(
+          () => "resolved",
+          () => "rejected"
+        ),
+        Effect.runPromise(Effect.sleep(100)).then(() => "pending"),
+      ]);
+      assert.equal(result, "rejected");
+      assert.deepEqual(counts, { approval: 0, claim: 0, memo: 0, prepared: 1 });
+      assert.equal(controlled.counts.dispatch, 0);
+      assert.equal(fixture.store.domain().tools.length, 0);
+    } finally {
+      controller.abort();
+      await invocation.catch(() => {});
+      await fixture.close();
+    }
+  }
+);
 
 test("Pi registry exposes registered tools only; replay returns a confirmed receipt", async () => {
   const fixture = await toolFixture();
@@ -823,6 +1222,155 @@ test("uncertain write blocks a new Pi task with the same unresolved intent", asy
     assert.equal(fixture.store.domain().runs[0]?.state, "unknown-outcome");
     assert.equal(fixture.controlled.counts.reconcile, 0);
   } finally {
+    await fixture.close();
+  }
+});
+
+const confirmedReceiptExecutor = (
+  fixture: Awaited<ReturnType<typeof toolFixture>>
+): ToolExecutor => ({
+  ...fixture.executor,
+  reconcile: (operationId, _context, read) =>
+    Effect.gen(function* reconcileFixture() {
+      const key = { operationId, organizationId: address.organizationId };
+      const stored = yield* fixture.receipts.service.read(
+        key,
+        allowedContext,
+        read
+      );
+      const effect = {
+        ...read,
+        operationId,
+        requestDigest: stored.intent.invocation.argumentDigest,
+      };
+      const execution = {
+        output: "confirmed fixture output",
+        providerReceipt: "confirmed-provider-receipt",
+      };
+      yield* fixture.receipts.service.recordOutcome(
+        key,
+        { execution, state: "succeeded" },
+        effect
+      );
+      yield* fixture.receipts.service.complete(key, effect);
+      return execution;
+    }),
+});
+
+test("product reconciliation uses confirmed receipts and never redispatches", async () => {
+  const fixture = await toolFixture(true);
+  const scope = Scope.makeUnsafe();
+  const executor = confirmedReceiptExecutor(fixture);
+  try {
+    await fixture.invoke();
+    const [unknown] = fixture.store.domain().tools;
+    assert.ok(unknown);
+    assert.equal(unknown.state, "unknown-outcome");
+    const runtime = await Effect.runPromise(
+      Scope.provide(scope)(
+        createSessionService({
+          ...fixture.dependencies,
+          executor,
+          receipts: fixture.receipts.service,
+        })
+      )
+    );
+    const command = {
+      address,
+      context: allowedContext,
+      operationId: unknown.operationId,
+      runId: unknown.runId,
+    };
+    const resolved = await Effect.runPromise(
+      runtime.service.reconcile(command, options())
+    );
+    assert.equal(resolved.state, "succeeded");
+    assert.equal(resolved.output, "confirmed fixture output");
+    assert.equal(
+      fixture
+        .reopen()
+        .domain()
+        .runs.find((run) => run.runId === unknown.runId)?.state,
+      "running"
+    );
+    assert.deepEqual(
+      await Effect.runPromise(runtime.service.reconcile(command, options())),
+      resolved
+    );
+    assert.equal(fixture.controlled.counts.dispatch, 1);
+    fixture.authority.setDecision({
+      decision: "deny",
+      policyVersion: "v2",
+      reason: "revoked",
+    });
+    assert.equal(
+      (await failure(runtime.service.reconcile(command, options())))._tag,
+      "Denied"
+    );
+    assert.equal(fixture.controlled.counts.dispatch, 1);
+  } finally {
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    await fixture.close();
+  }
+});
+
+test("reconciliation CAS cannot resume while another tool outcome is unknown", async () => {
+  const fixture = await toolFixture(true);
+  const scope = Scope.makeUnsafe();
+  let injected = false;
+  try {
+    await fixture.invoke();
+    const [unknown] = fixture.store.domain().tools;
+    assert.ok(unknown);
+    const other = { ...unknown, operationId: "concurrent-uncertain-operation" };
+    const store = {
+      ...fixture.dependencies.store,
+      commit: (...args: Parameters<typeof fixture.dependencies.store.commit>) =>
+        Effect.gen(function* injectConcurrentProjection() {
+          if (args[2].type === "projected-batch" && !injected) {
+            injected = true;
+            yield* fixture.store.publish(other.runId, {
+              ...other,
+              type: "tool",
+            });
+          }
+          return yield* fixture.dependencies.store.commit(...args);
+        }),
+    };
+    const runtime = await Effect.runPromise(
+      Scope.provide(scope)(
+        createSessionService({
+          ...fixture.dependencies,
+          executor: confirmedReceiptExecutor(fixture),
+          receipts: fixture.receipts.service,
+          store,
+        })
+      )
+    );
+    const command = {
+      address,
+      context: allowedContext,
+      operationId: unknown.operationId,
+      runId: unknown.runId,
+    };
+    assert.equal(
+      (await failure(runtime.service.reconcile(command, options())))._tag,
+      "Conflict"
+    );
+    const resolved = await Effect.runPromise(
+      runtime.service.reconcile(command, options())
+    );
+    assert.equal(resolved.state, "succeeded");
+    const snapshot = fixture.reopen().domain();
+    assert.equal(snapshot.runs[0]?.state, "unknown-outcome");
+    assert.equal(
+      snapshot.tools.find((tool) => tool.operationId === other.operationId)
+        ?.state,
+      "unknown-outcome"
+    );
+    assert.equal(fixture.controlled.counts.dispatch, 1);
+  } finally {
+    await Effect.runPromise(Scope.close(scope, Exit.void));
     await fixture.close();
   }
 });
@@ -888,6 +1436,7 @@ test("provider guard checks every physical HTTP call, including retries, before 
       physicalCalls += 1;
       return Promise.resolve(new Response("fixture"));
     },
+    maxInputBytes: 131_072,
     model,
     provider,
   });
@@ -901,6 +1450,55 @@ test("provider guard checks every physical HTTP call, including retries, before 
     .result();
   assert.equal(denied.stopReason, "error");
   assert.equal(physicalCalls, 1);
+});
+
+test("provider input limit counts UTF-8 bytes before physical dispatch", async () => {
+  const faux = fauxProvider();
+  const model = faux.getModel();
+  for (const body of ["é", "éé"] as const) {
+    let physicalCalls = 0;
+    const provider = {
+      ...faux.provider,
+      streamSimple: (
+        _model: typeof model,
+        _context: unknown,
+        readOptions?: { fetch?: typeof fetch; signal?: AbortSignal }
+      ) => {
+        const stream = createAssistantMessageEventStream();
+        const dispatch = async () => {
+          try {
+            assert.ok(readOptions?.fetch);
+            await readOptions.fetch("https://fixture.invalid/model", {
+              body,
+              method: "POST",
+              signal: readOptions.signal,
+            });
+            stream.end(fauxAssistantMessage("Accepted"));
+          } catch {
+            stream.end(fauxAssistantMessage("", { stopReason: "error" }));
+          }
+        };
+        void dispatch();
+        return stream;
+      },
+    };
+    const guarded = createControlledProvider({
+      authorize: () => Effect.void,
+      deadlineMs: 1000,
+      fetch: () => {
+        physicalCalls += 1;
+        return Promise.resolve(new Response("fixture"));
+      },
+      maxInputBytes: 2,
+      model,
+      provider,
+    });
+    const result = await guarded
+      .streamSimple(model, normalizeContext({ messages: [] }))
+      .result();
+    assert.equal(physicalCalls, body === "é" ? 1 : 0);
+    assert.equal(result.stopReason, body === "é" ? "stop" : "error");
+  }
 });
 
 test("observer overflow creates a fresh epoch and complete canonical snapshot", async () => {
@@ -1106,33 +1704,69 @@ test("coordinator admits native steering through the frozen engine port", async 
   }
 });
 
-test("caller deadline stops waiting while the admitted handoff completes in the host scope", async () => {
+test("host Layer preserves admission and projection after the request scope closes", async () => {
   const fixture = await setup();
   const scope = Scope.makeUnsafe();
   try {
+    let emit: ((update: DomainUpdate) => void) | undefined;
+    let retained: Promise<void> | undefined;
+    let commandFinished = false;
     const engine = {
       open: (...args: Parameters<typeof fixture.engine.service.open>) =>
         Effect.map(fixture.engine.service.open(...args), (conversation) => ({
           ...conversation,
+          observe: () =>
+            Stream.callback<DomainUpdate, ContractFailure>((queue) =>
+              Effect.sync(() => {
+                emit = (update) => {
+                  Queue.offerUnsafe(queue, update);
+                };
+              })
+            ),
           submit: (...submitted: Parameters<typeof conversation.submit>) =>
             Effect.flatMap(Effect.sleep(80), () =>
               conversation.submit(...submitted)
             ),
         })),
     };
-    const runtime = await Effect.runPromise(
-      Scope.provide(scope)(
-        createSessionService({ ...fixture.dependencies, engine })
+    const services = await Effect.runPromise(
+      Layer.buildWithScope(
+        sessionServiceLayer({
+          address,
+          agent,
+          retainDurableWork: (completion) => {
+            retained = (async () => {
+              await completion;
+              commandFinished = true;
+            })();
+          },
+        }).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(ExecutionEngine, engine),
+              fixture.store.layer,
+              fixture.authority.layer
+            )
+          )
+        ),
+        scope
       )
     );
+    const runtime = Context.get(services, SessionCoordinator);
+    assert.equal(Context.get(services, SessionService), runtime.service);
     const result = await failure(
-      runtime.service.submit(
-        { event: event(), type: "submit" },
-        { ...options(), deadlineAt: Date.now() + 20 }
+      Effect.scoped(
+        runtime.service.submit(
+          { event: event(), type: "submit" },
+          { ...options(), deadlineAt: Date.now() + 20 }
+        )
       )
     );
     assert.equal(result._tag, "Unavailable");
-    await Effect.runPromise(Effect.sleep(120));
+    assert.ok(retained);
+    assert.equal(commandFinished, false);
+    await retained;
+    assert.equal(commandFinished, true);
     const receipt = await Effect.runPromise(
       fixture.store.service.receipt(
         address,
@@ -1143,11 +1777,95 @@ test("caller deadline stops waiting while the admitted handoff completes in the 
     );
     assert.equal(receipt.runId, id.run("run:A"));
     assert.equal(fixture.engine.counts.submit, 1);
+    assert.equal(fixture.engine.counts.release, 0);
+    assert.ok(emit);
+    emit({
+      output: {
+        ...answerIdentity(receipt.runId),
+        citations: [],
+        dependencies: { sourceIds: [], toolIds: [] },
+        runId: receipt.runId,
+        text: "answer after request scope close",
+      },
+      type: "canonical-output",
+    });
+    emit({
+      run: {
+        completedAt: Date.now(),
+        runId: receipt.runId,
+        state: "completed",
+      },
+      type: "run",
+    });
+    await until(() => fixture.store.domain().runs[0]?.state === "completed");
+    assert.equal(
+      fixture.store.domain().outputs[0]?.text,
+      "answer after request scope close"
+    );
+    assert.equal(runtime.backgroundFailure(), undefined);
   } finally {
     await Effect.runPromise(Scope.close(scope, Exit.void));
     await fixture.close();
   }
 });
+
+for (const boundary of ["before-admission", "after-admission"] as const) {
+  test(`host lifetime observes command failure at ${boundary} without a caller success`, async () => {
+    let retained: Promise<void> | undefined;
+    const fixture = await setup(
+      false,
+      false,
+      (current) =>
+        current === boundary
+          ? Effect.fail(
+              new Unavailable({ reason: "Fixture checkpoint failed" })
+            )
+          : Effect.void,
+      (completion) => {
+        retained = completion;
+      }
+    );
+    try {
+      assert.equal(
+        (
+          await failure(
+            fixture.service.submit(
+              { event: event(), type: "submit" },
+              options()
+            )
+          )
+        )._tag,
+        "Unavailable"
+      );
+      assert.ok(retained);
+      await retained;
+      const admitted = boundary === "after-admission" ? 1 : 0;
+      assert.equal(fixture.engine.counts.submit, admitted);
+      assert.equal(fixture.engine.counts.open, 1);
+      assert.equal(
+        (
+          await Effect.runPromise(
+            fixture.store.service.recover(address, options())
+          )
+        ).length,
+        admitted
+      );
+      if (admitted) {
+        const receipt = await Effect.runPromise(
+          fixture.store.service.receipt(
+            address,
+            event().eventId,
+            allowedContext,
+            options()
+          )
+        );
+        assert.equal(receipt.runId, id.run("run:A"));
+      }
+    } finally {
+      await fixture.close();
+    }
+  });
+}
 
 test("completion during snapshot authorization appears in the snapshot or following committed updates", async () => {
   const fixture = await setup();
@@ -1405,9 +2123,19 @@ test("Pi observer binds delayed text to native run inputs and detaches without S
     assert.ok(initial.some((value) => value?.type === "canonical-output"));
     assert.ok(listener);
     await listener([
+      { message: fauxAssistantMessage("A"), type: "message_start" },
+    ]);
+    let firstText = await iterator.next();
+    while (firstText.value && firstText.value.type !== "provisional-text") {
+      firstText = await iterator.next();
+    }
+    assert.ok(firstText.value?.type === "provisional-text");
+    assert.equal(firstText.value.text, "A");
+    assert.equal(firstText.value.runId, first.runId);
+    await listener([
       {
         changes: [
-          { contentIndex: 0, delta: "A delayed text", type: "text_delta" },
+          { contentIndex: 0, delta: " delayed text", type: "text_delta" },
         ],
         type: "message_update",
         usage: fauxAssistantMessage("").usage,
@@ -1419,6 +2147,7 @@ test("Pi observer binds delayed text to native run inputs and detaches without S
     }
     assert.equal(delta.value?.type, "provisional-text");
     assert.ok(delta.value && delta.value.type === "provisional-text");
+    assert.equal(delta.value.text, " delayed text");
     assert.equal(delta.value.runId, first.runId);
     assert.notEqual(delta.value.runId, second.runId);
     await iterator.return?.();
@@ -1431,6 +2160,7 @@ test("Pi observer binds delayed text to native run inputs and detaches without S
 });
 
 const nativeSteeringFixture = async () => {
+  let controlledExecution: ToolRegistration["execute"] | undefined;
   const context = piContext();
   const firstStarted = Promise.withResolvers<boolean>();
   const secondStarted = Promise.withResolvers<boolean>();
@@ -1477,8 +2207,11 @@ const nativeSteeringFixture = async () => {
     tools: [
       {
         description: "Harmless gated native steering mapping probe",
-        execute: () => {
+        execute: (args, api, toolContext) => {
           toolCalls += 1;
+          if (controlledExecution) {
+            return controlledExecution(args, api, toolContext);
+          }
           return Promise.resolve({
             content: [{ text: "mapping tool result", type: "text" as const }],
           });
@@ -1515,6 +2248,9 @@ const nativeSteeringFixture = async () => {
     root,
     secondGate,
     secondStarted,
+    setToolExecution: (execute: typeof controlledExecution) => {
+      controlledExecution = execute;
+    },
     steeredInputPresent: () => steeredInputPresent,
     storage,
     toolCalls: () => toolCalls,
@@ -1746,7 +2482,9 @@ test("contract-fake admission adapter timing is measured separately from host pe
 
 // Public PiSession protocol delegates to the installed Harness APIs. Lifecycle
 // and celld alarm/eviction behavior remain separate host qualification checks.
-const joinedAdapterFixture = async () => {
+const joinedAdapterFixture = async (
+  prepareInput?: PiEngineConfiguration["prepareInput"]
+) => {
   const native = await nativeSteeringFixture();
   const fixture = await setup(false, true);
   let submissions = 0;
@@ -1846,17 +2584,25 @@ const joinedAdapterFixture = async () => {
         pi: () => Promise.resolve(native.pi),
         session: () => session,
       } as unknown as PiEngineConfiguration["harness"],
+      prepareInput,
       snapshot: fixture.store.domain,
       storage: () => native.storage,
     });
-    return await Effect.runPromise(
-      Scope.provide(hostScope)(
-        createSessionService({
-          ...fixture.dependencies,
-          engine: engine.service,
-        })
+    const services = await Effect.runPromise(
+      Layer.buildWithScope(
+        sessionServiceLayer({ address, agent }).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              engine.layer,
+              fixture.store.layer,
+              fixture.authority.layer
+            )
+          )
+        ),
+        hostScope
       )
     );
+    return Context.get(services, SessionCoordinator);
   };
   let runtime = await makeRuntime();
   return {
@@ -1897,16 +2643,193 @@ const joinedAdapterFixture = async () => {
       ),
   };
 };
-const until = async (condition: () => boolean) => {
-  const deadline = Date.now() + 2000;
-  while (!condition()) {
-    assert.ok(
-      Date.now() < deadline,
-      "Projection did not settle within two seconds"
-    );
-    await Effect.runPromise(Effect.sleep(5));
-  }
-};
+for (const scenario of [
+  "denied approval",
+  "expired approval",
+  "cancelled approval",
+  "no dispatch",
+  "confirmed failed receipt",
+  "uncertain dispatch",
+] as const) {
+  test(
+    `native ${scenario} settles product tools from confirmed dispatch evidence`,
+    { timeout: 5000 },
+    async () => {
+      const fixture = await joinedAdapterFixture();
+      const receipts = createReceiptFake(Date.now);
+      const tool = {
+        connectorFingerprint: id.digest("fixture-digest"),
+        connectorId: "fixture-connector",
+        effect: "read" as const,
+        id: id.tool("mapping_round"),
+        version: "1",
+      };
+      let physicalDispatches = 0;
+      const executor: ToolExecutor = {
+        execute: (call, capability, effectOptions) =>
+          Effect.gen(function* failControlledTool() {
+            if (scenario === "no dispatch") {
+              return yield* Effect.fail(
+                new Unavailable({ reason: "Failed before dispatch" })
+              );
+            }
+            const key = {
+              operationId: capability.operationId,
+              organizationId: call.organizationId,
+            };
+            const receipt = yield* receipts.service.read(
+              key,
+              call.context,
+              effectOptions
+            );
+            const claimed = yield* receipts.service.dispatch(
+              key,
+              receipt.revision,
+              undefined,
+              effectOptions
+            );
+            assert.equal(claimed.dispatch, true);
+            physicalDispatches += 1;
+            if (scenario === "uncertain dispatch") {
+              return yield* Effect.fail(
+                new Unavailable({ reason: "Lost after dispatch" })
+              );
+            }
+            yield* receipts.service.recordOutcome(
+              key,
+              { reason: "Provider confirmed failure", state: "failed" },
+              effectOptions
+            );
+            yield* receipts.service.complete(key, effectOptions);
+            return yield* Effect.fail(
+              new Denied({
+                code: "unauthorized",
+                reason: "Provider confirmed failure",
+              })
+            );
+          }),
+        reconcile: (operationId) =>
+          Effect.fail(
+            new UnknownOutcome({ operationId, reason: "No provider evidence" })
+          ),
+      };
+      const [registration] = createPiTools({
+        agent: { ...agent, enabledToolIds: [tool.id] },
+        approval: (_invocation, approval) => {
+          if (scenario === "cancelled approval") {
+            return Effect.never;
+          }
+          return scenario === "denied approval"
+            ? Effect.fail(
+                new Denied({ code: "revoked", reason: "Approval denied" })
+              )
+            : Effect.succeed({ ...approval, expiresAt: Date.now() - 1 });
+        },
+        authority: fixture.authority.service,
+        deadlineMs: 1000,
+        dependencies: () =>
+          Effect.succeed({ sourceIds: [], toolIds: [tool.id] }),
+        executor,
+        publish: fixture.store.publish,
+        receipts: receipts.service,
+        resolve: () =>
+          fixture.store.service
+            .recover(address, options())
+            .pipe(
+              Effect.flatMap((values) =>
+                values[0]
+                  ? Effect.succeed(values[0])
+                  : Effect.fail(
+                      new InvalidInput({ reason: "Missing test input" })
+                    )
+              )
+            ),
+        tools: [
+          {
+            definition: tool,
+            description: "Failure settlement",
+            parameters: Type.Object({}),
+            requiresApproval: scenario.includes("approval"),
+          },
+        ],
+      });
+      assert.ok(registration);
+      fixture.native.setToolExecution(registration.execute);
+      try {
+        const submitted = await fixture.submitNative(
+          "A",
+          "initial instructions"
+        );
+        await fixture.native.firstStarted.promise;
+        fixture.native.firstGate.resolve(true);
+        fixture.native.secondGate.resolve(true);
+        if (scenario === "cancelled approval") {
+          await until(
+            () =>
+              fixture.store.domain().tools[0]?.state === "waiting-for-approval"
+          );
+          await Effect.runPromise(
+            fixture.runtime().service.cancel(
+              {
+                address,
+                context: allowedContext,
+                runId: submitted.runId,
+                type: "cancel",
+              },
+              options()
+            )
+          );
+        }
+        await fixture.native.root.waitForIdle(fixture.native.context);
+        const uncertain = scenario === "uncertain dispatch";
+        await until(
+          () =>
+            fixture.store.domain().tools[0]?.state ===
+            (uncertain ? "unknown-outcome" : "failed")
+        );
+        const cancelled = scenario === "cancelled approval";
+        if (!uncertain && !cancelled) {
+          await until(() => fixture.store.domain().outputs.length === 1);
+        }
+        const native = await fixture.native.storage.submissionByRequest(
+          fixture.native.root.id,
+          "A",
+          fixture.native.context
+        );
+        let expectedRunState = "completed";
+        if (uncertain) {
+          expectedRunState = "unknown-outcome";
+        } else if (cancelled) {
+          expectedRunState = "cancelled";
+        }
+        assert.equal(
+          fixture.store
+            .domain()
+            .runs.find((run) => run.runId === submitted.runId)?.state,
+          expectedRunState
+        );
+        assert.equal(
+          fixture.store.domain().outputs.length,
+          uncertain || cancelled ? 0 : 1
+        );
+        assert.equal(
+          physicalDispatches,
+          scenario === "confirmed failed receipt" || uncertain ? 1 : 0
+        );
+        assert.equal(
+          fixture.reopen().domain().tools[0]?.state,
+          uncertain ? "unknown-outcome" : "failed"
+        );
+        assert.equal(fixture.runtime().backgroundFailure(), undefined);
+        if (!uncertain && !cancelled) {
+          assert.equal(native?.status, "done");
+        }
+      } finally {
+        await fixture.close();
+      }
+    }
+  );
+}
 
 const placeJoined = async (
   fixture: Awaited<ReturnType<typeof joinedAdapterFixture>>
@@ -1941,6 +2864,76 @@ const placeJoined = async (
   ]);
   return [first, second] as const;
 };
+
+test(
+  "prepared input reaches native submit and steer before acceptance",
+  { timeout: 5000 },
+  async () => {
+    const prepared: string[] = [];
+    const fixture = await joinedAdapterFixture((handoff) => {
+      const text = handoff.submission.event.event;
+      assert.equal(text.type, "user.message");
+      if (text.type !== "user.message") {
+        return Effect.fail(
+          new InvalidInput({ reason: "Expected user message" })
+        );
+      }
+      prepared.push(text.payload.text);
+      return Effect.succeed(`${text.payload.text}\nProtected source evidence`);
+    });
+    try {
+      const first = await fixture.submitNative("A", "initial instructions");
+      await fixture.native.firstStarted.promise;
+      const second = await fixture.submitNative(
+        "B",
+        "steered instructions",
+        "steer"
+      );
+      fixture.native.firstGate.resolve(true);
+      await fixture.native.secondStarted.promise;
+      for (const [runId, original] of [
+        [first.runId, "initial instructions"],
+        [second.runId, "steered instructions"],
+      ] as const) {
+        const handoff = (
+          await Effect.runPromise(
+            fixture.store.service.recover(address, options())
+          )
+        ).find((value) => value.submission.runId === runId);
+        assert.ok(handoff);
+        const record = await fixture.native.storage.submissionByRequest(
+          fixture.native.root.id,
+          handoff.submission.requestId,
+          fixture.native.context
+        );
+        assert.ok(record?.type === "input" && record.entry);
+        const entry = await fixture.native.storage.entry(
+          fixture.native.root.id,
+          record.entry,
+          fixture.native.context
+        );
+        assert.equal(
+          entry?.entry.model?.[0]?.content,
+          `${original}\nProtected source evidence`
+        );
+      }
+      fixture.native.secondGate.resolve(true);
+      await until(() => fixture.store.domain().outputs.length === 1);
+      await fixture.submitNative("B", "steered instructions", "steer");
+      assert.deepEqual(prepared, [
+        "initial instructions",
+        "steered instructions",
+      ]);
+      assert.equal(fixture.submissions(), 2);
+      assert.deepEqual(
+        fixture.store.domain().userMessages.map((message) => message.text),
+        prepared
+      );
+    } finally {
+      await fixture.close();
+    }
+  }
+);
 
 test(
   "public Pi adapter joins steering into one SQLite answer; retry and reconnect submit zero work",
@@ -2422,6 +3415,34 @@ test(
   }
 );
 
+test("recovery restarts failed canonical projection on the same host without resubmission", async () => {
+  const fixture = await joinedAdapterFixture();
+  const { save } = fixture.persistence;
+  try {
+    await placeJoined(fixture);
+    fixture.persistence.save = (json: string) => {
+      if (JSON.parse(json).snapshot.outputs.length) {
+        throw new Error("Injected canonical persistence failure");
+      }
+      save(json);
+    };
+    fixture.native.secondGate.resolve(true);
+    await until(() => Boolean(fixture.runtime().backgroundFailure()));
+    assert.equal(fixture.store.domain().outputs.length, 0);
+    fixture.persistence.save = save;
+    await Effect.runPromise(fixture.runtime().recover());
+    await until(() => fixture.store.domain().outputs.length === 1);
+    assert.equal(fixture.runtime().backgroundFailure(), undefined);
+    assert.equal(fixture.submissions(), 2);
+    assert.ok(
+      fixture.store.domain().runs.every((run) => run.state === "completed")
+    );
+  } finally {
+    fixture.persistence.save = save;
+    await fixture.close();
+  }
+});
+
 test(
   "Stop persists newly placed membership after lost observation before removing Pi's live execution",
   { timeout: 5000 },
@@ -2491,3 +3512,346 @@ test(
     }
   }
 );
+
+test("durable audit redacts content and retries the same event after sink acknowledgement loss", async () => {
+  const fixture = await setup(false, true);
+  try {
+    const receipt = await submit(fixture);
+    await Effect.runPromise(
+      fixture.project({
+        arguments: { secret: "private-tool-arguments" },
+        dependencies: { sourceIds: [], toolIds: ["fixture"] },
+        effect: "read",
+        operationId: id.operation("audit-tool"),
+        output: "private-tool-output",
+        runId: receipt.runId,
+        state: "succeeded",
+        toolId: id.tool("fixture"),
+        toolVersion: "1",
+        type: "tool",
+      })
+    );
+    await Effect.runPromise(
+      fixture.project({
+        output: {
+          ...answerIdentity(receipt.runId),
+          citations: [
+            {
+              observedAt: Date.now(),
+              sourceId: id.source("audit-source"),
+              sourceUri: "private-source-uri",
+              sourceVersion: "1",
+            },
+          ],
+          dependencies: {
+            sourceIds: [id.source("audit-source")],
+            toolIds: ["fixture"],
+          },
+          runId: receipt.runId,
+          text: "private-canonical-output",
+        },
+        type: "canonical-output",
+      })
+    );
+    await Effect.runPromise(
+      fixture.project({
+        run: {
+          completedAt: Date.now(),
+          runId: receipt.runId,
+          state: "completed",
+        },
+        type: "run",
+      })
+    );
+    const before = fixture.store.outbox();
+    const delivered: AuditProjection[] = [];
+    const sink = (value: AuditProjection) =>
+      Effect.sync(() => {
+        delivered.push(value);
+      });
+    const lostAck = {
+      ...fixture.store,
+      acknowledgeOutbox: () =>
+        Effect.fail(
+          new Unavailable({ reason: "Storage acknowledgement interrupted" })
+        ),
+    };
+    assert.equal(
+      (await failure(drainAuditProjection(address, lostAck, sink)))._tag,
+      "Unavailable"
+    );
+    assert.deepEqual(fixture.store.outbox(), before);
+    fixture.reopenDatabase();
+    const reopened = fixture.reopen();
+    assert.deepEqual(reopened.outbox(), before);
+    await Effect.runPromise(drainAuditProjection(address, reopened, sink));
+    assert.deepEqual(delivered[0], delivered[1]);
+    assert.equal(
+      new Set(delivered.map((value) => value.eventId)).size,
+      before.length
+    );
+    assert.deepEqual(reopened.outbox(), []);
+    for (const secret of [
+      "private-tool-arguments",
+      "private-tool-output",
+      "private-source-uri",
+      "private-canonical-output",
+      userEvent.event.text,
+    ]) {
+      assert.equal(JSON.stringify(delivered).includes(secret), false);
+    }
+    assert.ok(
+      delivered.some(
+        (value) =>
+          value.name === "run" &&
+          JSON.stringify(value.payload).includes("completed")
+      )
+    );
+    assert.equal(fixture.engine.counts.submit, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("audit delivery records a denied run independently of transcript permissions", async () => {
+  const fixture = await setup();
+  try {
+    const receipt = await submit(fixture);
+    await Effect.runPromise(
+      fixture.project({
+        run: {
+          endedAt: Date.now(),
+          runId: receipt.runId,
+          state: "failed",
+        },
+        type: "run",
+      })
+    );
+    fixture.setReadHook(() =>
+      Effect.fail(new Denied({ code: "revoked", reason: "Source revoked" }))
+    );
+    assert.equal(
+      (
+        await failure(
+          fixture.store.service.snapshot(address, allowedContext, options())
+        )
+      )._tag,
+      "Denied"
+    );
+    const delivered: AuditProjection[] = [];
+    await Effect.runPromise(
+      drainAuditProjection(address, fixture.store, (value) =>
+        Effect.sync(() => {
+          delivered.push(value);
+        })
+      )
+    );
+    assert.ok(
+      delivered.some(
+        (value) =>
+          value.name === "run" &&
+          JSON.stringify(value.payload).includes("failed")
+      )
+    );
+    assert.deepEqual(fixture.store.outbox(), []);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("ephemeral text and unpersisted audit timestamps cannot reach the sink", () => {
+  assert.throws(
+    () =>
+      auditProjection(address, {
+        id: "partial",
+        occurredAt: Date.now(),
+        revision: 1,
+        update: {
+          ...answerIdentity(id.run("run:audit")),
+          runId: id.run("run:audit"),
+          text: "private",
+          type: "provisional-text",
+        },
+      }),
+    InvalidInput
+  );
+  assert.throws(
+    () =>
+      auditProjection(address, {
+        id: "missing-time",
+        occurredAt: Number.NaN,
+        revision: 1,
+        update: {
+          run: { runId: id.run("run:audit"), state: "running" },
+          type: "run",
+        },
+      }),
+    InvalidInput
+  );
+});
+
+test("source-denied submission leaves no command for later recovery", async () => {
+  const fixture = await setup();
+  try {
+    const first = await submit(fixture);
+    await Effect.runPromise(
+      fixture.project({
+        arguments: {},
+        dependencies: { sourceIds: [id.source("revoked-source")], toolIds: [] },
+        effect: "read",
+        operationId: id.operation("retained-source"),
+        output: "protected source",
+        runId: first.runId,
+        state: "succeeded",
+        toolId: id.tool("fixture"),
+        toolVersion: "1",
+        type: "tool",
+      })
+    );
+    const before = fixture.store.domain();
+    const admissions = await Effect.runPromise(
+      fixture.store.service.recover(address, options())
+    );
+    fixture.setReadHook((content) =>
+      content.sourceIds.includes(id.source("revoked-source"))
+        ? Effect.fail(new Denied({ code: "revoked", reason: "Source revoked" }))
+        : Effect.void
+    );
+    assert.equal(
+      (
+        await failure(
+          fixture.service.submit(
+            { event: event("denied-followup"), type: "submit" },
+            options()
+          )
+        )
+      )._tag,
+      "Denied"
+    );
+    assert.deepEqual(fixture.store.domain(), before);
+    assert.deepEqual(
+      await Effect.runPromise(
+        fixture.store.service.recover(address, options())
+      ),
+      admissions
+    );
+    assert.equal(fixture.engine.counts.submit, 1);
+    const receipt = await Effect.runPromise(
+      fixture.store.service.receipt(
+        address,
+        event().eventId,
+        allowedContext,
+        options()
+      )
+    );
+    assert.equal(receipt.runId, first.runId);
+    fixture.setReadHook(() => Effect.void);
+    await Effect.runPromise(fixture.recover());
+    assert.deepEqual(
+      await Effect.runPromise(
+        fixture.store.service.recover(address, options())
+      ),
+      admissions
+    );
+    assert.equal(fixture.engine.counts.submit, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("an audit job batch leaves remaining events durable for the next wake", async () => {
+  const fixture = await setup();
+  try {
+    await submit(fixture);
+    const before = fixture.store.outbox();
+    assert.ok(before.length > 1);
+    const delivered: AuditProjection[] = [];
+    await Effect.runPromise(
+      drainAuditProjection(
+        address,
+        fixture.store,
+        (value) =>
+          Effect.sync(() => {
+            delivered.push(value);
+          }),
+        1
+      )
+    );
+    assert.equal(delivered.length, 1);
+    assert.deepEqual(fixture.store.outbox(), before.slice(1));
+    assert.deepEqual(fixture.reopen().outbox(), before.slice(1));
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("receipt metadata checks current owner access without exposing revoked content", async () => {
+  const fixture = await setup();
+  try {
+    const submitted = await submit(fixture);
+    fixture.setReadHook(() =>
+      Effect.fail(
+        new Denied({
+          code: "revoked",
+          reason: "Retained prepared source revoked",
+        })
+      )
+    );
+    const store = createSessionStore(fixture.persistence, {
+      ...fixture.storeConfiguration,
+      authorizeMetadata: (context, read) =>
+        fixture.authority.service
+          .require(
+            {
+              action: "read",
+              address,
+              context,
+              pinnedAgent: agent,
+              resource: {
+                id: address.agentId,
+                kind: "agent",
+                organizationId: address.organizationId,
+              },
+            },
+            read
+          )
+          .pipe(Effect.asVoid),
+    });
+    assert.equal(
+      (
+        await failure(
+          store.service.snapshot(address, allowedContext, options())
+        )
+      )._tag,
+      "Denied"
+    );
+    assert.deepEqual(
+      await Effect.runPromise(
+        store.service.receipt(
+          address,
+          event().eventId,
+          allowedContext,
+          options()
+        )
+      ),
+      { ...submitted, replayed: true }
+    );
+    fixture.authority.setAvailable(false);
+    assert.equal(
+      (
+        await failure(
+          store.service.receipt(
+            address,
+            event().eventId,
+            allowedContext,
+            options()
+          )
+        )
+      )._tag,
+      "Unavailable"
+    );
+    assert.equal(fixture.engine.counts.submit, 1);
+  } finally {
+    await fixture.close();
+  }
+});

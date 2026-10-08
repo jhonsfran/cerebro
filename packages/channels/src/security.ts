@@ -7,10 +7,13 @@ import type {
   PortResult,
   Resource,
 } from "@cerebro/contracts";
+import { failureToHttp } from "@cerebro/contracts/failures";
+import type { ContractFailure } from "@cerebro/contracts/failures";
 import type { Database } from "@cerebro/db";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import { identityPrincipal } from "@cerebro/db/schema/identity";
 import { and, eq } from "drizzle-orm";
+import { Effect } from "effect";
 
 import { ChannelError, EFFECT_DEADLINE_MS } from "./types";
 import type { ChannelOptions } from "./types";
@@ -53,6 +56,25 @@ export const unwrap = <T>(result: PortResult<T>): T => {
     statuses[result.status],
     "code" in result ? result.code : result.status,
     "reason" in result ? result.reason : "The resource was not found."
+  );
+};
+export const runEffect = async <Value>(
+  effect: Effect.Effect<Value, ContractFailure>
+): Promise<Value> => {
+  const result = await Effect.runPromise(
+    Effect.match(effect, {
+      onFailure: (failure) => ({ failure, ok: false as const }),
+      onSuccess: (value) => ({ ok: true as const, value }),
+    })
+  );
+  if (result.ok) {
+    return result.value;
+  }
+  const response = failureToHttp(result.failure);
+  throw new ChannelError(
+    response.status,
+    "code" in result.failure ? result.failure.code : result.failure._tag,
+    response.body.message
   );
 };
 export const principalContext = async (
@@ -124,18 +146,23 @@ export const authorize = async (
   const policy =
     options.authorization?.(database) ??
     createAuthorizationPolicy(createIdentityRepository(database), options.now);
-  const result = unwrap(
-    await policy.evaluate(
-      context,
-      action,
-      {
-        id: resourceId,
-        kind,
-        organizationId: id.organization(options.organizationId),
-      },
-      { deadlineAt: (options.now?.() ?? Date.now()) + EFFECT_DEADLINE_MS }
-    )
+  const startedAt = performance.now();
+  const evaluated = await policy.evaluate(
+    context,
+    action,
+    {
+      id: resourceId,
+      kind,
+      organizationId: id.organization(options.organizationId),
+    },
+    { deadlineAt: (options.now?.() ?? Date.now()) + EFFECT_DEADLINE_MS }
   );
+  options.recordAdapterTime?.({
+    adapter: "permission",
+    durationMs: performance.now() - startedAt,
+    resourceId,
+  });
+  const result = unwrap(evaluated);
   if (result.decision !== "allow") {
     throw new ChannelError(403, "forbidden", result.reason);
   }

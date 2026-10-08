@@ -13,6 +13,7 @@
     "@better-auth/scim": "1.7.6",
     "@better-auth/sso": "1.7.6",
     "@cerebro/db": "workspace:*",
+    "@noble/hashes": "2.4.0",
     "better-auth": "catalog:",
     "drizzle-orm": "catalog:"
   },
