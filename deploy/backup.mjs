@@ -361,7 +361,14 @@ const backup = async (options, config) => {
   ];
   const release = await run("git", ["rev-parse", "HEAD"]);
   const sourceCheckoutDirty = Boolean(
-    await run("git", ["status", "--porcelain"])
+    await run("git", [
+      "status",
+      "--porcelain",
+      "--untracked-files=all",
+      "--",
+      ".",
+      ":(exclude)artifacts/**",
+    ])
   );
   const images = {};
   for (const container of containers) {

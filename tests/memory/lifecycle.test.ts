@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 import { id } from "../../packages/contracts/src/index.ts";
 import {
@@ -287,6 +287,24 @@ test("forget deletes transitive content and retries failed MinIO deletion after 
         readOptions()
       )
     ).toEqual({ status: "ok", value: [] });
+    expect(originals).toHaveLength(2);
+    await f.database
+      .update(memoryArtifactDelete)
+      .set({ readyAt: new Date(0) })
+      .where(
+        inArray(
+          memoryArtifactDelete.objectKey,
+          originals.map((original) => original.objectKey)
+        )
+      );
+    const failedCleanup = createArtifactStore({
+      ...f.dependencies,
+      objects: failingObjects,
+    });
+    expect(await failedCleanup.cleanup(readOptions())).toEqual({
+      status: "ok",
+      value: { deleted: 0, failed: 2 },
+    });
     const pending = await f.database
       .select()
       .from(memoryArtifactDelete)

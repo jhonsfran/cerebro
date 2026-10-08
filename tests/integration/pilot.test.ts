@@ -102,6 +102,39 @@ const artifactSchema = z.object({
   }),
   visibility: z.object({ grantId: z.string(), kind: z.literal("grant") }),
 });
+const fixtureDiagnosticsSchema = z.object({
+  adapterMeasurements: z.array(
+    z.object({
+      adapter: z.enum(["permission", "projection"]),
+      durationMs: z.number().nonnegative(),
+      operationId: z.string().optional(),
+      recordedAt: z.number().int().nonnegative(),
+    })
+  ),
+  observerCount: z.number().int().nonnegative(),
+  projectionFailure: z
+    .object({
+      code: z.string().nullable(),
+      reasonSHA256: z.string().regex(/^[a-f0-9]{64}$/u),
+      tag: z.enum([
+        "Denied",
+        "InvalidInput",
+        "Conflict",
+        "Unavailable",
+        "NotFound",
+        "UnknownOutcome",
+      ]),
+    })
+    .nullable(),
+});
+const parseFixtureDiagnostics = (content: string) => {
+  try {
+    const parsed = fixtureDiagnosticsSchema.safeParse(JSON.parse(content));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+};
 const publicFailureCode = (content: string): string => {
   try {
     const parsed = z
@@ -138,6 +171,10 @@ let evidenceDirectory: string;
 const metrics: Record<string, unknown> = {};
 const evidence: Record<string, unknown> = {};
 let currentGate = "application setup";
+const ownerConversations = new Map<
+  string,
+  { address: Conversation; gate: string }
+>();
 const failedRequests: {
   gate: string;
   route: string;
@@ -153,7 +190,7 @@ const failedRequests: {
 }[] = [];
 evidence.failedRequests = failedRequests;
 const gates = new Set<string>();
-const expectedGates = 9;
+const expectedGates = 10;
 const literal = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 const route = (address: Conversation): string =>
   `/api/product/conversations/${encodeURIComponent(address.conversationId)}`;
@@ -224,11 +261,27 @@ const seedGrant = (
   fixture.sql(
     `INSERT INTO identity_grant(organization_id,principal_id,action,resource_kind,resource_id,source) VALUES (${[organizationId, principalId, action, kind, resourceId, "pilot-acceptance"].map(literal).join(",")}) ON CONFLICT DO NOTHING`
   );
-const createConversation = (cookie = owner.cookie, selectedAgent = agentId) =>
-  fixture.json("/api/product/conversations", cookie, conversationSchema, {
-    agentId: selectedAgent,
-    operationId: randomUUID(),
-  });
+const createConversation = async (
+  cookie = owner.cookie,
+  selectedAgent = agentId
+) => {
+  const address = await fixture.json(
+    "/api/product/conversations",
+    cookie,
+    conversationSchema,
+    {
+      agentId: selectedAgent,
+      operationId: randomUUID(),
+    }
+  );
+  if (cookie === owner.cookie) {
+    ownerConversations.set(address.conversationId, {
+      address,
+      gate: currentGate,
+    });
+  }
+  return address;
+};
 const submit = (
   address: Conversation,
   text: string,
@@ -286,7 +339,10 @@ const expectStatus = async (response: Response, expected: number) => {
   assert.equal(response.status, expected, `Expected HTTP ${expected}`);
   await response.body?.cancel();
 };
-const restart = async (address: Conversation) => {
+const restart = async (
+  address: Conversation,
+  settlingToolOperationId?: string
+) => {
   const beforeCrash = await provider();
   const recoveryRequests: {
     status: number;
@@ -298,6 +354,7 @@ const restart = async (address: Conversation) => {
   evidence[`restart:${address.conversationId}`] = {
     beforeCrash,
     recoveryRequests,
+    settlingToolOperationId,
   };
   const container = await fixture.container("celld");
   await execute("docker", ["kill", "--signal", "SIGKILL", container]);
@@ -347,12 +404,35 @@ const restart = async (address: Conversation) => {
   );
   const afterRecovery = await provider();
   assert.deepEqual(afterRecovery.model, beforeCrash.model);
-  assert.deepEqual(afterRecovery.tools, beforeCrash.tools);
+  assert.deepEqual(
+    afterRecovery.tools.map(
+      ({ completedAt: _completedAt, ...record }) => record
+    ),
+    beforeCrash.tools.map(({ completedAt: _completedAt, ...record }) => record)
+  );
+  for (const beforeTool of beforeCrash.tools) {
+    const recoveredTool = afterRecovery.tools.find(
+      (tool) => tool.operationId === beforeTool.operationId
+    );
+    assert.ok(recoveredTool);
+    if (
+      beforeTool.operationId === settlingToolOperationId &&
+      beforeTool.completedAt === undefined
+    ) {
+      assert.ok(
+        recoveredTool.completedAt === undefined ||
+          recoveredTool.completedAt >= beforeTool.startedAt
+      );
+    } else {
+      assert.equal(recoveredTool.completedAt, beforeTool.completedAt);
+    }
+  }
   return {
     afterRecovery,
     beforeCrash,
     elapsedMs: Math.round(performance.now() - started),
     recoveryRequests,
+    settlingToolOperationId,
   };
 };
 const sourceIdentity = async (): Promise<string> => {
@@ -549,8 +629,54 @@ before(
 );
 
 afterEach(async () => {
-  if (fixture) {
-    await fixture.controls({ arm: null, release: true });
+  if (!fixture) {
+    return;
+  }
+  await fixture.controls({ arm: null, release: true });
+  if (gates.has(currentGate)) {
+    return;
+  }
+  const owned = [...ownerConversations.values()];
+  const current = owned.filter((value) => value.gate === currentGate);
+  const records: Record<string, unknown>[] = [];
+  evidence[`failureDiagnostics:${currentGate}`] = records;
+  for (const { address, gate: createdGate } of current.length > 0
+    ? current
+    : owned) {
+    const started = performance.now();
+    try {
+      const response = await fetch(
+        `${fixture.boot.apiUrl}/api/fixture/runtime/observers`,
+        {
+          body: JSON.stringify({ conversationId: address.conversationId }),
+          headers: {
+            "Content-Type": "application/json",
+            Cookie: owner.cookie,
+            Origin: fixture.boot.webUrl,
+          },
+          method: "POST",
+          signal: AbortSignal.timeout(6000),
+        }
+      );
+      const content = await response.text();
+      records.push({
+        bodySHA256: createHash("sha256").update(content).digest("hex"),
+        code: response.status === 200 ? "ok" : publicFailureCode(content),
+        conversationId: address.conversationId,
+        createdGate,
+        diagnostics:
+          response.status === 200 ? parseFixtureDiagnostics(content) : null,
+        elapsedMs: Math.round(performance.now() - started),
+        status: response.status,
+      });
+    } catch (error) {
+      records.push({
+        conversationId: address.conversationId,
+        createdGate,
+        elapsedMs: Math.round(performance.now() - started),
+        errorName: error instanceof Error ? error.name : "unknown",
+      });
+    }
   }
 });
 
@@ -810,6 +936,38 @@ gate(
   "company, agent, tool, source, and principal revocations deny cached content and resumed history",
   async () => {
     const beforeProvider = await provider();
+    const deniedSubmissions: { conversationId: string; eventId: string }[] = [];
+    evidence.deniedSubmissions = deniedSubmissions;
+    const assertNoDeniedAdmission = async () => {
+      for (const denied of deniedSubmissions) {
+        assert.equal(
+          await fixture.sql(
+            `SELECT count(*) FROM channel_inbox WHERE conversation_id=${literal(denied.conversationId)} AND event_key LIKE ${literal(`%:${denied.eventId}`)}`
+          ),
+          "0"
+        );
+      }
+    };
+    const denyMessage = async (
+      address: Conversation,
+      cookie: string,
+      text: string,
+      eventId = randomUUID()
+    ) => {
+      deniedSubmissions.push({
+        conversationId: address.conversationId,
+        eventId,
+      });
+      await expectStatus(
+        await fixture.request(`${route(address)}/messages`, cookie, {
+          eventId,
+          mode: "follow-up",
+          text,
+        }),
+        403
+      );
+      await assertNoDeniedAdmission();
+    };
     const foreign = await fixture.signup("Pilot foreign company");
     const foreignCompany = `foreign:${randomUUID()}`;
     await fixture.sql(
@@ -823,20 +981,22 @@ gate(
         "/observations?accessGeneration=0",
         "/messages",
       ]) {
+        if (suffix === "/messages") {
+          await denyMessage(conversation, credentials, "Denied write fixture");
+          continue;
+        }
         await expectStatus(
-          await fixture.request(
-            `${route(conversation)}${suffix}`,
-            credentials,
-            suffix === "/messages"
-              ? { eventId: randomUUID(), text: "Denied write fixture" }
-              : undefined
-          ),
+          await fixture.request(`${route(conversation)}${suffix}`, credentials),
           403
         );
       }
     }
     const supportConversation = await createConversation(support.cookie);
-    await fixture.json(route(supportConversation), support.cookie, viewSchema);
+    const supportView = await fixture.json(
+      route(supportConversation),
+      support.cookie,
+      viewSchema
+    );
     const accessRoute = `/api/product/agents/${encodeURIComponent(agentId)}/access/${encodeURIComponent(supportPrincipal)}`;
     await fixture.json(
       accessRoute,
@@ -852,17 +1012,10 @@ gate(
       ),
       403
     );
-    await expectStatus(
-      await fixture.request(
-        `${route(supportConversation)}/messages`,
-        support.cookie,
-        {
-          eventId: randomUUID(),
-          mode: "follow-up",
-          text: "Denied agent execution",
-        }
-      ),
-      403
+    await denyMessage(
+      supportConversation,
+      support.cookie,
+      "Denied agent execution"
     );
     await fixture.json(
       accessRoute,
@@ -871,6 +1024,14 @@ gate(
       { actions: ["read", "execute", "approve"], operationId: randomUUID() },
       "PUT"
     );
+    const restoredSupportView = await fixture.json(
+      route(supportConversation),
+      support.cookie,
+      viewSchema
+    );
+    assert.deepEqual(restoredSupportView.snapshot, supportView.snapshot);
+    await assertNoDeniedAdmission();
+    const beforeToolRevocation = await read(conversation);
     await fixture.sql(
       `DELETE FROM identity_grant WHERE organization_id=${literal(organizationId)} AND principal_id=${literal(ownerPrincipal)} AND resource_kind='tool' AND resource_id='fixture-read'`
     );
@@ -883,11 +1044,14 @@ gate(
         await fixture.request(`${route(conversation)}/history`, owner.cookie),
         403
       );
+      await denyMessage(conversation, owner.cookie, "Denied cached tool input");
     } finally {
       await seedGrant(ownerPrincipal, "read", "tool", "fixture-read");
       await seedGrant(ownerPrincipal, "execute", "tool", "fixture-read");
     }
     const retainedView = await read(conversation);
+    assert.deepEqual(retainedView.snapshot, beforeToolRevocation.snapshot);
+    await assertNoDeniedAdmission();
     const retainedInboxCount = await fixture.sql(
       `SELECT count(*) FROM channel_inbox WHERE conversation_id=${literal(conversation.conversationId)}`
     );
@@ -915,15 +1079,20 @@ gate(
           403
         );
       }
-      await expectStatus(
-        await fixture.request(`${route(conversation)}/messages`, owner.cookie, {
-          eventId: deniedEventId,
-          mode: "follow-up",
-          text: "Use previous pilot answer",
-        }),
-        403
+      await denyMessage(
+        conversation,
+        owner.cookie,
+        "Use previous pilot answer",
+        deniedEventId
       );
       assert.equal(await deniedInboxCount(), "0");
+      await assertNoDeniedAdmission();
+      const laterSupportView = await fixture.json(
+        route(supportConversation),
+        support.cookie,
+        viewSchema
+      );
+      assert.deepEqual(laterSupportView.snapshot, supportView.snapshot);
       assert.equal(
         await fixture.sql(
           `SELECT count(*) FROM channel_inbox WHERE conversation_id=${literal(conversation.conversationId)}`
@@ -941,6 +1110,13 @@ gate(
       const restoredView = await read(conversation);
       assert.deepEqual(restoredView.snapshot, retainedView.snapshot);
       assert.equal(await deniedInboxCount(), "0");
+      await assertNoDeniedAdmission();
+      const restoredSupportSnapshot = await fixture.json(
+        route(supportConversation),
+        support.cookie,
+        viewSchema
+      );
+      assert.deepEqual(restoredSupportSnapshot.snapshot, supportView.snapshot);
       assert.equal(
         await fixture.sql(
           `SELECT count(*) FROM channel_inbox WHERE conversation_id=${literal(conversation.conversationId)}`
@@ -967,6 +1143,7 @@ gate(
       beforeProvider,
       deniedEventId,
       deniedInboxCount: await deniedInboxCount(),
+      deniedSubmissions,
       finalProvider,
       retainedInboxCount,
       retainedNativeSnapshot: retainedView.snapshot,
@@ -1128,6 +1305,109 @@ gate(
 );
 
 gate(
+  "native approval expiry preserves its waiting owner and rejects an expired write intent",
+  async () => {
+    const address = await createConversation();
+    const sent = await submit(address, "Run the approval fixture expiry case.");
+    const approval = await pending(address, sent.receipt.runId);
+    const waitingProvider = await provider();
+    const startedAt = Date.now();
+    const started = performance.now();
+    const samples: {
+      at: number;
+      elapsedMs: number;
+      beforeExpiry: boolean;
+      modelCount: number;
+      toolCount: number;
+      runState: string | undefined;
+    }[] = [];
+    evidence.approvalExpiry = { approval, samples, waitingProvider };
+    assert.ok(approval.expiresAt - startedAt >= 50_000);
+    for (let sample = 0; sample < 13; sample += 1) {
+      await delay(5000);
+      const view = await read(address);
+      const observed = await provider();
+      const at = Date.now();
+      const currentApproval = view.snapshot.approvals.find(
+        (value) => value.approvalId === approval.approvalId
+      );
+      const run = view.snapshot.runs.find(
+        (value) => value.runId === sent.receipt.runId
+      );
+      assert.ok(currentApproval);
+      assert.equal(currentApproval.expiresAt, approval.expiresAt);
+      assert.equal(currentApproval.operationId, approval.operationId);
+      assert.equal(currentApproval.runId, approval.runId);
+      assert.deepEqual(observed.tools, waitingProvider.tools);
+      const beforeExpiry = at < approval.expiresAt;
+      if (beforeExpiry) {
+        assert.deepEqual(currentApproval, approval);
+        assert.equal(run?.state, "waiting-for-approval");
+        assert.deepEqual(observed.model, waitingProvider.model);
+      }
+      samples.push({
+        at,
+        beforeExpiry,
+        elapsedMs: Math.round(performance.now() - started),
+        modelCount: observed.model.length,
+        runState: run?.state,
+        toolCount: observed.tools.length,
+      });
+    }
+    const elapsedMs = Math.round(performance.now() - started);
+    assert.ok(elapsedMs >= 65_000);
+    assert.ok(
+      samples.some(
+        (sample) => sample.beforeExpiry && sample.elapsedMs >= 50_000
+      )
+    );
+    assert.ok(Date.now() >= approval.expiresAt);
+    const expiredView = await read(address);
+    const beforeDeniedDecision = await provider();
+    const operationId = randomUUID();
+    await expectStatus(
+      await fixture.request(
+        `${route(address)}/approvals/${encodeURIComponent(approval.approvalId)}`,
+        owner.cookie,
+        { decision: "allow", operationId, runId: approval.runId }
+      ),
+      403
+    );
+    const finalProvider = await provider();
+    const deniedView = await read(address);
+    assert.deepEqual(
+      deniedView.snapshot.approvals,
+      expiredView.snapshot.approvals
+    );
+    assert.deepEqual(finalProvider.model, beforeDeniedDecision.model);
+    assert.deepEqual(finalProvider.tools, beforeDeniedDecision.tools);
+    assert.deepEqual(finalProvider.tools, waitingProvider.tools);
+    const terminal = await waitForFixture(
+      () => read(address),
+      (view) =>
+        view.snapshot.runs.some(
+          (run) =>
+            run.runId === sent.receipt.runId &&
+            ["completed", "failed", "cancelled"].includes(run.state)
+        ),
+      60_000
+    );
+    metrics.approvalExpiryObservationMs = elapsedMs;
+    evidence.approvalExpiry = {
+      approval,
+      beforeDeniedDecision,
+      deniedView,
+      expiredView,
+      finalProvider,
+      operationId,
+      samples,
+      terminal,
+      waitingProvider,
+    };
+  }
+);
+
+gate(
   "revoked write authority rejects approval before its external effect",
   async () => {
     const initial = await provider();
@@ -1177,7 +1457,17 @@ gate(
     const eventId = randomUUID();
     const sent = await submit(address, text, eventId);
     const approval = await pending(address, sent.receipt.runId);
-    const approving = approve(address, approval);
+    const approving = (async () => {
+      try {
+        await approve(address, approval);
+        return { status: "fulfilled" as const };
+      } catch (error) {
+        return {
+          errorName: error instanceof Error ? error.name : "unknown",
+          status: "rejected" as const,
+        };
+      }
+    })();
     await waitForFixture(
       provider,
       (value) =>
@@ -1185,8 +1475,8 @@ gate(
         value.tools.some((tool) => tool.operationId === approval.operationId),
       30_000
     );
-    const restartEvidence = await restart(address);
-    await approving.catch(() => {});
+    const restartEvidence = await restart(address, approval.operationId);
+    const approvalOutcome = await approving;
     const unknown = await state(address, sent.receipt.runId, "unknown-outcome");
     assert.equal(unknown.snapshot.tools[0]?.state, "unknown-outcome");
     const beforeReconcile = await provider();
@@ -1245,6 +1535,7 @@ gate(
     assert.deepEqual(finalProvider.model, beforeReconcile.model);
     evidence.unknownReceipt = {
       approval,
+      approvalOutcome,
       armId,
       beforeReconcile,
       exact,

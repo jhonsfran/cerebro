@@ -36,6 +36,7 @@ export class SessionAgent extends NativeSessionAgent<WorkerEnv> {
       diagnostics: {
         adapterMeasurements: readFixtureMetrics(this.ctx.storage),
         observerCount: await this.observerCount(),
+        projectionFailure: await this.projectionFailure(),
       },
     });
   }

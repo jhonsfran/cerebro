@@ -495,6 +495,30 @@ export class SessionAgent<
     return runtime.store.observerCount();
   }
 
+  protected async projectionFailure(): Promise<{
+    readonly tag: ContractFailure["_tag"];
+    readonly code: string | null;
+    readonly reasonSHA256: string;
+  } | null> {
+    const runtime = await this.ready();
+    const failure = runtime.backgroundFailure();
+    if (!failure) {
+      return null;
+    }
+    const reason = "reason" in failure ? failure.reason : failure.resource;
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(reason)
+    );
+    return {
+      code: "code" in failure ? failure.code : null,
+      reasonSHA256: Array.from(new Uint8Array(digest), (value) =>
+        value.toString(16).padStart(2, "0")
+      ).join(""),
+      tag: failure._tag,
+    };
+  }
+
   // Called by the coordinator's host startup hook. Official Lifecycle resumes Pi;
   // this only repairs Cerebro command markers and product projection.
   async recover(): Promise<void> {

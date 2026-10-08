@@ -80,6 +80,20 @@ export const inspectFixtureObservers = async (
           })
         ),
         observerCount: z.number().int().nonnegative(),
+        projectionFailure: z
+          .object({
+            code: z.string().nullable(),
+            reasonSHA256: z.string().regex(/^[a-f0-9]{64}$/u),
+            tag: z.enum([
+              "Denied",
+              "InvalidInput",
+              "Conflict",
+              "Unavailable",
+              "NotFound",
+              "UnknownOutcome",
+            ]),
+          })
+          .nullable(),
       }),
     })
     .parse(await response.json());
