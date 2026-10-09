@@ -2,13 +2,15 @@ import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { writeLocalRuntime } from "./local-runtime.mjs";
+
 const directory = process.env.CEREBRO_SECRETS_DIR ?? "/run/cerebro-secrets";
 const mode = process.env.DEPLOY_MODE ?? "local";
 const names = [
   "postgres-password",
   "minio-password",
   "auth-secret",
-  ...(mode === "local" ? ["bootstrap-token"] : []),
+  ...(mode === "local" ? ["bootstrap-token", "gateway-signing-key"] : []),
 ];
 
 const writeSecret = async (secretPath, value) => {
@@ -56,5 +58,8 @@ if (mode !== "production") {
       await writeSecret(path.join(outputDirectory, name), value);
     })
   );
+}
+if (mode === "local") {
+  await writeLocalRuntime(directory, process.env);
 }
 process.stdout.write("Cerebro secrets are ready\n");

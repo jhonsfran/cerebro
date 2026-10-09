@@ -1,6 +1,6 @@
 # Local credentialed acceptance
 
-`pnpm test:pi:live` uses an existing isolated local application, one configured live model, and one real controlled MCP read. The agent must have only that read tool enabled and must have explicit access to its resources. Fixture routes must be disabled. This command creates a fresh test conversation and preserves its durable history.
+`pnpm test:pi:live` uses an existing isolated local application, one configured live model, and one real controlled MCP read. The agent must have only that read tool enabled and must have explicit access to its resources. This command creates a fresh test conversation and preserves its durable history.
 
 Set `CEREBRO_PI_LIVE_CONFIG` to a private JSON file outside the repository. The file must contain `apiUrl`, `webUrl`, `cookie`, `agentId`, `modelId`, `toolId`, `prompt`, `fixtureId`, and `runtimeConfigurationPath`. Both application URLs must use loopback. The runtime configuration must be the local application's actual `runtime.json`. The prompt must supply the permitted read arguments and request exactly one tool call. The cookie is an existing test user's session cookie.
 

@@ -1,7 +1,0 @@
-Observed with celld 0.6.0 default per-isolate heap limit of 128 MiB.
-The POST /sessions/<fresh-id>/seed-ledger request returned 200.
-A following GET /sessions/<fresh-id>/storage returned 500 with this diagnostic.
-
-the isolate is over its V8 heap limit, so it stopped materializing a result set (see CELLD_V8_HEAP_LIMIT_MB)
-
-The diagnostic was captured from temporary fixture error output, then removed. The composed model loop was also affected after repeated probes.

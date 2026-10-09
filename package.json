@@ -7,14 +7,16 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "turbo run dev",
+    "start": "node deploy/local.mjs start",
+    "start:demo": "node deploy/local.mjs start --demo",
+    "stop": "node deploy/local.mjs stop",
+    "token": "node deploy/local.mjs token",
+    "logs": "node deploy/local.mjs logs",
     "build": "turbo run build",
     "check-types": "turbo run check-types",
     "dev:web": "turbo run dev:bare -F web --",
-    "dev:server": "turbo run dev:bare -F hono --",
     "db:generate": "turbo run db:generate -F @cerebro/db --",
-    "deploy": "docker compose build bootstrap && docker compose run --rm bootstrap",
-    "test:contracts": "node --test tests/contracts/contracts.test.ts tests/pi-durable-qualification/contracts.test.ts",
+    "test:contracts": "node --test tests/contracts/*.test.ts",
     "test:chat": "node --test tests/live/chat-stream.test.ts",
     "test:boot": "node --test tests/integration/boot.test.ts",
     "test:runtime": "node --test --test-concurrency=1 tests/runtime/*.test.ts",
@@ -28,7 +30,6 @@
     "fix": "ultracite fix",
     "prepare": "husky",
     "test:channels:native": "node tests/channels/native/run.mjs",
-    "test:pi-durable:qualification": "node tests/pi-durable-qualification/run.mjs",
     "test:pi:live": "node --test tests/live/pi.test.ts"
   },
   "dependencies": {

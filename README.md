@@ -1,70 +1,87 @@
 # Cerebro
 
-Cerebro is a self-hosted company assistant. It includes company identity and policy, durable conversations, budget admission, controlled tools, cited memory, web chat, and optional Slack direct messages. Session 7 connects these subsystems in the native celld deployment.
+Cerebro is a self-hosted assistant for a company. People chat with agents that answer from company memory, call controlled tools, and ask for approval before they write anything. Every step checks the person's current permissions. Agents run on [Pi Durable](https://www.npmjs.com/package/@earendil-works/pi-durable), so a conversation survives a crash and a write is never sent twice.
 
-## Start the local stack
+The [architecture overview](docs/architecture/overview.md) explains how the parts fit together.
 
-Docker is the host prerequisite for the application stack. From a fresh checkout, run:
+## Start Cerebro
 
-```sh
-docker compose up --build -d --wait
-```
+You need Docker and pnpm 11. The stack runs in Docker Compose: PostgreSQL, two MinIO stores, the API on celld, and the web app.
 
-Open [the web app](http://localhost:3001). Readiness is available at [the API](http://localhost:18765/ready). The default local mode uses the free `opencode/space-bunny-free` model. Calls use the pinned OpenCode SDK and its public provider key. No paid model fallback is configured. The native live check passed with one settled zero-cost usage receipt. Big Pickle did not pass that check and is excluded from the default catalog. Free model availability can change. Read [OpenCode pricing and privacy](https://opencode.ai/docs/en/zen/) before sending company data.
-
-Local setup requires the generated installation token. Read it from the protected secret volume, then enter it in the setup form:
+### Try it without a model key
 
 ```sh
-docker compose run --rm --no-deps bootstrap node --input-type=module -e 'import {readFile} from "node:fs/promises";process.stdout.write(await readFile("/run/cerebro-secrets/bootstrap-token","utf8"))'
+pnpm start:demo
 ```
 
-Local mode uses real PostgreSQL, MinIO, authorization, and usage records. Model charges are zero `usd-micro` units. Local mode also accepts HTTP and private-host models and connectors, such as a model on your machine; production requires public HTTPS. For an existing agent, select a configured model in the editor and start a new conversation. Existing data stays in its volumes.
+The demo uses a fake model that always gives the same answer, so it needs no key. The first start builds the images and takes a few minutes. When it finishes, it prints the web URL and a setup token:
 
-Compose generates local secrets once. PostgreSQL, both MinIO services, celld, and credentials use seven named volumes. `docker compose down` preserves that state. `docker compose down --volumes` deletes it.
-
-The bootstrap service creates MinIO buckets, applies PostgreSQL migrations, and publishes the API Worker with native `celld deploy`. Run `pnpm deploy` after changing the Worker in an existing local stack.
-
-## Run checks
-
-Install pnpm 11.9.0 for repository development.
-
-```sh
-pnpm install --frozen-lockfile
-pnpm test:contracts
-pnpm test:runtime
-pnpm test:identity
-pnpm test:policy
-pnpm test:memory
-pnpm test:channels
-pnpm test:integration
-pnpm test:opencode
-pnpm check-types
-pnpm check
-pnpm build
+```text
+Cerebro is running at http://localhost:3001
+Setup token: <token>
 ```
 
-The application has two modes, `local` and `production`, and no test mode. Integration tests boot isolated Compose projects in local mode with `tests/slice-1/compose.test.yaml`, which adds a deterministic fake model and connectors and writes a test `runtime.json` that points at them. `pnpm test:opencode` separately calls the live free provider through the native deployment and verifies a zero-cost usage receipt.
+Open http://localhost:3001, sign up, and enter the setup token. You are now the owner. Create an agent, start a conversation, and send a message.
 
-To run the local demonstration with the deterministic fake provider instead, use:
+### Use a real model
 
-```sh
-docker compose -p cerebro-demo -f compose.yaml -f tests/slice-1/compose.test.yaml up --build -d --wait
-```
+Cerebro works with any OpenAI-compatible endpoint.
 
-A protected `runtime.json` must match its deployment mode.
+1. Copy the example settings:
 
-The backup tests restore all seven stores into fresh volumes and start the recorded source images. Read [the session 7 receipt](docs/implementation/session-7.md) for current deployed acceptance evidence and known check limits.
+   ```sh
+   cp .env.example .env
+   ```
 
-## Data ownership
+2. In `.env`, set `CEREBRO_MODEL`, `CEREBRO_MODEL_BASE_URL`, and `CEREBRO_MODEL_API_KEY`. For a model on your machine, such as Ollama, use `http://host.docker.internal:11434/v1` and leave the key empty.
+3. Start the stack:
 
-Session Durable Objects own execution and conversation state. Pi Durable owns the agent loop, its inbox, and crash recovery. PostgreSQL owns company identity, current grants, shared budget, memory metadata, and audit projections. Runtime MinIO preserves celld state. Artifact MinIO holds source and application objects. No transaction spans these stores.
+   ```sh
+   pnpm start
+   ```
 
-The tool loader has no general outbound network access. It receives the named tool gateway as its capability. The gateway keeps no state; it dispatches only a call the runtime signed after current authorization and any required approval. Each tool call records a durable dispatch marker in Pi before its effect. After a crash, Pi replays the call: an idempotent tool runs again, and an at-most-once tool reports an unknown outcome to the model and is never dispatched again.
+`pnpm start` writes your model settings into `runtime.json` on every start. To change the model, edit `.env` and run `pnpm start` again. Existing agents keep their old model until you select the new one in the agent editor.
 
-## Production settings
+The demo and the real stack keep separate data. Stop one before you start the other, because they use the same ports.
 
-`compose.production.yaml` requires an external directory with `auth-secret`, `postgres-password`, `minio-password`, and the protected `runtime.json` configuration. Set a PostgreSQL URL with `sslmode=verify-full` and HTTPS public origins. Put a TLS reverse proxy in front of the loopback API and web ports. Production rejects HTTP and loopback models and connectors. Read [the pilot operations guide](docs/operations/pilot.md) for the runtime schema and trusted installation setup.
+## Commands
 
-Read [the backup procedure](docs/operations/backup.md) before maintenance. The automated backup command supports named volumes. Production bind-mounted secrets require the separate procedure in that guide.
+| Command | What it does |
+| --- | --- |
+| `pnpm start` | Builds and starts the stack with the model from `.env`, then prints the URL and setup token. |
+| `pnpm start:demo` | The same, with the fake model. |
+| `pnpm stop` | Stops both stacks. Data stays in Docker volumes. |
+| `pnpm token` | Prints the setup token. Add `--demo` for the demo stack. |
+| `pnpm logs` | Follows the logs. Add service names to filter, for example `pnpm logs celld`. |
 
-A pilot requires live results for every configured model, MCP, identity, budget, telemetry, and Slack integration. Publicly trusted Worker PostgreSQL TLS also requires a live result. The [delivery plan](docs/superpowers/plans/2026-09-28-cerebro-delivery.md) and [session 7 receipt](docs/implementation/session-7.md) identify incomplete qualification checks.
+To delete all local data, run `docker compose -p cerebro down --volumes`. For the demo stack, run `docker compose -p cerebro-demo -f compose.yaml -f tests/slice-1/compose.test.yaml down --volumes`.
+
+The web app is on port `3001` and the API on port `18765`. To use other ports, set `CEREBRO_WEB_PORT`, `CEREBRO_API_PORT`, `CEREBRO_PUBLIC_WEB_URL`, and `CEREBRO_PUBLIC_API_URL` before you start.
+
+## Run the checks
+
+Install dependencies once with `pnpm install --frozen-lockfile`. Every check except `check-types`, `check`, `build`, `test:contracts`, and `test:identity` needs Docker.
+
+| Command | Covers |
+| --- | --- |
+| `pnpm check-types` | TypeScript across the workspace |
+| `pnpm check` | Lint and formatting |
+| `pnpm build` | Production build of every package |
+| `pnpm test:contracts` | Shared contracts and session schemas |
+| `pnpm test:identity` | Identity, OIDC, and SCIM |
+| `pnpm test:policy` | Tool authority, approvals, and the tool gateway |
+| `pnpm test:memory` | Company memory and retrieval |
+| `pnpm test:channels` | Web and Slack channels against PostgreSQL |
+| `pnpm test:runtime` | The Pi session host on celld, including crash recovery. Takes about 15 minutes. |
+| `pnpm test:channels:native` | Channels against a full stack |
+| `pnpm test:integration` | Full stacks: boot, the pilot acceptance gates, and backup restore |
+
+Integration tests start isolated stacks with `tests/slice-1/compose.test.yaml`, which adds the fake model and connectors. `pnpm test:pi:live` runs one check against a real model and connector; [its README](tests/live/README.md) lists what it needs.
+
+## Learn more
+
+- [How Cerebro fits together](docs/architecture/overview.md)
+- [Architecture decision: keep company rules independent of replaceable components](docs/architecture/adr-0001-replaceable-application-boundaries.md)
+- [How to run Cerebro in production](docs/operations/production.md)
+- [How to back up and restore a stack](docs/operations/backup.md)
+- [Runtime configuration reference](docs/reference/runtime-configuration.md)

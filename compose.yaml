@@ -35,6 +35,13 @@ services:
   secrets-init:
     <<: *app
     command: [node, deploy/secrets.mjs]
+    environment:
+      CEREBRO_SECRETS_DIR: /run/cerebro-secrets
+      DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-local}
+      # The local model, written into runtime.json on each start. See .env.example.
+      CEREBRO_MODEL: ${CEREBRO_MODEL:-}
+      CEREBRO_MODEL_BASE_URL: ${CEREBRO_MODEL_BASE_URL:-}
+      CEREBRO_MODEL_API_KEY: ${CEREBRO_MODEL_API_KEY:-}
     volumes:
       - secrets:/run/cerebro-secrets
       - postgres-credential:/run/postgres-credential

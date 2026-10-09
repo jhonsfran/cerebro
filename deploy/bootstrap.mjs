@@ -88,8 +88,23 @@ const organizationId =
   channelConfig?.organizationId ??
   enterpriseIdentity?.organizationId ??
   "local-company";
+const readRuntimeConfiguration = async () => {
+  try {
+    return await readFile(path.join(directory, "runtime.json"), "utf-8");
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+    throw new Error(
+      mode === "local"
+        ? "No runtime.json. Set CEREBRO_MODEL in .env (see .env.example) or run pnpm start:demo."
+        : "Production requires runtime.json in the secrets directory.",
+      { cause: error }
+    );
+  }
+};
 const runtimeConfiguration = parseRuntimeConfiguration(
-  await readFile(path.join(directory, "runtime.json"), "utf-8"),
+  await readRuntimeConfiguration(),
   mode
 );
 const runtimeConfigurationJson = JSON.stringify(runtimeConfiguration);

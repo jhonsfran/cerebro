@@ -1,34 +1,27 @@
 /* oxlint-disable no-await-in-loop, unicorn/no-await-expression-member -- Samples and fault injection must retain scenario ordering. */
 import assert from "node:assert/strict";
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
 import { parseArgs, promisify } from "node:util";
 
-import { validatePerformance } from "./performance.mjs";
 import { boundaries, createFixture } from "./provider.mjs";
 
-const execute = promisify(execFile);
-const configuration = JSON.parse(
-  await readFile(new URL("scenarios.json", import.meta.url), "utf-8")
-);
 const { values } = parseArgs({
   options: {
-    "base-url": { type: "string" },
-    "baseline-fixture-id": { type: "string" },
-    "baseline-sha": { type: "string" },
-    driver: { type: "string" },
-    "fixture-id": { type: "string" },
     "fixture-url": { type: "string" },
-    output: { type: "string" },
-    scenario: { default: "fixture", type: "string" },
     "self-test": { type: "boolean" },
   },
 });
+const fixtureKeys = {
+  connectorKey: "fixture-connector-key",
+  controlToken: "slice-1-control",
+  modelKey: "fixture-model-key",
+};
+const otherCompany = "organization-2";
 const request = async (url, route, input, headers = {}) => {
   const response = await fetch(`${url}${route}`, {
     body: input === undefined ? undefined : JSON.stringify(input),
@@ -38,14 +31,14 @@ const request = async (url, route, input, headers = {}) => {
   });
   return { body: await response.json(), status: response.status };
 };
-const controls = { "X-Fixture-Control": configuration.fixture.controlToken };
+const controls = { "X-Fixture-Control": fixtureKeys.controlToken };
 const modelHeaders = (operationId, purpose = "turn") => ({
-  Authorization: `Bearer ${configuration.fixture.modelKey}`,
+  Authorization: `Bearer ${fixtureKeys.modelKey}`,
   "X-Fixture-Purpose": purpose,
   "X-Fixture-Request-Id": operationId,
 });
 const toolHeaders = {
-  Authorization: `Bearer ${configuration.fixture.connectorKey}`,
+  Authorization: `Bearer ${fixtureKeys.connectorKey}`,
 };
 
 const fixtureProbe = async (url) => {
@@ -391,15 +384,11 @@ if (values["self-test"]) {
               ...input,
               address: {
                 ...userEvent,
-                organizationId: id.organization(
-                  configuration.seed.otherCompany
-                ),
+                organizationId: id.organization(otherCompany),
               },
               resource: {
                 ...input.resource,
-                organizationId: id.organization(
-                  configuration.seed.otherCompany
-                ),
+                organizationId: id.organization(otherCompany),
               },
             },
             options
@@ -419,81 +408,9 @@ if (values["self-test"]) {
     );
   });
 } else {
-  const scenario = configuration.scenarios.find(
-    (item) => item.id === values.scenario
-  );
-  if (!scenario) {
-    throw new Error("Unknown scenario");
+  if (!values["fixture-url"]) {
+    throw new Error("Pass --self-test or --fixture-url <url>");
   }
-  const sha = (
-    await execute("git", ["rev-parse", "HEAD"], {
-      cwd: path.resolve(import.meta.dirname, "../.."),
-    })
-  ).stdout.trim();
-  const sourceCheckoutDirty = Boolean(
-    (
-      await execute(
-        "git",
-        [
-          "status",
-          "--porcelain",
-          "--untracked-files=all",
-          "--",
-          ".",
-          ":(exclude)artifacts/**",
-        ],
-        { cwd: path.resolve(import.meta.dirname, "../..") }
-      )
-    ).stdout.trim()
-  );
-  let report;
-  if (scenario.scope === "infrastructure") {
-    if (!values["fixture-url"] && !values["base-url"]) {
-      throw new Error("A fixture URL is required");
-    }
-    report = await fixtureProbe(values["fixture-url"] ?? values["base-url"]);
-  } else if (values.driver) {
-    const driver = await import(
-      pathToFileURL(path.resolve(values.driver)).href
-    );
-    report = await driver.runScenario({
-      baseUrl: values["base-url"],
-      configuration,
-      fixtureUrl: values["fixture-url"],
-      scenario,
-      sha,
-    });
-    if (report.status !== "pass") {
-      process.exitCode = 2;
-    }
-    if (scenario.id === "performance" && report.status === "pass") {
-      report.sourceCheckoutDirty = sourceCheckoutDirty;
-      report.metrics = validatePerformance(report, scenario, {
-        baselineFixtureId: values["baseline-fixture-id"],
-        baselineSha: values["baseline-sha"],
-        fixtureId: values["fixture-id"],
-        headSha: sha,
-      });
-    }
-  } else {
-    report = {
-      reason:
-        "S1-F application wiring and a scenario driver using the frozen SessionService are required",
-      required: scenario,
-      scenario: scenario.id,
-      status: "blocked",
-    };
-    process.exitCode = 2;
-  }
-  report = {
-    ...report,
-    scenario: scenario.id,
-    sourceCheckoutDirty,
-    testedSha: sha,
-  };
-  if (values.output) {
-    await mkdir(path.dirname(path.resolve(values.output)), { recursive: true });
-    await writeFile(values.output, `${JSON.stringify(report, null, 2)}\n`);
-  }
+  const report = await fixtureProbe(values["fixture-url"]);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 }
