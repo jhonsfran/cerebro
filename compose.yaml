@@ -39,8 +39,8 @@ services:
       CEREBRO_SECRETS_DIR: /run/cerebro-secrets
       DEPLOY_MODE: ${CEREBRO_DEPLOY_MODE:-local}
       # The local model, written into runtime.json on each start. See .env.example.
-      CEREBRO_MODEL: ${CEREBRO_MODEL:-}
-      CEREBRO_MODEL_BASE_URL: ${CEREBRO_MODEL_BASE_URL:-}
+      CEREBRO_MODEL: ${CEREBRO_MODEL:-openrouter/openai/gpt-6-luna}
+      CEREBRO_MODEL_BASE_URL: ${CEREBRO_MODEL_BASE_URL:-https://openrouter.ai/api/v1}
       CEREBRO_MODEL_API_KEY: ${CEREBRO_MODEL_API_KEY:-}
     volumes:
       - secrets:/run/cerebro-secrets

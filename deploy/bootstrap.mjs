@@ -97,7 +97,7 @@ const readRuntimeConfiguration = async () => {
     }
     throw new Error(
       mode === "local"
-        ? "No runtime.json. Set CEREBRO_MODEL in .env (see .env.example) or run pnpm start:demo."
+        ? "No runtime.json. Set CEREBRO_MODEL_API_KEY in .env (see .env.example) and run pnpm start."
         : "Production requires runtime.json in the secrets directory.",
       { cause: error }
     );

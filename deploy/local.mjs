@@ -1,63 +1,48 @@
 // Starts, stops, and inspects the local Docker stack.
 //
-//   node deploy/local.mjs start [--demo]
+//   node deploy/local.mjs start
 //   node deploy/local.mjs stop
-//   node deploy/local.mjs token [--demo]
-//   node deploy/local.mjs logs [--demo] [service...]
-//
-// --demo adds tests/slice-1/compose.test.yaml: a deterministic fake model and
-// connectors, so the app runs without a model key. It uses its own Compose
-// project and volumes.
+//   node deploy/local.mjs token
+//   node deploy/local.mjs logs [service...]
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseArgs, parseEnv } from "node:util";
 
 const root = path.resolve(import.meta.dirname, "..");
-const { positionals, values } = parseArgs({
-  allowPositionals: true,
-  options: { demo: { type: "boolean" } },
-});
+const { positionals } = parseArgs({ allowPositionals: true });
 const [command = "start", ...services] = positionals;
-const stacks = {
-  demo: {
-    files: ["compose.yaml", "tests/slice-1/compose.test.yaml"],
-    project: "cerebro-demo",
-  },
-  local: { files: ["compose.yaml"], project: "cerebro" },
-};
 
-const compose = (stack, args, options = {}) =>
+const compose = (args, options = {}) =>
   spawnSync(
     "docker",
-    [
-      "compose",
-      "-p",
-      stack.project,
-      ...stack.files.flatMap((file) => ["-f", file]),
-      ...args,
-    ],
-    { cwd: root, encoding: "utf-8", stdio: "inherit", ...options }
+    ["compose", "-p", "cerebro", "-f", "compose.yaml", ...args],
+    {
+      cwd: root,
+      encoding: "utf-8",
+      stdio: "inherit",
+      ...options,
+    }
   );
 const fail = (message) => {
   process.stderr.write(`${message}\n`);
   process.exit(1);
 };
-// Compose reads .env itself; this only checks that a model is configured.
-const environmentFile = () => {
+// Compose reads .env itself. This only reads it to check the model settings.
+const setting = (name) => {
   const file = path.join(root, ".env");
-  return existsSync(file) ? parseEnv(readFileSync(file, "utf-8")) : {};
+  const values = existsSync(file) ? parseEnv(readFileSync(file, "utf-8")) : {};
+  return (process.env[name] ?? values[name])?.trim();
 };
-const token = (stack) => {
+const token = () => {
   // `compose run` would create an empty stack, so check that one exists.
-  const existing = compose(stack, ["ps", "--all", "--quiet", "secrets-init"], {
+  const existing = compose(["ps", "--all", "--quiet", "secrets-init"], {
     stdio: ["ignore", "pipe", "ignore"],
   });
   if (!existing.stdout?.trim()) {
     fail("Could not read the setup token. Is the stack started?");
   }
   const result = compose(
-    stack,
     [
       "run",
       "--rm",
@@ -76,51 +61,44 @@ const token = (stack) => {
   return result.stdout.trim();
 };
 
-const stack = values.demo ? stacks.demo : stacks.local;
 switch (command) {
   case "start": {
+    // The default model is on OpenRouter and needs a key. A custom endpoint,
+    // such as a local Ollama server, may not.
     if (
-      !values.demo &&
-      !process.env.CEREBRO_MODEL &&
-      !environmentFile().CEREBRO_MODEL
+      !setting("CEREBRO_MODEL_API_KEY") &&
+      !setting("CEREBRO_MODEL_BASE_URL")
     ) {
       fail(
-        "No model is configured. Copy .env.example to .env and set CEREBRO_MODEL, or run pnpm start:demo."
+        "No model key is configured. Copy .env.example to .env and set CEREBRO_MODEL_API_KEY."
       );
     }
-    const started = compose(stack, ["up", "--build", "--detach", "--wait"]);
+    const started = compose(["up", "--build", "--detach", "--wait"]);
     if (started.status !== 0) {
-      fail(
-        `The stack did not start. Run pnpm logs${values.demo ? " --demo" : ""} to see why.`
-      );
+      fail("The stack did not start. Run pnpm logs to see why.");
     }
-    const web = process.env.CEREBRO_PUBLIC_WEB_URL ?? "http://localhost:3001";
+    const web = setting("CEREBRO_PUBLIC_WEB_URL") || "http://localhost:3001";
     process.stdout.write(
       [
         "",
         `Cerebro is running at ${web}`,
-        `Setup token: ${token(stack)}`,
+        `Setup token: ${token()}`,
         "Sign up, then enter the setup token to become the owner.",
-        values.demo
-          ? "Demo mode: the model is a fake that gives a fixed answer."
-          : "",
         "",
       ].join("\n")
     );
     break;
   }
   case "stop": {
-    for (const each of Object.values(stacks)) {
-      compose(each, ["stop"]);
-    }
+    compose(["stop"]);
     break;
   }
   case "token": {
-    process.stdout.write(`${token(stack)}\n`);
+    process.stdout.write(`${token()}\n`);
     break;
   }
   case "logs": {
-    compose(stack, ["logs", "--follow", "--tail=200", ...services]);
+    compose(["logs", "--follow", "--tail=200", ...services]);
     break;
   }
   default: {

@@ -6,15 +6,22 @@ The [architecture overview](docs/architecture/overview.md) explains how the part
 
 ## Start Cerebro
 
-You need Docker and pnpm 11. The stack runs in Docker Compose: PostgreSQL, two MinIO stores, the API on celld, and the web app.
+You need Docker, pnpm 11, and an [OpenRouter](https://openrouter.ai/keys) API key. The stack runs in Docker Compose: PostgreSQL, two MinIO stores, the API on celld, and the web app.
 
-### Try it without a model key
+1. Copy the example settings:
 
-```sh
-pnpm start:demo
-```
+   ```sh
+   cp .env.example .env
+   ```
 
-The demo uses a fake model that always gives the same answer, so it needs no key. The first start builds the images and takes a few minutes. When it finishes, it prints the web URL and a setup token:
+2. In `.env`, set `CEREBRO_MODEL_API_KEY` to your OpenRouter key.
+3. Start the stack:
+
+   ```sh
+   pnpm start
+   ```
+
+The first start builds the images and takes a few minutes. When it finishes, it prints the web URL and a setup token:
 
 ```text
 Cerebro is running at http://localhost:3001
@@ -23,40 +30,27 @@ Setup token: <token>
 
 Open http://localhost:3001, sign up, and enter the setup token. You are now the owner. Create an agent, start a conversation, and send a message.
 
-### Use a real model
+## Change the model
 
-Cerebro works with any OpenAI-compatible endpoint.
+The default model is GPT-6 Luna on OpenRouter (`openrouter/openai/gpt-6-luna`). Cerebro works with any OpenAI-compatible endpoint.
 
-1. Copy the example settings:
+- To use another OpenRouter model, set `CEREBRO_MODEL` to `openrouter/` followed by the OpenRouter model ID, for example `openrouter/openai/gpt-6-sol`.
+- To use another endpoint, set `CEREBRO_MODEL`, `CEREBRO_MODEL_BASE_URL`, and `CEREBRO_MODEL_API_KEY`. For a model on your machine, such as Ollama, use `http://host.docker.internal:11434/v1` and leave the key empty.
 
-   ```sh
-   cp .env.example .env
-   ```
-
-2. In `.env`, set `CEREBRO_MODEL`, `CEREBRO_MODEL_BASE_URL`, and `CEREBRO_MODEL_API_KEY`. For a model on your machine, such as Ollama, use `http://host.docker.internal:11434/v1` and leave the key empty.
-3. Start the stack:
-
-   ```sh
-   pnpm start
-   ```
-
-`pnpm start` writes your model settings into `runtime.json` on every start. To change the model, edit `.env` and run `pnpm start` again. Existing agents keep their old model until you select the new one in the agent editor.
-
-The demo and the real stack keep separate data. Stop one before you start the other, because they use the same ports.
+`pnpm start` writes the model settings into `runtime.json` on every start. After you edit `.env`, run `pnpm start` again. Existing agents keep their old model until you select the new one in the agent editor.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `pnpm start` | Builds and starts the stack with the model from `.env`, then prints the URL and setup token. |
-| `pnpm start:demo` | The same, with the fake model. |
-| `pnpm stop` | Stops both stacks. Data stays in Docker volumes. |
-| `pnpm token` | Prints the setup token. Add `--demo` for the demo stack. |
+| `pnpm start` | Builds and starts the stack, then prints the URL and setup token. |
+| `pnpm stop` | Stops the stack. Data stays in Docker volumes. |
+| `pnpm token` | Prints the setup token. |
 | `pnpm logs` | Follows the logs. Add service names to filter, for example `pnpm logs celld`. |
 
-To delete all local data, run `docker compose -p cerebro down --volumes`. For the demo stack, run `docker compose -p cerebro-demo -f compose.yaml -f tests/slice-1/compose.test.yaml down --volumes`.
+To delete all local data, run `docker compose -p cerebro down --volumes`.
 
-The web app is on port `3001` and the API on port `18765`. To use other ports, set `CEREBRO_WEB_PORT`, `CEREBRO_API_PORT`, `CEREBRO_PUBLIC_WEB_URL`, and `CEREBRO_PUBLIC_API_URL` before you start.
+The web app is on port `3001` and the API on port `18765`. To use other ports, set `CEREBRO_WEB_PORT`, `CEREBRO_API_PORT`, `CEREBRO_PUBLIC_WEB_URL`, and `CEREBRO_PUBLIC_API_URL` in `.env`.
 
 ## Run the checks
 

@@ -44,7 +44,8 @@ export const writeLocalRuntime = async (directory, environment) => {
         deadlineMs: 90_000,
         id: selected,
         maxInputBytes: 131_072,
-        maxOutputTokens: 4096,
+        // Reasoning models, such as GPT-6 Luna, spend part of this on reasoning.
+        maxOutputTokens: 16_384,
         maxResponseBytes: 1_048_576,
         model: selected.slice(separator + 1),
         provider: selected.slice(0, separator),

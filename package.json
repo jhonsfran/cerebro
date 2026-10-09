@@ -8,7 +8,6 @@
   "type": "module",
   "scripts": {
     "start": "node deploy/local.mjs start",
-    "start:demo": "node deploy/local.mjs start --demo",
     "stop": "node deploy/local.mjs stop",
     "token": "node deploy/local.mjs token",
     "logs": "node deploy/local.mjs logs",

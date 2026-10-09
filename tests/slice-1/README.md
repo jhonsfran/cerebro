@@ -1,6 +1,6 @@
 # Deterministic application stack
 
-These files run the real application with a fake model and fake connectors. The integration tests, the native channel tests, and `pnpm start:demo` use them. Production code knows nothing about them: the fake is configured through an ordinary local `runtime.json`.
+These files run the real application with a fake model and fake connectors. The integration tests and the native channel tests use them. Production code knows nothing about them: the fake is configured through an ordinary local `runtime.json`.
 
 ## Files
 
