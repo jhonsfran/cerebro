@@ -997,6 +997,134 @@ test("durable approval waits bind run and policy; duplicate decisions do not red
   }
 });
 
+test("stale native running frames preserve pending approval through single and mixed SQLite batches", async () => {
+  const fixture = await setup(false, true);
+  try {
+    const receipt = await submit(fixture);
+    const queued = await submit(fixture, "B");
+    const approval = approvalFor(receipt.runId);
+    await persistPendingApproval(fixture, approval);
+    await Effect.runPromise(
+      fixture.project({
+        run: { runId: receipt.runId, state: "waiting-for-approval" },
+        type: "run",
+      })
+    );
+    const waiting = fixture.store.domain();
+    const handoffs = await Effect.runPromise(
+      fixture.store.service.recover(address, options())
+    );
+    const waitingHandoff = handoffs.find(
+      (handoff) => handoff.submission.runId === receipt.runId
+    );
+    assert.ok(waitingHandoff);
+    const beforeOutbox = fixture.store.outbox();
+    const beforeCounts = { ...fixture.engine.counts };
+    const stale: DomainUpdate = {
+      run: { runId: receipt.runId, state: "running" },
+      type: "run",
+    };
+    await Effect.runPromise(fixture.project(stale));
+    assert.deepEqual(fixture.store.domain(), waiting);
+    assert.deepEqual(fixture.store.outbox(), beforeOutbox);
+    assert.deepEqual(
+      await Effect.runPromise(
+        fixture.store.service.recover(address, options())
+      ),
+      handoffs
+    );
+    const commit = (updates: readonly [DomainUpdate, ...DomainUpdate[]]) =>
+      fixture.store.service.commit(
+        address,
+        fixture.store.domain().revision,
+        { runId: receipt.runId, type: "projected-batch", updates },
+        options()
+      );
+    const firstExecution: DomainUpdate = {
+      execution: {
+        executionId: id.execution(`execution:${receipt.runId}`),
+        runIds: [receipt.runId],
+      },
+      type: "execution",
+    };
+    await Effect.runPromise(commit([stale, firstExecution]));
+    const afterFirst = fixture.store.domain();
+    assert.equal(afterFirst.revision, waiting.revision + 1);
+    assert.deepEqual(afterFirst.approvals, waiting.approvals);
+    assert.deepEqual(afterFirst.runs, waiting.runs);
+    assert.deepEqual(
+      fixture.store
+        .outbox()
+        .slice(beforeOutbox.length)
+        .map((record) => record.update),
+      [firstExecution]
+    );
+    const afterFirstHandoffs = await Effect.runPromise(
+      fixture.store.service.recover(address, options())
+    );
+    const firstHandoff = afterFirstHandoffs.find(
+      (handoff) => handoff.submission.runId === receipt.runId
+    );
+    assert.ok(firstHandoff);
+    assert.deepEqual(firstHandoff.run, waitingHandoff.run);
+    assert.deepEqual(firstHandoff.approvals, waitingHandoff.approvals);
+    assert.equal(firstHandoff.projectedRevision, afterFirst.revision);
+    const secondExecution: DomainUpdate = {
+      execution: {
+        executionId: id.execution(`execution:${queued.runId}`),
+        runIds: [queued.runId],
+      },
+      type: "execution",
+    };
+    await Effect.runPromise(commit([secondExecution, stale]));
+    const afterSecond = fixture.store.domain();
+    assert.equal(afterSecond.revision, afterFirst.revision + 1);
+    assert.deepEqual(afterSecond.approvals, waiting.approvals);
+    assert.deepEqual(afterSecond.runs, waiting.runs);
+    assert.deepEqual(
+      fixture.store
+        .outbox()
+        .slice(beforeOutbox.length)
+        .map((record) => record.update),
+      [firstExecution, secondExecution]
+    );
+    fixture.reopenDatabase();
+    assert.deepEqual(fixture.reopen().domain(), afterSecond);
+    const durableHandoffs = await Effect.runPromise(
+      fixture.reopen().service.recover(address, options())
+    );
+    assert.deepEqual(
+      durableHandoffs.find(
+        (handoff) => handoff.submission.runId === receipt.runId
+      ),
+      firstHandoff
+    );
+    assert.deepEqual(fixture.engine.counts, beforeCounts);
+    const command = {
+      address,
+      approvalId: approval.id,
+      context: allowedContext,
+      decision: "allow" as const,
+      runId: receipt.runId,
+      type: "approve" as const,
+    };
+    await Effect.runPromise(fixture.service.approve(command, options()));
+    await Effect.runPromise(fixture.service.approve(command, options()));
+    const resumed = fixture.reopen().domain();
+    assert.equal(resumed.approvals[0]?.state, "allowed");
+    assert.equal(
+      resumed.runs.find((run) => run.runId === receipt.runId)?.state,
+      "running"
+    );
+    assert.deepEqual(fixture.engine.counts, {
+      ...beforeCounts,
+      approve: beforeCounts.approve + 1,
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
 // Each task keeps its own durable memos, as Pi does; invoking the same task
 // again replays the call after a crash.
 const memoStore = () => {

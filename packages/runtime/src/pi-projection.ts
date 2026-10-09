@@ -63,6 +63,18 @@ const projectRun = (
   update: Extract<DomainUpdate, { type: "run" }>
 ): DomainSnapshot => {
   const previous = snapshot.runs.find((run) => run.runId === update.run.runId);
+  // Pi may report the run as running again after recovery while a person has
+  // not yet answered its approval. The approval keeps the run waiting.
+  if (
+    previous?.state === "waiting-for-approval" &&
+    update.run.state === "running" &&
+    snapshot.approvals.some(
+      (approval) =>
+        approval.runId === previous.runId && approval.state === "pending"
+    )
+  ) {
+    return snapshot;
+  }
   if (
     previous &&
     !pendingRun(previous) &&
