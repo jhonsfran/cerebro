@@ -30,7 +30,6 @@ RUN --mount=type=secret,id=proxy_ca \
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json ./
 COPY apps/server/package.json ./apps/server/package.json
 COPY apps/web/package.json ./apps/web/package.json
-COPY packages/ag-ui/package.json ./packages/ag-ui/package.json
 COPY packages/api/package.json ./packages/api/package.json
 COPY packages/auth/package.json ./packages/auth/package.json
 COPY packages/authorization/package.json ./packages/authorization/package.json

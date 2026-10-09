@@ -1,11 +1,9 @@
-import { protocolBatchResponse } from "@cerebro/ag-ui/protocol";
 import { SessionAgent as NativeSessionAgent } from "@cerebro/runtime/session-agent";
 import { Effect } from "effect";
 import { z } from "zod";
 
 import type { WorkerEnv } from "./env.server";
 import { readFixtureMetrics } from "./fixture-metrics";
-import { readObservationStream } from "./observation-stream";
 import {
   createRuntimeComposition,
   resolveSessionAddress,
@@ -20,14 +18,6 @@ export class SessionAgent extends NativeSessionAgent<WorkerEnv> {
   }
 
   override async onRequest(request: Request): Promise<Response> {
-    const chat =
-      new URL(request.url).pathname === "/stream" &&
-      z.object({ format: z.literal("ag-ui") }).safeParse(
-        await request
-          .clone()
-          .json()
-          .catch(() => null)
-      ).success;
     const diagnostics =
       this.env.DEPLOY_MODE === "fixture" &&
       new URL(request.url).pathname === "/inspect" &&
@@ -38,9 +28,6 @@ export class SessionAgent extends NativeSessionAgent<WorkerEnv> {
           .catch(() => null)
       ).success;
     const response = await super.onRequest(request);
-    if (chat && response.ok && response.body) {
-      return protocolBatchResponse(readObservationStream(response.body));
-    }
     if (!diagnostics || !response.ok) {
       return response;
     }

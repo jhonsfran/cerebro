@@ -59,13 +59,7 @@ const TranscriptMessage = ({
         .filter((part) => part.type === "thinking")
         .map((part) =>
           part.content ? (
-            <details
-              key={
-                "stepId" in part && typeof part.stepId === "string"
-                  ? part.stepId
-                  : `thinking:${message.id}`
-              }
-            >
+            <details key={part.stepId}>
               <summary>Thinking</summary>
               <p>{part.content}</p>
             </details>
@@ -84,11 +78,7 @@ const TranscriptMessage = ({
         .map((part) => (
           <details key={`result:${part.toolCallId}`}>
             <summary>Tool result</summary>
-            <pre>
-              {typeof part.content === "string"
-                ? part.content
-                : JSON.stringify(part.content, null, 2)}
-            </pre>
+            <pre>{part.content}</pre>
           </details>
         ))}
       {text ? <p>{text}</p> : null}

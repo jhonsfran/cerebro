@@ -1,13 +1,5 @@
 /* oxlint-disable no-await-in-loop -- A response reader delivers frames in wire order. */
-import { createObservationClient } from "@cerebro/ag-ui/client";
-import type { ObservationConnectionStatus } from "@cerebro/ag-ui/client";
-import type { ConversationProjection } from "@cerebro/ag-ui/projection";
-import {
-  CHAT_CONTENT_TYPE,
-  MAX_CHAT_FRAME_BYTES,
-} from "@cerebro/ag-ui/protocol";
-import type { UIMessage } from "@tanstack/ai-client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
 
 import {
@@ -19,6 +11,14 @@ import {
   ProductError,
 } from "./api";
 import type { PendingChatMessage } from "./chat";
+import {
+  createObservationClient,
+  MAX_OBSERVATION_FRAME_BYTES,
+  OBSERVATION_CONTENT_TYPE,
+} from "./observation";
+import type { ObservationConnectionStatus } from "./observation";
+import { projectionMessages } from "./projection";
+import type { ConversationProjection } from "./projection";
 import { messageReceiptSchema, stateMutationSchema } from "./types";
 import type { Conversation } from "./types";
 
@@ -31,7 +31,7 @@ export const readObservations = async function* readObservations(
     apiUrl(`${path}/observations?accessGeneration=${generation}`),
     {
       credentials: "include",
-      headers: { Accept: CHAT_CONTENT_TYPE },
+      headers: { Accept: OBSERVATION_CONTENT_TYPE },
       signal,
     }
   );
@@ -44,12 +44,10 @@ export const readObservations = async function* readObservations(
   }
   if (
     !response.body ||
-    !response.headers.get("Content-Type")?.startsWith(CHAT_CONTENT_TYPE)
+    !response.headers.get("Content-Type")?.startsWith(OBSERVATION_CONTENT_TYPE)
   ) {
     await response.body?.cancel();
-    throw new Error(
-      "The observation endpoint must return AG-UI NDJSON events."
-    );
+    throw new Error("The observation endpoint must return NDJSON frames.");
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -61,7 +59,7 @@ export const readObservations = async function* readObservations(
       assertCurrentAccess(generation);
       for (const byte of next.value ?? []) {
         frameBytes = byte === 0x0a ? 0 : frameBytes + 1;
-        if (frameBytes > MAX_CHAT_FRAME_BYTES) {
+        if (frameBytes > MAX_OBSERVATION_FRAME_BYTES) {
           throw new Error("Observation frame exceeds the transport limit.");
         }
       }
@@ -128,7 +126,6 @@ export const useConversationConnection = (
   const [projection, setProjection] = useState<ConversationProjection | null>(
     null
   );
-  const [messages, setMessages] = useState<UIMessage[]>([]);
   const [connection, setConnection] =
     useState<ObservationConnectionStatus>("disconnected");
   const [error, setError] = useState("");
@@ -144,7 +141,6 @@ export const useConversationConnection = (
       generation: currentAccessGeneration,
       onDenied: clearProductCache,
       onError: (failure) => setError(failure.message),
-      onMessages: setMessages,
       onProjection: setProjection,
       onStatus: setConnection,
       open: (generation, signal) => readObservations(path, generation, signal),
@@ -152,7 +148,6 @@ export const useConversationConnection = (
     const clear = () => {
       observer.detach();
       setProjection(null);
-      setMessages([]);
       setConnection("denied");
     };
     window.addEventListener("cerebro:access-cleared", clear);
@@ -163,6 +158,7 @@ export const useConversationConnection = (
       observer.dispose();
     };
   }, [agentId, conversationId, sessionId, connected, path]);
+  const messages = useMemo(() => projectionMessages(projection), [projection]);
   return {
     connection: connected ? connection : ("disconnected" as const),
     error,

@@ -1,18 +1,35 @@
-import {
-  ObservationTransport,
-  observationTransportLayer,
-  authorizedProtocolResponse,
-} from "@cerebro/ag-ui/authorized-observation";
-import {
-  CHAT_BATCH_CONTENT_TYPE,
-  CHAT_CONTENT_TYPE,
-  readProtocolBatches,
-} from "@cerebro/ag-ui/protocol";
 import { createChannelService } from "@cerebro/channels/service";
 import { ChannelError } from "@cerebro/channels/types";
 import type { ProductHandlerOptions } from "@cerebro/channels/types";
-import { Denied, Unavailable } from "@cerebro/contracts/failures";
-import { Effect } from "effect";
+import { Denied } from "@cerebro/contracts/failures";
+
+import {
+  guardedObservation,
+  OBSERVATION_CONTENT_TYPE,
+} from "../observation-delivery";
+
+const unavailable = () =>
+  new ChannelError(503, "unavailable", "Observation is unavailable.");
+
+const openSession = async (
+  options: ProductHandlerOptions,
+  input: Parameters<
+    NonNullable<ProductHandlerOptions["observationResponse"]>
+  >[0]
+): Promise<Response> => {
+  if (!options.observationResponse) {
+    throw unavailable();
+  }
+  try {
+    return await options.observationResponse(input);
+  } catch (error) {
+    const cause = error instanceof Error ? (error.cause ?? error) : error;
+    if (cause instanceof Denied) {
+      throw new ChannelError(403, "forbidden", cause.reason);
+    }
+    throw unavailable();
+  }
+};
 
 export const observeConversation = async (
   request: Request,
@@ -37,98 +54,58 @@ export const observeConversation = async (
       user.id,
       conversationId
     );
-    const sessions = options.sessions?.(database);
-    if (!sessions) {
-      throw new ChannelError(503, "unavailable", "Observation is unavailable.");
-    }
-    return { ...access, sessions, userId: user.id };
+    return { ...access, userId: user.id };
   });
-  const authorize = Effect.tryPromise({
-    catch: (error) => {
-      if (
-        error instanceof Denied ||
-        (error instanceof ChannelError && [401, 403].includes(error.status))
-      ) {
-        return new Denied({
-          code: "revoked",
-          reason: "Conversation access is no longer available.",
-        });
-      }
-      return new Unavailable({
-        reason: "Current access could not be verified.",
-      });
-    },
-    try: async () => {
-      const startedAt = performance.now();
-      try {
-        await options.withDatabase(async (database) => {
-          const current = await options.getUser(request, database);
-          if (!current || current.id !== attachment.userId) {
-            throw new Denied({
-              code: "revoked",
-              reason: "Authentication was revoked",
-            });
-          }
-          await createChannelService(database, options).chatAccess(
-            current.id,
-            conversationId
+  const authorize = async () => {
+    const startedAt = performance.now();
+    try {
+      await options.withDatabase(async (database) => {
+        const current = await options.getUser(request, database);
+        if (!current || current.id !== attachment.userId) {
+          throw new ChannelError(
+            401,
+            "unauthorized",
+            "Authentication was revoked."
           );
-        });
-      } finally {
-        options.recordAdapterTime?.({
-          adapter: "permission",
-          durationMs: performance.now() - startedAt,
-          resourceId: conversationId,
-        });
-      }
-    },
-  });
-  const source = attachment.sessions.stream(
-    attachment.address,
-    attachment.context,
-    { accessGeneration: generation },
-    { deadlineAt: Number.MAX_SAFE_INTEGER, signal: request.signal }
-  );
-  const delivery = {
+        }
+        await createChannelService(database, options).chatAccess(
+          current.id,
+          conversationId
+        );
+      });
+    } finally {
+      options.recordAdapterTime?.({
+        adapter: "permission",
+        durationMs: performance.now() - startedAt,
+        resourceId: conversationId,
+      });
+    }
+  };
+  const session = await openSession(options, {
     accessGeneration: generation,
     address: attachment.address,
-    authorize,
-    source,
-  };
-  if (request.headers.get("Accept")?.includes(CHAT_CONTENT_TYPE)) {
-    if (!options.observationResponse) {
-      throw new ChannelError(
-        503,
-        "unavailable",
-        "Chat observation is unavailable."
-      );
-    }
-    const response = await options.observationResponse({
+    context: attachment.context,
+    signal: request.signal,
+  });
+  if (
+    !session.body ||
+    !session.headers.get("Content-Type")?.startsWith(OBSERVATION_CONTENT_TYPE)
+  ) {
+    await session.body?.cancel();
+    throw unavailable();
+  }
+  return new Response(
+    guardedObservation({
       accessGeneration: generation,
       address: attachment.address,
-      context: attachment.context,
-      signal: request.signal,
-    });
-    if (
-      !response.body ||
-      !response.headers.get("Content-Type")?.startsWith(CHAT_BATCH_CONTENT_TYPE)
-    ) {
-      await response.body?.cancel();
-      throw new ChannelError(
-        503,
-        "unavailable",
-        "Chat observation is unavailable."
-      );
+      authorize,
+      body: session.body,
+    }),
+    {
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type": OBSERVATION_CONTENT_TYPE,
+      },
     }
-    return authorizedProtocolResponse({
-      ...delivery,
-      source: readProtocolBatches(response.body),
-    });
-  }
-  return await Effect.runPromise(
-    Effect.gen(function* response() {
-      const transport = yield* ObservationTransport;
-      return transport.response(delivery);
-    }).pipe(Effect.provide(observationTransportLayer))
   );
 };

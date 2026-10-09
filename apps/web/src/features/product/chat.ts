@@ -1,10 +1,9 @@
-import type { ConversationProjection } from "@cerebro/ag-ui/projection";
-import type { UIMessage } from "@tanstack/ai-client";
 import { z } from "zod";
 
+import type { ConversationMessage, ConversationProjection } from "./projection";
 import type { ConversationItem, PendingMessage } from "./types";
 
-export type ConversationMessage = UIMessage;
+export type { ConversationMessage } from "./projection";
 export type PendingChatMessage = PendingMessage & {
   mode: "follow-up" | "steer" | "replace";
 };

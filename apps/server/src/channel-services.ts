@@ -99,7 +99,7 @@ export const createChannelOptions = (env: WorkerEnv) => {
       >[0]
     ) =>
       Effect.runPromise(
-        createSessionClient(env).chatResponse(
+        createSessionClient(env).observationResponse(
           input.address,
           input.context,
           input.accessGeneration,

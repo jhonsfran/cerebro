@@ -10,7 +10,6 @@
     "check-types": "tsc -b"
   },
   "dependencies": {
-    "@cerebro/ag-ui": "workspace:*",
     "@cerebro/auth": "workspace:*",
     "@cerebro/authorization": "workspace:*",
     "@cerebro/channels": "workspace:*",

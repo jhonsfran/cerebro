@@ -282,13 +282,14 @@ export const createSessionClient = (env: WorkerEnv) => {
   };
   return {
     ...service,
-    chatResponse: (
+    // The raw session response is forwarded to the browser without re-encoding.
+    observationResponse: (
       address: EventAddress,
       context: ExecutionContext,
       accessGeneration: number,
       options: ReadOptions
     ): Effect.Effect<Response, ContractFailure> =>
-      Effect.gen(function* openChat() {
+      Effect.gen(function* openObservation() {
         const wireOptions = yield* Effect.promise(() =>
           readOptions(address, options)
         );
@@ -296,7 +297,7 @@ export const createSessionClient = (env: WorkerEnv) => {
           address,
           context,
           "/stream",
-          { accessGeneration, format: "ag-ui", options: wireOptions },
+          { accessGeneration, options: wireOptions },
           options
         );
         if (!response.ok) {

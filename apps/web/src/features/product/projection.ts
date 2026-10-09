@@ -7,8 +7,32 @@ import type {
   Observation,
 } from "@cerebro/contracts/session-service";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
-import type { UIMessage } from "@tanstack/ai-client";
 import { Schema } from "effect";
+
+export type MessagePart =
+  | { readonly type: "text"; readonly content: string }
+  | {
+      readonly type: "thinking";
+      readonly content: string;
+      readonly stepId: string;
+    }
+  | {
+      readonly type: "tool-call";
+      readonly id: string;
+      readonly name: string;
+      readonly arguments: string;
+    }
+  | {
+      readonly type: "tool-result";
+      readonly toolCallId: string;
+      readonly content: string;
+      readonly state: "complete" | "error";
+    };
+export interface ConversationMessage {
+  readonly id: string;
+  readonly role: "user" | "assistant";
+  readonly parts: readonly MessagePart[];
+}
 
 export interface ConversationProjection {
   readonly snapshot: DomainSnapshot;
@@ -211,12 +235,12 @@ export const projectObservation = (
 
 export const projectionMessages = (
   projection: ConversationProjection | null
-): UIMessage[] => {
+): ConversationMessage[] => {
   if (!projection) {
     return [];
   }
   const { snapshot, provisional, thinking } = projection;
-  const messages: UIMessage[] = [];
+  const messages: ConversationMessage[] = [];
   const outputs = new Map(
     snapshot.outputs.map((output) => [output.executionId, output])
   );
@@ -251,16 +275,15 @@ export const projectionMessages = (
           },
         ]
       : [];
-    const toolParts: UIMessage["parts"] = snapshot.tools
+    const toolParts: MessagePart[] = snapshot.tools
       .filter(
         (tool) => executionsByRun.get(tool.runId)?.executionId === executionId
       )
-      .flatMap((tool): UIMessage["parts"] => [
+      .flatMap((tool): MessagePart[] => [
         {
           arguments: JSON.stringify(tool.arguments),
           id: tool.operationId,
           name: tool.toolId,
-          state: "input-complete",
           type: "tool-call",
         },
         ...(tool.state === "succeeded" || tool.state === "failed"

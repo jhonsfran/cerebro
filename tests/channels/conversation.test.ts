@@ -3,11 +3,7 @@ import assert from "node:assert/strict";
 
 import { JSDOM } from "../../apps/web/node_modules/jsdom";
 import { createElement } from "../../apps/web/node_modules/react";
-import {
-  createProtocolProjection,
-  decodeObservation,
-  observationIdentity,
-} from "../../packages/ag-ui/src/protocol.ts";
+import { decodeObservation } from "../../apps/web/src/features/product/observation";
 
 mock.module("../../apps/web/src/env.public", () => ({
   ENV: { VITE_SERVER_URL: "http://fixture.invalid" },
@@ -18,6 +14,14 @@ const { ConversationPanel } =
   await import("../../apps/web/src/features/product/conversation");
 const { cacheKey, currentAccessGeneration } =
   await import("../../apps/web/src/features/product/api");
+const send = (
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  input: unknown
+) => {
+  controller.enqueue(
+    new TextEncoder().encode(`${JSON.stringify(decodeObservation(input))}\n`)
+  );
+};
 const globalNames = [
   "window",
   "document",
@@ -181,27 +185,8 @@ test("an open thinking panel stays open when the next delta arrives", async () =
     tools: [],
     userMessages: [],
   };
-  const project = createProtocolProjection();
   const pending =
     Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>();
-  const send = (
-    controller: ReadableStreamDefaultController<Uint8Array>,
-    input: unknown
-  ) => {
-    const observation = decodeObservation(input);
-    controller.enqueue(
-      new TextEncoder().encode(
-        `${project(observation)
-          .map((event) =>
-            JSON.stringify({
-              ...event,
-              metadata: { cerebro: observationIdentity(observation) },
-            })
-          )
-          .join("\n")}\n`
-      )
-    );
-  };
   Object.defineProperty(globalThis, "fetch", {
     configurable: true,
     value: (input: RequestInfo | URL) => {
@@ -232,7 +217,7 @@ test("an open thinking panel stays open when the next delta arrives", async () =
                 });
               },
             }),
-            { headers: { "Content-Type": "application/x-ag-ui+ndjson" } }
+            { headers: { "Content-Type": "application/x-ndjson" } }
           )
         );
       }
@@ -340,7 +325,7 @@ test("a confirmed retry clears its client intent when the accepted domain event 
               start: (controller) => {
                 controller.enqueue(
                   new TextEncoder().encode(
-                    `${createProtocolProjection()(
+                    `${JSON.stringify(
                       decodeObservation({
                         accessGeneration: currentAccessGeneration(),
                         address,
@@ -351,32 +336,12 @@ test("a confirmed retry clears its client intent when the accepted domain event 
                         snapshot,
                         type: "snapshot",
                       })
-                    )
-                      .map((event) =>
-                        JSON.stringify({
-                          ...event,
-                          metadata: {
-                            cerebro: observationIdentity(
-                              decodeObservation({
-                                accessGeneration: currentAccessGeneration(),
-                                address,
-                                epoch: "epoch",
-                                reason: "attach",
-                                schemaVersion: 1,
-                                sequence: 0,
-                                snapshot,
-                                type: "snapshot",
-                              })
-                            ),
-                          },
-                        })
-                      )
-                      .join("\n")}\n`
+                    )}\n`
                   )
                 );
               },
             }),
-            { headers: { "Content-Type": "application/x-ag-ui+ndjson" } }
+            { headers: { "Content-Type": "application/x-ndjson" } }
           )
         );
       }

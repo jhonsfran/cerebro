@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { Effect, Stream } from "effect";
 
 import { readObservationStream } from "../../apps/server/src/observation-stream.ts";
-import { authorizedObservation } from "../../packages/ag-ui/src/authorized-observation.ts";
+import { guardedObservation } from "../../packages/api/src/observation-delivery.ts";
 import { Denied, Unavailable } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { Observation } from "../../packages/contracts/src/session-service.ts";
@@ -33,27 +33,53 @@ test("revocation closes an idle upstream body while its next read is pending", a
       cancelled = true;
     },
   });
+  const guarded = guardedObservation({
+    accessGeneration: 0,
+    address,
+    authorize: () => {
+      checks += 1;
+      return Promise.reject(
+        new Denied({ code: "revoked", reason: "Access revoked" })
+      );
+    },
+    body,
+    recheckMs: 10,
+  });
   const values = await Effect.runPromise(
-    Stream.runCollect(
-      Stream.scoped(
-        authorizedObservation({
-          accessGeneration: 0,
-          address,
-          authorize: Effect.suspend(() => {
-            checks += 1;
-            return Effect.fail(
-              new Denied({ code: "revoked", reason: "Access revoked" })
-            );
-          }),
-          source: readObservationStream(body),
-        })
-      )
-    ).pipe(Effect.timeout(1500))
+    Stream.runCollect(readObservationStream(guarded)).pipe(Effect.timeout(1500))
   );
   assert.equal(values.length, 1);
   assert.equal(values[0].type, "access-denied");
+  assert.equal(values[0].accessGeneration, 0);
   assert.equal(cancelled, true);
   assert.equal(checks, 1);
+});
+
+test("forwarded bytes pass through unchanged until the next access read fails", async () => {
+  const encoder = new TextEncoder();
+  let checks = 0;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(`${JSON.stringify(frame)}\n`));
+    },
+  });
+  const guarded = guardedObservation({
+    accessGeneration: 0,
+    address,
+    authorize: () => {
+      checks += 1;
+      return checks < 3
+        ? Promise.resolve()
+        : Promise.reject(new Unavailable({ reason: "Authority unavailable" }));
+    },
+    body,
+    recheckMs: 10,
+  });
+  await assert.rejects(
+    Effect.runPromise(Stream.runCollect(readObservationStream(guarded))),
+    (error: unknown) => error instanceof Unavailable
+  );
+  assert.ok(checks >= 3);
 });
 
 test("observation decoding preserves fragmented UTF-8 and frozen fields", async () => {

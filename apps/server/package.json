@@ -8,7 +8,6 @@
     "compile": "bun build --compile --no-compile-autoload-dotenv --minify --sourcemap --bytecode ./src/index.ts --outfile server"
   },
   "dependencies": {
-    "@cerebro/ag-ui": "workspace:*",
     "@cerebro/api": "workspace:*",
     "@cerebro/auth": "workspace:*",
     "@cerebro/authorization": "workspace:*",

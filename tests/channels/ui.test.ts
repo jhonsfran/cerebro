@@ -3,7 +3,6 @@ import { afterEach, beforeEach, mock, test } from "bun:test";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { Stream } from "effect";
 import { z } from "zod";
 
 import {
@@ -12,8 +11,8 @@ import {
 } from "../../apps/web/src/features/product/configuration";
 import { operationFor } from "../../apps/web/src/features/product/intent";
 import type { OperationIntent } from "../../apps/web/src/features/product/intent";
+import { createObservationClient } from "../../apps/web/src/features/product/observation";
 import type { AgentDetail } from "../../apps/web/src/features/product/types";
-import { createObservationClient } from "../../packages/ag-ui/src/client.ts";
 
 mock.module("../../apps/web/src/env.public", () => ({
   ENV: { VITE_SERVER_URL: "http://fixture.invalid" },
@@ -209,18 +208,12 @@ test("unauthenticated requests clear private state", async () => {
 const { readObservations, submitMessage, sendRunCommand } =
   await import("../../apps/web/src/features/product/chat-connection");
 const {
-  CHAT_CONTENT_TYPE,
-  MAX_CHAT_FRAME_BYTES,
-  MAX_DOMAIN_FRAME_BYTES,
+  MAX_OBSERVATION_FRAME_BYTES,
+  OBSERVATION_CONTENT_TYPE,
   decodeObservation,
-  createProtocolProjection,
-  observationIdentity,
-  protocolBatchResponse,
-  protocolResponse,
-  readProtocolBatches,
-} = await import("../../packages/ag-ui/src/protocol");
+} = await import("../../apps/web/src/features/product/observation");
 const { projectObservation, projectionMessages } =
-  await import("../../packages/ag-ui/src/projection");
+  await import("../../apps/web/src/features/product/projection");
 const emptyObservation = () =>
   decodeObservation({
     accessGeneration: currentAccessGeneration(),
@@ -252,22 +245,11 @@ const emptyObservation = () =>
     },
     type: "snapshot",
   });
-const ndjson = (frames: unknown[]) => {
-  const project = createProtocolProjection();
-  const events = frames.flatMap((input) => {
-    const frame = decodeObservation(input);
-    return project(frame).map((event) => ({
-      ...event,
-      metadata: { cerebro: observationIdentity(frame) },
-    }));
-  });
-  return new Response(
-    `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
-    {
-      headers: { "Content-Type": "application/x-ag-ui+ndjson" },
-    }
+const ndjson = (frames: unknown[]) =>
+  new Response(
+    `${frames.map((frame) => JSON.stringify(decodeObservation(frame))).join("\n")}\n`,
+    { headers: { "Content-Type": OBSERVATION_CONTENT_TYPE } }
   );
-};
 const waitForObservation = async (predicate: () => boolean) => {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) {
@@ -287,10 +269,8 @@ test("a new authorized observation replaces the view with an empty transcript", 
       new AbortController().signal
     )
   );
-  assert.equal(values.length, 2);
-  const [first] = values;
-  assert.ok(first && typeof first === "object" && "value" in first);
-  const projection = projectObservation(null, decodeObservation(first.value));
+  assert.equal(values.length, 1);
+  const projection = projectObservation(null, decodeObservation(values[0]));
   assert.deepEqual(projectionMessages(projection), []);
   assert.deepEqual(conversationItems(projection, "/conversation"), []);
 });
@@ -382,27 +362,30 @@ const largeHistoryFrame = (kind: "text" | "tool") => {
   const overhead = new TextEncoder().encode(JSON.stringify(build(""))).length;
   const characterBytes = kind === "tool" ? 4 : 1;
   const text = (kind === "tool" ? '"' : "A").repeat(
-    Math.floor((MAX_DOMAIN_FRAME_BYTES - overhead - 16) / characterBytes)
+    Math.floor((MAX_OBSERVATION_FRAME_BYTES - overhead - 16) / characterBytes)
   );
   return { observation: build(text), text };
 };
 
 for (const kind of ["text", "tool"] as const) {
-  test(`a snapshot near the domain byte limit reaches TanStack once with ${kind} content`, async () => {
+  test(`a snapshot near the frame byte limit reaches the projection once with ${kind} content`, async () => {
     const { observation, text } = largeHistoryFrame(kind);
     const sourceBytes = new TextEncoder().encode(
       JSON.stringify(observation)
     ).length;
-    assert.ok(sourceBytes < MAX_DOMAIN_FRAME_BYTES);
-    assert.ok(sourceBytes > MAX_DOMAIN_FRAME_BYTES - 32);
+    assert.ok(sourceBytes < MAX_OBSERVATION_FRAME_BYTES);
+    assert.ok(sourceBytes > MAX_OBSERVATION_FRAME_BYTES - 32);
     let attachments = 0;
     installFetch(() => {
       attachments += 1;
-      const response = protocolBatchResponse(
-        Stream.make(observation).pipe(Stream.concat(Stream.never))
+      const stream = new TransformStream<Uint8Array>();
+      const writer = stream.writable.getWriter();
+      void writer.write(
+        new TextEncoder().encode(`${JSON.stringify(observation)}\n`)
       );
-      assert.ok(response.body);
-      return protocolResponse(readProtocolBatches(response.body));
+      return new Response(stream.readable, {
+        headers: { "Content-Type": OBSERVATION_CONTENT_TYPE },
+      });
     });
     const observer = createObservationClient({
       address: observation.address,
@@ -417,11 +400,11 @@ for (const kind of ["text", "tool"] as const) {
     try {
       observer.attach();
       await waitForObservation(
-        () => observer.client.getMessages().length === 3
+        () => projectionMessages(observer.getProjection()).length === 3
       );
-      const answers = observer.client
-        .getMessages()
-        .filter((message) => message.role === "assistant");
+      const answers = projectionMessages(observer.getProjection()).filter(
+        (message) => message.role === "assistant"
+      );
       assert.equal(answers.length, 1);
       const [answer] = answers;
       assert.ok(answer);
@@ -436,22 +419,21 @@ for (const kind of ["text", "tool"] as const) {
       }
       await delay(20);
       assert.equal(attachments, 1);
-      assert.equal(observer.client.getError(), undefined);
     } finally {
       observer.dispose();
     }
   });
 }
 
-test("the browser rejects mapped frames by UTF-8 byte size", async () => {
+test("the browser rejects frames by UTF-8 byte size", async () => {
   const content = JSON.stringify({
-    delta: "é".repeat(MAX_CHAT_FRAME_BYTES / 2),
+    delta: "é".repeat(MAX_OBSERVATION_FRAME_BYTES / 2),
   });
-  assert.ok(content.length < MAX_CHAT_FRAME_BYTES);
+  assert.ok(content.length < MAX_OBSERVATION_FRAME_BYTES);
   installFetch(
     () =>
       new Response(`${content}\n`, {
-        headers: { "Content-Type": CHAT_CONTENT_TYPE },
+        headers: { "Content-Type": OBSERVATION_CONTENT_TYPE },
       })
   );
   await assert.rejects(
@@ -637,7 +619,6 @@ const checkRetiredHttpObservation = async (
     assert.equal(denials, 0);
     assert.equal(currentAccessGeneration(), generation);
     assert.equal(storage.getItem(pendingKey), "current private message");
-    assert.equal(observer.client.getError(), undefined);
     if (retirement === "reattach") {
       assert.equal(fetches, 2);
       assert.ok(observer.getProjection());
@@ -656,7 +637,7 @@ test("the observation reader rejects truncated JSON and releases its reader", as
   installFetch(
     () =>
       new Response('{"unfinished":', {
-        headers: { "Content-Type": "application/x-ag-ui+ndjson" },
+        headers: { "Content-Type": OBSERVATION_CONTENT_TYPE },
       })
   );
   await assert.rejects(
@@ -671,7 +652,7 @@ test("the observation reader rejects truncated JSON and releases its reader", as
   );
 });
 
-test("TanStack text parts display the canonical answer", () => {
+test("text parts display the canonical answer", () => {
   assert.equal(
     messageText({
       id: "assistant:run",
