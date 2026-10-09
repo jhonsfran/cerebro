@@ -8,10 +8,15 @@ import type { ChannelOptions } from "./types";
 
 type InboxEntry = typeof channelInbox.$inferSelect;
 
+// A 409 from the session means the input was not admitted: the effect is
+// uncertain or the command conflicts. The synchronous caller reports it, so
+// the row is dropped and a later client retry starts clean. The drain keeps
+// its row and retries, because nobody else will resend a channel message.
 export const submitInbox = async (
   options: ChannelOptions,
   eventKey: string,
-  submit: (entry: InboxEntry) => Promise<SessionReceipt>
+  submit: (entry: InboxEntry) => Promise<SessionReceipt>,
+  onConflict: "drop" | "retry" = "drop"
 ): Promise<{ receipt: SessionReceipt; submitted: boolean }> => {
   const result = await options.withDatabase((database) =>
     withReservedDatabase(database, async (connection) => {
@@ -66,6 +71,14 @@ export const submitInbox = async (
             await connection
               .update(channelInbox)
               .set({ state: "denied" })
+              .where(eq(channelInbox.eventKey, eventKey));
+          } else if (
+            error instanceof ChannelError &&
+            error.status === 409 &&
+            onConflict === "drop"
+          ) {
+            await connection
+              .delete(channelInbox)
               .where(eq(channelInbox.eventKey, eventKey));
           }
           return { error };

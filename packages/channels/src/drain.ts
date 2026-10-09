@@ -173,7 +173,8 @@ export const drainChannelWork = async (
                 }
               )
             );
-          }
+          },
+          "retry"
         );
         submitted += Number(result.submitted);
       } catch (error) {
