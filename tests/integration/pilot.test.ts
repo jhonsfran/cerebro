@@ -844,11 +844,25 @@ gate(
           .passthrough()
       ),
     });
-    const exported = await rpc("identity.exportData", recordsSchema, {
-      kind: "audit",
-      limit: 200,
-      organizationId,
-    });
+    // Earlier conversations drain their audit outboxes in the background.
+    // Read until the export and the table agree, then test replay on one event.
+    const consistent = await waitForFixture(
+      async () => ({
+        exported: await rpc("identity.exportData", recordsSchema, {
+          kind: "audit",
+          limit: 200,
+          organizationId,
+        }),
+        rows: Number(
+          await fixture.sql(
+            `SELECT count(*) FROM cerebro_audit_event WHERE organization_id=${literal(organizationId)}`
+          )
+        ),
+      }),
+      (value) => value.rows === value.exported.records.length,
+      30_000
+    );
+    const { exported } = consistent;
     assert.ok(exported.records.length >= 4);
     assert.ok(
       exported.records.every(
@@ -868,13 +882,14 @@ gate(
       JSON.stringify(exported).includes("Cerebro slice 1 completed."),
       false
     );
-    const rows = await fixture.sql(
-      `SELECT count(*) FROM cerebro_audit_event WHERE organization_id=${literal(organizationId)}`
-    );
-    assert.equal(Number(rows), exported.records.length);
     const [firstAudit] = exported.records;
     assert.ok(firstAudit);
     const { eventId } = firstAudit;
+    const replayedRows = () =>
+      fixture.sql(
+        `SELECT count(*) FROM cerebro_audit_event WHERE event_id=${literal(eventId)}`
+      );
+    assert.equal(await replayedRows(), "1");
     for (let count = 0; count < 2; count += 1) {
       await fixture.json(
         "/api/fixture/audit/replay",
@@ -883,12 +898,7 @@ gate(
         { eventId }
       );
     }
-    assert.equal(
-      await fixture.sql(
-        `SELECT count(*) FROM cerebro_audit_event WHERE organization_id=${literal(organizationId)}`
-      ),
-      rows
-    );
+    assert.equal(await replayedRows(), "1");
     await expectStatus(
       await fixture.request("/api/fixture/audit/replay", owner.cookie, {
         changed: true,
@@ -928,7 +938,7 @@ gate(
         403
       );
     }
-    evidence.audit = { eventId, exported, historical, rows };
+    evidence.audit = { eventId, exported, historical, rows: consistent.rows };
   }
 );
 
