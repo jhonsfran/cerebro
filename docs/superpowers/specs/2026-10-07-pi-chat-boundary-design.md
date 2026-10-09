@@ -1,6 +1,6 @@
 # Pi chat ownership
 
-The conversation Durable Object owns Pi's root session and its durable execution. The existing Hono product API authenticates commands and attachments. It does not run an agent loop. Submission uses native `session.submit` with a stable operation identity and returns an admission receipt. Observation and disconnection cannot submit, cancel, or resume execution.
+> Superseded on 2026-10-09 by the [chat simplification design](2026-10-09-chat-simplification-design.md). The conversation Durable Object still owns Pi; the AG-UI mapping and the TanStack transcript described below were removed. The conversation Durable Object owns Pi's root session and its durable execution. The existing Hono product API authenticates commands and attachments. It does not run an agent loop. Submission uses native `session.submit` with a stable operation identity and returns an admission receipt. Observation and disconnection cannot submit, cancel, or resume execution.
 
 The Durable Object's server adapter maps authorized Pi-derived observations to AG-UI `StreamChunk` events. TanStack's client assembles messages and React renders its typed text, thinking, tool-call, and tool-result parts. Cerebro keeps company access, approval decisions, citations, durable Stop, and operation receipts. These product controls do not need a separate client transcript.
 

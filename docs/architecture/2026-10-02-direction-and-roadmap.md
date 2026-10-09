@@ -1,6 +1,6 @@
 # Cerebro direction, decisions, and roadmap
 
-Revised on 2026-10-05. This document records the agreed direction. The [first-slice execution plan](2026-10-05-cerebro-slice-1-plan.md) defines the remote-agent packets and acceptance gates. The [proposed architecture record](adr-0001-replaceable-application-boundaries.md) defines the dependency rules. The runtime integration remains unqualified. These documents do not describe a completed migration.
+Revised on 2026-10-09. This document records the agreed direction. The browser wire changed after the first-slice integration; the [chat simplification design](../superpowers/specs/2026-10-09-chat-simplification-design.md) explains that change. The [first-slice execution plan](2026-10-05-cerebro-slice-1-plan.md) defines the remote-agent packets and acceptance gates. The [proposed architecture record](adr-0001-replaceable-application-boundaries.md) defines the dependency rules. The runtime integration remains unqualified. These documents do not describe a completed migration.
 
 ## Product goal
 
@@ -16,7 +16,7 @@ Chat is the first interaction. Other channels, agents, and native tools can use 
 | --- | --- |
 | Retain celld | Keep the existing self-hosted deployment. Qualify the selected Pi integration on the actual host before implementation fan-out. |
 | Use Pi Durable | Replace OpenCode with one durable agent loop per company-scoped conversation. Keep private Pi state inside its adapter. |
-| Use TanStack AI and AG-UI | Replace AI SDK browser state and transport. Translate authorized Cerebro observations at the UI boundary. Do not start another model or tool loop. |
+| Deliver domain frames to the browser | The Durable Object emits Cerebro observation frames. The API forwards them. The web app applies them to one projection. No AG-UI or TanStack layer and no second model or tool loop. |
 | Use Effect TS | Write new Cerebro orchestration and adapters as Effect services with typed failures, Layers, cancellation, and scoped resources. |
 | Preserve company authority | Keep current authorization, pinned agent grants, connector controls, approval binding, and durable tool receipts. |
 | Define external metering ports only | The first slice has no active reservation or spend enforcement through that port. A future external provider owns pricing, balances, holds, and settlement. |
@@ -30,7 +30,7 @@ Keep one supported implementation per boundary. A generic plugin framework and r
 
 ```mermaid
 flowchart TD
-    Human[Human through TanStack UI] --> API[Authenticated Cerebro operations]
+    Human[Human through the web app] --> API[Authenticated Cerebro operations]
     Later[Later channels and external agents] --> API
     API --> Session[Effect SessionService]
     Session --> Policy[Current company policy]
@@ -50,7 +50,7 @@ The session service accepts durable commands and exposes authorized observations
 
 Effect controls composition, failures, cancellation, and resource lifetime inside Cerebro. Effect fibers alone do not survive a host crash. The engine and host adapters provide persistence and wake-up.
 
-AG-UI is the agent-to-UI protocol. It gives different clients and backends a common event format. Cerebro permissions remain server rules. Protocol compatibility does not supply authorization.
+The web app consumes Cerebro observation frames directly. A client that needs another protocol gets one mapper at the API edge over the same frames. Cerebro permissions remain server rules. Protocol compatibility does not supply authorization.
 
 ## State ownership
 
@@ -105,7 +105,7 @@ The cutover fences old OpenCode admission, alarms, turns, tool dispatch, and del
 | S1-0 | One qualification owner proves compatible pins, celld execution, durable handoff, approval wait, cancellation, observation, and an AI SDK-free candidate dependency graph. The coordinator freezes contracts. |
 | S1-A | Remote runtime owner builds the Pi, storage, and wake adapters against frozen Effect ports. |
 | S1-B | Remote authority owner preserves permissions, approvals, and controlled tool execution. |
-| S1-C | Remote UI owner builds TanStack state and the AG-UI adapter. |
+| S1-C | Remote UI owner builds TanStack state and the AG-UI adapter. Both were removed on 2026-10-09. |
 | S1-D | Remote infrastructure owner prepares deployment, counted fixtures, crash triggers, and restore checks. |
 | S1-F | Local coordinator merges the packets, wires services, removes legacy paths, and verifies one complete application PR. |
 

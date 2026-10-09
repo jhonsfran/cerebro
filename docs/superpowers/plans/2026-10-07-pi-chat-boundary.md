@@ -1,6 +1,6 @@
 # Pi chat boundary implementation plan
 
-> For agentic workers: implement these tasks in sequence and review behavior and code quality before completion.
+> Superseded on 2026-10-09. The AG-UI batch wire and the TanStack client this plan delivered were removed. The [chat simplification plan](2026-10-09-chat-simplification.md) and its [design](../specs/2026-10-09-chat-simplification-design.md) describe the current chat path. The native Pi work in task 1 stands. For agentic workers: implement these tasks in sequence and review behavior and code quality before completion.
 
 Goal: keep Pi execution inside the Durable Object and make TanStack own the browser transcript.
 

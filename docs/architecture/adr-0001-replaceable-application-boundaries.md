@@ -1,12 +1,12 @@
 # ADR 0001 keeps application behavior independent of replaceable components
 
-Status is proposed. Revised on 2026-10-07. This record does not describe a completed migration.
+Status is proposed. Revised on 2026-10-09. This record does not describe a completed migration.
 
 ## Context
 
 Cerebro needs company policy, durable work, controlled tools, and usable chat. The prototype couples those behaviors to celld, OpenCode, and Cloudflare chat libraries.
 
-The current delivery plan retains celld and replaces OpenCode and AI SDK with Pi Durable and TanStack AI. New Cerebro orchestration uses the latest published Effect 4 release, pinned at 4.0.1 in the S1-0 proposal. S1-0 requests the latest published Pi and TanStack packages and records their exact pins and isolated compatibility evidence. Future component changes must not require another company-policy implementation.
+The current delivery plan retains celld and replaces OpenCode and AI SDK with Pi Durable. TanStack AI and AG-UI were selected for the first slice and removed on 2026-10-09; the [chat simplification design](../superpowers/specs/2026-10-09-chat-simplification-design.md) records why. New Cerebro orchestration uses the latest published Effect 4 release, pinned at 4.0.1 in the S1-0 proposal. S1-0 requests the latest published Pi and TanStack packages and records their exact pins and isolated compatibility evidence. Future component changes must not require another company-policy implementation.
 
 ## Decision
 
@@ -18,7 +18,7 @@ Keep one application operation for each business action. HTTP, web chat, Slack, 
 
 Pi owns its private session, durable inbox, steering, model/tool loop, submission deduplication, native Stop semantics and engine recovery. The official PiHarness supplies persistence and Lifecycle wake-up. The thin Effect adapter translates public vendor calls; the conversation coordinator owns trusted command intents, durable product state and repair of its handoff and projection. It does not implement another execution queue or alarm scheduler. Cerebro owns action-approval decisions and operation identities. SDK permission prompts must not create another independent approval authority.
 
-The Durable Object maps authorized observations into AG-UI delivery batches. The HTTP route authenticates the viewer, authorizes each observation once and forwards its mapped chunks. It does not own the Pi loop. TanStack owns the browser transcript and typed message parts. Reconnect reads a fresh snapshot, including current partial content, then observes live updates. Pi's in-memory event stream does not provide cursor replay; exact replay would require a separate durable chunk log.
+The Durable Object emits authorized observation frames. The HTTP route authenticates the viewer, checks access on attach and on an interval, and forwards the bytes. It does not own the Pi loop. The web app applies the frames to one projection and renders its transcript, approvals and citations from it. Reconnect reads a fresh snapshot, including current partial content, then observes live updates. Pi's in-memory event stream does not provide cursor replay; exact replay would require a separate durable chunk log.
 
 Each fact has one authority. Product history and tool receipts use Cerebro tables in the session's SQLite store. PostgreSQL owns company records. Browser and channel history are projections. Pi checkpoints are private engine state. A future external meter owns pricing, balances, and reservations. Historical budget records remain preserved.
 
@@ -31,7 +31,7 @@ Preserve intent before external dispatch. Record confirmed results afterward. An
 | `packages/contracts` | Cerebro data, boundary schemas, Effect service types, and typed failures. No host, engine, UI protocol, authentication, or ORM SDK types. |
 | Company application behavior | Contracts, current policy, repositories, and explicit effect ports. No browser or actor context. |
 | celld and Pi adapters | Application behavior and contracts. Own engine setup, persistence integration, host lifecycle, and vendor event translation. |
-| TanStack and AG-UI adapters | Authorized domain observations and command receipts. Own protocol translation and browser state. No model or tool execution loop. |
+| Browser observation adapter | Authorized domain observations and command receipts. Owns the browser projection. No model or tool execution loop. |
 | Authentication and transport adapters | Verified credentials, boundary parsing, application calls, and presentation. No separate business rules. |
 | `apps/server` composition | Concrete implementations and configuration. Connects the selected components. |
 
@@ -51,7 +51,7 @@ Keep one supported implementation per boundary until a real requirement needs an
 
 The benefit is a smaller change area when an expensive component changes. Humans and agents use the same company rules. New engineers can locate behavior without tracing through vendor adapters.
 
-The cost is explicit ownership at the boundaries. The Cerebro-to-Pi handoff, approval wait, host wake-up, cancellation, and TanStack observation need runtime proof. Effect scopes do not provide durable execution by themselves.
+The cost is explicit ownership at the boundaries. The Cerebro-to-Pi handoff, approval wait, host wake-up, cancellation, and browser observation need runtime proof. Effect scopes do not provide durable execution by themselves.
 
 This proposal rejects a generic plugin framework, a broad rewrite of existing company services, and a second policy or approval engine. It uses Effect Layers for the selected adapters and preserves one company authority.
 

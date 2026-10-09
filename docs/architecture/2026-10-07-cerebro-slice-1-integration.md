@@ -21,7 +21,7 @@ The coordinator owns shared contracts, package pins, Effect Layers, server compo
 
 Native joined execution produces one canonical answer with exact execution and answer identities. Cerebro commits its answer, execution membership and completed runs in one projection batch. Partial text remains ephemeral. The [contract revision](2026-10-05-cerebro-slice-1-contracts.md#joined-execution-and-answer-identity-coordinator-revision-2026-10-07) defines these invariants.
 
-Commands, history and observations use current company access. Private DO calls require a signature bound to the address and body. Delivery rechecks authentication and content grants every 250 ms. A denied access generation clears protected browser state and stops reconnect. The Durable Object maps observations into AG-UI batches. The API authorizes each batch once and forwards its chunks. TanStack owns the browser transcript; the browser retains domain state for controls and citations. Reconnect restores a fresh snapshot and live updates without a model submission or persisted cursor replay.
+Commands, history and observations use current company access. Private DO calls require a signature bound to the address and body. Delivery checks authentication and content grants on attach and every 2 seconds. A denied access generation clears protected browser state and stops reconnect. The Durable Object emits observation frames. The API forwards them as bytes. The web app keeps one projection for the transcript, controls and citations. The [chat simplification design](../superpowers/specs/2026-10-09-chat-simplification-design.md) records the change from the AG-UI and TanStack wire that this record first described. Reconnect restores a fresh snapshot and live updates without a model submission or persisted cursor replay.
 
 Memory input includes authorized excerpts and provenance before physical model dispatch. The server checks the actual serialized request size. Audit projection uses stable event identities and a retained outbox. Approvals and confirmed or uncertain remote effects retain their original bindings.
 
@@ -29,7 +29,7 @@ Active OpenCode, AI SDK, local-budget, paid-work and Unprice execution paths are
 
 ## Selected integration
 
-Exact requests and source evidence remain in `tests/pi-durable-qualification/dependency-requests.json`. The selected pins are celld 0.6.1 at `sha256:acb0bc2dca628f0dac7c6b43eea42615a79f4943f316f6df7c1da0b86d52150b`, Agents 0.26.0, Pi Durable and Pi AI 1.0.4, Effect 4.0.1, TanStack AI 0.65.0, client 0.37.0, React adapter 0.29.5 and direct AG-UI core 1.0.2.
+Exact requests and source evidence remain in `tests/pi-durable-qualification/dependency-requests.json`. The selected pins are celld 0.6.1 at `sha256:acb0bc2dca628f0dac7c6b43eea42615a79f4943f316f6df7c1da0b86d52150b`, Agents 0.26.0, Pi Durable and Pi AI 1.0.4 and Effect 4.0.1. The TanStack AI and AG-UI pins were removed on 2026-10-09.
 
 The host uses `nodejs_compat`. The deterministic application fixture sets `CELLD_WAKER_TICK_MS=1000`. Each clean boot records immutable derived application images. Functional recovery evidence does not replace the sixty-second performance gate.
 

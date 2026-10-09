@@ -1,6 +1,6 @@
 # Cerebro slice 1 coordinator baseline
 
-The coordinator accepted corrected S1-0 at `46a44e199b3bf43173602ea609f40a0b6958f201` from `codex/cerebro-slice-1-contracts`. It was imported into `codex/cerebro-slice-1` by fast-forward. The planning baseline and unchanged `main` are `1855fed13aafee0e7a3369f3e684564f35715086`. Shared dependency commit: `8ee8135ffc89e0789538ec32957d12d1b552711f`.
+> The S1-C packet described below delivered TanStack state and an AG-UI adapter. Both were removed on 2026-10-09; see the [chat simplification design](../superpowers/specs/2026-10-09-chat-simplification-design.md). The coordinator accepted corrected S1-0 at `46a44e199b3bf43173602ea609f40a0b6958f201` from `codex/cerebro-slice-1-contracts`. It was imported into `codex/cerebro-slice-1` by fast-forward. The planning baseline and unchanged `main` are `1855fed13aafee0e7a3369f3e684564f35715086`. Shared dependency commit: `8ee8135ffc89e0789538ec32957d12d1b552711f`.
 
 The contracts are frozen for implementation preparation. Snapshots require accepted user messages, approval identity and state, and tool identity, arguments, dependencies, state and output. Live updates use the same record schemas. Fresh inspect and attachment restore those records without submitting work. Snapshot copies cannot change stored fake state.
 
