@@ -7,14 +7,14 @@ import path from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 
-import { Schema } from "effect";
-import { z } from "zod";
-
-import { id } from "../../../packages/contracts/src/identity.ts";
+import { id } from "@cerebro/contracts/identity";
 import {
   DomainSnapshot,
   Observation,
-} from "../../../packages/contracts/src/session-service.ts";
+} from "@cerebro/contracts/session-service";
+import { Schema } from "effect";
+import { z } from "zod";
+
 import {
   applicationFixture,
   readApplicationBoot,

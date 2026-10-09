@@ -2,24 +2,23 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { test } from "node:test";
 
-import { and, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
-
-import { createAuthorizationPolicy } from "../../../packages/authorization/src/index.ts";
-import { id } from "../../../packages/contracts/src/index.ts";
-import { createIdentityRepository } from "../../../packages/db/src/repositories/identity.ts";
+import { createAuthorizationPolicy } from "@cerebro/authorization";
+import { id } from "@cerebro/contracts/identity";
+import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import {
   scimConnectionBinding,
   scimProjectionGrant,
   scimUser,
   user,
-} from "../../../packages/db/src/schema/auth.ts";
-import { organization } from "../../../packages/db/src/schema/core.ts";
+} from "@cerebro/db/schema/auth";
+import { organization } from "@cerebro/db/schema/core";
 import {
   identityPrincipal,
   identityRolePermission,
-} from "../../../packages/db/src/schema/identity.ts";
+} from "@cerebro/db/schema/identity";
+import { and, eq } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
 
 const databaseUrl = process.env.IDENTITY_TEST_DATABASE_URL;
 if (!databaseUrl) {

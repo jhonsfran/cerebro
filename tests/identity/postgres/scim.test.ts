@@ -2,18 +2,17 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
-import { and, eq } from "drizzle-orm";
-
-import { createAuth } from "../../../packages/auth/src/index.ts";
-import { withDatabase } from "../../../packages/db/src/index.ts";
-import { createIdentityRepository } from "../../../packages/db/src/repositories/identity.ts";
-import { session } from "../../../packages/db/src/schema/auth.ts";
-import { organization } from "../../../packages/db/src/schema/core.ts";
+import { createAuth } from "@cerebro/auth";
+import { withDatabase } from "@cerebro/db";
+import { createIdentityRepository } from "@cerebro/db/repositories/identity";
+import { session } from "@cerebro/db/schema/auth";
+import { organization } from "@cerebro/db/schema/core";
 import {
   identityDelegation,
   identityPrincipal,
   identitySlackLinkChallenge,
-} from "../../../packages/db/src/schema/identity.ts";
+} from "@cerebro/db/schema/identity";
+import { and, eq } from "drizzle-orm";
 
 const databaseUrl = process.env.IDENTITY_TEST_DATABASE_URL;
 if (!databaseUrl) {

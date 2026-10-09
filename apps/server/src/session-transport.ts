@@ -14,15 +14,15 @@ import type { EffectOptions, ReadOptions } from "@cerebro/contracts/port";
 import { DomainSnapshot } from "@cerebro/contracts/session-service";
 import type { SessionService } from "@cerebro/contracts/session-service";
 import { digestToolArguments } from "@cerebro/contracts/tools";
-import { Effect, Schema, Stream } from "effect";
-import { z } from "zod";
-
-import { sessionName } from "../../../packages/runtime/src/event-handler";
+import { sessionName } from "@cerebro/runtime/event-handler";
 import {
   attempt,
   checkOptions,
   waitForCaller,
-} from "../../../packages/runtime/src/runtime-ports.ts";
+} from "@cerebro/runtime/runtime-ports";
+import { Effect, Schema, Stream } from "effect";
+import { z } from "zod";
+
 import type { WorkerEnv } from "./env.server";
 import { readObservationStream } from "./observation-stream";
 import { runtimeConfiguration } from "./runtime-services";

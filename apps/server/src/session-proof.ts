@@ -1,15 +1,14 @@
-import { Effect } from "effect";
-import { z } from "zod";
-
-import type { EventAddress } from "../../../packages/contracts/src/events.ts";
-import { Denied } from "../../../packages/contracts/src/failures.ts";
-import type { ContractFailure } from "../../../packages/contracts/src/failures.ts";
-import { id } from "../../../packages/contracts/src/identity.ts";
-import type { ExecutionContext } from "../../../packages/contracts/src/identity.ts";
+import type { EventAddress } from "@cerebro/contracts/events";
+import { Denied } from "@cerebro/contracts/failures";
+import type { ContractFailure } from "@cerebro/contracts/failures";
+import { id } from "@cerebro/contracts/identity";
+import type { ExecutionContext } from "@cerebro/contracts/identity";
 import {
   canonicalToolArguments,
   digestToolArguments,
-} from "../../../packages/contracts/src/tools.ts";
+} from "@cerebro/contracts/tools";
+import { Effect } from "effect";
+import { z } from "zod";
 
 const identifier = z.string().trim().min(1).max(512);
 const principal = z.strictObject({

@@ -1,7 +1,6 @@
+import { Unavailable } from "@cerebro/contracts/failures";
+import { Observation } from "@cerebro/contracts/session-service";
 import { Effect, Schema, Stream } from "effect";
-
-import { Unavailable } from "../../../packages/contracts/src/failures.ts";
-import { Observation } from "../../../packages/contracts/src/session-service.ts";
 
 const MAX_FRAME_BYTES = 1_048_576;
 
