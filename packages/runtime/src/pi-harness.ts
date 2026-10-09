@@ -452,11 +452,29 @@ export const createPiExecutionEngine = (
           const provisionalText = createProvisionalTextProjection();
           const provisionalThinking =
             createProvisionalTextProjection("thinking");
+          // The canonical projection reads every submission record, so only
+          // events that can change run, tool or answer state trigger it.
+          const stateEvents = new Set<AgentEvent["type"]>([
+            "snapshot",
+            "run_start",
+            "run_end",
+            "submission",
+            "tool_execution_start",
+            "tool_execution_end",
+            "task_failed",
+          ]);
           const sendCanonical = async () => {
             const values = await Effect.runPromise(updates(options));
             Queue.offerAllUnsafe(queue, values);
           };
+          let membership:
+            | { readonly key: string; readonly execution?: ExecutionState }
+            | undefined;
           const sendMembership = async () => {
+            const key = activeInputs.join("\n");
+            if (membership?.key === key) {
+              return membership.execution;
+            }
             const current = await Effect.runPromise(records(options));
             const members = activeInputs.flatMap((input) =>
               current.filter((value) => value.record.id === input)
@@ -465,13 +483,18 @@ export const createPiExecutionEngine = (
               return;
             }
             const execution = remember(members);
+            membership = { execution, key };
             if (execution) {
               Queue.offerUnsafe(queue, { execution, type: "execution" });
             }
             return execution;
           };
           const sendBatch = async (events: readonly AgentEvent[]) => {
+            let canonical = false;
             for (const event of events) {
+              if (stateEvents.has(event.type)) {
+                canonical = true;
+              }
               if (event.type === "snapshot") {
                 activeInputs = event.run?.inputs ?? [];
               }
@@ -514,7 +537,9 @@ export const createPiExecutionEngine = (
                 }
               }
             }
-            await sendCanonical();
+            if (canonical) {
+              await sendCanonical();
+            }
           };
           yield* vendorEffect(options, async () => {
             // Pi's attachment atomically captures its snapshot and future event batches.
