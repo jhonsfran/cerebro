@@ -58,6 +58,10 @@ The second disposable fixture, `cerebro-s1-oldcutover2-1007`, uses the baseline 
 
 No real Slack message or customer record is part of these isolated fixtures. Private identities and retained stores stay outside the source commit.
 
+## Merge on 2026-10-09
+
+The operator merged the integration branch, with the [chat simplification](../superpowers/specs/2026-10-09-chat-simplification-design.md) on top, to `main` as the experimental baseline. The S1-F gates below remain open. Two Docker recovery fixtures in `tests/runtime/recovery.test.ts` fail on bucket durability expectations, the pilot gate for the unknown-outcome receipt fails on the baseline commit and after, `test:pi:live` has no private configuration, and the browser video and performance gates were not run. The merge records the current state; it is not the acceptance verdict this document describes.
+
 ## Remaining acceptance
 
 Run the integrated unit, policy, memory, channel, host, qualification, boot, chat and integration checks at the final clean SHA. Complete independent permission and recovery review. Run a frozen install, inspect every active resolved graph, and verify legacy entry-point removal.

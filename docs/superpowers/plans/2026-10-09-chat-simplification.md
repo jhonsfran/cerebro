@@ -37,8 +37,8 @@ Files: `packages/runtime/src/pi-harness.ts`.
 
 ## Cut 5. Shorter web submission
 
-- [x] The web submit path no longer calls `inspect` before `submit`. The Durable Object authorizes the submission.
 - [x] The receipt cursor reads `max(cursor)` instead of every channel item.
+- [ ] Dropping the pre-submit `inspect` was tried and reverted. The pilot revocation gate requires a message from a viewer who lost access to cited content to be denied before an inbox row exists, and the inspect is what denies it there.
 
 Files: `packages/channels/src/service.ts`.
 
@@ -50,8 +50,20 @@ Files: `packages/channels/src/service.ts`.
 | 1 | Type check on runtime, channels and AG-UI. 6 delivery tests. 114 AG-UI and browser tests. 53 channel tests. In-memory runtime tests green. |
 | 2 | Full type check including the web build. 35 browser, panel and observation tests. 6 delivery integration tests. Lint on every changed file. |
 | 4 | 84 in-memory runtime tests. Type check. Lint. |
-| 5 | 61 channel tests. Type check. Lint. |
+| 5 | 61 channel tests. Type check. Lint. The inspect removal failed the pilot revocation gate and was reverted. |
 
-Three Docker recovery fixtures in `tests/runtime/recovery.test.ts` fail identically on the baseline commit. Their reader looked for celld state under `/var/lib/celld/state`, which this compose file's bucket durability does not use. The reader now also scans `/tmp/celld-*` and the fixture read retries a refused port, which makes the first of the three pass. The other two expect local state before any read after a restart, which bucket durability does not provide. They remain open and are not part of this change.
+Three Docker recovery fixtures in `tests/runtime/recovery.test.ts` fail before any cut. The first was run on the baseline commit and failed there; the other two use the same reader and failed the same way on cut 1. The reader looked for celld state under `/var/lib/celld/state`, which this compose file's bucket durability does not use. The reader now also scans `/tmp/celld-*` and the fixture read retries a refused port, which makes the first of the three pass. The other two expect local state before any read after a restart, which bucket durability does not provide. They remain open and are not part of this change.
 
-The final-head checks are recorded in the decision trail.
+Final head checks, all on the merged commit unless noted:
+
+| Check | Result |
+| --- | --- |
+| `pnpm check-types`, `pnpm build` | Green |
+| `pnpm check` | 153 findings, identical to the baseline set; zero new |
+| `pnpm test:contracts`, `test:identity`, `test:policy`, `test:memory` | Green |
+| `pnpm test:runtime` | 99 tests, 97 pass; the 2 failures are the recovery fixtures above |
+| `pnpm test:channels` | 61 pass |
+| `pnpm test:integration` | 44 tests, 40 pass on the first run. The backup test failed on exhausted Docker network pools and passed alone after cleanup. Two pilot gates failed on the removed pre-submit inspect and pass since it was restored. One pilot gate, the unknown-outcome receipt, fails on the baseline commit too; see below. |
+| `pnpm test:chat` | Green on the clean head before the cut 5 rebuild: early text, partial restore on reattach, sign-out denial in 1.8 s |
+
+The pilot gate "unknown non-idempotent receipt never replays and authorized reconciliation uses read-only proof" fails on the baseline commit, on the cut 1, cut 2 and cut 4 heads and on the final head, always the same way: a second model request starts after reconciliation. The last passing pilot evidence is at `artifacts/slice-1/db0693c6b745f4ff0de92d265b97044a550e41e0`. The regression sits between that commit and the baseline, in the cold-restart projection repair or the Pi chat boundary refactor, and is open.

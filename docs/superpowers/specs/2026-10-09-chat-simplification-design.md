@@ -39,13 +39,14 @@ Provisional text and thinking carry no governed content and ride on the interval
 
 ### Submission
 
-The web submit path no longer calls the session's `inspect` before `submit`. The Durable Object authorizes the submission itself. The Postgres inbox stays, because the channel dispatcher uses it to retry Slack and web submissions that reached Postgres but not the session.
+The web submit path keeps the session `inspect` before `submit`. Removing it was tried: the Durable Object authorizes the submission itself, but only after the Postgres inbox row exists, and the pilot revocation gate requires a viewer who lost access to cited content to be denied before any row exists. The receipt cursor now reads one aggregate instead of every channel item. The Postgres inbox stays, because the channel dispatcher uses it to retry Slack and web submissions that reached Postgres but not the session.
 
 ## Trade-offs
 
 - **No AG-UI compatibility.** A third-party AG-UI client cannot attach today. If one is needed later, add one mapper at the API edge over the domain frames. The domain frames are the contract.
 - **Revocation latency is an interval, not a frame.** Two seconds is a documented constant in `packages/api/src/observation-delivery.ts` and `packages/runtime/src/celld-session-store.ts`.
 - **No exact chunk replay.** Reconnect restores the current partial text from the snapshot. This was already the case; the AG-UI layer did not add replay.
+- **The API no longer inspects frames.** It used to drop frames whose address or access generation did not match the attachment and to cap frame size. The browser still checks both and caps a frame at 1 MiB. The session is addressed by a signed request to one Durable Object per conversation, so a mislabeled frame would be a Durable Object bug, not a client path. If a second client ever attaches, add the address check back at the API as one line per frame.
 
 ## Verification
 
