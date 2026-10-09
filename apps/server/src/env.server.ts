@@ -9,20 +9,15 @@ export interface WorkerEnv {
   BETTER_AUTH_SECRET: string;
   ENTERPRISE_IDENTITY_JSON?: string;
   CORS_ORIGIN: string;
-  DEPLOY_MODE: "local" | "fixture" | "production";
-  FIXTURE_ADAPTERS: "0" | "1";
+  DEPLOY_MODE: "local" | "production";
   CHANNEL_DISPATCHER: DurableObjectNamespace;
   CHANNEL_ORGANIZATION_ID?: string;
   SLACK_CHANNEL_JSON?: string;
-  SESSION_FIXTURE: DurableObjectNamespace;
   SESSION: DurableObjectNamespace<SessionAgent>;
-  GATEWAY_JOURNAL: DurableObjectNamespace;
   TOOL_GATEWAY: Fetcher;
   LOADER: WorkerLoader;
   AUDIT_SINK: Fetcher;
   RUNTIME_CONFIG_JSON: string;
-  FIXTURE_URL: string;
-  TOOL_EFFECT_MODE: "idempotent" | "non-idempotent";
 }
 
 export const assertWorkerEnv = (env: WorkerEnv): void => {
@@ -32,11 +27,8 @@ export const assertWorkerEnv = (env: WorkerEnv): void => {
   if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 32) {
     throw new Error("Authentication secret is missing or too short");
   }
-  if (!["local", "fixture", "production"].includes(env.DEPLOY_MODE)) {
+  if (!["local", "production"].includes(env.DEPLOY_MODE)) {
     throw new Error("Invalid deployment mode");
-  }
-  if (env.DEPLOY_MODE !== "fixture" && env.FIXTURE_ADAPTERS !== "0") {
-    throw new Error("Fixture adapters require explicit fixture mode");
   }
   if (
     env.DEPLOY_MODE === "production" &&

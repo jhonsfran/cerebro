@@ -9,7 +9,7 @@ import type {
   PrincipalId,
   ToolId,
 } from "./identity.ts";
-import type { EffectOptions, PortResult, ReadOptions } from "./port.ts";
+import type { EffectOptions, PortResult } from "./port.ts";
 
 export interface ToolDefinition {
   readonly id: ToolId;
@@ -258,11 +258,5 @@ export interface ToolExecutor {
     call: ToolCall,
     capability: ToolCapability,
     options: EffectOptions
-  ) => Promise<PortResult<ToolExecution>>;
-  // Reconciliation may inspect a provider receipt. It must not execute the effect again.
-  readonly reconcile: (
-    operationId: OperationId,
-    context: ExecutionContext,
-    options: ReadOptions
   ) => Promise<PortResult<ToolExecution>>;
 }

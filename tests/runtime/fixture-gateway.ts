@@ -5,8 +5,8 @@ import type { TestEnvironment } from "./environment.ts";
 export class FixtureEffectGateway extends WorkerEntrypoint<TestEnvironment> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (request.method === "GET" && url.pathname === "/effect") {
-      return await fetch(`${this.env.FIXTURE_URL}/effects${url.search}`);
+    if (request.method === "GET" && url.pathname === "/health") {
+      return Response.json({ ok: true });
     }
     if (request.method !== "POST" || url.pathname !== "/effect") {
       return new Response(null, { status: 404 });

@@ -28,7 +28,6 @@
     "fix": "ultracite fix",
     "prepare": "husky",
     "test:channels:native": "node tests/channels/native/run.mjs",
-    "test:policy:runtime": "node --test tests/policy/runtime/*.test.ts",
     "test:pi-durable:qualification": "node tests/pi-durable-qualification/run.mjs",
     "test:pi:live": "node --test tests/live/pi.test.ts"
   },

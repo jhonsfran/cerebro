@@ -57,29 +57,20 @@ export const observeConversation = async (
     return { ...access, userId: user.id };
   });
   const authorize = async () => {
-    const startedAt = performance.now();
-    try {
-      await options.withDatabase(async (database) => {
-        const current = await options.getUser(request, database);
-        if (!current || current.id !== attachment.userId) {
-          throw new ChannelError(
-            401,
-            "unauthorized",
-            "Authentication was revoked."
-          );
-        }
-        await createChannelService(database, options).chatAccess(
-          current.id,
-          conversationId
+    await options.withDatabase(async (database) => {
+      const current = await options.getUser(request, database);
+      if (!current || current.id !== attachment.userId) {
+        throw new ChannelError(
+          401,
+          "unauthorized",
+          "Authentication was revoked."
         );
-      });
-    } finally {
-      options.recordAdapterTime?.({
-        adapter: "permission",
-        durationMs: performance.now() - startedAt,
-        resourceId: conversationId,
-      });
-    }
+      }
+      await createChannelService(database, options).chatAccess(
+        current.id,
+        conversationId
+      );
+    });
   };
   const session = await openSession(options, {
     accessGeneration: generation,

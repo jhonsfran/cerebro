@@ -34,7 +34,7 @@ const toolSchema = z.strictObject({
   maxOutputBytes: positive,
   outputSchema: jsonSchema,
   requiresApproval: z.boolean(),
-  retryMode: z.enum(["idempotent", "reconcile-only"]),
+  retryMode: z.enum(["idempotent", "at-most-once"]),
   target: z.discriminatedUnion("kind", [
     z.strictObject({
       kind: z.literal("mcp-read"),
@@ -42,7 +42,7 @@ const toolSchema = z.strictObject({
       url: z.url(),
     }),
     z.strictObject({
-      kind: z.literal("fixture-write"),
+      kind: z.literal("http-write"),
       method: z.string().min(1),
       url: z.url(),
     }),
@@ -59,7 +59,7 @@ const schema = z.strictObject({
   }),
   bootstrapToken: z.string().min(32).optional(),
   gatewaySigningKey: z.string().min(32),
-  mode: z.enum(["local", "fixture", "production"]),
+  mode: z.enum(["local", "production"]),
   models: z.array(modelSchema).min(1),
   retrievalMode: z.literal("full-text"),
   tools: z.array(toolSchema),
@@ -88,16 +88,15 @@ export const createRuntimeRegistry = (config: RuntimeConfiguration) =>
     config.mode
   );
 
-const fixtureHost = (value: string): boolean => {
-  const host = new URL(value).hostname;
-  return (
-    ["fixture", "localhost", "127.0.0.1", "[::1]"].includes(host) ||
-    host.endsWith(".invalid")
-  );
-};
+const loopbackHost = (value: string): boolean =>
+  ["localhost", "127.0.0.1", "[::1]"].includes(new URL(value).hostname);
+// Local deployments may use HTTP and private hosts, such as a model on the
+// developer's machine. Production requires public HTTPS endpoints.
+const productionEndpoint = (value: string): boolean =>
+  new URL(value).protocol === "https:" && !loopbackHost(value);
 export const parseRuntimeConfiguration = (
   serialized: string,
-  mode: "local" | "fixture" | "production"
+  mode: "local" | "production"
 ): RuntimeConfiguration => {
   try {
     const config = schema.parse(JSON.parse(serialized));
@@ -121,42 +120,15 @@ export const parseRuntimeConfiguration = (
     ) {
       throw new Error("Invalid runtime model configuration");
     }
-    if (
-      mode !== "fixture" &&
-      !config.bootstrapToken &&
-      !config.trustedOwnerUserId
-    ) {
-      throw new Error(
-        "Local and production deployments require trusted setup credentials."
-      );
+    if (!config.bootstrapToken && !config.trustedOwnerUserId) {
+      throw new Error("Deployments require trusted setup credentials.");
     }
     if (
-      mode !== "fixture" &&
-      config.models.some(
-        (model) =>
-          model.id.startsWith("fixture") ||
-          model.provider.startsWith("fixture") ||
-          fixtureHost(model.baseUrl) ||
-          new URL(model.baseUrl).protocol !== "https:"
-      )
+      mode === "production" &&
+      (config.models.some((model) => !productionEndpoint(model.baseUrl)) ||
+        config.tools.some((tool) => !productionEndpoint(tool.target.url)))
     ) {
-      throw new Error(
-        "Local and production models must use real HTTPS providers"
-      );
-    }
-    if (
-      mode !== "fixture" &&
-      config.tools.some(
-        (tool) =>
-          tool.effect !== "read" ||
-          tool.target.kind !== "mcp-read" ||
-          fixtureHost(tool.target.url) ||
-          tool.id.startsWith("fixture")
-      )
-    ) {
-      throw new Error(
-        "Local and production permit configured real read-only MCP tools"
-      );
+      throw new Error("Production models and tools must use public HTTPS.");
     }
     const connectorIdentities = new Map<string, string>();
     for (const tool of config.tools) {

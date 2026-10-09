@@ -4,14 +4,12 @@ import type { DomainSnapshot } from "@cerebro/contracts/session-service";
 import type { Database } from "@cerebro/db";
 import {
   channelConversation,
-  channelInbox,
   channelItem,
   channelReply,
 } from "@cerebro/db/schema/agents";
 import type { ChannelItemBody } from "@cerebro/db/schema/agents";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 
-import { sessionServiceFor } from "./fixture-session";
 import { authorize, authorizeContent, runEffect } from "./security";
 import { conversationAddress } from "./service";
 import { EFFECT_DEADLINE_MS } from "./types";
@@ -108,13 +106,12 @@ export const projectSession = async (
   if (conversation.engine !== "pi-v1" || conversation.retiredAt) {
     return;
   }
-  const startedAt = performance.now();
   const snapshot = await runEffect(
-    sessionServiceFor(database, options).inspect(
-      conversationAddress(conversation),
-      context,
-      { deadlineAt: (options.now?.() ?? Date.now()) + EFFECT_DEADLINE_MS }
-    )
+    options
+      .sessions(database)
+      .inspect(conversationAddress(conversation), context, {
+        deadlineAt: (options.now?.() ?? Date.now()) + EFFECT_DEADLINE_MS,
+      })
   );
   const items = snapshotItems(snapshot);
   for (const entry of items) {
@@ -164,25 +161,9 @@ export const projectSession = async (
           target: channelItem.itemKey,
         });
     }
-    const admissions = await tx
-      .select({ eventId: channelInbox.envelope })
-      .from(channelInbox)
-      .where(
-        and(
-          eq(channelInbox.conversationId, conversation.conversationId),
-          inArray(channelInbox.state, ["pending", "accepted"])
-        )
-      );
-    const acceptedIds = new Set(
-      snapshot.userMessages.map((message) => message.eventId)
+    const complete = snapshot.runs.every((run) =>
+      ["completed", "failed", "cancelled"].includes(run.state)
     );
-    const complete =
-      admissions.every((entry) => acceptedIds.has(entry.eventId.eventId)) &&
-      snapshot.runs.every((run) =>
-        ["completed", "failed", "cancelled", "unknown-outcome"].includes(
-          run.state
-        )
-      );
     if (complete) {
       await tx
         .update(channelConversation)
@@ -214,10 +195,5 @@ export const projectSession = async (
         })
         .onConflictDoNothing();
     }
-  });
-  options.recordAdapterTime?.({
-    adapter: "projection",
-    durationMs: performance.now() - startedAt,
-    resourceId: conversation.conversationId,
   });
 };

@@ -20,10 +20,7 @@ export const createMemoryStore = (
 });
 
 export { createArtifactStore } from "./artifact-store";
-export {
-  createHttpEmbeddings,
-  createDeterministicFixtureEmbeddings,
-} from "./embeddings";
+export { createHttpEmbeddings } from "./embeddings";
 export { createS3ObjectStorage } from "./object-storage";
 export type {
   EmbeddingPort,

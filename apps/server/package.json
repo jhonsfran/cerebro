@@ -18,7 +18,7 @@
     "@cerebro/policy": "workspace:*",
     "@cerebro/runtime": "workspace:*",
     "@cerebro/tools": "workspace:*",
-    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/pi-ai": "1.1.0",
     "@orpc/openapi": "catalog:",
     "@orpc/server": "catalog:",
     "@orpc/zod": "catalog:",

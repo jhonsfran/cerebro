@@ -9,14 +9,12 @@ import { z } from "zod";
 import type { AuthorityRequest } from "../../packages/contracts/src/authority-service.ts";
 import {
   Denied,
-  Unavailable,
   UnknownOutcome,
 } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { AgentDefinition } from "../../packages/contracts/src/session.ts";
 import {
   createAuthorityFake,
-  createReceiptFake,
   createToolFake,
 } from "../../packages/contracts/src/testing/effect-fakes.ts";
 import {
@@ -59,10 +57,10 @@ const fixture = async (write = false) => {
         maxOutputBytes: 1024,
         output: z.string(),
         requiresApproval: write,
-        retryMode: "reconcile-only",
+        retryMode: "at-most-once",
         target: write
           ? {
-              kind: "fixture-write",
+              kind: "http-write",
               method: "effect",
               url: "http://fixture.invalid/effect",
             }
@@ -73,7 +71,7 @@ const fixture = async (write = false) => {
             },
       },
     ],
-    "fixture"
+    "local"
   );
   const tool = await Effect.runPromise(bindRegisteredTool(registry.list()[0]));
   const agent: AgentDefinition = {
@@ -183,7 +181,6 @@ const fixture = async (write = false) => {
     approverId: call.context.actor.id,
     id: "approval-1",
   };
-  const receipts = createReceiptFake(clock);
   const driver = createToolFake(clock);
   const dependencies: ControlledToolDependencies = {
     address: request.address,
@@ -198,7 +195,6 @@ const fixture = async (write = false) => {
     driver: driver.service,
     now: clock,
     pinnedAgent: agent,
-    receipts: receipts.service,
     registry,
   };
   const executor = createControlledToolExecutor(dependencies);
@@ -213,7 +209,6 @@ const fixture = async (write = false) => {
     driver,
     effect,
     executor,
-    receipts,
     registry,
     request,
     state,
@@ -334,34 +329,13 @@ test("model dispatch authority checks the pinned and configured model on every e
   );
 });
 
-test("controlled reads replay one immutable receipt and never disclose it after revocation", async () => {
+test("controlled reads dispatch through the driver and deny after revocation", async () => {
   const f = await fixture();
-  const started = performance.now();
-  const first = await Effect.runPromise(
-    f.executor.execute(f.call, f.capability, f.effect)
-  );
-  const elapsed = performance.now() - started;
-  assert.deepEqual(first, {
-    output: "fixture result",
-    providerReceipt: "fixture receipt",
-  });
   assert.deepEqual(
     await Effect.runPromise(f.executor.execute(f.call, f.capability, f.effect)),
-    first
+    { output: "fixture result", providerReceipt: "fixture receipt" }
   );
   assert.equal(f.driver.counts.dispatch, 1);
-  const changed = { ...f.call, arguments: { query: "changed" } };
-  const digest = await digestToolArguments(changed.arguments);
-  assert.equal(
-    await failureTag(
-      f.executor.execute(
-        changed,
-        { ...f.capability, argumentDigest: digest },
-        { ...f.effect, requestDigest: digest }
-      )
-    ),
-    "Conflict"
-  );
   f.current.setDecision({
     decision: "deny",
     policyVersion: "revoked",
@@ -371,39 +345,7 @@ test("controlled reads replay one immutable receipt and never disclose it after 
     await failureTag(f.executor.execute(f.call, f.capability, f.effect)),
     "Denied"
   );
-  assert.equal(
-    await failureTag(
-      f.executor.reconcile(f.effect.operationId, f.call.context, options)
-    ),
-    "Denied"
-  );
   assert.equal(f.driver.counts.dispatch, 1);
-  process.stdout.write(
-    `S1-B read evidence: ${JSON.stringify({ deniedDispatches: 0, dispatchAdapterMs: elapsed, physicalDispatches: 1, replayDispatches: 0 })}\n`
-  );
-});
-
-test("duplicate bound approvals compete for one write dispatch", async () => {
-  const f = await fixture(true);
-  const results = await Promise.all(
-    [1, 2].map(() =>
-      Effect.runPromise(
-        Effect.result(f.executor.execute(f.call, f.capability, f.effect))
-      )
-    )
-  );
-  assert.equal(
-    results.filter((result) => result._tag === "Success").length >= 1,
-    true
-  );
-  assert.equal(f.driver.counts.dispatch, 1);
-  assert.deepEqual(
-    await Effect.runPromise(f.executor.execute(f.call, f.capability, f.effect)),
-    { output: "fixture result", providerReceipt: "fixture receipt" }
-  );
-  process.stdout.write(
-    `S1-B write evidence: ${JSON.stringify({ duplicateApprovalDispatches: f.driver.counts.dispatch })}\n`
-  );
 });
 
 test("run, connector, arguments, actor, represented principal, delegation, version, policy and expiry bindings deny writes", async () => {
@@ -461,22 +403,17 @@ test("authority and approver are rechecked after approval wait and immediately b
   );
   assert.equal(g.driver.counts.dispatch, 0);
   const h = await fixture(true);
-  const receipts = {
-    ...h.receipts.service,
-    dispatch: (...args: Parameters<typeof h.receipts.service.dispatch>) =>
-      h.receipts.service.dispatch(...args).pipe(
-        Effect.tap(() =>
-          Effect.sync(() =>
-            h.current.setDecision({
-              decision: "deny",
-              policyVersion: "revoked",
-              reason: "Revoked before physical dispatch",
-            })
-          )
-        )
+  const final = createControlledToolExecutor({
+    ...h.dependencies,
+    checkApprover: () =>
+      Effect.sync(() =>
+        h.current.setDecision({
+          decision: "deny",
+          policyVersion: "revoked",
+          reason: "Revoked before physical dispatch",
+        })
       ),
-  };
-  const final = createControlledToolExecutor({ ...h.dependencies, receipts });
+  });
   assert.equal(
     await failureTag(final.execute(h.call, h.capability, h.effect)),
     "Denied"
@@ -484,10 +421,9 @@ test("authority and approver are rechecked after approval wait and immediately b
   assert.equal(h.driver.counts.dispatch, 0);
 });
 
-test("uncertain writes block a new occurrence and policy change; reconciliation only reads evidence", async () => {
+test("an uncertain write reports UnknownOutcome after one dispatch", async () => {
   const f = await fixture(true);
   let effects = 0;
-  let reads = 0;
   const driver: ToolExecutor = {
     execute: () =>
       Effect.flatMap(
@@ -502,50 +438,35 @@ test("uncertain writes block a new occurrence and policy change; reconciliation 
             })
           )
       ),
-    reconcile: () =>
-      Effect.sync(() => {
-        reads += 1;
-        return { output: "confirmed", providerReceipt: "provider-1" };
-      }),
   };
   const executor = createControlledToolExecutor({ ...f.dependencies, driver });
   assert.equal(
     await failureTag(executor.execute(f.call, f.capability, f.effect)),
     "UnknownOutcome"
   );
-  f.current.setDecision({ decision: "allow", policyVersion: "policy-v2" });
-  assert.equal(
-    await failureTag(
-      executor.execute(
-        f.call,
-        {
-          ...f.capability,
-          operationId: id.operation("new-occurrence"),
-          policyVersion: "policy-v2",
-        },
-        { ...f.effect, operationId: id.operation("new-occurrence") }
-      )
-    ),
-    "UnknownOutcome"
-  );
-  assert.deepEqual(
-    await Effect.runPromise(
-      executor.reconcile(f.effect.operationId, f.call.context, options)
-    ),
-    { output: "confirmed", providerReceipt: "provider-1" }
-  );
   assert.equal(effects, 1);
-  assert.equal(reads, 1);
 });
 
-test("Effect interruption persists unknown receipt even after the caller stops", async () => {
+test("invalid driver output after dispatch is an unknown outcome", async () => {
+  const f = await fixture(true);
+  const driver: ToolExecutor = {
+    execute: () => Effect.succeed({ output: "x".repeat(1025) }),
+  };
+  const executor = createControlledToolExecutor({ ...f.dependencies, driver });
+  assert.equal(
+    await failureTag(executor.execute(f.call, f.capability, f.effect)),
+    "UnknownOutcome"
+  );
+});
+
+test("Effect interruption stops the driver after the caller stops", async () => {
   const f = await fixture(true);
   const entered = Promise.withResolvers<null>();
   let interrupted = false;
   const driver: ToolExecutor = {
     ...f.driver.service,
     execute: () =>
-      Effect.sync(() => entered.resolve()).pipe(
+      Effect.sync(() => entered.resolve(null)).pipe(
         Effect.flatMap(() => Effect.never),
         Effect.onInterrupt(() =>
           Effect.sync(() => {
@@ -561,27 +482,6 @@ test("Effect interruption persists unknown receipt even after the caller stops",
   await entered.promise;
   await Effect.runPromise(Fiber.interrupt(fiber));
   assert.equal(interrupted, true);
-  const receipt = await Effect.runPromise(
-    f.receipts.service.read(
-      {
-        operationId: f.effect.operationId,
-        organizationId: f.call.organizationId,
-      },
-      f.call.context,
-      options
-    )
-  );
-  assert.equal(receipt.state, "unknown");
-  assert.equal(
-    await failureTag(
-      executor.execute(
-        f.call,
-        { ...f.capability, operationId: id.operation("retry") },
-        { ...f.effect, operationId: id.operation("retry") }
-      )
-    ),
-    "UnknownOutcome"
-  );
 });
 
 test("unavailable, expired or foreign capability never dispatches", async () => {
@@ -682,42 +582,6 @@ test("an expired capability after the approval wait cannot dispatch", async () =
   assert.equal(f.driver.counts.dispatch, 0);
 });
 
-test("invalid reconciliation output does not resolve an uncertain write", async () => {
-  const f = await fixture(true);
-  const driver: ToolExecutor = {
-    execute: () =>
-      Effect.fail(
-        new UnknownOutcome({
-          operationId: f.effect.operationId,
-          reason: "Uncertain write",
-        })
-      ),
-    reconcile: () => Effect.succeed({ output: "x".repeat(1025) }),
-  };
-  const executor = createControlledToolExecutor({ ...f.dependencies, driver });
-  assert.equal(
-    await failureTag(executor.execute(f.call, f.capability, f.effect)),
-    "UnknownOutcome"
-  );
-  assert.equal(
-    await failureTag(
-      executor.reconcile(f.effect.operationId, f.call.context, options)
-    ),
-    "InvalidInput"
-  );
-  const receipt = await Effect.runPromise(
-    f.receipts.service.read(
-      {
-        operationId: f.effect.operationId,
-        organizationId: f.call.organizationId,
-      },
-      f.call.context,
-      options
-    )
-  );
-  assert.equal(receipt.state, "unknown");
-});
-
 test("authority stops waiting for unavailable session and capability adapters", async () => {
   const f = await fixture();
   const session = createAgentAuthority({
@@ -753,49 +617,6 @@ test("authority stops waiting for unavailable session and capability adapters", 
   await entered.promise;
   controller.abort();
   assert.equal(await pending, "Unavailable");
-});
-
-test("replay repairs completion after a persisted outcome without repeating the effect", async () => {
-  const f = await fixture();
-  let failCompletion = true;
-  const receipts = {
-    ...f.receipts.service,
-    complete: (...args: Parameters<typeof f.receipts.service.complete>) =>
-      Effect.suspend(() => {
-        if (failCompletion) {
-          failCompletion = false;
-          return Effect.fail(
-            new Unavailable({ reason: "Completion persistence failed" })
-          );
-        }
-        return f.receipts.service.complete(...args);
-      }),
-  };
-  const executor = createControlledToolExecutor({
-    ...f.dependencies,
-    receipts,
-  });
-  assert.equal(
-    await failureTag(executor.execute(f.call, f.capability, f.effect)),
-    "Unavailable"
-  );
-  assert.equal(f.driver.counts.dispatch, 1);
-  assert.deepEqual(
-    await Effect.runPromise(executor.execute(f.call, f.capability, f.effect)),
-    { output: "fixture result", providerReceipt: "fixture receipt" }
-  );
-  assert.equal(f.driver.counts.dispatch, 1);
-  const receipt = await Effect.runPromise(
-    f.receipts.service.read(
-      {
-        operationId: f.effect.operationId,
-        organizationId: f.call.organizationId,
-      },
-      f.call.context,
-      options
-    )
-  );
-  assert.equal(receipt.state, "completed");
 });
 
 test("invalid deadlines fail in the typed channel before authority or tool dispatch", async () => {

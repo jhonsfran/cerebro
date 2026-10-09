@@ -6,7 +6,6 @@ import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { ReadOptions } from "@cerebro/contracts/port";
-import { ToolReceiptStore } from "@cerebro/contracts/receipt-service";
 import type {
   AgentDefinition,
   ContentDependencies,
@@ -27,15 +26,8 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import { createProvider } from "@earendil-works/pi-ai/models";
 import { and, eq } from "drizzle-orm";
 import { Effect, Schema } from "effect";
-import { z } from "zod";
 
-import { createCelldToolReceiptStore } from "../../../packages/runtime/src/celld-tool-receipts";
 import type { WorkerEnv } from "./env.server";
-import { fixtureCheckpoint } from "./fixture-checkpoints";
-import {
-  measureFixturePermission,
-  measureFixtureProjection,
-} from "./fixture-metrics";
 import { databaseEffect, fromPortResult } from "./port-effect";
 import { createRuntimeRegistry } from "./runtime-configuration";
 import { SessionContent, sessionContentLayer } from "./runtime-content";
@@ -195,21 +187,7 @@ export const createRuntimeComposition = (
         })
       )
     );
-    const authority =
-      env.DEPLOY_MODE === "fixture"
-        ? {
-            evaluate: (...args: Parameters<typeof currentAuthority.evaluate>) =>
-              measureFixturePermission(
-                storage,
-                currentAuthority.evaluate(...args)
-              ),
-            require: (...args: Parameters<typeof currentAuthority.require>) =>
-              measureFixturePermission(
-                storage,
-                currentAuthority.require(...args)
-              ),
-          }
-        : currentAuthority;
+    const authority = currentAuthority;
     const content = yield* SessionContent.pipe(
       Effect.provide(sessionContentLayer(env, storage, address, agent)),
       Effect.provideService(AuthorityService, authority)
@@ -238,44 +216,6 @@ export const createRuntimeComposition = (
           )
         )
       ).pipe(Effect.flatMap(fromPortResult));
-    const checkpoint =
-      config.mode === "fixture"
-        ? measureFixtureProjection(
-            storage,
-            fixtureCheckpoint(modelConfig.baseUrl)
-          )
-        : undefined;
-    const receiptAdapter = createCelldToolReceiptStore(storage, {
-      address,
-      authorize: (receipt, context, options) =>
-        Effect.gen(function* authorizeReceipt() {
-          const { invocation } = receipt.intent;
-          yield* authority.require(
-            {
-              action: "read",
-              address,
-              context,
-              pinnedAgent: agent,
-              resource: {
-                id: invocation.tool.id,
-                kind: "tool",
-                organizationId: address.organizationId,
-              },
-              tool: invocation.tool,
-            },
-            options
-          );
-          yield* dependencies(
-            context,
-            { sourceIds: [], toolIds: [invocation.tool.id] },
-            options
-          );
-        }),
-      checkpoint,
-    });
-    const receipts = yield* ToolReceiptStore.pipe(
-      Effect.provide(receiptAdapter.layer)
-    );
     const approvalFor = (operationId: string): BoundApproval | undefined => {
       const [row] = storage.sql
         .exec<{ state: string }>(
@@ -301,30 +241,6 @@ export const createRuntimeComposition = (
       authorizationPolicy: createCurrentAuthorization(env),
       gateway: env.TOOL_GATEWAY,
       loader: env.LOADER,
-      reconcile: async (operationId, context, options) => {
-        const response = await env.TOOL_GATEWAY.fetch(
-          new Request("https://gateway.internal/reconcile", {
-            body: JSON.stringify({
-              context,
-              operationId,
-              options: { deadlineAt: options.deadlineAt },
-            }),
-            headers: {
-              "Content-Type": "application/json",
-              "X-Cerebro-Gateway-Key": config.gatewaySigningKey,
-            },
-            method: "POST",
-          })
-        );
-        if (!response.ok) {
-          return {
-            code: "provider-unavailable",
-            reason: "Gateway evidence is unavailable.",
-            status: "unavailable",
-          };
-        }
-        return await response.json();
-      },
       registry,
       signer,
     });
@@ -370,25 +286,9 @@ export const createRuntimeComposition = (
                   })
                 );
               }
-              yield* databaseEffect(async () => {
-                const response = await env.TOOL_GATEWAY.fetch(
-                  new Request("https://gateway.internal/approve", {
-                    body: JSON.stringify(approval),
-                    headers: {
-                      "Content-Type": "application/json",
-                      "X-Cerebro-Gateway-Key": config.gatewaySigningKey,
-                    },
-                    method: "POST",
-                  })
-                );
-                if (!response.ok) {
-                  throw new Error("The gateway approval was not retained");
-                }
-              });
             }),
           driver,
           pinnedAgent: agent,
-          receipts,
           registry,
         })
       )
@@ -425,7 +325,6 @@ export const createRuntimeComposition = (
         authenticateSessionRequest(request, config.gatewaySigningKey, address),
       authority,
       checkDependencies: dependencies,
-      checkpoint,
       content: content.content,
       executor,
       prepareInput: content.prepareInput,
@@ -448,67 +347,10 @@ export const createRuntimeComposition = (
       provider: {
         beforeFetch: () => content.beforeFetch(),
         deadlineMs: modelConfig.deadlineMs,
-        fetch: async (input, init) => {
-          if (env.DEPLOY_MODE !== "fixture") {
-            return await fetch(input, init);
-          }
-          const headers = new Headers(
-            init?.headers ??
-              (input instanceof Request ? input.headers : undefined)
-          );
-          const [row] = storage.sql
-            .exec<{ state: string }>(
-              "SELECT state FROM cerebro_pi_session WHERE id=1"
-            )
-            .toArray();
-          const snapshot = row
-            ? Schema.decodeUnknownSync(DomainSnapshot)(
-                JSON.parse(row.state).snapshot
-              )
-            : undefined;
-          const active = snapshot?.runs.find(
-            (run) =>
-              !["completed", "failed", "cancelled", "unknown-outcome"].includes(
-                run.state
-              )
-          );
-          if (active) {
-            headers.set("x-cerebro-model-operation", active.runId);
-          }
-          const body = typeof init?.body === "string" ? init.body : "";
-          const parsed = z
-            .object({
-              messages: z.array(
-                z
-                  .object({ content: z.unknown(), role: z.string() })
-                  .passthrough()
-              ),
-            })
-            .safeParse(JSON.parse(body));
-          const last = parsed.success
-            ? parsed.data.messages.findLast(
-                (message) => message.role === "user"
-              )
-            : undefined;
-          const prompt =
-            typeof last?.content === "string"
-              ? last.content
-              : JSON.stringify(last?.content ?? "");
-          if (
-            prompt.includes("fixture_effect") ||
-            prompt.includes("approval fixture")
-          ) {
-            headers.set("x-fixture-tool", "fixture_effect");
-          } else if (prompt.includes("fixture-read")) {
-            headers.set("x-fixture-tool", "fixture-read");
-          }
-          return await fetch(input, { ...init, headers });
-        },
         maxInputBytes: modelConfig.maxInputBytes,
         model,
         provider,
       },
-      receipts,
       toolDependencies: (tool) =>
         Effect.succeed({ sourceIds: [], toolIds: [tool.id] }),
       tools: registry.list().map((entry, index) => ({
@@ -520,6 +362,7 @@ export const createRuntimeComposition = (
             });
           })(),
         description: entry.description,
+        idempotent: entry.retryMode === "idempotent",
         parameters: entry.inputJsonSchema,
         prepare: (args: unknown) =>
           Effect.try({

@@ -4,7 +4,6 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
-import type { ToolReceipt } from "../../packages/contracts/src/receipt-service.ts";
 import type { DomainSnapshot } from "../../packages/contracts/src/session-service.ts";
 import {
   addressFor,
@@ -19,8 +18,6 @@ import {
   messageEvent,
   newStack,
   pending,
-  rawRequest,
-  reconcile,
   request,
   submit,
   waitFor,
@@ -840,7 +837,7 @@ test(
 );
 
 test(
-  "a dispatched native write remains unknown across SIGKILL and reconciles without a second write",
+  "a native write dispatched before SIGKILL is never dispatched again",
   { timeout: 360_000 },
   async () => {
     const stack = await newStack("dispatch");
@@ -860,12 +857,6 @@ test(
           value.held === 1 &&
           value.tools.some((tool) => tool.operationId === approval.operationId)
       );
-      const durable = await request<ToolReceipt>(
-        stack,
-        "/runtime/fixture/receipt",
-        { address, operationId: approval.operationId }
-      );
-      assert.equal(durable.state, "dispatched");
       const beforeLifecycle = await request<LifecycleEvidence>(
         stack,
         "/runtime/fixture/lifecycle",
@@ -875,7 +866,6 @@ test(
         approval,
         beforeLifecycle,
         dispatched,
-        durable,
       });
       const killedAt = Date.now();
       compose(stack, ["kill", "-s", "SIGKILL", "celld"]);
@@ -919,62 +909,13 @@ test(
         wakeMs <= 60_000,
         `Selected celld host must recover within 60 seconds; actual wake ${wakeMs} ms`
       );
-      const unknown = await waitFor(
-        () => inspect(stack, address),
-        (value) => value.runs[0]?.state === "unknown-outcome",
-        120_000
-      );
-      const blocked = await rawRequest(stack, "/runtime/submit", {
-        address,
-        command: {
-          event: messageEvent(address, "blocked-event"),
-          mode: "follow-up",
-          type: "submit",
-        },
-        options: {
-          deadlineAt: Date.now() + 60_000,
-          operationId: "blocked-command",
-          requestDigest: "sha256:blocked",
-        },
-      });
-      assert.equal(blocked.status, 409);
-      await request(stack, "/runtime/fixture/evidence", {
-        address,
-        enabled: false,
-      });
-      const unavailable = await rawRequest(stack, "/runtime/reconcile", {
-        address,
-        command: { operationId: approval.operationId, runId: approval.runId },
-        options: {
-          deadlineAt: Date.now() + 60_000,
-          operationId: "unavailable-reconcile",
-          requestDigest: "sha256:unavailable-reconcile",
-        },
-      });
-      assert.equal(unavailable.status, 503);
-      const repeated = await rawRequest(stack, "/runtime/fixture/occurrence", {
-        address,
-        operationId: approval.operationId,
-        replacementOperationId: "new-uncertain-occurrence",
-      });
-      assert.equal(repeated.status, 409);
-      await request(stack, "/runtime/fixture/evidence", {
-        address,
-        enabled: true,
-      });
-      const reconciled = await reconcile(stack, address, approval);
-      const confirmed = await request<ToolReceipt>(
-        stack,
-        "/runtime/fixture/receipt",
-        { address, operationId: approval.operationId }
-      );
-      assert.equal(confirmed.state, "completed");
+      // Pi replays the interrupted call; its dispatch memo stops a second write.
       const final = await waitFor(
         () => inspect(stack, address),
         (value) => value.runs[0]?.state === "completed",
         120_000
       );
-      assert.equal(final.tools[0]?.state, "succeeded");
+      assert.equal(final.tools[0]?.state, "unknown-outcome");
       assert.equal(final.outputs.length, 1);
       const provider = await getFixture<ProviderEvidence>(stack);
       assert.equal(
@@ -985,16 +926,12 @@ test(
       );
       await evidence(stack, "dispatch-restart", {
         approval,
-        confirmed,
         dispatched,
-        durable,
         final,
         firstReadAt,
         lifecycle,
         provider,
-        reconciled,
         restartedAt,
-        unknown,
       });
       passed = true;
     } finally {

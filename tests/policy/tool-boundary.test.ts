@@ -2,10 +2,7 @@
 // oxlint-disable eslint/require-await -- Fixture policy ports preserve synchronous state behind asynchronous contracts.
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { test } from "node:test";
 
 import { Effect } from "effect";
@@ -16,11 +13,11 @@ import type {
   AuthorizationPolicy,
   EntitlementPolicy,
 } from "../../packages/contracts/src/policy.ts";
-import type { EffectOptions } from "../../packages/contracts/src/port.ts";
-import {
-  createAuthorityFake,
-  createReceiptFake,
-} from "../../packages/contracts/src/testing/effect-fakes.ts";
+import type {
+  EffectOptions,
+  PortResult,
+} from "../../packages/contracts/src/port.ts";
+import { createAuthorityFake } from "../../packages/contracts/src/testing/effect-fakes.ts";
 import {
   allowedContext,
   fixtureAgentId,
@@ -38,13 +35,11 @@ import type {
   Approval,
   ToolCall,
   ToolCapability,
+  ToolExecution,
 } from "../../packages/contracts/src/tools.ts";
 import { createAgentAuthority } from "../../packages/policy/src/agent-authority.ts";
 import { readBoundedJson } from "../../packages/tools/src/bounded-json.ts";
-import {
-  createToolBroker,
-  createControlledToolExecutor,
-} from "../../packages/tools/src/broker.ts";
+import { createControlledToolExecutor } from "../../packages/tools/src/broker.ts";
 import {
   createCapabilitySigner,
   gatewayInvocation,
@@ -64,7 +59,6 @@ import {
   bindRegisteredTool,
 } from "../../packages/tools/src/registry.ts";
 import type { ToolRegistration } from "../../packages/tools/src/registry.ts";
-import { SqliteToolOperationJournal } from "./fixtures/journal.ts";
 
 const secret = "fixture-secret-for-redaction";
 const inputSchema = z.strictObject({ query: z.string() });
@@ -86,10 +80,10 @@ const registration = (write = false): ToolRegistration => ({
   },
   output: outputSchema,
   requiresApproval: write,
-  retryMode: "reconcile-only",
+  retryMode: "at-most-once",
   target: write
     ? {
-        kind: "fixture-write",
+        kind: "http-write",
         method: "fixture-effect",
         url: "http://fixture.invalid/effect",
       }
@@ -99,7 +93,7 @@ const registration = (write = false): ToolRegistration => ({
         url: "https://fixture.invalid/mcp",
       },
 });
-const fixture = async (write = false, journalPath = ":memory:") => {
+const fixture = async (write = false) => {
   const requests: unknown[] = [];
   const state = {
     cancelledStream: false,
@@ -115,7 +109,7 @@ const fixture = async (write = false, journalPath = ":memory:") => {
     timeout: false,
   };
   const registered = registration(write);
-  const registry = createToolRegistry([registered], "fixture");
+  const registry = createToolRegistry([registered], "local");
   const call: ToolCall = {
     agentId: fixtureAgentId,
     arguments: { query: "  support  " },
@@ -129,8 +123,6 @@ const fixture = async (write = false, journalPath = ":memory:") => {
     operationId: id.operation(crypto.randomUUID()),
     requestDigest: await digestToolArguments(prepared.arguments),
   };
-  const brokerJournal = new SqliteToolOperationJournal(journalPath, "broker");
-  const gatewayJournal = new SqliteToolOperationJournal(journalPath, "gateway");
   const authorizationPolicy: AuthorizationPolicy = {
     async evaluate(_context, _action, resource) {
       return {
@@ -205,7 +197,6 @@ const fixture = async (write = false, journalPath = ":memory:") => {
     );
   };
   const gatewayDependencies = {
-    approvals: brokerJournal,
     audience: "fixture-gateway",
     authorizationPolicy,
     credentials: async () => ({
@@ -214,7 +205,6 @@ const fixture = async (write = false, journalPath = ":memory:") => {
     }),
     entitlementPolicy,
     fetch: providerFetch,
-    journal: gatewayJournal,
     registry,
     signer,
   };
@@ -247,16 +237,8 @@ const fixture = async (write = false, journalPath = ":memory:") => {
       fetch: async (request) => await gateway.fetch(new Request(request)),
     },
     loader,
-    reconcile: gateway.reconcile,
     registry,
     signer,
-  });
-  const broker = createToolBroker({
-    authorizationPolicy,
-    entitlementPolicy,
-    executor,
-    journal: brokerJournal,
-    registry,
   });
   const approval: Approval = {
     actorPrincipalId: call.context.actor.id,
@@ -287,6 +269,27 @@ const fixture = async (write = false, journalPath = ":memory:") => {
     toolId: call.tool.id,
     toolVersion: call.tool.version,
   };
+  // Normalize, then dispatch through the real isolated executor and gateway.
+  const invoke = async (
+    input: ToolCall,
+    effect: EffectOptions
+  ): Promise<PortResult<ToolExecution>> => {
+    let normalized: ToolCall;
+    try {
+      normalized = registry.prepare(input);
+    } catch {
+      return { reason: "Tool metadata is invalid.", status: "invalid-input" };
+    }
+    return await executor.execute(
+      normalized,
+      {
+        ...capability,
+        argumentDigest: effect.requestDigest,
+        operationId: effect.operationId,
+      },
+      effect
+    );
+  };
   const envelope = async (overrides: Partial<ToolCapability> = {}) =>
     await signer.sign(
       gatewayInvocation(
@@ -300,18 +303,15 @@ const fixture = async (write = false, journalPath = ":memory:") => {
     );
   return {
     approval,
-    broker,
-    brokerJournal,
     call,
     capability,
     close() {
-      brokerJournal.close();
-      gatewayJournal.close();
+      // The gateway and executor keep no durable state.
     },
     envelope,
     gateway,
     gatewayDependencies,
-    gatewayJournal,
+    invoke,
     loader,
     options,
     prepared,
@@ -329,7 +329,7 @@ const gatewayRequest = (envelope: unknown) =>
 
 const controlledFixture = async (
   write = false,
-  gatewayApprovalRun = fixtureRunId
+  approvalChange: Partial<BoundApproval> = {}
 ) => {
   const f = await fixture(write);
   const tool = await Effect.runPromise(
@@ -346,8 +346,8 @@ const controlledFixture = async (
     ...f.approval,
     connectorFingerprint: tool.connectorFingerprint,
     runId: fixtureRunId,
+    ...approvalChange,
   };
-  f.brokerJournal.putApproval({ ...approval, runId: gatewayApprovalRun });
   const pinnedAgent = {
     agentId: call.agentId,
     enabledToolIds: [tool.id],
@@ -398,11 +398,9 @@ const controlledFixture = async (
       fetch: async (request) => await f.gateway.fetch(new Request(request)),
     },
     loader: f.loader,
-    reconcile: f.gateway.reconcile,
     registry: f.registry,
     signer: f.signer,
   });
-  const receipts = createReceiptFake(Date.now);
   const executor = createControlledToolExecutor({
     address: userEvent,
     approval: () => Effect.succeed(approval),
@@ -410,7 +408,6 @@ const controlledFixture = async (
     checkApprover: () => Effect.void,
     driver,
     pinnedAgent,
-    receipts: receipts.service,
     registry: f.registry,
   });
   return {
@@ -423,24 +420,14 @@ const controlledFixture = async (
   };
 };
 
-test("Effect controlled executor uses the signed restricted MCP gateway and replays one redacted read", async () => {
+test("Effect controlled executor uses the signed restricted MCP gateway for one redacted read", async () => {
   const f = await controlledFixture();
   try {
-    const started = performance.now();
     const result = await Effect.runPromise(
       f.executor.execute(f.boundCall, f.boundCapability, f.options)
     );
     assert.deepEqual(result, { output: { text: "support [redacted]" } });
-    assert.deepEqual(
-      await Effect.runPromise(
-        f.executor.execute(f.boundCall, f.boundCapability, f.options)
-      ),
-      result
-    );
     assert.equal(f.state.posts, 1);
-    process.stdout.write(
-      `S1-B signed gateway read evidence: ${JSON.stringify({ adapterElapsedMs: performance.now() - started, physicalDispatches: f.state.posts, replayDispatches: 0 })}\n`
-    );
     f.current.setDecision({
       decision: "deny",
       policyVersion: "revoked",
@@ -458,26 +445,19 @@ test("Effect controlled executor uses the signed restricted MCP gateway and repl
   }
 });
 
-test("Effect controlled writes keep full signed run and connector approval binding at the gateway", async () => {
+test("Effect controlled writes require an approval bound to the run and connector", async () => {
   const f = await controlledFixture(true);
   try {
     const result = await Effect.runPromise(
       f.executor.execute(f.boundCall, f.boundCapability, f.options)
     );
     assert.deepEqual(result, { output: { text: "support [redacted]" } });
-    assert.deepEqual(
-      await Effect.runPromise(
-        f.executor.execute(f.boundCall, f.boundCapability, f.options)
-      ),
-      result
-    );
     assert.equal(f.state.posts, 1);
     assert.equal(f.state.effects, 1);
-    process.stdout.write(`S1-B gateway write counter: ${f.state.effects}\n`);
   } finally {
     f.close();
   }
-  const g = await controlledFixture(true, id.run("wrong-run"));
+  const g = await controlledFixture(true, { runId: id.run("wrong-run") });
   try {
     const denied = await Effect.runPromise(
       Effect.result(
@@ -514,7 +494,7 @@ test("credential lookup cannot hide a connector revocation before physical dispa
   }
 });
 
-test("Effect gateway uncertainty blocks a new occurrence and reconciles through one provider GET", async () => {
+test("Effect gateway uncertainty reports an unknown outcome after one dispatch", async () => {
   const f = await controlledFixture(true);
   try {
     f.state.timeout = true;
@@ -527,29 +507,8 @@ test("Effect gateway uncertainty blocks a new occurrence and reconciles through 
     if (uncertain._tag === "Failure") {
       assert.equal(uncertain.failure._tag, "UnknownOutcome");
     }
-    const nextId = id.operation("new-occurrence");
-    const repeated = await Effect.runPromise(
-      Effect.result(
-        f.executor.execute(
-          f.boundCall,
-          { ...f.boundCapability, operationId: nextId },
-          { ...f.options, operationId: nextId }
-        )
-      )
-    );
-    assert.equal(repeated._tag, "Failure");
-    if (repeated._tag === "Failure") {
-      assert.equal(repeated.failure._tag, "UnknownOutcome");
-    }
-    f.state.timeout = false;
-    const confirmed = await Effect.runPromise(
-      f.executor.reconcile(f.options.operationId, f.boundCall.context, {
-        deadlineAt: f.options.deadlineAt,
-      })
-    );
-    assert.deepEqual(confirmed, { output: { text: "receipt-confirmed" } });
     assert.equal(f.state.posts, 1);
-    assert.equal(f.state.reads, 1);
+    assert.equal(f.state.reads, 0);
   } finally {
     f.close();
   }
@@ -560,7 +519,7 @@ test("bound connector fingerprints use normalized configured destinations and co
   const getTool = async (changes: Partial<ToolRegistration>) => {
     const registry = createToolRegistry(
       [{ ...original, connectorVersion: "connector-v1", ...changes }],
-      "fixture"
+      "local"
     );
     return await Effect.runPromise(bindRegisteredTool(registry.list()[0]));
   };
@@ -577,10 +536,10 @@ test("bound connector fingerprints use normalized configured destinations and co
   assert.notEqual(first.connectorFingerprint, destination.connectorFingerprint);
 });
 
-test("tool broker normalizes before digest and uses fixed MCP tools/call with redacted output", async () => {
+test("tool calls normalize before digest and use fixed MCP tools/call with redacted output", async () => {
   const f = await fixture();
   try {
-    const result = await f.broker.invoke(f.call, f.options);
+    const result = await f.invoke(f.call, f.options);
     assert.deepEqual(result, {
       status: "ok",
       value: { output: { text: "support [redacted]" } },
@@ -605,8 +564,6 @@ test("tool broker normalizes before digest and uses fixed MCP tools/call with re
         },
       },
     ]);
-    const second = await f.broker.invoke(f.call, f.options);
-    assert.deepEqual(second, result);
     assert.equal(f.state.posts, 1);
   } finally {
     f.close();
@@ -619,16 +576,16 @@ test("wrong normalized digest and caller-overridden connector metadata cannot di
     const rawDigest = await digestToolArguments(f.call.arguments);
     assert.equal(
       (
-        await f.broker.invoke(f.call, {
+        await f.invoke(f.call, {
           ...f.options,
           requestDigest: rawDigest,
         })
       ).status,
-      "conflict"
+      "denied"
     );
     assert.equal(
       (
-        await f.broker.invoke(
+        await f.invoke(
           { ...f.call, tool: { ...f.call.tool, connectorId: "foreign" } },
           f.options
         )
@@ -636,16 +593,15 @@ test("wrong normalized digest and caller-overridden connector metadata cannot di
       "invalid-input"
     );
     assert.equal(f.state.posts, 0);
-    assert.equal((await f.broker.invoke(f.call, f.options)).status, "ok");
+    assert.equal((await f.invoke(f.call, f.options)).status, "ok");
   } finally {
     f.close();
   }
 });
 
-test("gateway rejects forged, widened, wrong-audience and replayed capabilities before a second write", async () => {
+test("gateway rejects forged, widened and wrong-audience capabilities", async () => {
   const f = await fixture(true);
   try {
-    f.brokerJournal.putApproval(f.approval);
     const signed = await f.envelope();
     const tampered = {
       ...signed,
@@ -664,10 +620,6 @@ test("gateway rejects forged, widened, wrong-audience and replayed capabilities 
       status: "ok",
       value: { output: { text: "support [redacted]" } },
     });
-    assert.deepEqual(
-      await (await f.gateway.fetch(gatewayRequest(signed))).json(),
-      first
-    );
     assert.equal(f.state.posts, 1);
   } finally {
     f.close();
@@ -683,15 +635,18 @@ for (const [name, change] of Object.entries({
   principal: { principalId: id.principal("foreign") },
   version: { toolVersion: "2" },
 })) {
-  test(`stale approval ${name} is denied by actual broker`, async () => {
-    const f = await fixture(true);
+  test(`stale approval ${name} is denied before dispatch`, async () => {
+    const f = await controlledFixture(true, change);
     try {
-      f.brokerJournal.putApproval({ ...f.approval, ...change });
-      assert.deepEqual(await f.broker.invoke(f.call, f.options), {
-        code: "approval-required",
-        reason: "Approval does not match the current tool request.",
-        status: "denied",
-      });
+      const denied = await Effect.runPromise(
+        Effect.result(
+          f.executor.execute(f.boundCall, f.boundCapability, f.options)
+        )
+      );
+      assert.equal(denied._tag, "Failure");
+      if (denied._tag === "Failure") {
+        assert.equal(denied.failure._tag, "Denied");
+      }
       assert.equal(f.state.posts, 0);
     } finally {
       f.close();
@@ -699,30 +654,23 @@ for (const [name, change] of Object.entries({
   });
 }
 
-test("revoked authorization and entitlement deny cached broker results and gateway replay", async () => {
+test("revoked authorization and entitlement deny later calls and gateway replay", async () => {
   const f = await fixture();
   try {
     const signed = await f.envelope();
-    assert.equal((await f.broker.invoke(f.call, f.options)).status, "ok");
+    assert.equal((await f.invoke(f.call, f.options)).status, "ok");
     f.state.denied = true;
-    assert.equal((await f.broker.invoke(f.call, f.options)).status, "denied");
+    assert.equal((await f.invoke(f.call, f.options)).status, "denied");
     assert.equal(
       (await (await f.gateway.fetch(gatewayRequest(signed))).json()).status,
       "denied"
     );
-    assert.equal(
-      (
-        await f.broker.reconcile(
-          f.options.operationId,
-          f.call.context,
-          f.options
-        )
-      ).status,
-      "denied"
-    );
     f.state.denied = false;
     f.state.entitled = false;
-    assert.equal((await f.broker.invoke(f.call, f.options)).status, "denied");
+    assert.equal(
+      (await (await f.gateway.fetch(gatewayRequest(signed))).json()).status,
+      "denied"
+    );
     assert.equal(f.state.posts, 1);
   } finally {
     f.close();
@@ -733,7 +681,7 @@ test("gateway checks current connector access separately", async () => {
   const f = await fixture();
   try {
     f.state.connectorDenied = true;
-    assert.deepEqual(await f.broker.invoke(f.call, f.options), {
+    assert.deepEqual(await f.invoke(f.call, f.options), {
       code: "unauthorized",
       reason: "Current policy denies connector access.",
       status: "denied",
@@ -742,7 +690,7 @@ test("gateway checks current connector access separately", async () => {
     f.state.connectorDenied = false;
     assert.equal(
       (
-        await f.broker.invoke(f.call, {
+        await f.invoke(f.call, {
           ...f.options,
           operationId: id.operation(crypto.randomUUID()),
         })
@@ -754,43 +702,11 @@ test("gateway checks current connector access separately", async () => {
   }
 });
 
-test("unknown non-idempotent writes only reconcile through GET without another effect", async () => {
-  const f = await fixture(true);
-  try {
-    f.brokerJournal.putApproval(f.approval);
-    f.state.timeout = true;
-    assert.equal(
-      (await f.broker.invoke(f.call, f.options)).status,
-      "unknown-outcome"
-    );
-    assert.equal(
-      (await f.broker.invoke(f.call, f.options)).status,
-      "unknown-outcome"
-    );
-    assert.equal(f.state.effects, 1);
-    assert.deepEqual(
-      await f.broker.reconcile(
-        f.options.operationId,
-        f.call.context,
-        f.options
-      ),
-      { status: "ok", value: { output: { text: "receipt-confirmed" } } }
-    );
-    assert.equal(f.state.posts, 1);
-    assert.equal(f.state.reads, 1);
-  } finally {
-    f.close();
-  }
-});
-
 test("provider stream limit cancels before parse and cannot produce a successful tool result", async () => {
   const f = await fixture();
   try {
     f.state.oversized = true;
-    assert.equal(
-      (await f.broker.invoke(f.call, f.options)).status,
-      "unknown-outcome"
-    );
+    assert.equal((await f.invoke(f.call, f.options)).status, "unknown-outcome");
     assert.equal(f.state.cancelledStream, true);
     assert.equal(f.state.posts, 1);
   } finally {
@@ -798,11 +714,11 @@ test("provider stream limit cancels before parse and cannot produce a successful
   }
 });
 
-test("registry and cached results reject caller mutation and changed intent", async () => {
+test("registry and results reject caller mutation", async () => {
   const f = await fixture();
   try {
     Reflect.set(f.registered.target, "url", "https://foreign.invalid/");
-    const first = await f.broker.invoke(f.call, f.options);
+    const first = await f.invoke(f.call, f.options);
     assert.deepEqual(first, {
       status: "ok",
       value: { output: { text: "support [redacted]" } },
@@ -810,20 +726,10 @@ test("registry and cached results reject caller mutation and changed intent", as
     if (first.status === "ok") {
       Reflect.set(first.value.output, "text", "changed");
     }
-    assert.deepEqual(await f.broker.invoke(f.call, f.options), {
+    assert.deepEqual(await f.invoke(f.call, f.options), {
       status: "ok",
       value: { output: { text: "support [redacted]" } },
     });
-    const changed = { ...f.call, arguments: { query: "changed" } };
-    assert.equal(
-      (
-        await f.broker.invoke(changed, {
-          ...f.options,
-          requestDigest: await digestToolArguments(changed.arguments),
-        })
-      ).status,
-      "conflict"
-    );
     assert.equal(
       f.registry.get(f.call.tool.id)?.target.url,
       "https://fixture.invalid/mcp"
@@ -832,10 +738,10 @@ test("registry and cached results reject caller mutation and changed intent", as
     assert.throws(() =>
       createToolRegistry(
         [{ ...registration(true), requiresApproval: false }],
-        "fixture"
+        "local"
       )
     );
-    assert.equal(f.state.posts, 1);
+    assert.equal(f.state.posts, 2);
   } finally {
     f.close();
   }
@@ -853,7 +759,7 @@ test("signed registration fingerprint rejects a changed fixed destination", asyn
           target: { ...original.target, url: "https://foreign.invalid/mcp" },
         },
       ],
-      "fixture"
+      "local"
     );
     const changedGateway = createMcpGateway({
       ...f.gatewayDependencies,
@@ -869,92 +775,21 @@ test("signed registration fingerprint rejects a changed fixed destination", asyn
       }
     );
     assert.equal(f.state.posts, 0);
-    assert.equal((await f.broker.invoke(f.call, f.options)).status, "ok");
+    assert.equal((await f.invoke(f.call, f.options)).status, "ok");
   } finally {
     f.close();
   }
 });
 
-test("completed results replay after reopening the durable broker and gateway journal", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "cerebro-tool-journal-"));
-  const databasePath = path.join(directory, "journal.sqlite");
-  const first = await fixture(false, databasePath);
-  const result = await first.broker.invoke(first.call, first.options);
-  assert.deepEqual(result, {
-    status: "ok",
-    value: { output: { text: "support [redacted]" } },
-  });
-  const { call, options } = first;
-  first.close();
-  const resumed = await fixture(false, databasePath);
-  try {
-    assert.deepEqual(await resumed.broker.invoke(call, options), {
-      status: "ok",
-      value: { output: { text: "support [redacted]" } },
-    });
-    assert.equal(resumed.state.posts, 0);
-    resumed.state.denied = true;
-    assert.equal((await resumed.broker.invoke(call, options)).status, "denied");
-  } finally {
-    resumed.close();
-    await rm(directory, { force: true, recursive: true });
-  }
-});
-
-test("unknown write after journal reopen uses receipt lookup and never dispatches again", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "cerebro-tool-unknown-"));
-  const databasePath = path.join(directory, "journal.sqlite");
-  const first = await fixture(true, databasePath);
-  first.brokerJournal.putApproval(first.approval);
-  first.state.timeout = true;
-  assert.equal(
-    (await first.broker.invoke(first.call, first.options)).status,
-    "unknown-outcome"
-  );
-  assert.equal(first.state.effects, 1);
-  const { call, options } = first;
-  first.close();
-  const resumed = await fixture(true, databasePath);
-  try {
-    assert.equal(
-      (await resumed.broker.invoke(call, options)).status,
-      "unknown-outcome"
-    );
-    assert.deepEqual(
-      await resumed.broker.reconcile(
-        options.operationId,
-        call.context,
-        options
-      ),
-      {
-        status: "ok",
-        value: { output: { text: "receipt-confirmed" } },
-      }
-    );
-    assert.equal(resumed.state.posts, 0);
-    assert.equal(resumed.state.reads, 1);
-  } finally {
-    resumed.close();
-    await rm(directory, { force: true, recursive: true });
-  }
-});
-
-test("write fixture registration rejects public remote destinations", () => {
+test("write connectors require approval and use HTTPS in production", () => {
   const tool = registration(true);
-  assert.throws(
-    () =>
-      createToolRegistry(
-        [
-          {
-            ...tool,
-            target: { ...tool.target, url: "https://remote.example/effects" },
-          },
-        ],
-        "fixture"
-      ),
-    /local fixture host/u
-  );
-  assert.equal(createToolRegistry([tool], "fixture").list().length, 1);
+  assert.throws(() => createToolRegistry([tool], "production"), /HTTPS/u);
+  const remote = {
+    ...tool,
+    target: { ...tool.target, url: "https://remote.example/effects" },
+  };
+  assert.equal(createToolRegistry([remote], "production").list().length, 1);
+  assert.equal(createToolRegistry([tool], "local").list().length, 1);
 });
 
 test("streamed provider output stops waiting and cancels when the deadline signal aborts", async () => {
@@ -1000,7 +835,6 @@ test("dynamic executor cancels a stalled wrapper response body after cancellatio
       fetch: async (request) => await f.gateway.fetch(new Request(request)),
     },
     loader,
-    reconcile: f.gateway.reconcile,
     registry: f.registry,
     signer: f.signer,
   });
@@ -1123,10 +957,6 @@ test("local HTTP MCP provider enforces pinned headers and metadata and returns S
       value: { output: { text: "fixture-result" } },
     });
     assert.ok(observed);
-    assert.equal(
-      (await (await gateway.fetch(gatewayRequest(envelope))).json()).status,
-      "ok"
-    );
     assert.equal(requests, 1);
   } finally {
     server.closeAllConnections();
@@ -1286,7 +1116,7 @@ test("MCP JSON validates IDs and required content, and returns full result witho
   );
 });
 
-test("unsupported protocol responses never trigger downgrade or redispatch", async () => {
+test("unsupported protocol responses never trigger a downgrade retry", async () => {
   const f = await fixture();
   let requests = 0;
   try {
@@ -1313,10 +1143,6 @@ test("unsupported protocol responses never trigger downgrade or redispatch", asy
       },
     });
     const envelope = await f.envelope();
-    assert.equal(
-      (await (await gateway.fetch(gatewayRequest(envelope))).json()).status,
-      "unknown-outcome"
-    );
     assert.equal(
       (await (await gateway.fetch(gatewayRequest(envelope))).json()).status,
       "unknown-outcome"

@@ -1,6 +1,4 @@
 services:
-  fixture:
-    profiles: [fixture]
   secrets-init:
     environment:
       DEPLOY_MODE: production

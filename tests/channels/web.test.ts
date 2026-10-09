@@ -5,41 +5,46 @@ import { Effect } from "effect";
 
 import { createProductHandler } from "../../packages/api/src/routers/conversations";
 import { drainChannelWork } from "../../packages/channels/src/drain";
-import { createFixtureSessionService } from "../../packages/channels/src/fixture-session";
 import { runEffect } from "../../packages/channels/src/security";
 import { createChannelService } from "../../packages/channels/src/service";
-import {
-  Denied,
-  Unavailable,
-  UnknownOutcome,
-} from "../../packages/contracts/src/failures";
+import { Unavailable } from "../../packages/contracts/src/failures";
 import { id } from "../../packages/contracts/src/index";
 import { and, eq } from "../../packages/db/node_modules/drizzle-orm";
 import { createAgentRepository } from "../../packages/db/src/repositories/agents";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
 import {
   channelConversation,
-  channelFixtureRun,
-  channelInbox,
   channelItem,
 } from "../../packages/db/src/schema/agents";
 import { identityGrant } from "../../packages/db/src/schema/identity";
+import {
+  createFixtureSessionService,
+  fixtureRunCount,
+} from "./fixture-session";
 import {
   array,
   createTestProduct,
   domainSnapshot,
   object,
   string,
+  TEST_BOOTSTRAP_TOKEN,
 } from "./helpers";
 
-test("fixture setup chooses one owner and production rejects fixture adapters", async () => {
+test("setup with the bootstrap token chooses one owner", async () => {
   const app = await createTestProduct();
+  const untrusted = await app.request("/api/product/setup", "POST", {
+    operationId: "untrusted",
+  });
+  assert.equal(untrusted.status, 403);
   const responses = await Promise.all([
-    app.request("/api/product/setup", "POST", { operationId: "one" }),
+    app.request("/api/product/setup", "POST", {
+      bootstrapToken: TEST_BOOTSTRAP_TOKEN,
+      operationId: "one",
+    }),
     app.request(
       "/api/product/setup",
       "POST",
-      { operationId: "two" },
+      { bootstrapToken: TEST_BOOTSTRAP_TOKEN, operationId: "two" },
       "test-other"
     ),
   ]);
@@ -54,13 +59,6 @@ test("fixture setup chooses one owner and production rejects fixture adapters", 
     null
   );
   assert.equal(verifiedResult1.status, 401);
-  await app.options.withDatabase((db) => {
-    assert.throws(
-      () =>
-        createFixtureSessionService(db, { ...app.options, mode: "production" }),
-      /disabled in production/u
-    );
-  });
 });
 
 test("agent versions, message replay, SSE reconnect, citations, approval, and revocation use REST with PostgreSQL", async () => {
@@ -137,11 +135,8 @@ test("agent versions, message replay, SSE reconnect, citations, approval, and re
     replies.map((response) => response.status),
     [200, 200]
   );
+  assert.equal(fixtureRunCount(), 1);
   await app.options.withDatabase(async (db) => {
-    const verifiedResult5 = await db.select().from(channelInbox);
-    assert.equal(verifiedResult5.length, 1);
-    const verifiedResult6 = await db.select().from(channelFixtureRun);
-    assert.equal(verifiedResult6.length, 1);
     const verifiedResult7 = await db.select().from(channelItem);
     assert.equal(verifiedResult7.length, 5);
   });
@@ -362,202 +357,43 @@ test("stale access operation replay cannot restore a later revoked grant", async
   assert.equal(verifiedResult105.status, 403);
 });
 
-test("one unavailable pending submission does not stop another admitted session", async () => {
-  const app = await createTestProduct();
-  await app.install();
-  const verifiedResult106 = await app.createAgent();
-  const agentId = string(verifiedResult106.agentId);
-  const conversationResponse = await app.request(
-    "/api/product/conversations",
-    "POST",
-    { agentId, operationId: "retry-conversation" }
-  );
-  const conversationId = string(
-    object(await conversationResponse.json()).conversationId
-  );
-  const responses = await Promise.all(
-    ["Unavailable request", "Healthy request"].map((text) =>
-      app.request(
-        `/api/product/conversations/${conversationId}/messages`,
-        "POST",
-        { eventId: text, text }
-      )
-    )
-  );
-  assert.deepEqual(
-    responses.map((response) => response.status),
-    [200, 200]
-  );
-  await app.options.withDatabase((db) =>
-    db.update(channelInbox).set({ receipt: null, state: "pending" })
-  );
-  const options = {
-    ...app.options,
-    sessions: (db: Parameters<typeof createFixtureSessionService>[0]) => {
-      const fixture = createFixtureSessionService(db, app.options);
-      return {
-        ...fixture,
-        submit: (
-          command: Parameters<typeof fixture.submit>[0],
-          effect: Parameters<typeof fixture.submit>[1]
-        ) =>
-          command.event.event.type === "user.message" &&
-          command.event.event.payload.text === "Unavailable request"
-            ? Effect.fail(
-                new Unavailable({
-                  reason: "This session adapter is unavailable.",
-                })
-              )
-            : fixture.submit(command, effect),
-      };
-    },
-  };
-  const result = await drainChannelWork(options);
-  assert.equal(result.submitted, 1);
-  await app.options.withDatabase(async (db) => {
-    const inbox = await db.select().from(channelInbox);
-    assert.deepEqual(inbox.map((row) => row.state).toSorted(), [
-      "accepted",
-      "pending",
-    ]);
-  });
-});
-
-test("a submission rejected while an effect is uncertain leaves nothing for the drain to retry", async () => {
+test("an unavailable session rejects a message and a client retry admits it once", async () => {
   const app = await createTestProduct();
   await app.install();
   const created = await app.createAgent();
   const agentId = string(created.agentId);
   const response = await app.request("/api/product/conversations", "POST", {
     agentId,
-    operationId: "uncertain-conversation",
+    operationId: "retry-conversation",
   });
   const conversationId = string(object(await response.json()).conversationId);
-  let uncertain = true;
-  const submissions: string[] = [];
-  const options = {
-    ...app.options,
-    sessions: (db: Parameters<typeof createFixtureSessionService>[0]) => {
-      const fixture = createFixtureSessionService(db, app.options);
-      return {
-        ...fixture,
-        submit: (
-          command: Parameters<typeof fixture.submit>[0],
-          effect: Parameters<typeof fixture.submit>[1]
-        ) =>
-          Effect.gen(function* submit() {
-            if (uncertain) {
-              return yield* Effect.fail(
-                new UnknownOutcome({
-                  operationId: id.operation("uncertain-write"),
-                  reason:
-                    "Reconcile the uncertain effect before admitting another input",
-                })
-              );
-            }
-            submissions.push(
-              command.event.event.type === "user.message"
-                ? command.event.event.payload.text
-                : ""
-            );
-            return yield* fixture.submit(command, effect);
-          }),
-      };
-    },
-  };
-  const handler = createProductHandler(options);
-  const submit = (eventId: string, text: string) =>
-    handler(
-      new Request(
-        `http://cerebro.test/api/product/conversations/${conversationId}/messages`,
-        {
-          body: JSON.stringify({ eventId, text }),
-          headers: {
-            "Content-Type": "application/json",
-            "x-test-user": "test-owner",
-          },
-          method: "POST",
-        }
-      )
-    );
-  const rejected = await submit("follow-up", "Follow-up while uncertain");
-  assert.equal(rejected.status, 409);
-  const rows = await app.options.withDatabase((db) =>
-    db
-      .select()
-      .from(channelInbox)
-      .where(eq(channelInbox.conversationId, conversationId))
-  );
-  assert.deepEqual(rows, []);
-  uncertain = false;
-  const drained = await drainChannelWork(options);
-  assert.equal(drained.submitted, 0);
-  assert.deepEqual(submissions, []);
-  const retried = await submit("follow-up", "Follow-up while uncertain");
-  assert.equal(retried.status, 200);
-  assert.deepEqual(submissions, ["Follow-up while uncertain"]);
-});
-
-test("a stale drain selection cannot submit a denied event after access returns", async () => {
-  const app = await createTestProduct();
-  await app.install();
-  const created = await app.createAgent();
-  const agentId = string(created.agentId);
-  const response = await app.request("/api/product/conversations", "POST", {
-    agentId,
-    operationId: "stale-drain-conversation",
-  });
-  const conversationId = string(object(await response.json()).conversationId);
-  const selected = Promise.withResolvers<undefined>();
-  const release = Promise.withResolvers<undefined>();
   let available = false;
-  let denied = false;
   const submissions: string[] = [];
-  const options = {
+  const handler = createProductHandler({
     ...app.options,
-    sessions: (db: Parameters<typeof createFixtureSessionService>[0]) => {
+    sessions: (db) => {
       const fixture = createFixtureSessionService(db, app.options);
       return {
         ...fixture,
-        submit: (
-          command: Parameters<typeof fixture.submit>[0],
-          effect: Parameters<typeof fixture.submit>[1]
-        ) =>
+        submit: (command, effect) =>
           Effect.gen(function* submit() {
             if (!available) {
               return yield* Effect.fail(
-                new Unavailable({ reason: "Seed pending admission." })
+                new Unavailable({ reason: "The session is restarting." })
               );
             }
-            const text =
-              command.event.event.type === "user.message"
-                ? command.event.event.payload.text
-                : "";
-            if (text === "First pending event") {
-              selected.resolve();
-              yield* Effect.promise(() => release.promise);
-            }
-            if (denied && text === "Denied pending event") {
-              return yield* Effect.fail(
-                new Denied({
-                  code: "unauthorized",
-                  reason: "Source access changed.",
-                })
-              );
-            }
-            submissions.push(text);
+            submissions.push(command.event.eventId);
             return yield* fixture.submit(command, effect);
           }),
       };
     },
-  };
-  const handler = createProductHandler(options);
-  const submit = (eventId: string, text: string) =>
+  });
+  const submit = () =>
     handler(
       new Request(
         `http://cerebro.test/api/product/conversations/${conversationId}/messages`,
         {
-          body: JSON.stringify({ eventId, text }),
+          body: JSON.stringify({ eventId: "retry", text: "Retry me" }),
           headers: {
             "Content-Type": "application/json",
             "x-test-user": "test-owner",
@@ -566,62 +402,55 @@ test("a stale drain selection cannot submit a denied event after access returns"
         }
       )
     );
-  const first = await submit("first", "First pending event");
-  assert.equal(first.status, 503);
-  const second = await submit("second", "Denied pending event");
-  assert.equal(second.status, 503);
-  await app.options.withDatabase(async (db) => {
-    const rows = await db.select().from(channelInbox);
-    const firstEntry = rows.find(
-      (entry) =>
-        entry.envelope.event.type === "user.message" &&
-        entry.envelope.event.payload.text === "First pending event"
-    );
-    assert.ok(firstEntry);
-    await db
-      .update(channelInbox)
-      .set({ lastAttemptAt: new Date(1) })
-      .where(eq(channelInbox.eventKey, firstEntry.eventKey));
-  });
+  const unavailable = await submit();
+  assert.equal(unavailable.status, 503);
+  assert.equal(fixtureRunCount(), 0);
   available = true;
-  const draining = drainChannelWork(options);
-  try {
-    await selected.promise;
-    denied = true;
-    const rejection = await submit("second", "Denied pending event");
-    assert.equal(rejection.status, 403);
-    const before = await app.options.withDatabase((db) =>
-      db.select().from(channelInbox)
+  const [first, second] = [await submit(), await submit()];
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  const firstReceipt = object(object(await first.json()).receipt);
+  const secondReceipt = object(object(await second.json()).receipt);
+  assert.equal(secondReceipt.runId, firstReceipt.runId);
+  assert.equal(secondReceipt.replayed, true);
+  assert.equal(fixtureRunCount(), 1);
+});
+
+test("a denied message is never admitted and is admitted on retry after access returns", async () => {
+  const app = await createTestProduct();
+  const setup = await app.install();
+  const principalId = string(setup.principalId);
+  const created = await app.createAgent();
+  const agentId = string(created.agentId);
+  const response = await app.request("/api/product/conversations", "POST", {
+    agentId,
+    operationId: "denied-conversation",
+  });
+  const conversationId = string(object(await response.json()).conversationId);
+  const path = `/api/product/conversations/${conversationId}/messages`;
+  const grant = (allowed: boolean) =>
+    app.options.withDatabase((db) =>
+      createIdentityRepository(db).setManualGrant(
+        app.options.organizationId,
+        principalId,
+        { action: "execute", resourceId: agentId, resourceKind: "agent" },
+        allowed
+      )
     );
-    assert.equal(
-      before.find(
-        (entry) =>
-          entry.envelope.event.type === "user.message" &&
-          entry.envelope.event.payload.text === "Denied pending event"
-      )?.state,
-      "denied"
-    );
-    denied = false;
-  } finally {
-    release.resolve();
-  }
-  const drained = await draining;
-  assert.equal(drained.submitted, 1);
-  assert.deepEqual(submissions, ["First pending event"]);
-  const after = await app.options.withDatabase((db) =>
-    db.select().from(channelInbox)
-  );
-  assert.equal(
-    after.find(
-      (entry) =>
-        entry.envelope.event.type === "user.message" &&
-        entry.envelope.event.payload.text === "Denied pending event"
-    )?.state,
-    "denied"
-  );
-  const replay = await submit("second", "Denied pending event");
-  assert.equal(replay.status, 403);
-  assert.deepEqual(submissions, ["First pending event"]);
+  await grant(false);
+  const denied = await app.request(path, "POST", {
+    eventId: "denied",
+    text: "Denied message",
+  });
+  assert.equal(denied.status, 403);
+  assert.equal(fixtureRunCount(), 0);
+  await grant(true);
+  const admitted = await app.request(path, "POST", {
+    eventId: "denied",
+    text: "Denied message",
+  });
+  assert.equal(admitted.status, 200);
+  assert.equal(fixtureRunCount(), 1);
 });
 
 test("audit reads require current company audit permission as well as conversation access", async () => {
@@ -819,7 +648,7 @@ for (const retirement of ["legacy", "retired"] as const) {
   });
 }
 
-test("submission mode is immutable in admission and survives delayed drain replay", async () => {
+test("submission mode is part of the event identity", async () => {
   const app = await createTestProduct();
   await app.install();
   const agent = await app.createAgent();
@@ -828,29 +657,23 @@ test("submission mode is immutable in admission and survives delayed drain repla
     operationId: "mode-replay",
   });
   const conversationId = string(object(await response.json()).conversationId);
-  const modes: unknown[] = [];
   await app.options.withDatabase(async (db) => {
-    const fixture = createFixtureSessionService(db, app.options);
-    const service = createChannelService(db, {
-      ...app.options,
-      sessions: () => ({
-        ...fixture,
-        submit: (command) => {
-          modes.push(command.mode);
-          return Effect.fail(new Unavailable({ reason: "Delayed admission." }));
-        },
-      }),
-    });
-    await assert.rejects(
-      service.submit(
-        "test-owner",
-        conversationId,
-        "mode-event",
-        "Steer this work",
-        "steer"
-      ),
-      { status: 503 }
+    const service = createChannelService(db, app.options);
+    const first = await service.submit(
+      "test-owner",
+      conversationId,
+      "mode-event",
+      "Steer this work",
+      "steer"
     );
+    const replay = await service.submit(
+      "test-owner",
+      conversationId,
+      "mode-event",
+      "Steer this work",
+      "steer"
+    );
+    assert.equal(replay.receipt.runId, first.receipt.runId);
     await assert.rejects(
       service.submit(
         "test-owner",
@@ -861,27 +684,9 @@ test("submission mode is immutable in admission and survives delayed drain repla
       ),
       { status: 409 }
     );
-    const [admission] = await db.select().from(channelInbox);
-    assert.equal(admission.submissionMode, "steer");
-    assert.equal(admission.state, "pending");
   });
-  await drainChannelWork({
-    ...app.options,
-    sessions: (db) => {
-      const fixture = createFixtureSessionService(db, app.options);
-      return {
-        ...fixture,
-        submit: (command, effect) => {
-          modes.push(command.mode);
-          return fixture.submit(command, effect);
-        },
-      };
-    },
-  });
-  assert.deepEqual(modes, ["steer", "steer"]);
+  await drainChannelWork(app.options);
   await app.options.withDatabase(async (db) => {
-    const [admission] = await db.select().from(channelInbox);
-    assert.equal(admission.state, "accepted");
     const records = await db
       .select()
       .from(channelItem)

@@ -68,8 +68,15 @@ test("a disabled principal and an expired delegation cannot enter a session", ()
   );
 });
 
-test("the inbox detects duplicate delivery and rejects changed payloads", () => {
+test("admission detects duplicate delivery and rejects changed payloads", () => {
   assert.equal(classifyEventDelivery(userEvent, duplicateEvent), "duplicate");
+  assert.equal(
+    classifyEventDelivery(userEvent, {
+      ...duplicateEvent,
+      occurredAt: duplicateEvent.occurredAt + 1,
+    }),
+    "duplicate"
+  );
   assert.equal(
     classifyEventDelivery(userEvent, {
       ...duplicateEvent,
@@ -98,13 +105,6 @@ test("the inbox detects duplicate delivery and rejects changed payloads", () => 
         payload: { task: "Summarize the support issue." },
         type: "scheduled.run",
       },
-    }),
-    "conflict"
-  );
-  assert.equal(
-    classifyEventDelivery(userEvent, {
-      ...duplicateEvent,
-      occurredAt: duplicateEvent.occurredAt + 1,
     }),
     "conflict"
   );
@@ -522,14 +522,6 @@ test("fixture tool reports an unknown outcome without a second effect", async ()
       unknownOutcomeInvocation,
       unknownOutcomeCapability,
       effect
-    ),
-    first
-  );
-  assert.deepEqual(
-    await ports.toolExecutor.reconcile(
-      unknownOutcomeInvocation.operationId,
-      allowedContext,
-      { deadlineAt: 1_900_000_000_000 }
     ),
     first
   );
@@ -1120,7 +1112,7 @@ test("memory and artifact visibility ignore caller mutation", async () => {
 
 // oxlint-enable unicorn/no-await-expression-member
 
-test("tool output and reconciliation ignore returned object mutation", async () => {
+test("tool output and replay ignore returned object mutation", async () => {
   const { toolExecutor } = createFixtureAdapters({
     mode: "fixture",
   });
@@ -1149,10 +1141,12 @@ test("tool output and reconciliation ignore returned object mutation", async () 
       Reflect.set(outputArguments, "ticket", "changed-output");
     }
   }
-  const reconciled = await toolExecutor.reconcile(operationId, allowedContext, {
-    deadlineAt: 1_900_000_000_000,
-  });
-  assert.deepEqual(reconciled, {
+  const replayed = await toolExecutor.execute(
+    { ...call, arguments: { ticket: "support-1" } },
+    capability,
+    effect
+  );
+  assert.deepEqual(replayed, {
     status: "ok",
     value: {
       output: { arguments: { ticket: "support-1" }, toolId: call.tool.id },

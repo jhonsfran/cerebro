@@ -26,11 +26,6 @@ export type RunState =
       readonly state: "failed" | "cancelled";
       readonly runId: RunId;
       readonly endedAt: number;
-    }
-  | {
-      readonly state: "unknown-outcome";
-      readonly runId: RunId;
-      readonly operationId: OperationId;
     };
 
 export interface SessionSnapshot {

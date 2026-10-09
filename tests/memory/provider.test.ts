@@ -1,9 +1,7 @@
 import { expect, test } from "bun:test";
 
-import {
-  createDeterministicFixtureEmbeddings,
-  createHttpEmbeddings,
-} from "../../packages/memory/src/index.ts";
+import { createHttpEmbeddings } from "../../packages/memory/src/index.ts";
+import { createDeterministicFixtureEmbeddings } from "./deterministic-embeddings.ts";
 
 const httpProvider = (endpoint: string) =>
   createHttpEmbeddings({

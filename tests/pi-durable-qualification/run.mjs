@@ -723,12 +723,7 @@ try {
         ? {
             note: "Transferred acceptance check; not executed by this public-wrapper runner",
             owner: "S1-F coordinator",
-            suites: [
-              "tests/runtime",
-              "tests/policy/runtime",
-              "tests/channels/native",
-              "tests/slice-1",
-            ],
+            suites: ["tests/runtime", "tests/channels/native", "tests/slice-1"],
           }
         : "Required runner check did not execute; no pass claimed"
     );

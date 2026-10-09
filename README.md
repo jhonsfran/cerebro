@@ -18,7 +18,7 @@ Local setup requires the generated installation token. Read it from the protecte
 docker compose run --rm --no-deps bootstrap node --input-type=module -e 'import {readFile} from "node:fs/promises";process.stdout.write(await readFile("/run/cerebro-secrets/bootstrap-token","utf8"))'
 ```
 
-Local mode uses real PostgreSQL, MinIO, authorization, and usage records. Model charges are zero `usd-micro` units. No fixture model, source, or tool is enabled. For an existing agent, select an OpenCode model in the editor, remove obsolete fixture tools, and start a new conversation. Existing data stays in its volumes.
+Local mode uses real PostgreSQL, MinIO, authorization, and usage records. Model charges are zero `usd-micro` units. Local mode also accepts HTTP and private-host models and connectors, such as a model on your machine; production requires public HTTPS. For an existing agent, select a configured model in the editor and start a new conversation. Existing data stays in its volumes.
 
 Compose generates local secrets once. PostgreSQL, both MinIO services, celld, and credentials use seven named volumes. `docker compose down` preserves that state. `docker compose down --volumes` deletes it.
 
@@ -43,27 +43,27 @@ pnpm check
 pnpm build
 ```
 
-Integration tests explicitly select deterministic fixture mode in isolated Compose projects. `pnpm test:opencode` separately calls the live free provider through the native deployment and verifies a zero-cost usage receipt.
+The application has two modes, `local` and `production`, and no test mode. Integration tests boot isolated Compose projects in local mode with `tests/slice-1/compose.test.yaml`, which adds a deterministic fake model and connectors and writes a test `runtime.json` that points at them. `pnpm test:opencode` separately calls the live free provider through the native deployment and verifies a zero-cost usage receipt.
 
-To run the local demonstration with controlled providers instead, use:
+To run the local demonstration with the deterministic fake provider instead, use:
 
 ```sh
-CEREBRO_DEPLOY_MODE=fixture COMPOSE_PROFILES=fixture docker compose up --build -d --wait
+docker compose -p cerebro-demo -f compose.yaml -f tests/slice-1/compose.test.yaml up --build -d --wait
 ```
 
-Use separate Compose project names for local and fixture deployments. A protected `runtime.json` must match its deployment mode.
+A protected `runtime.json` must match its deployment mode.
 
 The backup tests restore all seven stores into fresh volumes and start the recorded source images. Read [the session 7 receipt](docs/implementation/session-7.md) for current deployed acceptance evidence and known check limits.
 
 ## Data ownership
 
-Session Durable Objects own execution, conversation state, and replay receipts. PostgreSQL owns company identity, current grants, shared budget, memory metadata, and audit projections. Runtime MinIO preserves celld state. Artifact MinIO holds source and application objects. No transaction spans these stores.
+Session Durable Objects own execution and conversation state. Pi Durable owns the agent loop, its inbox, and crash recovery. PostgreSQL owns company identity, current grants, shared budget, memory metadata, and audit projections. Runtime MinIO preserves celld state. Artifact MinIO holds source and application objects. No transaction spans these stores.
 
-The tool loader has no general outbound network access. It receives the named tool gateway as its capability. Each paid operation needs current authorization and a budget reservation before dispatch. An uncertain model dispatch retains its budget reservation. An uncertain non-idempotent tool stops for reconciliation.
+The tool loader has no general outbound network access. It receives the named tool gateway as its capability. The gateway keeps no state; it dispatches only a call the runtime signed after current authorization and any required approval. Each tool call records a durable dispatch marker in Pi before its effect. After a crash, Pi replays the call: an idempotent tool runs again, and an at-most-once tool reports an unknown outcome to the model and is never dispatched again.
 
 ## Production settings
 
-`compose.production.yaml` requires an external directory with `auth-secret`, `postgres-password`, `minio-password`, and the protected `runtime.json` configuration. Set a PostgreSQL URL with `sslmode=verify-full` and HTTPS public origins. Put a TLS reverse proxy in front of the loopback API and web ports. Production rejects fixture providers and policies. Read [the pilot operations guide](docs/operations/pilot.md) for the runtime schema and trusted installation setup.
+`compose.production.yaml` requires an external directory with `auth-secret`, `postgres-password`, `minio-password`, and the protected `runtime.json` configuration. Set a PostgreSQL URL with `sslmode=verify-full` and HTTPS public origins. Put a TLS reverse proxy in front of the loopback API and web ports. Production rejects HTTP and loopback models and connectors. Read [the pilot operations guide](docs/operations/pilot.md) for the runtime schema and trusted installation setup.
 
 Read [the backup procedure](docs/operations/backup.md) before maintenance. The automated backup command supports named volumes. Production bind-mounted secrets require the separate procedure in that guide.
 

@@ -12,7 +12,7 @@ import { MCP_PROTOCOL_VERSION } from "./mcp-transport.ts";
 export type ConnectorTarget =
   | { readonly kind: "mcp-read"; readonly url: string; readonly method: string }
   | {
-      readonly kind: "fixture-write";
+      readonly kind: "http-write";
       readonly url: string;
       readonly method: string;
     };
@@ -28,7 +28,8 @@ export interface ToolRegistration {
   readonly maxInputBytes: number;
   readonly maxOutputBytes: number;
   readonly requiresApproval: boolean;
-  readonly retryMode: "idempotent" | "reconcile-only";
+  // An at-most-once tool is never dispatched again after an interrupted attempt.
+  readonly retryMode: "idempotent" | "at-most-once";
 }
 
 const freezeJson = (value: unknown): void => {
@@ -84,7 +85,7 @@ const validateTarget = (
   target: ConnectorTarget,
   definition: ToolDefinition,
   requiresApproval: boolean,
-  mode: "local" | "fixture" | "production"
+  mode: "local" | "production"
 ) => {
   const url = new URL(target.url);
   if (url.username || url.password || url.hash || !target.method) {
@@ -92,35 +93,26 @@ const validateTarget = (
       "Connector target must have no embedded credentials or fragment."
     );
   }
-  if (
-    target.kind === "mcp-read" &&
-    (definition.effect !== "read" || url.protocol !== "https:")
-  ) {
-    throw new Error(
-      "MCP connectors require HTTPS and read-only tool definitions."
-    );
-  }
-  if (
-    target.kind === "fixture-write" &&
-    (mode !== "fixture" || definition.effect !== "write" || !requiresApproval)
-  ) {
-    throw new Error("Write connectors require explicit fixture mode.");
-  }
-  if (
-    target.kind === "fixture-write" &&
-    !["fixture", "localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
-    !url.hostname.endsWith(".invalid")
-  ) {
-    throw new Error("Write fixture targets must use a local fixture host.");
-  }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error("Connector target must use HTTP or HTTPS.");
+  }
+  if (mode === "production" && url.protocol !== "https:") {
+    throw new Error("Production connectors require HTTPS.");
+  }
+  if (target.kind === "mcp-read" && definition.effect !== "read") {
+    throw new Error("MCP read connectors require read-only tool definitions.");
+  }
+  if (
+    target.kind === "http-write" &&
+    (definition.effect !== "write" || !requiresApproval)
+  ) {
+    throw new Error("Write connectors require write tools with approval.");
   }
 };
 
 export const createToolRegistry = (
   registrations: readonly ToolRegistration[],
-  mode: "local" | "fixture" | "production"
+  mode: "local" | "production"
 ): ToolRegistry => {
   const entries = new Map<ToolId, RegisteredTool>();
   for (const registration of registrations) {

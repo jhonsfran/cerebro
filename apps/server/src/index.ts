@@ -1,15 +1,12 @@
 import { createProductHandler } from "@cerebro/api/routers/conversations";
 import { createAppRouter } from "@cerebro/api/routers/index";
-import { principalContext } from "@cerebro/channels/security";
 import { ChannelError } from "@cerebro/channels/types";
-import { id } from "@cerebro/contracts";
-import { auditEvent } from "@cerebro/db/schema/audit";
 import { createS3ObjectStorage } from "@cerebro/memory";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { OpenAPIReferencePlugin } from "@orpc/openapi/plugins";
 import { RPCHandler } from "@orpc/server/fetch";
 import { ZodToJsonSchemaConverter } from "@orpc/zod/zod4";
-import { and, count, eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -18,19 +15,13 @@ import { createChannelOptions } from "./channel-services";
 import { createContext } from "./context";
 import { assertWorkerEnv } from "./env.server";
 import type { WorkerEnv } from "./env.server";
-import { inspectFixtureObservers } from "./fixture-observers";
 import { requestRoute, logRequest } from "./request-log";
-import {
-  createCurrentAuthorization,
-  createMemoryServices,
-  runtimeConfiguration,
-} from "./runtime-services";
+import { createMemoryServices, runtimeConfiguration } from "./runtime-services";
 import { createAuth, withDatabase } from "./services";
 
 export { ChannelDispatcher } from "./channel-dispatcher";
-export { SessionFixture } from "./session-fixture";
 export { SessionAgent } from "./deployed-session-agent";
-export { GatewayJournal, TrustedGateway, AuditSink } from "./runtime-gateways";
+export { TrustedGateway, AuditSink } from "./runtime-gateways";
 
 const app = new Hono<{ Bindings: WorkerEnv }>();
 const requestTraces = new WeakMap<Request, string>();
@@ -110,7 +101,6 @@ app.get("/ready", async (context) => {
       !context.env.SESSION ||
       !context.env.LOADER ||
       !context.env.TOOL_GATEWAY ||
-      !context.env.GATEWAY_JOURNAL ||
       !context.env.AUDIT_SINK ||
       !context.env.CHANNEL_DISPATCHER
     ) {
@@ -143,188 +133,17 @@ app.on(["POST", "GET", "PUT", "PATCH", "DELETE"], "/api/auth/*", (context) =>
   )
 );
 
-app.post("/api/fixture/runtime/isolation", async (context) => {
-  if (context.env.DEPLOY_MODE !== "fixture") {
-    return context.json({ error: "Not found" }, 404);
-  }
-  return await withDatabase(context.env, async (database) => {
-    const session = await createAuth(context.env, database).api.getSession({
-      headers: context.req.raw.headers,
-    });
-    if (!session) {
-      return context.json({ error: "Unauthorized" }, 401);
-    }
-    const organizationId =
-      context.env.CHANNEL_ORGANIZATION_ID ?? "local-company";
-    const execution = await principalContext(
-      database,
-      organizationId,
-      session.user.id
-    );
-    const allowed = await createCurrentAuthorization(context.env).evaluate(
-      execution,
-      "manage",
-      {
-        id: `installation:${organizationId}`,
-        kind: "agent",
-        organizationId: id.organization(organizationId),
-      },
-      { deadlineAt: Date.now() + 5000 }
-    );
-    if (allowed.status !== "ok") {
-      return context.json({ error: "Authorization unavailable" }, 503);
-    }
-    if (allowed.value.decision !== "allow") {
-      return context.json({ error: "Forbidden" }, 403);
-    }
-    const worker = context.env.LOADER.get("cerebro-isolation-proof-v1", () => ({
-      compatibilityDate: "2026-09-28",
-      env: { GATEWAY: context.env.TOOL_GATEWAY },
-      globalOutbound: null,
-      mainModule: "isolation.js",
-      modules: {
-        "isolation.js": `export default {async fetch(request, env){let deniedAmbientEgress=false;try{await fetch("http://fixture:8090/health")}catch{deniedAmbientEgress=true}const gateway=await env.GATEWAY.fetch(new Request("https://gateway.internal/ready"));return Response.json({deniedAmbientEgress,gatewayReachable:gateway.ok})}}`,
-      },
-    }));
-    return await worker
-      .getEntrypoint()
-      .fetch(new Request("https://isolation.internal/probe"));
-  });
-});
-
-app.post("/api/fixture/runtime/observers", (context) =>
-  inspectFixtureObservers(context.req.raw, context.env)
-);
-
-const auditReplayInput = z.strictObject({
-  changed: z.boolean().default(false),
-  eventId: z.string().min(1).max(512),
-});
-app.post("/api/fixture/audit/replay", async (context) => {
-  if (context.env.DEPLOY_MODE !== "fixture") {
-    return context.json({ error: "Not found" }, 404);
-  }
-  const origin = context.req.header("Origin");
-  if (origin && origin !== context.env.CORS_ORIGIN) {
-    return context.json({ error: "Forbidden" }, 403);
-  }
-  return await withDatabase(context.env, async (database) => {
-    const session = await createAuth(context.env, database).api.getSession({
-      headers: context.req.raw.headers,
-    });
-    if (!session) {
-      return context.json({ error: "Unauthorized" }, 401);
-    }
-    const organizationId =
-      context.env.CHANNEL_ORGANIZATION_ID ?? "local-company";
-    const execution = await principalContext(
-      database,
-      organizationId,
-      session.user.id
-    );
-    const allowed = await createCurrentAuthorization(context.env).evaluate(
-      execution,
-      "manage",
-      {
-        id: `installation:${organizationId}`,
-        kind: "agent",
-        organizationId: id.organization(organizationId),
-      },
-      { deadlineAt: Date.now() + 5000 }
-    );
-    if (allowed.status !== "ok") {
-      return context.json({ error: "Authorization unavailable" }, 503);
-    }
-    if (allowed.value.decision !== "allow") {
-      return context.json({ error: "Forbidden" }, 403);
-    }
-    const input = auditReplayInput.safeParse(await context.req.json());
-    if (!input.success) {
-      return context.json({ error: "Invalid replay input" }, 400);
-    }
-    const scope = and(
-      eq(auditEvent.eventId, input.data.eventId),
-      eq(auditEvent.organizationId, organizationId)
-    );
-    const [row] = await database.select().from(auditEvent).where(scope);
-    if (!row) {
-      return context.json({ error: "Not found" }, 404);
-    }
-    const [before] = await database
-      .select({ count: count() })
-      .from(auditEvent)
-      .where(scope);
-    const event = {
-      ...row,
-      name: input.data.changed ? `${row.name}.replay-conflict` : row.name,
-      occurredAt: row.occurredAt.getTime(),
-    };
-    const statuses = await Promise.all(
-      [1, 2].map(async () => {
-        const response = await context.env.AUDIT_SINK.fetch(
-          new Request("https://audit.internal/project", {
-            body: JSON.stringify(event),
-            headers: { "Content-Type": "application/json" },
-            method: "POST",
-          })
-        );
-        return response.status;
-      })
-    );
-    const [after] = await database
-      .select({ count: count() })
-      .from(auditEvent)
-      .where(scope);
-    const result = {
-      after: after?.count ?? 0,
-      before: before?.count ?? 0,
-      statuses,
-    };
-    if (statuses.includes(409)) {
-      return context.json(result, 409);
-    }
-    if (statuses.some((status) => status !== 200)) {
-      return context.json(result, 503);
-    }
-    return context.json(result);
-  });
-});
-
-app.on(["POST", "GET"], "/fixture/sessions/:name", async (context) => {
-  if (context.env.DEPLOY_MODE !== "fixture") {
-    return context.json({ error: "Not found" }, 404);
-  }
-  return await withDatabase(context.env, async (database) => {
-    const auth = createAuth(context.env, database);
-    const session = await auth.api.getSession({
-      headers: context.req.raw.headers,
-    });
-    if (!session) {
-      return context.json({ error: "Unauthorized" }, 401);
-    }
-    const durable = context.env.SESSION_FIXTURE.get(
-      context.env.SESSION_FIXTURE.idFromName(context.req.param("name"))
-    );
-    const request = new Request(context.req.raw.url, {
-      headers: { "X-Cerebro-Fixture-User-Id": session.user.id },
-      method: context.req.method,
-    });
-    return durable.fetch(request);
-  });
-});
-
 app.use("*", async (context, next) => {
   const { path } = context.req;
   if (
     !path.startsWith("/api/product/") &&
-    !path.startsWith("/api/channels/slack/") &&
-    !path.startsWith("/api/fixture/slack/")
+    !path.startsWith("/api/channels/slack/")
   ) {
     return next();
   }
   const origin = context.req.header("Origin");
   if (
-    (path.startsWith("/api/product/") || path.startsWith("/api/fixture/")) &&
+    path.startsWith("/api/product/") &&
     origin &&
     origin !== context.env.CORS_ORIGIN
   ) {

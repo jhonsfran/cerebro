@@ -12,17 +12,17 @@ The current delivery plan retains celld and replaces OpenCode and AI SDK with Pi
 
 Organize code around company behavior and a few explicit integration boundaries. Add an interface where a component has an independent lifecycle or a high replacement cost.
 
-Reuse the meanings of `SessionService`, `AuthorizationPolicy`, and `ToolExecutor` through Effect service contracts. Separate durable tool receipts from historical budget journal states. Define an external metering port without implementing a local budget authority. Keep contracts in Cerebro terms. Vendor configuration, SDK contexts, clients, connections, and storage handles stay in implementations.
+Reuse the meanings of `SessionService`, `AuthorizationPolicy`, and `ToolExecutor` through Effect service contracts. Define an external metering port without implementing a local budget authority. Keep contracts in Cerebro terms. Vendor configuration, SDK contexts, clients, connections, and storage handles stay in implementations.
 
-Keep one application operation for each business action. HTTP, web chat, Slack, and agent tools call that operation. The application verifies current company access and coordinates approvals and tool receipts. External metering remains unbound in the first slice.
+Keep one application operation for each business action. HTTP, web chat, Slack, and agent tools call that operation. The application verifies current company access and coordinates approvals. External metering remains unbound in the first slice.
 
 Pi owns its private session, durable inbox, steering, model/tool loop, submission deduplication, native Stop semantics and engine recovery. The official PiHarness supplies persistence and Lifecycle wake-up. The thin Effect adapter translates public vendor calls; the conversation coordinator owns trusted command intents, durable product state and repair of its handoff and projection. It does not implement another execution queue or alarm scheduler. Cerebro owns action-approval decisions and operation identities. SDK permission prompts must not create another independent approval authority.
 
 The Durable Object emits authorized observation frames. The HTTP route authenticates the viewer, checks access on attach and on an interval, and forwards the bytes. It does not own the Pi loop. The web app applies the frames to one projection and renders its transcript, approvals and citations from it. Reconnect reads a fresh snapshot, including current partial content, then observes live updates. Pi's in-memory event stream does not provide cursor replay; exact replay would require a separate durable chunk log.
 
-Each fact has one authority. Product history and tool receipts use Cerebro tables in the session's SQLite store. PostgreSQL owns company records. Browser and channel history are projections. Pi checkpoints are private engine state. A future external meter owns pricing, balances, and reservations. Historical budget records remain preserved.
+Each fact has one authority. Product history uses Cerebro tables in the session's SQLite store. Tool dispatch markers and outcomes are Pi task memos. PostgreSQL owns company records. Browser and channel history are projections. Pi checkpoints are private engine state. A future external meter owns pricing, balances, and reservations. Historical budget records remain preserved.
 
-Preserve intent before external dispatch. Record confirmed results afterward. An uncertain non-idempotent effect stops for reconciliation. Neither actors nor database transactions guarantee exactly-once execution in a remote system.
+Preserve intent before external dispatch. Record confirmed results afterward. An uncertain non-idempotent effect is reported as an unknown outcome and never dispatched again. Neither actors nor database transactions guarantee exactly-once execution in a remote system.
 
 ## Dependency rules
 
@@ -43,7 +43,7 @@ Direct Drizzle queries are acceptable in company repositories. Do not add a gene
 
 Replace the implementation and migrate its callers in one change. Delete the old integration and implementation-specific tests. Preserve behavioral tests that still describe company requirements.
 
-A runtime replacement changes the session adapter, persistence integration, and deployment. An engine replacement changes private session handling and event translation. Neither should change company authorization or tool receipts.
+A runtime replacement changes the session adapter, persistence integration, and deployment. An engine replacement changes private session handling and event translation. Neither should change company authorization or approval binding.
 
 Keep one supported implementation per boundary until a real requirement needs another. An alternative component does not need checkpoint compatibility with an old engine.
 

@@ -12,19 +12,16 @@ import {
   InvalidInput,
   NotFound,
   Unavailable,
-  UnknownOutcome,
 } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext, RunId } from "@cerebro/contracts/identity";
 import type { EffectOptions, ReadOptions } from "@cerebro/contracts/port";
-import type { ToolReceiptStore } from "@cerebro/contracts/receipt-service";
 import type { AgentDefinition, RunState } from "@cerebro/contracts/session";
 import {
   DomainUpdate,
   SessionService,
 } from "@cerebro/contracts/session-service";
-import type { ToolExecutor } from "@cerebro/contracts/tool-service";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import {
   Context,
@@ -48,8 +45,6 @@ export interface SessionServiceDependencies {
   readonly authority: AuthorityService;
   readonly engine: ExecutionEngine;
   readonly store: SessionStore;
-  readonly executor?: ToolExecutor;
-  readonly receipts?: ToolReceiptStore;
   readonly checkpoint?: HostCheckpoint;
   readonly retainDurableWork?: (completion: Promise<void>) => void;
   readonly retainProjection?: () => Effect.Effect<void, ContractFailure>;
@@ -229,10 +224,7 @@ export const createSessionService = (
     Effect.gen(function* projectAffected() {
       for (const run of states) {
         const handoff = yield* findHandoff(run.runId);
-        if (
-          handoff.run.state === "unknown-outcome" ||
-          run.state === "completed"
-        ) {
+        if (run.state === "completed") {
           continue;
         }
         yield* commit(handoff, {
@@ -262,17 +254,6 @@ export const createSessionService = (
         );
         if (handoff.mode === "replace" && !handoff.replaceStopped) {
           if (!accepted) {
-            const unknown = (yield* handoffs(dependencies)).find(
-              (item) => item.run.state === "unknown-outcome"
-            );
-            if (unknown?.run.state === "unknown-outcome") {
-              return yield* Effect.fail(
-                new UnknownOutcome({
-                  operationId: unknown.run.operationId,
-                  reason: "Reconcile the uncertain effect before replacement",
-                })
-              );
-            }
             const pending = states.find(pendingRun);
             if (pending) {
               yield* projectBeforeStop(engine, pending.runId);
@@ -591,14 +572,6 @@ export const createSessionService = (
                 hostOptions()
               );
               const handoff = yield* findHandoff(command.runId);
-              if (handoff.run.state === "unknown-outcome") {
-                return yield* Effect.fail(
-                  new UnknownOutcome({
-                    operationId: handoff.run.operationId,
-                    reason: "Stop cannot confirm an uncertain write",
-                  })
-                );
-              }
               if (!pendingRun(handoff.run)) {
                 return handoff.run;
               }
@@ -623,139 +596,6 @@ export const createSessionService = (
           );
           return yield* dependencies.store.snapshot(address, context, options);
         }),
-      reconcile: (command, options) =>
-        durableCommand(
-          Effect.gen(function* reconcileTool() {
-            yield* authorizeCommand(
-              dependencies,
-              command.address,
-              command.context,
-              "execute",
-              hostOptions()
-            );
-            const snapshot = yield* dependencies.store.snapshot(
-              command.address,
-              command.context,
-              hostOptions()
-            );
-            const tool = snapshot.tools.find(
-              (value) =>
-                value.runId === command.runId &&
-                value.operationId === command.operationId
-            );
-            if (!tool) {
-              return yield* Effect.fail(
-                new NotFound({ resource: "Bound tool operation" })
-              );
-            }
-            if (tool.state === "succeeded" || tool.state === "failed") {
-              return tool;
-            }
-            if (tool.state !== "unknown-outcome") {
-              return yield* Effect.fail(
-                new Conflict({
-                  code: "already-final",
-                  reason: "Only an uncertain tool can be reconciled",
-                })
-              );
-            }
-            if (!dependencies.executor || !dependencies.receipts) {
-              return yield* Effect.fail(
-                new Unavailable({
-                  reason: "Tool reconciliation is not configured",
-                })
-              );
-            }
-            const result = yield* Effect.result(
-              dependencies.executor.reconcile(
-                command.operationId,
-                command.context,
-                hostOptions()
-              )
-            );
-            if (result._tag === "Failure" && result.failure._tag === "Denied") {
-              return yield* Effect.fail(result.failure);
-            }
-            const receipt = yield* dependencies.receipts.read(
-              {
-                operationId: command.operationId,
-                organizationId: command.address.organizationId,
-              },
-              command.context,
-              hostOptions()
-            );
-            if (receipt.state !== "completed" && receipt.state !== "outcome") {
-              if (result._tag === "Failure") {
-                return yield* Effect.fail(result.failure);
-              }
-              return yield* Effect.fail(
-                new UnknownOutcome({
-                  operationId: command.operationId,
-                  reason: "The gateway has no confirmed receipt",
-                })
-              );
-            }
-            if (receipt.intent.invocation.runId !== command.runId) {
-              return yield* Effect.fail(
-                new Conflict({
-                  code: "digest-mismatch",
-                  reason: "Receipt belongs to another run",
-                })
-              );
-            }
-            yield* authorizeCommand(
-              dependencies,
-              command.address,
-              command.context,
-              "execute",
-              hostOptions()
-            );
-            const resolved = {
-              ...tool,
-              output:
-                receipt.outcome.state === "succeeded"
-                  ? receipt.outcome.execution.output
-                  : null,
-              state: receipt.outcome.state,
-            };
-            const handoff = yield* findHandoff(command.runId);
-            const resumes =
-              handoff.run.state === "unknown-outcome" &&
-              !snapshot.tools.some(
-                (value) =>
-                  value.runId === command.runId &&
-                  value.operationId !== command.operationId &&
-                  value.state === "unknown-outcome"
-              );
-            const toolUpdate: DomainUpdate = { ...resolved, type: "tool" };
-            if (resumes) {
-              yield* dependencies.retainProjection?.() ?? Effect.void;
-            }
-            yield* commit(handoff, {
-              runId: command.runId,
-              type: "projected-batch",
-              updates: resumes
-                ? [
-                    toolUpdate,
-                    {
-                      run: { runId: command.runId, state: "running" },
-                      type: "run",
-                    },
-                  ]
-                : [toolUpdate],
-            });
-            if (resumes) {
-              // The run ended in the engine before reconciliation, so no engine
-              // event follows. Project now; the scheduled repair job retries.
-              const engine = yield* open();
-              yield* projectCanonical(engine, hostOptions()).pipe(
-                Effect.catch(noteObservationFailure)
-              );
-            }
-            return resolved;
-          }),
-          options
-        ),
       stream: (address, context, request, options) =>
         Stream.unwrap(
           Effect.gen(function* observeDomain() {
@@ -808,26 +648,6 @@ export const createSessionService = (
           });
           return yield* durableCommand(
             Effect.gen(function* handoffSubmission() {
-              const values = yield* handoffs(dependencies);
-              if (
-                !values.some(
-                  (value) =>
-                    value.submission.requestId === command.event.eventId
-                )
-              ) {
-                const unknown = values.find(
-                  (value) => value.run.state === "unknown-outcome"
-                );
-                if (unknown?.run.state === "unknown-outcome") {
-                  return yield* Effect.fail(
-                    new UnknownOutcome({
-                      operationId: unknown.run.operationId,
-                      reason:
-                        "Reconcile the uncertain effect before admitting another input",
-                    })
-                  );
-                }
-              }
               const engine = yield* open();
               for (const value of yield* handoffs(dependencies)) {
                 if (
@@ -896,8 +716,6 @@ export const sessionServiceLayer = (
     SessionServiceDependencies,
     | "address"
     | "agent"
-    | "executor"
-    | "receipts"
     | "checkpoint"
     | "retainDurableWork"
     | "retainProjection"

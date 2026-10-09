@@ -15,11 +15,6 @@ ENTRYPOINT ["node", "deploy/entrypoint.mjs", "minio"]
 
 FROM ghcr.io/denoland/celld:0.6.1@sha256:acb0bc2dca628f0dac7c6b43eea42615a79f4943f316f6df7c1da0b86d52150b AS celld-bin
 
-FROM node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8 AS fixture
-WORKDIR /app
-COPY tests/slice-1/provider.mjs ./tests/slice-1/provider.mjs
-CMD ["node", "tests/slice-1/provider.mjs"]
-
 FROM node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8 AS app
 COPY --from=celld-bin /usr/local/bin/celld /usr/local/bin/celld
 COPY --from=celld-bin /etc/ssl/certs /etc/ssl/certs
@@ -48,7 +43,6 @@ RUN --mount=type=secret,id=proxy_ca \
 COPY apps ./apps
 COPY packages ./packages
 COPY deploy ./deploy
-COPY tests/slice-1 ./tests/slice-1
 ENV PATH="/app/node_modules/.bin:${PATH}"
 ARG VITE_SERVER_URL=http://localhost:18765
 ENV VITE_SERVER_URL=${VITE_SERVER_URL}

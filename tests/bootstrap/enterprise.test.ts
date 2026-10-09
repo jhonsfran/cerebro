@@ -14,9 +14,7 @@ const environment: WorkerEnv = {
   BETTER_AUTH_URL: "http://localhost:18765",
   CORS_ORIGIN: "http://localhost:3001",
   DATABASE_URL: "postgres://user:pass@localhost:5432/cerebro",
-  DEPLOY_MODE: "fixture",
-  FIXTURE_ADAPTERS: "1",
-  SESSION_FIXTURE: {} as DurableObjectNamespace,
+  DEPLOY_MODE: "local",
 };
 
 test("readiness reports invalid enterprise authentication configuration", async () => {
@@ -83,7 +81,7 @@ test("bootstrap rejects semantic enterprise configuration before deployment", as
       env: {
         ...process.env,
         CEREBRO_SECRETS_DIR: directory,
-        DEPLOY_MODE: "fixture",
+        DEPLOY_MODE: "local",
       },
       timeout: 10_000,
     });

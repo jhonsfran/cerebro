@@ -32,10 +32,8 @@ export const createChannelOptions = (env: WorkerEnv) => {
   const slack = env.SLACK_CHANNEL_JSON
     ? slackConfiguration.parse(JSON.parse(env.SLACK_CHANNEL_JSON))
     : undefined;
-  if (env.DEPLOY_MODE !== "fixture" && slack?.apiUrl) {
-    throw new Error(
-      "A custom Slack API URL is permitted only in fixture mode."
-    );
+  if (env.DEPLOY_MODE === "production" && slack?.apiUrl) {
+    throw new Error("Production uses the public Slack API URL.");
   }
   return {
     bootstrapToken: config.bootstrapToken,
@@ -117,22 +115,6 @@ export const createChannelOptions = (env: WorkerEnv) => {
       context: ExecutionContext,
       input: { sourceId: string }
     ) => readSource(env, database, context, input.sourceId),
-    recordAdapterTime:
-      env.DEPLOY_MODE === "fixture"
-        ? (measurement: {
-            readonly adapter: "permission" | "projection";
-            readonly durationMs: number;
-            readonly resourceId: string;
-          }) => {
-            console.info(
-              JSON.stringify({
-                ...measurement,
-                at: Date.now(),
-                event: "slice-1.adapter",
-              })
-            );
-          }
-        : undefined,
     sessions: () => createSessionClient(env),
     slack,
     trustedOwnerUserId: config.trustedOwnerUserId,

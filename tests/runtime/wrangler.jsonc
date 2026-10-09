@@ -5,7 +5,6 @@
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "DATABASE_URL": "postgres://runtime:runtime-local-only@postgres:5432/runtime",
-    "DEPLOY_MODE": "fixture",
     "FIXTURE_URL": "http://fixture:8090",
     "FAIL_FIRST_EFFECT": "0",
     "TRACE_NATIVE": "0",
@@ -26,4 +25,5 @@
       "entrypoint": "AuditSink",
     },
   ],
+  "worker_loaders": [{ "binding": "LOADER" }],
 }

@@ -21,8 +21,6 @@ import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import {
   channelConversation,
   channelEffect,
-  channelFixtureRun,
-  channelInbox,
   channelItem,
   installationSetup,
 } from "@cerebro/db/schema/agents";
@@ -34,8 +32,6 @@ import {
 } from "@cerebro/db/schema/identity";
 import { and, asc, eq, gt, max, sql } from "drizzle-orm";
 
-import { sessionServiceFor } from "./fixture-session";
-import { submitInbox } from "./inbox-submission";
 import {
   authorize,
   authorizeContent,
@@ -49,9 +45,6 @@ import {
 import {
   ChannelError,
   EFFECT_DEADLINE_MS,
-  FIXTURE_MODEL_ID,
-  FIXTURE_SOURCE_ID,
-  FIXTURE_TOOL_ID,
   INSTALLATION_AGENT_PREFIX,
 } from "./types";
 import type {
@@ -130,8 +123,7 @@ export const createChannelService = (
       database
     ).findPrincipalByUser(options.organizationId, userId);
     return {
-      bootstrapTokenRequired:
-        options.mode !== "fixture" && Boolean(options.bootstrapToken),
+      bootstrapTokenRequired: Boolean(options.bootstrapToken),
       mode: options.mode,
       organizationId: options.organizationId,
       owner: record?.ownerUserId === userId,
@@ -161,10 +153,7 @@ export const createChannelService = (
         }
         return;
       }
-      if (
-        options.mode !== "fixture" &&
-        !(await trustedSetupCredential(options, userId, bootstrapToken))
-      ) {
+      if (!(await trustedSetupCredential(options, userId, bootstrapToken))) {
         throw new ChannelError(
           403,
           "unauthorized",
@@ -206,81 +195,26 @@ export const createChannelService = (
           state: "active",
         });
       }
-      await tx.insert(identityGrant).values([
-        {
-          action: "manage",
+      await tx.insert(identityGrant).values(
+        (
+          [
+            [
+              "manage",
+              "agent",
+              `${INSTALLATION_AGENT_PREFIX}${options.organizationId}`,
+            ],
+            ["read", "budget", options.organizationId],
+            ["read", "audit", options.organizationId],
+          ] as const
+        ).map(([action, resourceKind, resourceId]) => ({
+          action,
           organizationId: options.organizationId,
           principalId,
-          resourceId: `${INSTALLATION_AGENT_PREFIX}${options.organizationId}`,
-          resourceKind: "agent",
-          source:
-            options.mode === "fixture" ? "fixture-owner" : "installation-owner",
-        },
-        {
-          action: "read",
-          organizationId: options.organizationId,
-          principalId,
-          resourceId: options.organizationId,
-          resourceKind: "budget",
-          source:
-            options.mode === "fixture" ? "fixture-owner" : "installation-owner",
-        },
-        {
-          action: "read",
-          organizationId: options.organizationId,
-          principalId,
-          resourceId: options.organizationId,
-          resourceKind: "audit",
-          source:
-            options.mode === "fixture" ? "fixture-owner" : "installation-owner",
-        },
-        ...(options.mode === "fixture"
-          ? [
-              ...(["read", "execute", "write", "approve"] as const).map(
-                (action) => ({
-                  action,
-                  organizationId: options.organizationId,
-                  principalId,
-                  resourceId: "fixture_effect",
-                  resourceKind: "tool" as const,
-                  source: "fixture-owner",
-                })
-              ),
-              {
-                action: "read" as const,
-                organizationId: options.organizationId,
-                principalId,
-                resourceId: FIXTURE_TOOL_ID,
-                resourceKind: "tool" as const,
-                source: "fixture-owner",
-              },
-              {
-                action: "execute" as const,
-                organizationId: options.organizationId,
-                principalId,
-                resourceId: FIXTURE_TOOL_ID,
-                resourceKind: "tool" as const,
-                source: "fixture-owner",
-              },
-              {
-                action: "execute" as const,
-                organizationId: options.organizationId,
-                principalId,
-                resourceId: "fixture-connector",
-                resourceKind: "tool" as const,
-                source: "fixture-owner",
-              },
-              {
-                action: "read" as const,
-                organizationId: options.organizationId,
-                principalId,
-                resourceId: FIXTURE_SOURCE_ID,
-                resourceKind: "memory" as const,
-                source: "fixture-owner",
-              },
-            ]
-          : []),
-      ]);
+          resourceId,
+          resourceKind,
+          source: "installation-owner",
+        }))
+      );
       await tx.insert(installationSetup).values({
         id: "installation",
         organizationId: options.organizationId,
@@ -300,16 +234,6 @@ export const createChannelService = (
       return {
         ...options.catalog,
         sourceChoices: options.catalog.sourceChoices ?? [],
-      };
-    }
-    if (options.mode === "fixture" && !options.sessions) {
-      return {
-        connectorChoices: [
-          { id: FIXTURE_TOOL_ID, label: "Local pilot source" },
-        ],
-        modelChoices: [
-          { id: FIXTURE_MODEL_ID, label: "Deterministic local fixture" },
-        ],
       };
     }
     throw new ChannelError(
@@ -695,14 +619,6 @@ export const createChannelService = (
       "agent",
       conversation.agentId
     );
-    const sessions = sessionServiceFor(database, options);
-    await runEffect(
-      sessions.inspect(
-        conversationAddress(conversation),
-        context,
-        readOptions()
-      )
-    );
     const contentDigest = await digest({
       address: conversationAddress(conversation),
       mode,
@@ -710,7 +626,7 @@ export const createChannelService = (
       text,
     });
     const eventId = id.event(`event:${await digest(eventKey)}`);
-    const envelope = {
+    const event = {
       ...conversationAddress(conversation),
       context,
       event: { payload: { text }, type: "user.message" as const },
@@ -719,66 +635,27 @@ export const createChannelService = (
       payloadDigest: id.digest(contentDigest),
       schemaVersion: 1 as const,
     };
-    const row = await database.transaction(async (tx) => {
-      await tx.execute(
-        sql`select set_config('lock_timeout', ${`${EFFECT_DEADLINE_MS}ms`}, true)`
-      );
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtext(${eventKey}))`
-      );
-      const [prior] = await tx
-        .select()
-        .from(channelInbox)
-        .where(eq(channelInbox.eventKey, eventKey));
-      if (prior) {
-        if (prior.digest !== contentDigest) {
-          throw new ChannelError(
-            409,
-            "digest-mismatch",
-            "The event ID has different message content."
-          );
+    // The session admits each event once; a retry with the same ID replays its receipt.
+    const receipt = await runEffect(
+      options.sessions(database).submit(
+        { event, mode, type: "submit" },
+        {
+          ...readOptions(),
+          operationId: id.operation(`submit:${eventId}`),
+          requestDigest: id.digest(contentDigest),
         }
-        return prior;
-      }
-      const [inserted] = await tx
-        .insert(channelInbox)
-        .values({
-          conversationId: conversation.conversationId,
-          digest: contentDigest,
-          envelope,
-          eventKey,
-          organizationId: options.organizationId,
-          state: "pending",
-          submissionMode: mode,
-        })
-        .returning();
-      if (!inserted) {
-        throw new Error("The inbox insert returned no row.");
-      }
-      await tx
-        .update(channelConversation)
-        .set({
-          activityVersion: sql`${channelConversation.activityVersion} + 1`,
-          projectionState: "active",
-        })
-        .where(
-          eq(channelConversation.conversationId, conversation.conversationId)
-        );
-      return inserted;
-    });
-    const result = await submitInbox(options, row.eventKey, (entry) =>
-      runEffect(
-        sessions.submit(
-          { event: entry.envelope, mode: entry.submissionMode, type: "submit" },
-          {
-            ...readOptions(),
-            operationId: id.operation(`submit:${entry.envelope.eventId}`),
-            requestDigest: id.digest(entry.digest),
-          }
-        )
       )
     );
-    return result.receipt;
+    await database
+      .update(channelConversation)
+      .set({
+        activityVersion: sql`${channelConversation.activityVersion} + 1`,
+        projectionState: "active",
+      })
+      .where(
+        eq(channelConversation.conversationId, conversation.conversationId)
+      );
+    return receipt;
   };
   const submit = async (
     userId: string,
@@ -867,11 +744,9 @@ export const createChannelService = (
           ],
         }
       : await runEffect(
-          sessionServiceFor(database, options).inspect(
-            conversationAddress(row),
-            context,
-            readOptions()
-          )
+          options
+            .sessions(database)
+            .inspect(conversationAddress(row), context, readOptions())
         );
     return {
       agentId: row.agentId,
@@ -971,7 +846,7 @@ export const createChannelService = (
     };
     return {
       run: await runEffect(
-        sessionServiceFor(database, options).approve(command, {
+        options.sessions(database).approve(command, {
           ...readOptions(),
           operationId: id.operation(
             `approve:${context.actor.id}:${operationId}`
@@ -998,37 +873,10 @@ export const createChannelService = (
     };
     return {
       run: await runEffect(
-        sessionServiceFor(database, options).cancel(command, {
+        options.sessions(database).cancel(command, {
           ...readOptions(),
           operationId: id.operation(
             `cancel:${context.actor.id}:${operationId}`
-          ),
-          requestDigest: id.digest(await digest(command)),
-        })
-      ),
-    };
-  };
-  const reconcile = async (
-    userId: string,
-    conversationId: string,
-    runId: string,
-    operationId: string
-  ) => {
-    const context = await current(userId);
-    const row = await requireConversation(conversationId, context, "execute");
-    requireActive(row);
-    const command = {
-      address: conversationAddress(row),
-      context,
-      operationId: id.operation(operationId),
-      runId: id.run(runId),
-    };
-    return {
-      tool: await runEffect(
-        sessionServiceFor(database, options).reconcile(command, {
-          ...readOptions(),
-          operationId: id.operation(
-            `reconcile:${context.actor.id}:${operationId}`
           ),
           requestDigest: id.digest(await digest(command)),
         })
@@ -1070,23 +918,11 @@ export const createChannelService = (
         mode: options.mode,
       };
     }
-    if (options.mode !== "fixture" || options.sessions) {
-      throw new ChannelError(
-        503,
-        "provider-unavailable",
-        "The source adapter is not configured."
-      );
-    }
-    if (sourceId !== FIXTURE_SOURCE_ID) {
-      throw new ChannelError(404, "not-found", "The source was not found.");
-    }
-    return {
-      mode: "fixture",
-      sourceId,
-      sourceVersion: "1",
-      text: "Cerebro admits each conversation event with a stable ID. Retries reuse the stored envelope. Current permissions apply to every read and action. This source is a local fixture, not company retrieval.",
-      title: "Local pilot source",
-    };
+    throw new ChannelError(
+      503,
+      "provider-unavailable",
+      "The source adapter is not configured."
+    );
   };
   const audit = async (
     userId: string,
@@ -1119,53 +955,11 @@ export const createChannelService = (
         mode: options.mode,
       };
     }
-    if (options.mode !== "fixture" || options.sessions) {
-      throw new ChannelError(
-        503,
-        "provider-unavailable",
-        "The audit adapter is not configured."
-      );
-    }
-    const [record] = await database
-      .select()
-      .from(channelFixtureRun)
-      .where(
-        and(
-          eq(channelFixtureRun.organizationId, options.organizationId),
-          eq(channelFixtureRun.conversationId, conversationId),
-          eq(channelFixtureRun.runId, runId)
-        )
-      );
-    if (!record) {
-      throw new ChannelError(404, "not-found", "The run was not found.");
-    }
-    let endedAt = record.envelope.occurredAt;
-    if (record.state.state === "completed") {
-      endedAt = record.state.completedAt;
-    } else if (
-      record.state.state === "cancelled" ||
-      record.state.state === "failed"
-    ) {
-      const { endedAt: terminalAt } = record.state;
-      endedAt = terminalAt;
-    }
-    return {
-      entries: [
-        {
-          at: record.envelope.occurredAt,
-          description: "The stable conversation event was accepted.",
-          type: "admission",
-        },
-        {
-          at: endedAt,
-          description: `The run state is ${record.state.state}.`,
-          type: "state",
-        },
-      ],
-      mode: "fixture",
-      runId,
-      state: record.state.state,
-    };
+    throw new ChannelError(
+      503,
+      "provider-unavailable",
+      "The audit adapter is not configured."
+    );
   };
   return {
     admit,
@@ -1182,7 +976,6 @@ export const createChannelService = (
     listConversations,
     publishAgent,
     readConversation,
-    reconcile,
     setAccess,
     setup,
     source,

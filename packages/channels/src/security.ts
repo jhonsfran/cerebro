@@ -146,7 +146,6 @@ export const authorize = async (
   const policy =
     options.authorization?.(database) ??
     createAuthorizationPolicy(createIdentityRepository(database), options.now);
-  const startedAt = performance.now();
   const evaluated = await policy.evaluate(
     context,
     action,
@@ -157,11 +156,6 @@ export const authorize = async (
     },
     { deadlineAt: (options.now?.() ?? Date.now()) + EFFECT_DEADLINE_MS }
   );
-  options.recordAdapterTime?.({
-    adapter: "permission",
-    durationMs: performance.now() - startedAt,
-    resourceId,
-  });
   const result = unwrap(evaluated);
   if (result.decision !== "allow") {
     throw new ChannelError(403, "forbidden", result.reason);
@@ -178,10 +172,7 @@ export const authorizeContent = async (
     return;
   }
   if (!item.dependencies) {
-    if (
-      item.type !== "user" &&
-      (options.mode !== "fixture" || options.checkContentDependencies)
-    ) {
+    if (item.type !== "user") {
       throw new ChannelError(
         403,
         "unauthorized",
@@ -206,10 +197,7 @@ export const authorizeContent = async (
         item.dependencies
       )
     );
-  } else if (
-    options.mode !== "fixture" &&
-    item.dependencies.sourceIds.length > 0
-  ) {
+  } else if (item.dependencies.sourceIds.length > 0) {
     throw new ChannelError(
       503,
       "provider-unavailable",

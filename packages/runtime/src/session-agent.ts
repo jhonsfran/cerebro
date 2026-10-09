@@ -12,7 +12,6 @@ import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext, RunId } from "@cerebro/contracts/identity";
 import type { EffectOptions, ReadOptions } from "@cerebro/contracts/port";
-import type { ToolReceiptStore } from "@cerebro/contracts/receipt-service";
 import type {
   AgentDefinition,
   ContentDependencies,
@@ -72,7 +71,6 @@ export interface SessionHostConfiguration {
   readonly agent: AgentDefinition;
   readonly authority: AuthorityService;
   readonly executor: ToolExecutor;
-  readonly receipts: ToolReceiptStore;
   readonly checkpoint?: HostCheckpoint;
   readonly projectAudit?: (
     event: AuditProjection
@@ -104,11 +102,6 @@ const validApproval = (command: ApprovalCommand): boolean =>
   typeof command?.approvalId === "string" &&
   typeof command.runId === "string" &&
   (command.decision === "allow" || command.decision === "deny");
-const validReconciliation = (command: {
-  readonly runId?: string;
-  readonly operationId?: string;
-}): command is { readonly runId: string; readonly operationId: string } =>
-  typeof command?.runId === "string" && typeof command.operationId === "string";
 const requestOptions = (value: unknown): EffectOptions => {
   const supplied = value as Partial<EffectOptions> | undefined;
   if (
@@ -430,8 +423,13 @@ export class SessionAgent<
         deadlineMs: configuration.provider.deadlineMs,
         dependencies: configuration.toolDependencies,
         executor: configuration.executor,
+        persist: () =>
+          Effect.tryPromise({
+            catch: () =>
+              new Unavailable({ reason: "Tool dispatch state flush failed" }),
+            try: () => this.ctx.storage.sync(),
+          }),
         publish: store.publish,
-        receipts: configuration.receipts,
         resolve,
         tools: configuration.tools,
       });
@@ -788,29 +786,6 @@ export class SessionAgent<
                   context,
                   runId: id.run(command.runId),
                   type: "cancel",
-                },
-                options
-              ),
-            });
-          }
-          if (path === "/reconcile") {
-            const command = body.command as {
-              readonly runId?: string;
-              readonly operationId?: string;
-            };
-            if (!validReconciliation(command)) {
-              return yield* Effect.fail(
-                new InvalidInput({ reason: "Invalid reconciliation" })
-              );
-            }
-            return Response.json({
-              status: "ok",
-              value: yield* runtime.service.reconcile(
-                {
-                  address,
-                  context,
-                  operationId: id.operation(command.operationId),
-                  runId: id.run(command.runId),
                 },
                 options
               ),

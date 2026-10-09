@@ -32,7 +32,7 @@ import type { PiHarness } from "agents/harness/pi";
 import { Cause, Effect, Layer, Queue, Stream } from "effect";
 
 import { sameAddress } from "./event-handler.ts";
-import { pendingRun } from "./pi-projection.ts";
+import { pendingRun, settledTool } from "./pi-projection.ts";
 import { createProvisionalTextProjection } from "./pi-provisional-text.ts";
 import {
   attempt,
@@ -80,9 +80,6 @@ const stateOf = (
   handoff: DurableHandoff,
   endedAt: number
 ): RunState => {
-  if (handoff.run.state === "unknown-outcome") {
-    return handoff.run;
-  }
   const { runId } = handoff.submission;
   switch (record.status) {
     case "queued": {
@@ -246,32 +243,18 @@ export const createPiExecutionEngine = (
       }
       return values;
     });
-  const executionBlocked = (
-    execution: ExecutionState,
-    members: readonly NativeInput[]
-  ) =>
-    members.some(({ handoff }) => handoff.run.state === "unknown-outcome") ||
+  const executionBlocked = (execution: ExecutionState) =>
     configuration
       .snapshot()
       .tools.some(
         (tool) =>
-          execution.runIds.includes(tool.runId) &&
-          tool.state !== "succeeded" &&
-          tool.state !== "failed" &&
-          tool.state !== "cancelled"
+          execution.runIds.includes(tool.runId) && !settledTool(tool.state)
       );
   const inspect = (options: ReadOptions) =>
     Effect.map(captureMembership(options), (values) => {
       const blocked = new Set(
         [...executions.values()]
-          .filter((execution) =>
-            executionBlocked(
-              execution,
-              values.filter(({ handoff }) =>
-                execution.runIds.includes(handoff.submission.runId)
-              )
-            )
-          )
+          .filter((execution) => executionBlocked(execution))
           .flatMap((execution) => execution.runIds)
       );
       return values.map(({ record, handoff }) =>
@@ -335,7 +318,7 @@ export const createPiExecutionEngine = (
         const done = members.every(
           ({ record }) => record.type === "input" && record.status === "done"
         );
-        const blocked = executionBlocked(execution, members);
+        const blocked = executionBlocked(execution);
         if (done && !blocked) {
           const [primary] = members;
           if (
@@ -386,11 +369,7 @@ export const createPiExecutionEngine = (
           }
         }
         for (const { handoff, record } of members) {
-          if (
-            blocked &&
-            record.status === "done" &&
-            handoff.run.state !== "unknown-outcome"
-          ) {
+          if (blocked && record.status === "done") {
             projected.push({ run: handoff.run, type: "run" });
             continue;
           }

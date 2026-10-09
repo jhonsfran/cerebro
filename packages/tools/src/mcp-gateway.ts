@@ -1,6 +1,4 @@
-import { sameExecutionContext } from "@cerebro/contracts/identity";
 import type { OrganizationId } from "@cerebro/contracts/identity";
-import type { ToolOperationJournal } from "@cerebro/contracts/operation-journal";
 import { preflightEffect } from "@cerebro/contracts/port";
 import type { EffectOptions, PortResult } from "@cerebro/contracts/port";
 import {
@@ -8,18 +6,12 @@ import {
   digestToolArguments,
   toolCapabilityMatches,
 } from "@cerebro/contracts/tools";
-import type {
-  ToolCall,
-  ToolExecution,
-  ToolExecutor,
-} from "@cerebro/contracts/tools";
+import type { ToolCall, ToolExecution } from "@cerebro/contracts/tools";
 import { Effect } from "effect";
-import { z } from "zod";
 
 import { readBoundedJson, redactSecrets } from "./bounded-json.ts";
-import { authorizeTool, checkToolApproval } from "./broker.ts";
+import { authorizeTool } from "./broker.ts";
 import type { ToolAuthority } from "./broker.ts";
-import { boundToolCallSchema, toolCallSchema } from "./capability.ts";
 import type { CapabilitySigner, GatewayInvocation } from "./capability.ts";
 import { mcpToolRequest, readMcpToolResult } from "./mcp-transport.ts";
 import type { RegisteredTool, ToolRegistry } from "./registry.ts";
@@ -31,20 +23,14 @@ export interface ConnectorCredentials {
 }
 export interface McpGateway {
   readonly fetch: (request: Request) => Promise<Response>;
-  readonly reconcile: ToolExecutor["reconcile"];
 }
-const gatewayIntent = z.strictObject({
-  call: z.union([toolCallSchema, boundToolCallSchema]),
-  fingerprint: z.string(),
-  kind: z.literal("gateway"),
-});
 const deadlineSignal = (options: EffectOptions): AbortSignal => {
   const timeout = AbortSignal.timeout(
     Math.max(1, Math.ceil(options.deadlineAt - Date.now()))
   );
   return options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
 };
-const persistedOptions = (options: EffectOptions): EffectOptions => ({
+const afterDispatch = (options: EffectOptions): EffectOptions => ({
   deadlineAt: Date.now() + 5000,
   operationId: options.operationId,
   requestDigest: options.requestDigest,
@@ -91,8 +77,6 @@ export const createMcpGateway = (
     readonly registry: ToolRegistry;
     readonly signer: CapabilitySigner;
     readonly audience: string;
-    readonly journal: ToolOperationJournal;
-    readonly approvals: ToolOperationJournal;
     readonly credentials: (
       organizationId: OrganizationId,
       connectorId: string
@@ -114,18 +98,6 @@ export const createMcpGateway = (
         reason: "Tool is not registered.",
         status: "invalid-input",
       } as const;
-    }
-    if (entry.requiresApproval) {
-      const approved = await checkToolApproval(
-        dependencies.approvals,
-        call,
-        options,
-        allowed.value.policyVersion,
-        now()
-      );
-      if (approved.status !== "ok") {
-        return approved;
-      }
     }
     const connector = await dependencies.authorizationPolicy.evaluate(
       call.context,
@@ -325,41 +297,8 @@ export const createMcpGateway = (
       if (afterCredentials.status !== "ok") {
         return Response.json(afterCredentials);
       }
-      const claimed = await dependencies.journal.claim(
-        {
-          operationId: options.operationId,
-          organizationId: call.organizationId,
-          request: {
-            call,
-            fingerprint: entry.fingerprint,
-            kind: "gateway",
-          },
-          requestDigest: options.requestDigest,
-        },
-        options
-      );
-      if (claimed.status !== "ok") {
-        return Response.json(claimed);
-      }
-      if (claimed.value.state === "completed") {
-        return Response.json(claimed.value.result);
-      }
-      if (claimed.value.state === "pending") {
-        return Response.json({
-          operationId: options.operationId,
-          reason: "The connector dispatch requires reconciliation.",
-          status: "unknown-outcome",
-        });
-      }
-      const { claimToken } = claimed.value;
-      const dispatched = await dependencies.journal.dispatch(
-        claimToken,
-        { connectorId: call.tool.connectorId },
-        options
-      );
-      if (dispatched.status !== "ok") {
-        return Response.json(dispatched);
-      }
+      // The trusted runtime signs a capability only after approval. Pi never
+      // re-dispatches an at-most-once call, so the gateway keeps no journal.
       let result: PortResult<ToolExecution>;
       try {
         const mcp =
@@ -375,15 +314,6 @@ export const createMcpGateway = (
           operationId: options.operationId,
           tool: entry.target.method,
         };
-        const current = await beforeDispatch(call, options, policyVersion);
-        if (current.status !== "ok") {
-          const saved = await dependencies.journal.complete(
-            claimToken,
-            current,
-            persistedOptions(options)
-          );
-          return Response.json(saved.status === "ok" ? current : saved);
-        }
         const providerHeaders = new Headers(credentials.headers);
         for (const [name, value] of Object.entries({
           "Content-Type": "application/json",
@@ -417,135 +347,8 @@ export const createMcpGateway = (
           status: "unknown-outcome",
         };
       }
-      const saved =
-        result.status === "unknown-outcome"
-          ? await dependencies.journal.unknown(
-              claimToken,
-              result.reason,
-              persistedOptions(options)
-            )
-          : await dependencies.journal.complete(
-              claimToken,
-              result,
-              persistedOptions(options)
-            );
-      if (saved.status !== "ok") {
-        return Response.json(saved);
-      }
-      const current = await permitted(call, persistedOptions(options));
+      const current = await permitted(call, afterDispatch(options));
       return Response.json(current.status === "ok" ? result : current);
-    },
-    async reconcile(operationId, context, options) {
-      const record = await dependencies.journal.read(
-        context.actor.organizationId,
-        operationId,
-        options
-      );
-      if (record.status !== "ok") {
-        return record;
-      }
-      const intent = gatewayIntent.safeParse(record.value.intent.request);
-      if (
-        !intent.success ||
-        !sameExecutionContext(intent.data.call.context, context)
-      ) {
-        return {
-          code: "unauthorized",
-          reason: "The caller does not own this connector operation.",
-          status: "denied",
-        };
-      }
-      if (
-        intent.data.fingerprint !==
-        dependencies.registry.get(intent.data.call.tool.id)?.fingerprint
-      ) {
-        return {
-          code: "version-mismatch",
-          reason: "The connector registration changed after dispatch.",
-          status: "conflict",
-        };
-      }
-      const effect = {
-        ...options,
-        operationId,
-        requestDigest: record.value.intent.requestDigest,
-      };
-      const allowed = await permitted(intent.data.call, effect);
-      if (allowed.status !== "ok") {
-        return allowed;
-      }
-      if (record.value.state === "completed") {
-        return structuredClone(record.value.result);
-      }
-      const { entry } = allowed.value;
-      if (entry.target.kind !== "fixture-write") {
-        return {
-          operationId,
-          reason: "This connector has no receipt lookup.",
-          status: "unknown-outcome",
-        };
-      }
-      const credentials = await dependencies.credentials(
-        intent.data.call.organizationId,
-        intent.data.call.tool.connectorId
-      );
-      if (!credentials) {
-        return {
-          code: "unauthorized",
-          reason: "Connector access is unavailable.",
-          status: "denied",
-        };
-      }
-      try {
-        const url = new URL(entry.target.url);
-        url.searchParams.set("operationId", operationId);
-        const response = await providerFetch(url, {
-          headers: {
-            ...credentials.headers,
-            "X-Cerebro-Operation-Id": operationId,
-          },
-          method: "GET",
-          redirect: "error",
-          signal: deadlineSignal(effect),
-        });
-        if (response.status === 404) {
-          await response.body?.cancel();
-          return {
-            operationId,
-            reason: "The fixture has no confirmed receipt.",
-            status: "unknown-outcome",
-          };
-        }
-        const result: PortResult<ToolExecution> = {
-          status: "ok",
-          value: await output(
-            response,
-            entry,
-            credentials.secrets,
-            operationId,
-            deadlineSignal(effect)
-          ),
-        };
-        const saved = await dependencies.journal.complete(
-          record.value.claimToken,
-          result,
-          persistedOptions(effect)
-        );
-        if (saved.status !== "ok") {
-          return saved;
-        }
-        const current = await permitted(
-          intent.data.call,
-          persistedOptions(effect)
-        );
-        return current.status === "ok" ? result : current;
-      } catch {
-        return {
-          operationId,
-          reason: "Receipt lookup could not establish the connector outcome.",
-          status: "unknown-outcome",
-        };
-      }
     },
   };
 };

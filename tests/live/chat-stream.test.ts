@@ -279,9 +279,8 @@ test(
         .join("");
       assert.ok(visiblePrefix.length > 0);
       const during = await readProvider(fixture);
-      const call = during.model.find(
-        (row) => row.operationId === receipts[0].runId
-      );
+      // The first physical model request after admission serves this run.
+      const [call] = during.model.slice(initial.model.length);
       assert.ok(call);
       assert.equal(
         call.completedAt,

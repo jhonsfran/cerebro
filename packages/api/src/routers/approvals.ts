@@ -35,23 +35,6 @@ export const handleApprovalRequest = (
   if (
     path[2] === "runs" &&
     path[3] &&
-    path[4] === "reconcile" &&
-    path.length === 5
-  ) {
-    const input = parseInput(
-      z.strictObject({ operationId: z.string().min(1).max(512) }),
-      body
-    );
-    return service.reconcile(
-      userId,
-      conversationId,
-      path[3],
-      input.operationId
-    );
-  }
-  if (
-    path[2] === "runs" &&
-    path[3] &&
     path[4] === "cancel" &&
     path.length === 5
   ) {

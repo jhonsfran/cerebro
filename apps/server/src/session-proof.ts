@@ -42,14 +42,7 @@ const proofSchema = z.strictObject({
   context: contextSchema,
   digest: z.string(),
   expiresAt: z.number().finite(),
-  path: z.enum([
-    "/submit",
-    "/inspect",
-    "/stream",
-    "/approve",
-    "/cancel",
-    "/reconcile",
-  ]),
+  path: z.enum(["/submit", "/inspect", "/stream", "/approve", "/cancel"]),
 });
 const signedSchema = z.strictObject({
   proof: proofSchema,

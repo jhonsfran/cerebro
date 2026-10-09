@@ -1,9 +1,7 @@
 import type {
   AgentDefinition,
   ContentDependencies,
-  EventEnvelope,
   RunState,
-  SessionReceipt,
 } from "@cerebro/contracts";
 import type {
   ApprovalState,
@@ -132,40 +130,12 @@ export const channelConversation = pgTable("channel_conversation", {
   streamCursor: text("stream_cursor"),
   workspaceId: text("workspace_id"),
 });
-export const channelInbox = pgTable("channel_inbox", {
-  conversationId: text("conversation_id").notNull(),
-  digest: text("digest").notNull(),
-  envelope: jsonb("envelope").$type<EventEnvelope>().notNull(),
-  eventKey: text("event_key").primaryKey(),
-  lastAttemptAt: timestamp("last_attempt_at").defaultNow().notNull(),
-  organizationId: text("organization_id").notNull(),
-  receipt: jsonb("receipt").$type<SessionReceipt>(),
-  state: text("state", {
-    enum: ["pending", "accepted", "denied", "quarantined"],
-  }).notNull(),
-  submissionMode: text("submission_mode", {
-    enum: ["follow-up", "steer", "replace"],
-  })
-    .notNull()
-    .default("follow-up"),
-});
 export const channelItem = pgTable("channel_item", {
   conversationId: text("conversation_id").notNull(),
   cursor: serial("cursor").primaryKey(),
   item: jsonb("item").$type<ChannelItemBody>().notNull(),
   itemKey: text("item_key").notNull().unique(),
   organizationId: text("organization_id").notNull(),
-});
-export const channelFixtureRun = pgTable("channel_fixture_run", {
-  agentVersion: integer("agent_version").notNull(),
-  conversationId: text("conversation_id").notNull(),
-  digest: text("digest").notNull(),
-  envelope: jsonb("envelope").$type<EventEnvelope>().notNull(),
-  eventId: text("event_id").notNull().unique(),
-  operationId: text("operation_id").notNull().unique(),
-  organizationId: text("organization_id").notNull(),
-  runId: text("run_id").primaryKey(),
-  state: jsonb("state").$type<RunState>().notNull(),
 });
 export const channelEffect = pgTable("channel_effect", {
   digest: text("digest").notNull(),
@@ -203,8 +173,6 @@ export const agentSchema = {
   agentVersion,
   channelConversation,
   channelEffect,
-  channelFixtureRun,
-  channelInbox,
   channelItem,
   channelLinkEvent,
   channelReply,

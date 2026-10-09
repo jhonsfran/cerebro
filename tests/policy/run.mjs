@@ -93,11 +93,7 @@ try {
   }
   const result = spawnSync(
     process.execPath,
-    [
-      "--test",
-      ...files.map((name) => `tests/policy/${name}`),
-      "tests/policy/fixtures/journal.test.ts",
-    ],
+    ["--test", ...files.map((name) => `tests/policy/${name}`)],
     {
       cwd: root,
       env: { ...process.env, POLICY_TEST_DATABASE_URL: databaseUrl },

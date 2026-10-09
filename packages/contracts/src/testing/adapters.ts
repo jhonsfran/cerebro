@@ -346,21 +346,6 @@ export const createFixtureAdapters = (
       });
       return result;
     },
-    reconcile: async (operationId, context, readOptions) => {
-      const failure = readFailure(readOptions, now);
-      if (failure) {
-        return failure;
-      }
-      if (!hasGrant(context, fixtureOrganizationId)) {
-        return denied("The principal has no current grant.");
-      }
-      return (
-        copyFixture(toolResults.get(operationId)?.result) ?? {
-          resource: "tool operation",
-          status: "not-found",
-        }
-      );
-    },
   };
 
   const records = new Map<string, MemoryRecord>();

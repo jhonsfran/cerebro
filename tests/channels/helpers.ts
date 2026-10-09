@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import { z } from "zod";
 
 import { createProductHandler } from "../../packages/api/src/routers/conversations";
+import { ChannelError } from "../../packages/channels/src/types";
 import type {
   ProductHandlerOptions,
   SlackConfiguration,
@@ -11,6 +12,17 @@ import { DomainSnapshot } from "../../packages/contracts/src/session-service";
 import { sql } from "../../packages/db/node_modules/drizzle-orm";
 import { withDatabase } from "../../packages/db/src/index";
 import { user } from "../../packages/db/src/schema/auth";
+import { identityGrant } from "../../packages/db/src/schema/identity";
+import {
+  createFixtureSessionService,
+  FIXTURE_MODEL_ID,
+  FIXTURE_SOURCE_ID,
+  FIXTURE_TOOL_ID,
+  fixtureRun,
+  resetFixtureSessions,
+} from "./fixture-session";
+
+export const TEST_BOOTSTRAP_TOKEN = "channel-test-bootstrap-token-0123456789";
 
 export const object = (value: unknown): Record<string, unknown> =>
   z.record(z.string(), z.unknown()).parse(value);
@@ -30,6 +42,15 @@ export const createTestProduct = async (
   const database: ProductHandlerOptions["withDatabase"] = (run) =>
     withDatabase({ DATABASE_URL: databaseUrl }, run);
   const options: ProductHandlerOptions = {
+    bootstrapToken: TEST_BOOTSTRAP_TOKEN,
+    catalog: {
+      connectorChoices: [{ id: FIXTURE_TOOL_ID, label: "Local pilot source" }],
+      modelChoices: [
+        { id: FIXTURE_MODEL_ID, label: "Deterministic test model" },
+      ],
+    },
+    checkContentDependencies: () =>
+      Promise.resolve({ status: "ok", value: undefined }),
     fetch,
     getUser: (request) =>
       Promise.resolve(
@@ -37,14 +58,61 @@ export const createTestProduct = async (
           ? { id: request.headers.get("x-test-user") ?? "" }
           : null
       ),
-    mode: "fixture",
+    mode: "local",
     organizationId: "channel-test-company",
+    readAudit: (_database, _context, input) => {
+      const run = fixtureRun(input.conversationId, input.runId);
+      if (!run) {
+        throw new ChannelError(404, "not-found", "The run was not found.");
+      }
+      let endedAt = run.envelope.occurredAt;
+      if (run.state.state === "completed") {
+        endedAt = run.state.completedAt;
+      } else if ("endedAt" in run.state) {
+        ({ endedAt } = run.state);
+      }
+      return Promise.resolve({
+        status: "ok",
+        value: {
+          entries: [
+            {
+              at: run.envelope.occurredAt,
+              description: "The stable conversation event was accepted.",
+              type: "admission",
+            },
+            {
+              at: endedAt,
+              description: `The run state is ${run.state.state}.`,
+              type: "state",
+            },
+          ],
+          runId: input.runId,
+          state: run.state.state,
+        },
+      });
+    },
+    readSource: (_database, _context, input) =>
+      Promise.resolve(
+        input.sourceId === FIXTURE_SOURCE_ID
+          ? {
+              status: "ok",
+              value: {
+                sourceId: input.sourceId,
+                sourceVersion: "1",
+                text: "Cerebro admits each conversation event with a stable ID. Current permissions apply to every read and action.",
+                title: "Local pilot source",
+              },
+            }
+          : { resource: "source", status: "not-found" }
+      ),
+    sessions: (db) => createFixtureSessionService(db, options),
     slack,
     withDatabase: database,
   };
+  resetFixtureSessions();
   await options.withDatabase(async (db) => {
     await db.execute(
-      sql`truncate installation_setup, agent, agent_version, agent_publish_operation, channel_conversation, channel_inbox, channel_item, channel_fixture_run, channel_effect, channel_reply, channel_link_event, identity_principal, identity_grant, identity_policy_revision, identity_slack_link, identity_slack_link_challenge restart identity cascade`
+      sql`truncate installation_setup, agent, agent_version, agent_publish_operation, channel_conversation, channel_item, channel_effect, channel_reply, channel_link_event, identity_principal, identity_grant, identity_policy_revision, identity_slack_link, identity_slack_link_challenge restart identity cascade`
     );
     await db
       .insert(user)
@@ -81,20 +149,46 @@ export const createTestProduct = async (
         method,
       })
     );
+  // The owner receives the test tool and source grants that an operator
+  // would configure for real connectors.
   const install = async () => {
     const response = await request("/api/product/setup", "POST", {
+      bootstrapToken: TEST_BOOTSTRAP_TOKEN,
       operationId: "install-1",
     });
     if (response.status !== 200) {
       throw new Error(await response.text());
     }
-    return object(await response.json());
+    const setup = object(await response.json());
+    const principalId = string(setup.principalId);
+    await options.withDatabase((db) =>
+      db
+        .insert(identityGrant)
+        .values(
+          (
+            [
+              ["read", "tool", FIXTURE_TOOL_ID],
+              ["execute", "tool", FIXTURE_TOOL_ID],
+              ["read", "memory", FIXTURE_SOURCE_ID],
+            ] as const
+          ).map(([action, resourceKind, resourceId]) => ({
+            action,
+            organizationId: options.organizationId,
+            principalId,
+            resourceId,
+            resourceKind,
+            source: "test-fixture",
+          }))
+        )
+        .onConflictDoNothing()
+    );
+    return setup;
   };
   const agentBody = {
     enabledToolIds: ["fixture-read"],
     grants: [],
     instructions: "Use the pilot source.",
-    model: "fixture-model",
+    model: FIXTURE_MODEL_ID,
     name: "Support",
     operationId: "agent-create-1",
   };

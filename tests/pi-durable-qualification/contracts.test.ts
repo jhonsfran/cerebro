@@ -23,7 +23,6 @@ import {
 } from "../../packages/contracts/src/session-service.ts";
 import {
   createAuthorityFake,
-  createReceiptFake,
   createToolFake,
 } from "../../packages/contracts/src/testing/effect-fakes.ts";
 import {
@@ -203,99 +202,7 @@ test("approvals bind run, registration version and destination, arguments, ident
     )
   );
 });
-test("atomic dispatch claims one write and immutable completion survives duplicate callers", async () => {
-  const fake = createReceiptFake(() => now);
-  const intent = { invocation, policyVersion: "fixture-v1" };
-  const claim = await Effect.runPromise(fake.service.claim(intent, options));
-  const results = await Promise.all(
-    [1, 2].map(() =>
-      Effect.runPromise(
-        fake.service.dispatch(claim.receipt.key, 1, approval, options)
-      )
-    )
-  );
-  assert.equal(results.filter((result) => result.dispatch).length, 1);
-  const outcome = {
-    execution: { output: "done", providerReceipt: "confirmed" },
-    state: "succeeded",
-  } as const;
-  await Effect.runPromise(
-    fake.service.recordOutcome(claim.receipt.key, outcome, options)
-  );
-  await Effect.runPromise(fake.service.complete(claim.receipt.key, options));
-  assert.equal(
-    (await Effect.runPromise(fake.service.claim(intent, options))).receipt
-      .state,
-    "completed"
-  );
-  assert.equal(
-    (
-      await failureTag(
-        fake.service.recordOutcome(
-          claim.receipt.key,
-          { ...outcome, execution: { output: "changed" } },
-          options
-        )
-      )
-    )._tag,
-    "Conflict"
-  );
-});
-test("changed intent conflicts, uncertain writes cannot dispatch, and revocation denies reads", async () => {
-  const fake = createReceiptFake(() => now);
-  const claim = await Effect.runPromise(
-    fake.service.claim({ invocation, policyVersion: "fixture-v1" }, options)
-  );
-  assert.equal(
-    (
-      await failureTag(
-        fake.service.claim(
-          {
-            invocation: { ...invocation, runId: id.run("run-B") },
-            policyVersion: "fixture-v1",
-          },
-          options
-        )
-      )
-    )._tag,
-    "Conflict"
-  );
-  await Effect.runPromise(
-    fake.service.dispatch(claim.receipt.key, 1, approval, options)
-  );
-  await Effect.runPromise(
-    fake.service.unknown(
-      claim.receipt.key,
-      "dispatch interrupted",
-      undefined,
-      options
-    )
-  );
-  assert.ok(
-    (await failureTag(
-      fake.service.dispatch(claim.receipt.key, 3, approval, options)
-    )) instanceof UnknownOutcome
-  );
-  const nextOccurrence = id.operation("new-Pi-occurrence");
-  const blockedOccurrence = await failureTag(
-    fake.service.claim(
-      {
-        invocation: { ...invocation, operationId: nextOccurrence },
-        policyVersion: "fixture-v1",
-      },
-      { ...options, operationId: nextOccurrence }
-    )
-  );
-  assert.ok(blockedOccurrence instanceof UnknownOutcome);
-  assert.equal(blockedOccurrence.operationId, invocation.operationId);
-  fake.setAllowed(false);
-  assert.ok(
-    (await failureTag(
-      fake.service.read(claim.receipt.key, allowedContext, options)
-    )) instanceof Denied
-  );
-});
-test("denied and revoked approval cause zero fake dispatches; reconcile never executes", async () => {
+test("a denied capability causes zero fake dispatches", async () => {
   const fake = createToolFake(() => now);
   const capability = {
     ...unknownOutcomeCapability,
@@ -310,28 +217,7 @@ test("denied and revoked approval cause zero fake dispatches; reconcile never ex
       fake.service.execute(invocation, capability, options)
     )) instanceof Denied
   );
-  assert.ok(
-    (await failureTag(
-      fake.service.reconcile(invocation.operationId, allowedContext, options)
-    )) instanceof UnknownOutcome
-  );
   assert.equal(fake.counts.dispatch, 0);
-  assert.equal(fake.counts.reconcile, 1);
-  const receipt = createReceiptFake(() => now);
-  const claim = await Effect.runPromise(
-    receipt.service.claim({ invocation, policyVersion: "fixture-v1" }, options)
-  );
-  assert.ok(
-    (await failureTag(
-      receipt.service.dispatch(claim.receipt.key, 1, undefined, options)
-    )) instanceof Denied
-  );
-  receipt.setAllowed(false);
-  assert.ok(
-    (await failureTag(
-      receipt.service.dispatch(claim.receipt.key, 1, approval, options)
-    )) instanceof Denied
-  );
 });
 test("denial frames validate and HTTP conversion preserves unknown-outcome meaning", () => {
   const denial = {
@@ -399,11 +285,6 @@ test("Effect 4 observation schemas preserve run variants, revision checks and ca
       { completedAt: now, runId: invocation.runId, state: "completed" },
       { endedAt: now, runId: invocation.runId, state: "failed" },
       { endedAt: now, runId: invocation.runId, state: "cancelled" },
-      {
-        operationId: invocation.operationId,
-        runId: invocation.runId,
-        state: "unknown-outcome",
-      },
     ],
     tools: [],
     userMessages: [],

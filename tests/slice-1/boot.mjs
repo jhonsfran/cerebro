@@ -59,25 +59,26 @@ const env = {
   ...process.env,
   CEREBRO_API_PORT: String(apiPort),
   CEREBRO_DATABASE_URL: "",
-  CEREBRO_DEPLOY_MODE: "fixture",
+  CEREBRO_DEPLOY_MODE: "local",
   CEREBRO_FIXTURE_ID: values.project,
   CEREBRO_FIXTURE_PORT: String(fixturePort),
   CEREBRO_FIXTURE_SHA: sha,
   CEREBRO_PUBLIC_API_URL: `http://localhost:${apiPort}`,
   CEREBRO_PUBLIC_WEB_URL: `http://localhost:${webPort}`,
   CEREBRO_WEB_PORT: String(webPort),
-  COMPOSE_PROFILES: "fixture",
 };
+// The test file adds the fake provider, test runtime.json and pilot source.
+const stackFiles = [
+  path.join(root, "compose.yaml"),
+  path.join(root, "tests/slice-1/compose.test.yaml"),
+];
 const compose = [
   "compose",
   "--project-directory",
   root,
   "-p",
   values.project,
-  "-f",
-  path.join(root, "compose.yaml"),
-  "-f",
-  overridePath,
+  ...[...stackFiles, overridePath].flatMap((file) => ["-f", file]),
 ];
 const docker = async (args) =>
   (
@@ -203,12 +204,11 @@ if (values.down || values["kill-at"]) {
   const configuration = JSON.parse(
     await docker([
       "compose",
-      "--profile",
-      "fixture",
+      "--project-directory",
+      root,
       "-p",
       values.project,
-      "-f",
-      path.join(root, "compose.yaml"),
+      ...stackFiles.flatMap((file) => ["-f", file]),
       "config",
       "--format",
       "json",
@@ -248,6 +248,8 @@ if (values.down || values["kill-at"]) {
       "web",
       "minio-runtime",
       "minio-artifacts",
+      "fixture",
+      "test-config",
     ]) {
       services[name].build = { secrets: ["proxy_ca"] };
     }

@@ -8,17 +8,19 @@ import { requireChatSession } from "../../apps/server/src/chat-session";
 import { createProductHandler } from "../../packages/api/src/routers/conversations";
 import { createIdentityRouter } from "../../packages/api/src/routers/identity";
 import { drainChannelWork } from "../../packages/channels/src/drain";
-import { createFixtureSessionService } from "../../packages/channels/src/fixture-session";
 import { unwrap } from "../../packages/channels/src/security";
 import { createChannelService } from "../../packages/channels/src/service";
 import type { ProductHandlerOptions } from "../../packages/channels/src/types";
 import { Unavailable } from "../../packages/contracts/src/failures";
 import { id } from "../../packages/contracts/src/index";
 import { eq } from "../../packages/db/node_modules/drizzle-orm";
+import {
+  AuditProjectionConflictError,
+  projectAuditEvent,
+} from "../../packages/db/src/repositories/audit";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
 import {
   channelConversation,
-  channelInbox,
   channelItem,
   channelReply,
 } from "../../packages/db/src/schema/agents";
@@ -30,6 +32,7 @@ import {
   identitySlackLink,
 } from "../../packages/db/src/schema/identity";
 import { usageReservation } from "../../packages/db/src/schema/usage";
+import { createFixtureSessionService } from "./fixture-session";
 import {
   array,
   createTestProduct,
@@ -196,6 +199,7 @@ test("production setup requires trusted credentials and preserves the exact loca
   const request = configuredRequest({
     ...app.options,
     bootstrapToken: "server-configured-test-token",
+    catalog: undefined,
     mode: "production",
   });
   const setupResponse = await request("setup");
@@ -546,7 +550,10 @@ test("production with missing adapters never returns fixture source, audit, budg
   );
   const request = configuredRequest({
     ...app.options,
+    catalog: undefined,
     mode: "production",
+    readAudit: undefined,
+    readSource: undefined,
     sessions: (db) => createFixtureSessionService(db, app.options),
   });
   const missingCatalogResponse = await request("catalog");
@@ -734,7 +741,7 @@ test("audit and usage exports require current export grants and return bounded c
   });
 });
 
-test("unknown tool outcomes finish channel projection and remain visible for reconciliation", async () => {
+test("an uncertain tool settles channel projection and stays visible", async () => {
   const app = await createTestProduct();
   await app.install();
   const agent = await app.createAgent();
@@ -745,11 +752,8 @@ test("unknown tool outcomes finish channel projection and remain visible for rec
   });
   const conversation = object(await response.json());
   const conversationId = string(conversation.conversationId);
-  const run = {
-    operationId: id.operation("unknown-tool"),
-    runId: id.run("unknown-run"),
-    state: "unknown-outcome" as const,
-  };
+  const runId = id.run("unknown-run");
+  const dependencies = { sourceIds: [], toolIds: ["fixture-read"] };
   await app.options.withDatabase((db) =>
     db
       .update(channelConversation)
@@ -761,7 +765,37 @@ test("unknown tool outcomes finish channel projection and remain visible for rec
     sessions: (db) => ({
       ...createFixtureSessionService(db, app.options),
       inspect: (address) =>
-        Effect.succeed(domainSnapshot(address, { revision: 1, runs: [run] })),
+        Effect.succeed(
+          domainSnapshot(address, {
+            executions: [{ executionId: "unknown-execution", runIds: [runId] }],
+            outputs: [
+              {
+                answerId: "unknown-answer",
+                citations: [],
+                dependencies,
+                executionId: "unknown-execution",
+                runId,
+                runIds: [runId],
+                text: "Check the target system.",
+              },
+            ],
+            revision: 1,
+            runs: [{ completedAt: 42, runId, state: "completed" }],
+            tools: [
+              {
+                arguments: {},
+                dependencies,
+                effect: "write",
+                operationId: "unknown-tool",
+                output: null,
+                runId,
+                state: "unknown-outcome",
+                toolId: "fixture-read",
+                toolVersion: "1",
+              },
+            ],
+          })
+        ),
     }),
   });
   await app.options.withDatabase(async (db) => {
@@ -770,15 +804,19 @@ test("unknown tool outcomes finish channel projection and remain visible for rec
       .from(channelConversation)
       .where(eq(channelConversation.conversationId, conversationId));
     assert.equal(projection?.projectionState, "idle");
-    const [item] = await db
+    const items = await db
       .select()
       .from(channelItem)
       .where(eq(channelItem.conversationId, conversationId));
-    assert.deepEqual(item?.item, { run, runId: "unknown-run", type: "run" });
+    const tool = items.find((entry) => entry.item.type === "tool")?.item;
+    assert.equal(
+      tool?.type === "tool" ? tool.state : undefined,
+      "unknown-outcome"
+    );
   });
 });
 
-test("empty runtime sessions become idle but pending or accepted admissions remain active", async () => {
+test("empty runtime sessions become idle and only an admitted message reactivates projection", async () => {
   const app = await createTestProduct();
   await app.install();
   const agent = await app.createAgent();
@@ -788,23 +826,32 @@ test("empty runtime sessions become idle but pending or accepted admissions rema
   });
   const conversation = object(await response.json());
   const conversationId = string(conversation.conversationId);
+  let available = false;
   const options: ProductHandlerOptions = {
     ...app.options,
-    sessions: (db) => ({
-      ...createFixtureSessionService(db, app.options),
-      inspect: (address) => Effect.succeed(domainSnapshot(address)),
-      submit: () =>
-        Effect.fail(new Unavailable({ reason: "Admission delayed." })),
-    }),
+    sessions: (db) => {
+      const fixture = createFixtureSessionService(db, app.options);
+      return {
+        ...fixture,
+        inspect: (address) => Effect.succeed(domainSnapshot(address)),
+        submit: (command, effect) =>
+          available
+            ? fixture.submit(command, effect)
+            : Effect.fail(new Unavailable({ reason: "Admission delayed." })),
+      };
+    },
   };
+  const projectionState = () =>
+    app.options.withDatabase(async (db) => {
+      const [row] = await db
+        .select()
+        .from(channelConversation)
+        .where(eq(channelConversation.conversationId, conversationId));
+      return row?.projectionState;
+    });
   await drainChannelWork(options);
+  assert.equal(await projectionState(), "idle");
   await app.options.withDatabase(async (db) => {
-    const [projection] = await db
-      .select()
-      .from(channelConversation)
-      .where(eq(channelConversation.conversationId, conversationId));
-    assert.equal(projection?.projectionState, "idle");
-    assert.equal(projection?.streamCursor, null);
     const items = await db
       .select()
       .from(channelItem)
@@ -812,35 +859,18 @@ test("empty runtime sessions become idle but pending or accepted admissions rema
     assert.deepEqual(items, []);
   });
   const request = configuredRequest(options);
-  const admission = await request(
-    `conversations/${encodeURIComponent(conversationId)}/messages`,
-    "POST",
-    {
-      eventId: "delayed-empty-admission",
-      text: "Wait for admission.",
-    }
-  );
-  assert.equal(admission.status, 503);
-  await drainChannelWork(options);
-  await app.options.withDatabase(async (db) => {
-    const [pending] = await db
-      .select()
-      .from(channelConversation)
-      .where(eq(channelConversation.conversationId, conversationId));
-    assert.equal(pending?.projectionState, "active");
-    await db
-      .update(channelInbox)
-      .set({ state: "accepted" })
-      .where(eq(channelInbox.conversationId, conversationId));
-  });
-  await drainChannelWork(options);
-  await app.options.withDatabase(async (db) => {
-    const [accepted] = await db
-      .select()
-      .from(channelConversation)
-      .where(eq(channelConversation.conversationId, conversationId));
-    assert.equal(accepted?.projectionState, "active");
-  });
+  const message = {
+    eventId: "delayed-empty-admission",
+    text: "Wait for admission.",
+  };
+  const path = `conversations/${encodeURIComponent(conversationId)}/messages`;
+  const delayed = await request(path, "POST", message);
+  assert.equal(delayed.status, 503);
+  assert.equal(await projectionState(), "idle");
+  available = true;
+  const admitted = await request(path, "POST", message);
+  assert.equal(admitted.status, 200);
+  assert.equal(await projectionState(), "active");
 });
 
 test("local Slack delivery denies a queued reply without an authorized output projection", async () => {
@@ -911,5 +941,33 @@ test("local Slack delivery denies a queued reply without an authorized output pr
     assert.deepEqual(reply.providerReceipt, {
       reason: "Current authorization denied reply delivery.",
     });
+  });
+});
+
+test("audit projection stores a replayed event once and rejects a changed one", async () => {
+  const app = await createTestProduct();
+  const event = {
+    agentId: "agent-audit",
+    eventId: `audit-replay:${crypto.randomUUID()}`,
+    kind: "audit" as const,
+    name: "run.completed",
+    occurredAt: 1_800_000_000_000,
+    organizationId: app.options.organizationId,
+    payload: { state: "completed" },
+    runId: "run-audit",
+    sessionId: "session-audit",
+  };
+  await app.options.withDatabase(async (db) => {
+    await projectAuditEvent(db, event);
+    await projectAuditEvent(db, event);
+    const rows = await db
+      .select()
+      .from(auditEvent)
+      .where(eq(auditEvent.eventId, event.eventId));
+    assert.equal(rows.length, 1);
+    await assert.rejects(
+      projectAuditEvent(db, { ...event, name: "run.changed" }),
+      AuditProjectionConflictError
+    );
   });
 });

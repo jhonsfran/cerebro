@@ -1,6 +1,6 @@
 # Cerebro direction, decisions, and roadmap
 
-Revised on 2026-10-09. This document records the agreed direction. The browser wire changed after the first-slice integration; the [chat simplification design](../superpowers/specs/2026-10-09-chat-simplification-design.md) explains that change. The [first-slice execution plan](2026-10-05-cerebro-slice-1-plan.md) defines the remote-agent packets and acceptance gates. The [proposed architecture record](adr-0001-replaceable-application-boundaries.md) defines the dependency rules. The runtime integration remains unqualified. These documents do not describe a completed migration.
+Revised on 2026-10-09. This document records the agreed direction. The browser wire changed after the first-slice integration; the [chat simplification design](../superpowers/specs/2026-10-09-chat-simplification-design.md) explains that change. A second simplification on the same day let Pi own tool crash semantics, removed the PostgreSQL channel inbox, and removed the fixture deployment mode; the [execution simplification](#execution-simplification) section records it. The [first-slice execution plan](2026-10-05-cerebro-slice-1-plan.md) defines the remote-agent packets and acceptance gates. The [proposed architecture record](adr-0001-replaceable-application-boundaries.md) defines the dependency rules. The runtime integration remains unqualified. These documents do not describe a completed migration.
 
 ## Product goal
 
@@ -18,7 +18,7 @@ Chat is the first interaction. Other channels, agents, and native tools can use 
 | Use Pi Durable | Replace OpenCode with one durable agent loop per company-scoped conversation. Keep private Pi state inside its adapter. |
 | Deliver domain frames to the browser | The Durable Object emits Cerebro observation frames. The API forwards them. The web app applies them to one projection. No AG-UI or TanStack layer and no second model or tool loop. |
 | Use Effect TS | Write new Cerebro orchestration and adapters as Effect services with typed failures, Layers, cancellation, and scoped resources. |
-| Preserve company authority | Keep current authorization, pinned agent grants, connector controls, approval binding, and durable tool receipts. |
+| Preserve company authority | Keep current authorization, pinned agent grants, connector controls, and approval binding. Pi's per-call dispatch marker replaces Cerebro tool receipts. |
 | Define external metering ports only | The first slice has no active reservation or spend enforcement through that port. A future external provider owns pricing, balances, holds, and settlement. |
 | Keep components replaceable | Select concrete adapters through Effect Layers. Keep host, engine, and UI SDK types out of application contracts. |
 | Execute remotely and integrate locally | Remote agents work on separate branches after a contract freeze. The local coordinator merges, wires, and verifies the complete application. |
@@ -59,7 +59,7 @@ The web app consumes Cerebro observation frames directly. A client that needs an
 | Company identities, memberships, grants, agent definitions, and connector configuration | Existing company services and PostgreSQL. |
 | Admission receipts, product run state, approvals, tool intent, outcomes, and canonical history | Cerebro records in the session store. |
 | Private transcript, model context, inbox, and engine checkpoints | The selected Pi integration. |
-| Remote tool outcome | Provider evidence and Cerebro dispatch and reconciliation receipts. |
+| Tool dispatch and outcome | Pi task memos: a dispatch marker before the effect and the recorded outcome after it. |
 | Browser and channel messages | Authorized projections. They do not admit work or decide that a run completed. |
 | Files and large artifacts | Existing artifact storage. |
 | Future pricing, balances, reservations, and settlement | An external metering provider behind the port. |
@@ -76,8 +76,8 @@ A future host change preserves application contracts but needs qualified persist
 | PostgreSQL and Drizzle | Company records, identity, policy, memory metadata, and audit views. |
 | Durable Object SQLite | Local durable execution records and supported private engine storage. |
 | Existing runtime and artifact object storage | Self-hosted persistence, backups, and artifacts. |
-| Current channel services | Inbox deduplication, projections, replies, and audience checks. |
-| Registered tool gateway | Bounded arguments and outputs, controlled destinations, credential isolation, and durable receipts. |
+| Current channel services | Projections, replies, and audience checks. Admission goes straight to the session. |
+| Registered tool gateway | Bounded arguments and outputs, controlled destinations, and credential isolation. It keeps no state. |
 | Memory services | Controlled access to company knowledge and content dependencies. |
 
 The implementation plan changes only the callers required by the new session boundary. It does not rewrite identity, memory, or all database access.
@@ -90,7 +90,7 @@ A submission has a stable event ID and an input digest. A matching retry returns
 
 Approval binds one effect intent. Execution rechecks current authority after the wait and before dispatch. A duplicate approval cannot repeat a completed write.
 
-An uncertain non-idempotent tool outcome blocks repeat execution until provider evidence resolves it. A local timeout or cancellation does not prove that a remote effect did not occur.
+An uncertain non-idempotent tool outcome is never dispatched again. The model and the user see it as an unknown outcome; the run continues. A local timeout or cancellation does not prove that a remote effect did not occur.
 
 Reconnect loads canonical state and attaches to the existing run. Snapshot and subscription ordering must not miss completion. Provisional text can be replaced by canonical output. Exact replay of every lost text chunk is outside this slice.
 
@@ -131,3 +131,15 @@ The selected Pi host wrapper, published package pins, durable approval wait, run
 A failed qualification keeps the implementation step open. Contract fakes and successful typechecks cannot qualify host persistence or recovery.
 
 The plan requires fixture counters, crash evidence, clean dependency resolution, browser checks, and a separate live model and controlled MCP read. Performance budgets are acceptance targets, not production capacity guarantees.
+
+## Execution simplification
+
+Decided on 2026-10-09 for the proof of concept: keep one owner per concern and prefer Pi's existing mechanisms.
+
+| Change | Result |
+| --- | --- |
+| Pi owns tool crash semantics | Each tool call records a durable dispatch marker in its Pi task memo before the effect and the outcome after it. On replay an idempotent tool runs again; an at-most-once tool reports an unknown outcome and never dispatches again. The Cerebro tool receipt store, the gateway operation journal, provider-evidence reconciliation, and the run-level `unknown-outcome` state are removed. |
+| No channel inbox | Web and Slack messages go straight to the session, which deduplicates by event ID and content. A failed admission is retried by the client; Slack redelivers webhooks. The `channel_inbox` table and its drain are removed. |
+| No fixture mode | Deployments are `local` or `production`. Tests add a fake model and connectors through `tests/slice-1/compose.test.yaml` and an ordinary local `runtime.json`. Test routes, crash checkpoints, and the fixture session Durable Object are removed from production code. |
+
+Trade-off: Cerebro no longer queries a provider to settle an uncertain write. An operator checks the target system by operation ID. The gateway no longer deduplicates a replayed signed capability; the loader runs only Cerebro's fixed wrapper, and capabilities expire with the call deadline.

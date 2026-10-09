@@ -1,6 +1,5 @@
 /* oxlint-disable no-await-in-loop -- A response reader delivers frames in wire order. */
 import { useEffect, useMemo, useState } from "react";
-import { z } from "zod";
 
 import {
   apiUrl,
@@ -100,23 +99,6 @@ export const sendRunCommand = (
   operationId: string,
   body: { runId: string; decision?: "allow" | "deny" }
 ) => mutate(`${path}/${suffix}`, { ...body, operationId }, stateMutationSchema);
-
-export const reconcileRunCommand = (
-  path: string,
-  runId: string,
-  operationId: string
-) =>
-  mutate(
-    `${path}/runs/${encodeURIComponent(runId)}/reconcile`,
-    { operationId },
-    z.object({
-      tool: z.object({
-        operationId: z.string(),
-        runId: z.string(),
-        state: z.enum(["succeeded", "failed"]),
-      }),
-    })
-  );
 
 export const useConversationConnection = (
   conversation: Conversation | null,

@@ -40,6 +40,7 @@ import { sameAddress } from "./event-handler.ts";
 import {
   pendingRun,
   projectUpdate,
+  settledTool,
   updateRunId,
   updateRunIds,
 } from "./pi-projection.ts";
@@ -417,10 +418,7 @@ export const createSessionStore = (
       if (
         projected.tools.some(
           (tool) =>
-            output.runIds.includes(tool.runId) &&
-            tool.state !== "succeeded" &&
-            tool.state !== "failed" &&
-            tool.state !== "cancelled"
+            output.runIds.includes(tool.runId) && !settledTool(tool.state)
         ) ||
         output.runIds.some(
           (runId) =>
@@ -653,9 +651,11 @@ export const createSessionStore = (
           access(command.event, command.event.context);
         });
         const mode = command.mode ?? "follow-up";
+        // A redelivered event keeps its digest; its delivery time may differ.
+        const { occurredAt: _deliveredAt, ...delivered } = command.event;
         const digest = yield* Effect.tryPromise({
           catch: contractFailure,
-          try: () => digestToolArguments({ event: command.event, mode }),
+          try: () => digestToolArguments({ event: delivered, mode }),
         });
         const admitted = yield* attempt(() => {
           const handoff = persistence.transaction(() => {

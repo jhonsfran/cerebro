@@ -1,3 +1,4 @@
+import type { WorkerLoader } from "../../packages/tools/src/dynamic-worker.ts";
 import type { SessionAgent } from "./fixture-session.ts";
 
 export interface TestEnvironment extends Readonly<Record<string, unknown>> {
@@ -5,6 +6,7 @@ export interface TestEnvironment extends Readonly<Record<string, unknown>> {
   readonly DATABASE_URL: string;
   readonly FAIL_FIRST_EFFECT: "0" | "1";
   readonly FIXTURE_URL: string;
+  readonly LOADER: WorkerLoader;
   readonly SESSION: DurableObjectNamespace<SessionAgent>;
   readonly TOOL_GATEWAY: Fetcher;
   readonly TRACE_NATIVE: "0" | "1";

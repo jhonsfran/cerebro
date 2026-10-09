@@ -5,12 +5,10 @@ import path from "node:path";
 import { AwsClient } from "aws4fetch";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
-import { build } from "esbuild";
 import postgres from "postgres";
 
 import { parseRuntimeConfiguration } from "../apps/server/src/runtime-configuration.ts";
 import { parseEnterpriseIdentityJSON } from "../packages/auth/src/enterprise.ts";
-import { fixtureRuntimeConfiguration } from "./fixture-runtime.ts";
 
 const directory = process.env.CEREBRO_SECRETS_DIR ?? "/run/cerebro-secrets";
 const mode = process.env.DEPLOY_MODE ?? "local";
@@ -31,9 +29,6 @@ const postgresPassword = postgresPasswordFile.trim();
 const minioPassword = minioPasswordFile.trim();
 const localDatabaseUrl = `postgres://cerebro:${encodeURIComponent(postgresPassword)}@postgres:5432/cerebro`;
 const databaseUrl = process.env.CEREBRO_DATABASE_URL || localDatabaseUrl;
-if (mode === "fixture" && databaseUrl !== localDatabaseUrl) {
-  throw new Error("Fixture bootstrap requires the isolated project database.");
-}
 const authUrl = process.env.CEREBRO_PUBLIC_API_URL ?? "http://localhost:18765";
 const webUrl = process.env.CEREBRO_PUBLIC_WEB_URL ?? "http://localhost:3001";
 let enterpriseIdentityJson;
@@ -71,7 +66,7 @@ try {
   }
 }
 
-if (!["local", "fixture", "production"].includes(mode)) {
+if (!["local", "production"].includes(mode)) {
   throw new Error("Invalid deployment mode");
 }
 if (mode === "production") {
@@ -93,13 +88,10 @@ const organizationId =
   channelConfig?.organizationId ??
   enterpriseIdentity?.organizationId ??
   "local-company";
-const runtimeConfiguration =
-  mode === "fixture"
-    ? fixtureRuntimeConfiguration(minioPassword)
-    : parseRuntimeConfiguration(
-        await readFile(path.join(directory, "runtime.json"), "utf-8"),
-        mode
-      );
+const runtimeConfiguration = parseRuntimeConfiguration(
+  await readFile(path.join(directory, "runtime.json"), "utf-8"),
+  mode
+);
 const runtimeConfigurationJson = JSON.stringify(runtimeConfiguration);
 
 const aws = new AwsClient({
@@ -139,28 +131,6 @@ try {
       .pathname,
   });
   await client`INSERT INTO organization (id, name) VALUES (${organizationId}, ${organizationId}) ON CONFLICT (id) DO NOTHING`;
-  if (mode === "fixture") {
-    const seederId = `pilot-source-seeder:${organizationId}`;
-    await client`INSERT INTO identity_principal (id, organization_id, kind, state) VALUES (${seederId}, ${organizationId}, 'service', 'active') ON CONFLICT (id) DO NOTHING`;
-    await client`INSERT INTO identity_grant (organization_id, principal_id, action, resource_kind, resource_id, source) VALUES (${organizationId}, ${seederId}, 'write', 'memory', 'pilot-source', 'fixture-source-seeder') ON CONFLICT DO NOTHING`;
-    const seedBundle = path.join(process.cwd(), "deploy", ".pilot-source.mjs");
-    await build({
-      bundle: true,
-      entryPoints: ["deploy/seed-fixture.ts"],
-      external: ["postgres"],
-      format: "esm",
-      nodePaths: [path.join(process.cwd(), "apps/server/node_modules")],
-      outfile: seedBundle,
-      platform: "node",
-    });
-    const { seedFixtureSource } = await import(seedBundle);
-    await seedFixtureSource(
-      databaseUrl,
-      organizationId,
-      runtimeConfiguration.artifacts
-    );
-    await unlink(seedBundle);
-  }
   if (enterpriseIdentity) {
     try {
       await client`
@@ -183,13 +153,13 @@ const config = {
   compatibility_flags: ["nodejs_compat"],
   durable_objects: {
     bindings: [
-      { class_name: "SessionFixture", name: "SESSION_FIXTURE" },
       { class_name: "ChannelDispatcher", name: "CHANNEL_DISPATCHER" },
       { class_name: "SessionAgent", name: "SESSION" },
-      { class_name: "GatewayJournal", name: "GATEWAY_JOURNAL" },
     ],
   },
   main: "apps/server/src/index.ts",
+  // Applied migration tags are history. celld cannot delete classes, so the
+  // retired SessionFixture and GatewayJournal stay named here but unexported.
   migrations: [
     { new_sqlite_classes: ["SessionFixture"], tag: "v1" },
     { new_sqlite_classes: ["ChannelDispatcher"], tag: "v2" },
@@ -214,10 +184,7 @@ const config = {
     CORS_ORIGIN: webUrl,
     DATABASE_URL: databaseUrl,
     DEPLOY_MODE: mode,
-    FIXTURE_ADAPTERS: mode === "fixture" ? "1" : "0",
-    FIXTURE_URL: "http://fixture:8090",
     RUNTIME_CONFIG_JSON: runtimeConfigurationJson,
-    TOOL_EFFECT_MODE: "idempotent",
     ...(channelConfig?.slack
       ? { SLACK_CHANNEL_JSON: JSON.stringify(channelConfig.slack) }
       : {}),

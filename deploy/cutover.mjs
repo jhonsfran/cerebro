@@ -227,7 +227,6 @@ const operations = {
     JSON.parse(
       await sql(`SELECT json_build_object(
     'conversations', (SELECT coalesce(json_agg(c), '[]') FROM channel_conversation c WHERE engine='legacy-v1'),
-    'inbox', (SELECT coalesce(json_agg(i), '[]') FROM channel_inbox i JOIN channel_conversation c USING(conversation_id) WHERE c.engine='legacy-v1' AND i.state IN ('pending','accepted')),
     'replies', (SELECT coalesce(json_agg(r), '[]') FROM channel_reply r JOIN channel_conversation c USING(conversation_id) WHERE c.engine='legacy-v1' AND r.state IN ('ready','sending')));`)
     ),
   stopExecution: async () => {

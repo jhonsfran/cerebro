@@ -1,11 +1,16 @@
 /* oxlint-disable no-await-in-loop -- Each stream item requires its own current permission check before emission. */
-import { classifyEventDelivery, id, preflightEffect } from "@cerebro/contracts";
-import type {
-  EventAddress,
-  EventEnvelope,
-  RunState,
-  SessionReceipt,
-} from "@cerebro/contracts";
+// A deterministic in-process SessionService for channel tests. Runs live in
+// memory; transcript items use the real channel_item projection table.
+import { Effect, Schema, Stream } from "effect";
+
+import {
+  authorize,
+  authorizeContent,
+  digest,
+  unwrap,
+} from "../../packages/channels/src/security";
+import { ChannelError } from "../../packages/channels/src/types";
+import type { ChannelOptions } from "../../packages/channels/src/types";
 import {
   Conflict,
   Denied,
@@ -13,26 +18,62 @@ import {
   NotFound,
   Unavailable,
   UnknownOutcome,
-} from "@cerebro/contracts/failures";
-import type { ContractFailure } from "@cerebro/contracts/failures";
-import type { PortResult } from "@cerebro/contracts/port";
-import { DomainSnapshot } from "@cerebro/contracts/session-service";
-import type { SessionService } from "@cerebro/contracts/session-service";
-import type { Database } from "@cerebro/db";
-import { createAgentRepository } from "@cerebro/db/repositories/agents";
+} from "../../packages/contracts/src/failures";
+import type { ContractFailure } from "../../packages/contracts/src/failures";
 import {
-  channelInbox,
+  classifyEventDelivery,
+  id,
+  preflightEffect,
+} from "../../packages/contracts/src/index";
+import type {
+  EventAddress,
+  EventEnvelope,
+  RunState,
+  SessionReceipt,
+} from "../../packages/contracts/src/index";
+import type { PortResult } from "../../packages/contracts/src/port";
+import { DomainSnapshot } from "../../packages/contracts/src/session-service";
+import type {
+  SessionService,
+  SubmissionMode,
+} from "../../packages/contracts/src/session-service";
+import { and, asc, eq, sql } from "../../packages/db/node_modules/drizzle-orm";
+import type { Database } from "../../packages/db/src/index";
+import { createAgentRepository } from "../../packages/db/src/repositories/agents";
+import {
   channelEffect,
-  channelFixtureRun,
   channelItem,
-} from "@cerebro/db/schema/agents";
-import type { ChannelItemBody } from "@cerebro/db/schema/agents";
-import { and, asc, eq, sql } from "drizzle-orm";
-import { Effect, Schema, Stream } from "effect";
+} from "../../packages/db/src/schema/agents";
+import type { ChannelItemBody } from "../../packages/db/src/schema/agents";
 
-import { authorize, authorizeContent, digest, unwrap } from "./security";
-import { ChannelError, FIXTURE_SOURCE_ID, FIXTURE_TOOL_ID } from "./types";
-import type { ChannelOptions } from "./types";
+export const FIXTURE_SOURCE_ID = "pilot-source";
+export const FIXTURE_TOOL_ID = "fixture-read";
+export const FIXTURE_MODEL_ID = "fixture-model";
+
+interface FixtureRun {
+  readonly agentVersion: number;
+  readonly conversationId: string;
+  readonly digest: string;
+  readonly envelope: EventEnvelope;
+  readonly eventId: string;
+  readonly mode: SubmissionMode;
+  readonly operationId: string;
+  readonly organizationId: string;
+  readonly runId: string;
+  state: RunState;
+}
+const fixtureRuns = new Map<string, FixtureRun>();
+export const resetFixtureSessions = (): void => {
+  fixtureRuns.clear();
+};
+export const fixtureRunCount = (): number => fixtureRuns.size;
+export const fixtureRun = (
+  conversationId: string,
+  runId: string
+): FixtureRun | undefined => {
+  const run = fixtureRuns.get(runId);
+  return run?.conversationId === conversationId ? run : undefined;
+};
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 const typedResult = <Value>(
@@ -135,6 +176,11 @@ const item = (
       organizationId: envelope.organizationId,
     })
     .onConflictDoUpdate({ set: { item: value }, target: channelItem.itemKey });
+const fixtureDependencies = {
+  sourceIds: [id.source(FIXTURE_SOURCE_ID)],
+  toolIds: [FIXTURE_TOOL_ID],
+};
+const toolDependencies = { sourceIds: [], toolIds: [FIXTURE_TOOL_ID] };
 const complete = async (
   tx: Transaction,
   envelope: EventEnvelope,
@@ -147,6 +193,7 @@ const complete = async (
       : "Scheduled fixture request";
   const answer = `Fixture answer for "${text}". The local pilot source describes durable conversation admission.`;
   await item(tx, envelope, {
+    dependencies: toolDependencies,
     name: "Read pilot source",
     runId,
     state: "succeeded",
@@ -154,11 +201,13 @@ const complete = async (
     type: "tool",
   });
   await item(tx, envelope, {
+    dependencies: fixtureDependencies,
     runId,
     text: answer,
     type: "output",
   });
   await item(tx, envelope, {
+    dependencies: fixtureDependencies,
     href: `/api/product/conversations/${envelope.conversationId}/sources/${FIXTURE_SOURCE_ID}`,
     runId,
     sourceId: FIXTURE_SOURCE_ID,
@@ -183,11 +232,6 @@ export const createFixtureSessionService = (
   database: Database,
   options: ChannelOptions
 ): SessionService => {
-  if (options.mode !== "fixture") {
-    throw new Error(
-      "The channel SessionService fixture is disabled in production."
-    );
-  }
   const now = options.now ?? Date.now;
   const fixture = {
     async approve(
@@ -224,12 +268,9 @@ export const createFixtureSessionService = (
                 status: "conflict",
               };
         }
-        const rows = await tx
-          .select()
-          .from(channelFixtureRun)
-          .where(
-            eq(channelFixtureRun.conversationId, command.address.conversationId)
-          );
+        const rows = [...fixtureRuns.values()].filter(
+          (row) => row.conversationId === command.address.conversationId
+        );
         const found = rows.find(
           (row) =>
             row.runId === command.runId &&
@@ -265,10 +306,7 @@ export const createFixtureSessionService = (
             type: "run",
           });
         }
-        await tx
-          .update(channelFixtureRun)
-          .set({ state: result })
-          .where(eq(channelFixtureRun.runId, found.runId));
+        found.state = result;
         await tx.insert(channelEffect).values({
           digest: requestDigest,
           operationId: effect.operationId,
@@ -311,18 +349,11 @@ export const createFixtureSessionService = (
                 status: "conflict",
               };
         }
-        const [found] = await tx
-          .select()
-          .from(channelFixtureRun)
-          .where(eq(channelFixtureRun.runId, command.runId));
+        const found = fixtureRuns.get(command.runId);
         if (!found || !addressMatches(found.envelope, command.address)) {
           return { resource: "run", status: "not-found" };
         }
-        if (
-          ["completed", "failed", "cancelled", "unknown-outcome"].includes(
-            found.state.state
-          )
-        ) {
+        if (["completed", "failed", "cancelled"].includes(found.state.state)) {
           return {
             code: "already-final",
             reason: "The run is already final.",
@@ -334,10 +365,7 @@ export const createFixtureSessionService = (
           runId: command.runId,
           state: "cancelled",
         };
-        await tx
-          .update(channelFixtureRun)
-          .set({ state: result })
-          .where(eq(channelFixtureRun.runId, found.runId));
+        found.state = result;
         await item(tx, found.envelope, {
           run: result,
           runId: found.runId,
@@ -380,10 +408,9 @@ export const createFixtureSessionService = (
         await tx.execute(
           sql`select pg_advisory_xact_lock(hashtext(${envelope.sessionId}))`
         );
-        const [prior] = await tx
-          .select()
-          .from(channelFixtureRun)
-          .where(eq(channelFixtureRun.eventId, envelope.eventId));
+        const prior = [...fixtureRuns.values()].find(
+          (run) => run.eventId === envelope.eventId
+        );
         if (prior) {
           if (
             classifyEventDelivery(prior.envelope, envelope) !== "duplicate" ||
@@ -420,6 +447,7 @@ export const createFixtureSessionService = (
           type: "user",
         });
         await item(tx, envelope, {
+          dependencies: toolDependencies,
           name: "Read pilot source",
           runId,
           state: "running",
@@ -442,12 +470,13 @@ export const createFixtureSessionService = (
         } else {
           state = await complete(tx, envelope, runId, now());
         }
-        await tx.insert(channelFixtureRun).values({
+        fixtureRuns.set(runId, {
           agentVersion: definition.version,
           conversationId: envelope.conversationId,
           digest: effect.requestDigest,
           envelope,
           eventId: envelope.eventId,
+          mode: command.mode ?? "follow-up",
           operationId: effect.operationId,
           organizationId: envelope.organizationId,
           runId,
@@ -493,17 +522,11 @@ export const createFixtureSessionService = (
           "agent",
           address.agentId
         );
-        const allRuns = await database
-          .select()
-          .from(channelFixtureRun)
-          .where(
-            and(
-              eq(channelFixtureRun.organizationId, address.organizationId),
-              eq(channelFixtureRun.conversationId, address.conversationId)
-            )
-          );
-        const runs = allRuns.filter((run) =>
-          addressMatches(run.envelope, address)
+        const runs = [...fixtureRuns.values()].filter(
+          (run) =>
+            run.organizationId === address.organizationId &&
+            run.conversationId === address.conversationId &&
+            addressMatches(run.envelope, address)
         );
         const records = await database
           .select()
@@ -518,20 +541,7 @@ export const createFixtureSessionService = (
         for (const record of records) {
           await authorizeContent(database, options, context, record.item);
         }
-        const admissions = await database
-          .select()
-          .from(channelInbox)
-          .where(eq(channelInbox.conversationId, address.conversationId));
-        const modes = new Map(
-          admissions.map((entry) => [
-            entry.envelope.eventId,
-            entry.submissionMode,
-          ])
-        );
-        const dependencies = {
-          sourceIds: [id.source(FIXTURE_SOURCE_ID)],
-          toolIds: [FIXTURE_TOOL_ID],
-        };
+        const dependencies = fixtureDependencies;
         const tools = new Map(
           records.flatMap((record) =>
             record.item.type === "tool"
@@ -613,7 +623,7 @@ export const createFixtureSessionService = (
           })),
           userMessages: runs.map((run) => ({
             eventId: run.eventId,
-            mode: modes.get(run.envelope.eventId) ?? "follow-up",
+            mode: run.mode,
             occurredAt: run.envelope.occurredAt,
             runId: run.runId,
             text:
@@ -623,14 +633,6 @@ export const createFixtureSessionService = (
           })),
         });
       }),
-    reconcile: (command) =>
-      Effect.fail(
-        new UnknownOutcome({
-          operationId: command.operationId,
-          reason:
-            "The channel contract fixture has no provider receipt. Use the native host fixture for reconciliation.",
-        })
-      ),
     stream: (address, context, request, read) =>
       Stream.map(
         Stream.fromEffect(service.inspect(address, context, read)),
@@ -652,20 +654,4 @@ export const createFixtureSessionService = (
       ),
   };
   return service;
-};
-export const sessionServiceFor = (
-  database: Database,
-  options: ChannelOptions
-): SessionService => {
-  if (options.sessions) {
-    return options.sessions(database);
-  }
-  if (options.mode !== "fixture") {
-    throw new ChannelError(
-      503,
-      "unavailable",
-      "The session adapter is not configured."
-    );
-  }
-  return createFixtureSessionService(database, options);
 };

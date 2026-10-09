@@ -42,7 +42,6 @@ import type {
 import type { ContentDependencies } from "../../packages/contracts/src/session.ts";
 import {
   createAuthorityFake,
-  createReceiptFake,
   createToolFake,
 } from "../../packages/contracts/src/testing/effect-fakes.ts";
 import {
@@ -998,50 +997,38 @@ test("durable approval waits bind run and policy; duplicate decisions do not red
   }
 });
 
-const toolFixture = async (uncertain = false) => {
+// Each task keeps its own durable memos, as Pi does; invoking the same task
+// again replays the call after a crash.
+const memoStore = () => {
+  const tasks = new Map<number, Map<string, unknown>>();
+  return (taskId: number) => {
+    const memos = tasks.get(taskId) ?? new Map<string, unknown>();
+    tasks.set(taskId, memos);
+    return memos;
+  };
+};
+const toolFixture = async ({
+  idempotent = false,
+  uncertain = false,
+}: { idempotent?: boolean; uncertain?: boolean } = {}) => {
   const fixture = await setup();
   const receipt = await submit(fixture);
-  const receipts = createReceiptFake(Date.now);
   const controlled = createToolFake(Date.now);
-  let approved: BoundApproval | undefined;
   const definition = {
     ...unknownOutcomeInvocation.tool,
     connectorFingerprint: id.digest("registered-connector"),
   };
   const executor: ToolExecutor = {
-    ...controlled.service,
     execute: (call, capability, effectOptions) =>
-      Effect.gen(function* confirmedExecution() {
+      Effect.gen(function* controlledExecution() {
         // Signed gateway payloads must contain only JSON values for human callers.
         canonicalToolArguments(capability);
-        const key = {
-          operationId: capability.operationId,
-          organizationId: call.organizationId,
-        };
-        const stored = yield* receipts.service.read(
-          key,
-          call.context,
-          effectOptions
-        );
-        const dispatched = yield* receipts.service.dispatch(
-          key,
-          stored.revision,
-          approved,
-          effectOptions
-        );
-        assert.equal(dispatched.dispatch, true);
         const execution = yield* controlled.service.execute(
           call,
           capability,
           effectOptions
         );
         if (uncertain) {
-          yield* receipts.service.unknown(
-            key,
-            "Injected loss after dispatch",
-            undefined,
-            effectOptions
-          );
           return yield* Effect.fail(
             new UnknownOutcome({
               operationId: capability.operationId,
@@ -1049,29 +1036,23 @@ const toolFixture = async (uncertain = false) => {
             })
           );
         }
-        yield* receipts.service.recordOutcome(
-          key,
-          { execution, state: "succeeded" },
-          effectOptions
-        );
-        yield* receipts.service.complete(key, effectOptions);
         return execution;
       }),
   };
+  const counts = { persisted: 0 };
   const tools = createPiTools({
     agent,
-    approval: (_invocation, approval) =>
-      Effect.sync(() => {
-        approved = approval;
-        return approval;
-      }),
+    approval: (_invocation, approval) => Effect.succeed(approval),
     authority: fixture.authority.service,
     deadlineMs: 10_000,
     dependencies: () =>
       Effect.succeed({ sourceIds: [], toolIds: [definition.id] }),
     executor,
+    persist: () =>
+      Effect.sync(() => {
+        counts.persisted += 1;
+      }),
     publish: fixture.store.publish,
-    receipts: receipts.service,
     resolve: () =>
       Effect.gen(function* resolveFixture() {
         const handoffs = yield* fixture.store.service.recover(
@@ -1088,38 +1069,48 @@ const toolFixture = async (uncertain = false) => {
       {
         definition,
         description: "Controlled fixture",
+        idempotent,
         parameters: Type.Object({ ticket: Type.String() }),
       },
     ],
   });
   const [tool] = tools;
   assert.ok(tool);
+  const memos = memoStore();
   const invoke = async (taskId = 1, signal?: AbortSignal) => {
-    let memo: unknown;
+    const stored = memos(taskId);
     const api = {
       callId: "fixture-call",
-      memo: (_name: string, candidate: unknown) => {
-        if (typeof candidate === "string") {
-          memo ??= candidate;
+      memo: (name: string, ...rest: unknown[]) => {
+        if (rest.length === 2 && !stored.has(name)) {
+          stored.set(name, structuredClone(rest[0]));
         }
-        return Promise.resolve(memo);
+        return Promise.resolve(stored.get(name));
       },
       taskId,
     } as unknown as Parameters<typeof tool.execute>[1];
     return await tool.execute({ ticket: "support-1" }, api, piContext(signal));
   };
-  return { ...fixture, controlled, executor, invoke, receipt, receipts, tools };
+  return {
+    ...fixture,
+    controlled,
+    counts,
+    executor,
+    invoke,
+    memos,
+    receipt,
+    tools,
+  };
 };
 
 test(
-  "stalled argument preparation expires before memo, receipt, approval or dispatch",
+  "stalled argument preparation expires before memo, approval or dispatch",
   { timeout: 1000 },
   async () => {
     const fixture = await setup();
-    const receipts = createReceiptFake(Date.now);
     const controlled = createToolFake(Date.now);
     const controller = new AbortController();
-    const counts = { approval: 0, claim: 0, memo: 0, prepared: 0 };
+    const counts = { approval: 0, memo: 0, persisted: 0, prepared: 0 };
     const [registration] = createPiTools({
       agent,
       approval: (_invocation, approval) =>
@@ -1131,14 +1122,11 @@ test(
       deadlineMs: 10,
       dependencies: () => Effect.succeed({ sourceIds: [], toolIds: [] }),
       executor: controlled.service,
+      persist: () =>
+        Effect.sync(() => {
+          counts.persisted += 1;
+        }),
       publish: fixture.store.publish,
-      receipts: {
-        ...receipts.service,
-        claim: (...args) => {
-          counts.claim += 1;
-          return receipts.service.claim(...args);
-        },
-      },
       resolve: () =>
         Effect.fail(
           new InvalidInput({ reason: "Preparation must finish before binding" })
@@ -1179,7 +1167,12 @@ test(
         Effect.runPromise(Effect.sleep(100)).then(() => "pending"),
       ]);
       assert.equal(result, "rejected");
-      assert.deepEqual(counts, { approval: 0, claim: 0, memo: 0, prepared: 1 });
+      assert.deepEqual(counts, {
+        approval: 0,
+        memo: 0,
+        persisted: 0,
+        prepared: 1,
+      });
       assert.equal(controlled.counts.dispatch, 0);
       assert.equal(fixture.store.domain().tools.length, 0);
     } finally {
@@ -1190,7 +1183,7 @@ test(
   }
 );
 
-test("Pi registry exposes registered tools only; replay returns a confirmed receipt", async () => {
+test("Pi registry exposes registered tools only; replay returns the recorded outcome", async () => {
   const fixture = await toolFixture();
   try {
     assert.deepEqual(
@@ -1201,6 +1194,8 @@ test("Pi registry exposes registered tools only; replay returns a confirmed rece
     const replay = await fixture.invoke();
     assert.deepEqual(first.content, replay.content);
     assert.equal(fixture.controlled.counts.dispatch, 1);
+    // The dispatch marker and the outcome are each made durable once.
+    assert.equal(fixture.counts.persisted, 2);
     const { tools } = fixture.store.domain();
     assert.equal(tools.length, 1);
     assert.equal(tools[0]?.state, "succeeded");
@@ -1212,215 +1207,52 @@ test("Pi registry exposes registered tools only; replay returns a confirmed rece
   }
 });
 
-test("uncertain write blocks a new Pi task with the same unresolved intent", async () => {
-  const fixture = await toolFixture(true);
+test("an uncertain write reaches the model as an error and never dispatches again", async () => {
+  const fixture = await toolFixture({ uncertain: true });
   try {
     const first = await fixture.invoke(1);
-    const retry = await fixture.invoke(2);
-    assert.equal(first.control?.terminate, true);
-    assert.equal(retry.control?.terminate, true);
+    const replay = await fixture.invoke(1);
+    assert.equal(first.isError, true);
+    assert.equal(replay.isError, true);
+    assert.equal(first.control, undefined);
     assert.equal(fixture.controlled.counts.dispatch, 1);
-    assert.equal(fixture.store.domain().runs[0]?.state, "unknown-outcome");
-    assert.equal(fixture.controlled.counts.reconcile, 0);
+    const snapshot = fixture.store.domain();
+    assert.equal(snapshot.tools[0]?.state, "unknown-outcome");
+    assert.notEqual(snapshot.runs[0]?.state, "completed");
+    // A new call is a new operation; it needs its own approval and dispatch.
+    await fixture.invoke(2);
+    assert.equal(fixture.controlled.counts.dispatch, 2);
   } finally {
     await fixture.close();
   }
 });
 
-const confirmedReceiptExecutor = (
-  fixture: Awaited<ReturnType<typeof toolFixture>>
-): ToolExecutor => ({
-  ...fixture.executor,
-  reconcile: (operationId, _context, read) =>
-    Effect.gen(function* reconcileFixture() {
-      const key = { operationId, organizationId: address.organizationId };
-      const stored = yield* fixture.receipts.service.read(
-        key,
-        allowedContext,
-        read
-      );
-      const effect = {
-        ...read,
-        operationId,
-        requestDigest: stored.intent.invocation.argumentDigest,
-      };
-      const execution = {
-        output: "confirmed fixture output",
-        providerReceipt: "confirmed-provider-receipt",
-      };
-      yield* fixture.receipts.service.recordOutcome(
-        key,
-        { execution, state: "succeeded" },
-        effect
-      );
-      yield* fixture.receipts.service.complete(key, effect);
-      return execution;
-    }),
-});
-
-test("product reconciliation uses confirmed receipts and never redispatches", async () => {
-  const fixture = await toolFixture(true);
-  const scope = Scope.makeUnsafe();
-  const executor = confirmedReceiptExecutor(fixture);
+test("a call interrupted after dispatch reports an unknown outcome on replay", async () => {
+  const fixture = await toolFixture();
   try {
-    await fixture.invoke();
-    const [unknown] = fixture.store.domain().tools;
-    assert.ok(unknown);
-    assert.equal(unknown.state, "unknown-outcome");
-    const runtime = await Effect.runPromise(
-      Scope.provide(scope)(
-        createSessionService({
-          ...fixture.dependencies,
-          executor,
-          receipts: fixture.receipts.service,
-        })
-      )
-    );
-    const command = {
-      address,
-      context: allowedContext,
-      operationId: unknown.operationId,
-      runId: unknown.runId,
-    };
-    const resolved = await Effect.runPromise(
-      runtime.service.reconcile(command, options())
-    );
-    assert.equal(resolved.state, "succeeded");
-    assert.equal(resolved.output, "confirmed fixture output");
-    assert.equal(
-      fixture
-        .reopen()
-        .domain()
-        .runs.find((run) => run.runId === unknown.runId)?.state,
-      "running"
-    );
-    assert.deepEqual(
-      await Effect.runPromise(runtime.service.reconcile(command, options())),
-      resolved
-    );
-    assert.equal(fixture.controlled.counts.dispatch, 1);
-    fixture.authority.setDecision({
-      decision: "deny",
-      policyVersion: "v2",
-      reason: "revoked",
-    });
-    assert.equal(
-      (await failure(runtime.service.reconcile(command, options())))._tag,
-      "Denied"
-    );
-    assert.equal(fixture.controlled.counts.dispatch, 1);
+    const interrupted = fixture.memos(3);
+    interrupted.set("cerebro-run", fixture.receipt.runId);
+    interrupted.set("cerebro-dispatch", "dispatched-before-crash");
+    const replay = await fixture.invoke(3);
+    assert.equal(replay.isError, true);
+    assert.equal(fixture.controlled.counts.dispatch, 0);
+    assert.equal(fixture.store.domain().tools[0]?.state, "unknown-outcome");
   } finally {
-    await Effect.runPromise(Scope.close(scope, Exit.void));
     await fixture.close();
   }
 });
 
-test("reconciliation completes the run through the repair job after a transient projection failure", async () => {
-  const fixture = await toolFixture(true);
-  const scope = Scope.makeUnsafe();
-  const executor = confirmedReceiptExecutor(fixture);
+test("an idempotent call interrupted after dispatch is dispatched again on replay", async () => {
+  const fixture = await toolFixture({ idempotent: true });
   try {
-    await fixture.invoke();
-    const [unknown] = fixture.store.domain().tools;
-    assert.ok(unknown);
-    const runtime = await Effect.runPromise(
-      Scope.provide(scope)(
-        createSessionService({
-          ...fixture.dependencies,
-          executor,
-          receipts: fixture.receipts.service,
-        })
-      )
-    );
-    const command = {
-      address,
-      context: allowedContext,
-      operationId: unknown.operationId,
-      runId: unknown.runId,
-    };
-    fixture.engine.failProject(
-      new Unavailable({ reason: "Content read timed out" })
-    );
-    const resolved = await Effect.runPromise(
-      runtime.service.reconcile(command, options())
-    );
-    assert.equal(resolved.state, "succeeded");
-    const stateOf = () =>
-      fixture
-        .reopen()
-        .domain()
-        .runs.find((run) => run.runId === unknown.runId)?.state;
-    assert.equal(stateOf(), "running");
-    fixture.engine.completeRun(unknown.runId);
-    assert.equal(
-      await Effect.runPromise(runtime.repairProjection(options())),
-      true
-    );
-    assert.equal(stateOf(), "completed");
-    assert.equal(fixture.engine.counts.submit, 1);
-  } finally {
-    await Effect.runPromise(Scope.close(scope, Exit.void));
-    await fixture.close();
-  }
-});
-
-test("reconciliation CAS cannot resume while another tool outcome is unknown", async () => {
-  const fixture = await toolFixture(true);
-  const scope = Scope.makeUnsafe();
-  let injected = false;
-  try {
-    await fixture.invoke();
-    const [unknown] = fixture.store.domain().tools;
-    assert.ok(unknown);
-    const other = { ...unknown, operationId: "concurrent-uncertain-operation" };
-    const store = {
-      ...fixture.dependencies.store,
-      commit: (...args: Parameters<typeof fixture.dependencies.store.commit>) =>
-        Effect.gen(function* injectConcurrentProjection() {
-          if (args[2].type === "projected-batch" && !injected) {
-            injected = true;
-            yield* fixture.store.publish(other.runId, {
-              ...other,
-              type: "tool",
-            });
-          }
-          return yield* fixture.dependencies.store.commit(...args);
-        }),
-    };
-    const runtime = await Effect.runPromise(
-      Scope.provide(scope)(
-        createSessionService({
-          ...fixture.dependencies,
-          executor: confirmedReceiptExecutor(fixture),
-          receipts: fixture.receipts.service,
-          store,
-        })
-      )
-    );
-    const command = {
-      address,
-      context: allowedContext,
-      operationId: unknown.operationId,
-      runId: unknown.runId,
-    };
-    assert.equal(
-      (await failure(runtime.service.reconcile(command, options())))._tag,
-      "Conflict"
-    );
-    const resolved = await Effect.runPromise(
-      runtime.service.reconcile(command, options())
-    );
-    assert.equal(resolved.state, "succeeded");
-    const snapshot = fixture.reopen().domain();
-    assert.equal(snapshot.runs[0]?.state, "unknown-outcome");
-    assert.equal(
-      snapshot.tools.find((tool) => tool.operationId === other.operationId)
-        ?.state,
-      "unknown-outcome"
-    );
+    const interrupted = fixture.memos(4);
+    interrupted.set("cerebro-run", fixture.receipt.runId);
+    interrupted.set("cerebro-dispatch", "dispatched-before-crash");
+    const replay = await fixture.invoke(4);
+    assert.equal(replay.isError, undefined);
     assert.equal(fixture.controlled.counts.dispatch, 1);
+    assert.equal(fixture.store.domain().tools[0]?.state, "succeeded");
   } finally {
-    await Effect.runPromise(Scope.close(scope, Exit.void));
     await fixture.close();
   }
 });
@@ -1692,50 +1524,38 @@ test("current authority denies model attempts and command dispatch without calli
   }
 });
 
-test("unknown effects cannot become successful Stop or replacement", async () => {
+test("an uncertain tool outcome does not block Stop or a new input", async () => {
   const fixture = await setup();
   try {
     const receipt = await submit(fixture);
     await Effect.runPromise(
       fixture.project({
-        run: {
-          operationId: id.operation("uncertain"),
-          runId: receipt.runId,
-          state: "unknown-outcome",
-        },
-        type: "run",
+        arguments: {},
+        dependencies: { sourceIds: [], toolIds: [] },
+        effect: "write",
+        operationId: id.operation("uncertain"),
+        output: null,
+        runId: receipt.runId,
+        state: "unknown-outcome",
+        toolId: id.tool("fixture-write"),
+        toolVersion: "1",
+        type: "tool",
       })
     );
-    assert.equal(
-      (
-        await failure(
-          fixture.service.cancel(
-            {
-              address,
-              context: allowedContext,
-              runId: receipt.runId,
-              type: "cancel",
-            },
-            options()
-          )
-        )
-      )._tag,
-      "UnknownOutcome"
+    await Effect.runPromise(
+      fixture.service.cancel(
+        {
+          address,
+          context: allowedContext,
+          runId: receipt.runId,
+          type: "cancel",
+        },
+        options()
+      )
     );
-    assert.equal(
-      (
-        await failure(
-          fixture.service.submit(
-            { event: event("R"), mode: "replace", type: "submit" },
-            options()
-          )
-        )
-      )._tag,
-      "UnknownOutcome"
-    );
-    assert.equal(fixture.engine.counts.stop, 0);
-    assert.equal(fixture.engine.counts.cancel, 0);
-    assert.equal(fixture.engine.counts.submit, 1);
+    await submit(fixture, "B");
+    assert.equal(fixture.engine.counts.cancel, 1);
+    assert.equal(fixture.engine.counts.submit, 2);
   } finally {
     await fixture.close();
   }
@@ -2758,11 +2578,10 @@ for (const scenario of [
   "uncertain dispatch",
 ] as const) {
   test(
-    `native ${scenario} settles product tools from confirmed dispatch evidence`,
+    `native ${scenario} settles product tools without a repeated dispatch`,
     { timeout: 5000 },
     async () => {
       const fixture = await joinedAdapterFixture();
-      const receipts = createReceiptFake(Date.now);
       const tool = {
         connectorFingerprint: id.digest("fixture-digest"),
         connectorId: "fixture-connector",
@@ -2779,34 +2598,17 @@ for (const scenario of [
                 new Unavailable({ reason: "Failed before dispatch" })
               );
             }
-            const key = {
-              operationId: capability.operationId,
-              organizationId: call.organizationId,
-            };
-            const receipt = yield* receipts.service.read(
-              key,
-              call.context,
-              effectOptions
-            );
-            const claimed = yield* receipts.service.dispatch(
-              key,
-              receipt.revision,
-              undefined,
-              effectOptions
-            );
-            assert.equal(claimed.dispatch, true);
+            assert.equal(call.organizationId, capability.organizationId);
+            assert.ok(effectOptions.operationId);
             physicalDispatches += 1;
             if (scenario === "uncertain dispatch") {
               return yield* Effect.fail(
-                new Unavailable({ reason: "Lost after dispatch" })
+                new UnknownOutcome({
+                  operationId: capability.operationId,
+                  reason: "Lost after dispatch",
+                })
               );
             }
-            yield* receipts.service.recordOutcome(
-              key,
-              { reason: "Provider confirmed failure", state: "failed" },
-              effectOptions
-            );
-            yield* receipts.service.complete(key, effectOptions);
             return yield* Effect.fail(
               new Denied({
                 code: "unauthorized",
@@ -2814,10 +2616,6 @@ for (const scenario of [
               })
             );
           }),
-        reconcile: (operationId) =>
-          Effect.fail(
-            new UnknownOutcome({ operationId, reason: "No provider evidence" })
-          ),
       };
       const [registration] = createPiTools({
         agent: { ...agent, enabledToolIds: [tool.id] },
@@ -2836,8 +2634,8 @@ for (const scenario of [
         dependencies: () =>
           Effect.succeed({ sourceIds: [], toolIds: [tool.id] }),
         executor,
+        persist: () => Effect.void,
         publish: fixture.store.publish,
-        receipts: receipts.service,
         resolve: () =>
           fixture.store.service
             .recover(address, options())
@@ -2894,7 +2692,7 @@ for (const scenario of [
             (uncertain ? "unknown-outcome" : "failed")
         );
         const cancelled = scenario === "cancelled approval";
-        if (!uncertain && !cancelled) {
+        if (!cancelled) {
           await until(() => fixture.store.domain().outputs.length === 1);
         }
         const native = await fixture.native.storage.submissionByRequest(
@@ -2902,22 +2700,15 @@ for (const scenario of [
           "A",
           fixture.native.context
         );
-        let expectedRunState = "completed";
-        if (uncertain) {
-          expectedRunState = "unknown-outcome";
-        } else if (cancelled) {
-          expectedRunState = "cancelled";
-        }
+        // The model answers after an uncertain call; the run completes.
+        const expectedRunState = cancelled ? "cancelled" : "completed";
         assert.equal(
           fixture.store
             .domain()
             .runs.find((run) => run.runId === submitted.runId)?.state,
           expectedRunState
         );
-        assert.equal(
-          fixture.store.domain().outputs.length,
-          uncertain || cancelled ? 0 : 1
-        );
+        assert.equal(fixture.store.domain().outputs.length, cancelled ? 0 : 1);
         assert.equal(
           physicalDispatches,
           scenario === "confirmed failed receipt" || uncertain ? 1 : 0
@@ -2927,7 +2718,7 @@ for (const scenario of [
           uncertain ? "unknown-outcome" : "failed"
         );
         assert.equal(fixture.runtime().backgroundFailure(), undefined);
-        if (!uncertain && !cancelled) {
+        if (!cancelled) {
           assert.equal(native?.status, "done");
         }
       } finally {
@@ -3362,7 +3153,7 @@ test("SQLite projected batches roll back late validation and save failures; obse
   }
 });
 
-test("SQLite rejects incomplete, unknown-tool, and ephemeral joined completion batches without mutation", async () => {
+test("SQLite rejects incomplete, running-tool, and ephemeral joined completion batches without mutation", async () => {
   const fixture = await setup();
   try {
     const first = await submit(fixture);
@@ -3387,7 +3178,7 @@ test("SQLite rejects incomplete, unknown-tool, and ephemeral joined completion b
       operationId: id.operation("unknown-joined-write"),
       output: null,
       runId: second.runId,
-      state: "unknown-outcome",
+      state: "running",
       toolId: id.tool("fixture-write"),
       toolVersion: "1",
       type: "tool",
@@ -3414,15 +3205,17 @@ test("SQLite rejects incomplete, unknown-tool, and ephemeral joined completion b
       "InvalidInput"
     );
     assert.deepEqual(fixture.store.domain(), before);
-    // Confirmed tool ownership remains on B while both logical runs complete.
+    // An uncertain tool is settled: tool ownership remains on B while both
+    // logical runs complete.
     await Effect.runPromise(
       commit([
         updates[0],
-        { ...tool, output: "confirmed", state: "succeeded" },
+        { ...tool, state: "unknown-outcome" },
         ...updates.slice(1),
       ])
     );
     assert.equal(fixture.store.domain().tools[0]?.runId, second.runId);
+    assert.equal(fixture.store.domain().tools[0]?.state, "unknown-outcome");
     assert.ok(
       fixture.store.domain().runs.every((run) => run.state === "completed")
     );
@@ -3430,44 +3223,6 @@ test("SQLite rejects incomplete, unknown-tool, and ephemeral joined completion b
     await fixture.close();
   }
 });
-
-test(
-  "unknown write on a joined member blocks native answer completion for every logical run",
-  { timeout: 5000 },
-  async () => {
-    const fixture = await joinedAdapterFixture();
-    try {
-      const [first, second] = await placeJoined(fixture);
-      await Effect.runPromise(
-        fixture.store.publish(first.runId, {
-          run: {
-            operationId: id.operation("uncertain-write"),
-            runId: first.runId,
-            state: "unknown-outcome",
-          },
-          type: "run",
-        })
-      );
-      fixture.native.secondGate.resolve(true);
-      await fixture.native.root.waitForIdle(fixture.native.context);
-      await Effect.runPromise(fixture.runtime().recover());
-      const snapshot = fixture.store.domain();
-      assert.equal(snapshot.outputs.length, 0);
-      assert.equal(
-        snapshot.runs.find((run) => run.runId === first.runId)?.state,
-        "unknown-outcome"
-      );
-      assert.notEqual(
-        snapshot.runs.find((run) => run.runId === second.runId)?.state,
-        "completed"
-      );
-      assert.equal(fixture.submissions(), 2);
-      assert.equal(fixture.runtime().backgroundFailure(), undefined);
-    } finally {
-      await fixture.close();
-    }
-  }
-);
 
 test(
   "withdrawing a queued steer leaves the primary native execution running and never joins that member",

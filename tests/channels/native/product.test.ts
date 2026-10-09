@@ -279,7 +279,7 @@ test(
         `${route}/sources/pilot-source`,
         owner.cookie,
         z.object({
-          mode: z.literal("fixture"),
+          mode: z.literal("local"),
           sourceId: z.literal("pilot-source"),
           text: z.string(),
         })

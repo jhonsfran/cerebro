@@ -23,13 +23,11 @@ import {
   isExecutionContextActiveAt,
 } from "../../packages/contracts/src/identity.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/identity.ts";
-import { ToolReceiptStore } from "../../packages/contracts/src/receipt-service.ts";
 import { DomainSnapshot } from "../../packages/contracts/src/session-service.ts";
 import type {
   BoundApproval,
   ToolExecutor,
 } from "../../packages/contracts/src/tool-service.ts";
-import { createCelldToolReceiptStore } from "../../packages/runtime/src/celld-tool-receipts.ts";
 import { SessionAgent as NativeSessionAgent } from "../../packages/runtime/src/session-agent.ts";
 import type { SessionHostConfiguration } from "../../packages/runtime/src/session-agent.ts";
 import { createControlledToolExecutor } from "../../packages/tools/src/broker.ts";
@@ -67,8 +65,6 @@ const checkpointControl = z.object({
 const fixtureInput = z.object({
   checkpoint: checkpointControl.nullable().optional(),
   enabled: z.boolean().optional(),
-  operationId: z.string().optional(),
-  replacementOperationId: z.string().optional(),
 });
 
 export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
@@ -434,15 +430,15 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
             maxOutputBytes: 4096,
             output: receiptOutput,
             requiresApproval: true,
-            retryMode: "reconcile-only",
+            retryMode: "at-most-once",
             target: {
-              kind: "fixture-write",
+              kind: "http-write",
               method: "POST",
               url: `${this.env.FIXTURE_URL}/effects`,
             },
           },
         ],
-        "fixture"
+        "local"
       );
       const [entry] = registry.list();
       if (!entry) {
@@ -451,57 +447,25 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
         );
       }
       const definition = yield* bindRegisteredTool(entry);
-      const receipts = yield* ToolReceiptStore.pipe(
-        Effect.provide(
-          createCelldToolReceiptStore(this.ctx.storage, {
-            address,
-            authorize: (receipt, caller, options) =>
-              Effect.asVoid(
-                authority.require(
-                  {
-                    action: "read",
-                    address,
-                    context: caller,
-                    pinnedAgent: agent,
-                    resource: {
-                      id: receipt.intent.invocation.tool.id,
-                      kind: "tool",
-                      organizationId: address.organizationId,
-                    },
-                    tool: receipt.intent.invocation.tool,
-                  },
-                  options
-                )
-              ),
-          }).layer
-        )
-      );
       const approval = (operationId: string): BoundApproval | undefined =>
         this.handoffs()
           .flatMap((handoff) => handoff.approvals)
           .find((value) => value.operationId === operationId);
-      const dispatch = (operationId: string, args?: unknown) =>
+      const dispatch = (operationId: string, args: unknown) =>
         Effect.tryPromise({
           catch: () =>
             new Unavailable({ reason: "Fixture gateway response unavailable" }),
           try: async (signal) => {
             const response = await this.env.TOOL_GATEWAY.fetch(
-              new Request(
-                args === undefined
-                  ? `https://gateway.internal/effect?operationId=${encodeURIComponent(operationId)}`
-                  : "https://gateway.internal/effect",
-                args === undefined
-                  ? { signal }
-                  : {
-                      body: JSON.stringify({ arguments: args, operationId }),
-                      headers: { "Content-Type": "application/json" },
-                      method: "POST",
-                      signal,
-                    }
-              )
+              new Request("https://gateway.internal/effect", {
+                body: JSON.stringify({ arguments: args, operationId }),
+                headers: { "Content-Type": "application/json" },
+                method: "POST",
+                signal,
+              })
             );
             if (!response.ok) {
-              throw new Error("Fixture gateway has no confirmed receipt");
+              throw new Error("Fixture gateway did not confirm the write");
             }
             const output = receiptOutput.parse(await response.json());
             return { output, providerReceipt: output.receipt };
@@ -510,21 +474,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
       const driver: ToolExecutor = {
         execute: (call, _capability, options) =>
           dispatch(options.operationId, call.arguments),
-        reconcile: (operationId) =>
-          Effect.suspend(() => {
-            const [row] = this.ctx.storage.sql
-              .exec<{ evidence: number }>(
-                "SELECT evidence FROM fixture_authority WHERE id=1"
-              )
-              .toArray();
-            return row?.evidence === 1
-              ? dispatch(operationId)
-              : Effect.fail(
-                  new Unavailable({
-                    reason: "Injected fixture provider evidence outage",
-                  })
-                );
-          }),
       };
       const executor = createControlledToolExecutor({
         address,
@@ -550,7 +499,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
           ),
         driver,
         pinnedAgent: agent,
-        receipts,
         registry,
       });
       const model: Model<"openai-completions"> = {
@@ -684,7 +632,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
           model,
           provider,
         },
-        receipts,
         toolDependencies: () =>
           Effect.succeed({ sourceIds: [], toolIds: [definition.id] }),
         tools: [
@@ -730,10 +677,7 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
               new InvalidInput({ reason: "Invalid fixture command" }),
             try: async () => fixtureInput.parse(await request.json()),
           });
-          if (
-            (path === "/fixture/access" || path === "/fixture/evidence") &&
-            input.enabled !== undefined
-          ) {
+          if (path === "/fixture/access" && input.enabled !== undefined) {
             if (
               request.headers.get("x-fixture-principal") !==
               ownerContext(configuration.address).actor.id
@@ -746,9 +690,7 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
               );
             }
             this.ctx.storage.sql.exec(
-              path === "/fixture/access"
-                ? "UPDATE fixture_authority SET enabled=? WHERE id=1"
-                : "UPDATE fixture_authority SET evidence=? WHERE id=1",
+              "UPDATE fixture_authority SET enabled=? WHERE id=1",
               input.enabled ? 1 : 0
             );
             yield* Effect.tryPromise({
@@ -758,7 +700,7 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
             });
             return { enabled: input.enabled };
           }
-          const caller = yield* configuration.authenticate(request);
+          yield* configuration.authenticate(request);
 
           if (path === "/fixture/checkpoint") {
             return yield* this.checkpointState(input.checkpoint);
@@ -835,61 +777,9 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
             };
           }
 
-          if (!input.operationId) {
-            return yield* Effect.fail(
-              new InvalidInput({
-                reason: "Fixture receipt requires operation identity",
-              })
-            );
-          }
-          const options = { deadlineAt: Date.now() + 30_000 };
-          const receipt = yield* configuration.receipts.read(
-            {
-              operationId: id.operation(input.operationId),
-              organizationId: configuration.address.organizationId,
-            },
-            caller,
-            options
+          return yield* Effect.fail(
+            new InvalidInput({ reason: `Unknown fixture route ${path}` })
           );
-          if (path === "/fixture/replay" || path === "/fixture/occurrence") {
-            const { invocation, policyVersion } = receipt.intent;
-            const operationId = input.replacementOperationId
-              ? id.operation(input.replacementOperationId)
-              : invocation.operationId;
-            const deadlineAt = Date.now() + 30_000;
-            return yield* configuration.executor.execute(
-              {
-                agentId: invocation.agentId,
-                arguments: invocation.arguments,
-                context: caller,
-                organizationId: invocation.organizationId,
-                runId: invocation.runId,
-                tool: invocation.tool,
-              },
-              {
-                actorPrincipalId: caller.actor.id,
-                agentId: invocation.agentId,
-                argumentDigest: invocation.argumentDigest,
-                connectorFingerprint: invocation.tool.connectorFingerprint,
-                connectorId: invocation.tool.connectorId,
-                effect: invocation.tool.effect,
-                expiresAt: deadlineAt,
-                operationId,
-                organizationId: invocation.organizationId,
-                policyVersion,
-                principalId: caller.represented?.id ?? caller.actor.id,
-                runId: invocation.runId,
-                toolId: invocation.tool.id,
-                toolVersion: invocation.tool.version,
-              },
-              {
-                deadlineAt,
-                operationId,
-                requestDigest: invocation.argumentDigest,
-              }
-            );
-          }
-          return receipt;
         })
       )
     );

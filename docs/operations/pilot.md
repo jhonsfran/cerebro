@@ -1,16 +1,16 @@
 # Operate the company pilot
 
-Local fixture acceptance is complete. External production qualification remains incomplete. Read [the session 7 receipt](../implementation/session-7.md) before enabling a pilot. A fixture result does not qualify an external provider.
+Local acceptance with the deterministic test provider is complete. External production qualification remains incomplete. Read [the session 7 receipt](../implementation/session-7.md) before enabling a pilot. A result against the test provider does not qualify an external provider.
 
 ## Default local models
 
 The default Compose deployment uses `local` mode. It offers `opencode/space-bunny-free` through the native OpenCode SDK. The model uses `https://opencode.ai/zen/v1`, the SDK public key, and zero input/output prices in `usd-micro` units. [OpenCode lists the model as free](https://opencode.ai/docs/en/zen/). The native live check completed and settled one operation with zero charge. Big Pickle returned no authoritative usage receipt in the native check and is excluded from the default catalog. There is no paid fallback. The provider can remove free access. Check the current model terms before using company data.
 
-Local mode creates a persistent `bootstrap-token` alongside the other local secrets. Installation setup requires this token. It uses real policy, PostgreSQL, artifact storage, and durable usage accounting. Fixture routes, test grants, sources, and tools are disabled. Configure read-only MCP tools explicitly if needed. Existing agents must select a registered model and start a new conversation after a model change.
+Local mode creates a persistent `bootstrap-token` alongside the other local secrets. Installation setup requires this token. It uses real policy, PostgreSQL, artifact storage, and durable usage accounting. The application has no test routes or test grants. Configure MCP read tools and approved write connectors explicitly if needed. Existing agents must select a registered model and start a new conversation after a model change.
 
-Local model limits are 65,536 input bytes, 2,048 output tokens, 262,144 response bytes, 90 seconds per request, and eight requests per run. Usage must still have an authoritative token receipt. Unknown outcomes stop for reconciliation even when the charge is zero. Local HTTP origins and local PostgreSQL are permitted; production retains HTTPS and verified PostgreSQL TLS requirements.
+Local model limits are 65,536 input bytes, 2,048 output tokens, 262,144 response bytes, 90 seconds per request, and eight requests per run. Usage must still have an authoritative token receipt. Local HTTP origins, private model and connector hosts, and local PostgreSQL are permitted; production retains public HTTPS and verified PostgreSQL TLS requirements.
 
-Use `CEREBRO_DEPLOY_MODE=fixture COMPOSE_PROFILES=fixture` for deterministic testing. Use `production` with the production Compose override and explicit runtime configuration for an external deployment. A protected runtime file with a different mode is rejected rather than silently reused.
+For deterministic testing, add `tests/slice-1/compose.test.yaml` to a local deployment; it supplies a fake model and connectors through an ordinary local `runtime.json`. Use `production` with the production Compose override and explicit runtime configuration for an external deployment. A protected runtime file with a different mode is rejected rather than silently reused.
 
 ## Configure an installation
 
@@ -18,9 +18,9 @@ Use one company per installation. Keep the public API and web origins stable. Th
 
 Production requires HTTPS public origins, a reverse proxy, PostgreSQL with `sslmode=verify-full`, and the external secrets directory selected by `CEREBRO_PRODUCTION_SECRETS_DIR`. Preserve that directory with the data. Never generate fresh passwords for restored data.
 
-`deploy/bootstrap.mjs` reads `runtime.json` from the same protected directory as the other secrets. Production requires that file. Default fixture mode generates a local configuration when the file is absent; it also ingests the fixed pilot source through PostgreSQL and artifact MinIO. A configuration change takes effect when bootstrap publishes the Worker again.
+`deploy/bootstrap.mjs` reads `runtime.json` from the same protected directory as the other secrets. Every deployment requires that file. A configuration change takes effect when bootstrap publishes the Worker again.
 
-The runtime configuration is secret. It contains model credentials, fixed model prices and request limits, connector targets and credentials, the gateway signing key, artifact storage, and installation setup credentials. Supply real OpenAI-compatible model endpoints and registered read-only MCP tools in production. The current composition supports local PostgreSQL budget authority and full-text memory. Unsupported configured modes fail during configuration parsing.
+The runtime configuration is secret. It contains model credentials, fixed model prices and request limits, connector targets and credentials, the gateway signing key, artifact storage, and installation setup credentials. Supply real OpenAI-compatible model endpoints, MCP read tools (`mcp-read`), and approved write connectors (`http-write`) in production. A write connector must require approval. Its `retryMode` is `idempotent` when the provider deduplicates by the `Idempotency-Key` header, otherwise `at-most-once`. The current composition supports local PostgreSQL budget authority and full-text memory. Unsupported configured modes fail during configuration parsing.
 
 The exact schema is [runtime-configuration.ts](../../apps/server/src/runtime-configuration.ts). A model ID must be `provider/model`. Prices are nonnegative integer units per token. The maximum reservation is `maxInputBytes * inputPerToken + maxOutputTokens * outputPerToken` and must fit a safe integer. A response needs authoritative OpenAI-compatible token usage before it reaches the SDK. Each run permits at most maxRequestsPerRun requests, with a default of 16. The runtime disables automatic SDK compaction and assigns a session title to avoid auxiliary model calls. A conversation that exceeds the complete outbound request bound fails before dispatch; start a new conversation instead of silently summarizing its history.
 
@@ -89,17 +89,17 @@ The OpenCode shared SQLite patch is tied to reviewed file hashes. A changed SDK 
 
 ## Rotate secrets
 
-Use a maintenance window. Stop admission and wait for active work to finish. Resolve uncertain operations before changing provider or gateway credentials.
+Use a maintenance window. Stop admission and wait for active work to finish. Check any tool shown as an unknown outcome in the target system before changing provider or gateway credentials.
 
 For model or MCP credentials, update the protected runtime configuration, publish the Worker, and verify one permitted operation. For the gateway signing key, stop active sessions and allow issued capabilities to expire before replacing the key. Check that the restricted loader and gateway use the same new key.
 
 An auth-secret change invalidates existing auth sessions. Verify sign-in after publishing the new binding. A database password change requires the PostgreSQL credential and Worker database URL to agree. A MinIO password change requires both MinIO services and their runtime and artifact clients to agree. Update each pair during the same maintenance window. Keep the old backup credentials protected for restore.
 
-## Recover an uncertain operation
+## Handle an unknown tool outcome
 
-A dispatched model with no authoritative receipt remains uncertain. Its maximum budget reservation stays held. A non-idempotent tool with no authoritative receipt retains an uncertain operation journal. The current tool broker does not reserve paid model capacity for tools. Do not clear the journal, change its operation ID, or submit a blind retry. Read the company audit and usage records, then reconcile against the provider's authoritative receipt. An operator must establish the effect and charge before releasing or settling held capacity.
+Before a tool's effect starts, Pi durably records a dispatch marker for that call. If the process stops after dispatch and before the result is recorded, Pi replays the call on recovery. An `idempotent` tool runs again. An `at-most-once` tool is never dispatched again: the conversation shows the tool as an unknown outcome, and the model is told to ask the user to check the target system. The run then continues.
 
-A known receipt can be replayed for accounting without repeating the provider call. A current grant is still required before cached source or tool content can be read.
+Cerebro does not query the provider for evidence. Check the target system for the operation ID, which the gateway sends as `Idempotency-Key` and `X-Cerebro-Operation-Id`. A new model call that repeats the action is a new operation and requires its own approval. A dispatched model with no authoritative receipt still keeps its maximum budget reservation.
 
 ## Tested deployment size
 

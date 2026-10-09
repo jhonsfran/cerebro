@@ -222,39 +222,6 @@ export const createProductHandler =
         }
         const service = createChannelService(database, options);
         const body = parseBody(raw);
-        if (
-          url.pathname === "/api/fixture/slack/events" &&
-          request.method === "POST"
-        ) {
-          const setup = await service.setup(user.id);
-          if (options.mode !== "fixture") {
-            throw new ChannelError(
-              404,
-              "not-found",
-              "The fixture route is disabled."
-            );
-          }
-          if (!setup.owner) {
-            throw new ChannelError(
-              403,
-              "forbidden",
-              "The fixture route requires the installation owner."
-            );
-          }
-          const fixture = parseInput(
-            z.object({ agentId: z.string().min(1), event: z.unknown() }),
-            body
-          );
-          const config = options.slack ?? {
-            agentId: fixture.agentId,
-            appId: "fixture-app",
-            signingSecret: "fixture-only",
-            workspaceId: "fixture-workspace",
-          };
-          return json(
-            await receiveSlackEvent(database, options, fixture.event, config)
-          );
-        }
         if (!url.pathname.startsWith("/api/product/")) {
           throw new ChannelError(404, "not-found", "The route was not found.");
         }

@@ -102,39 +102,6 @@ const artifactSchema = z.object({
   }),
   visibility: z.object({ grantId: z.string(), kind: z.literal("grant") }),
 });
-const fixtureDiagnosticsSchema = z.object({
-  adapterMeasurements: z.array(
-    z.object({
-      adapter: z.enum(["permission", "projection"]),
-      durationMs: z.number().nonnegative(),
-      operationId: z.string().optional(),
-      recordedAt: z.number().int().nonnegative(),
-    })
-  ),
-  observerCount: z.number().int().nonnegative(),
-  projectionFailure: z
-    .object({
-      code: z.string().nullable(),
-      reasonSHA256: z.string().regex(/^[a-f0-9]{64}$/u),
-      tag: z.enum([
-        "Denied",
-        "InvalidInput",
-        "Conflict",
-        "Unavailable",
-        "NotFound",
-        "UnknownOutcome",
-      ]),
-    })
-    .nullable(),
-});
-const parseFixtureDiagnostics = (content: string) => {
-  try {
-    const parsed = fixtureDiagnosticsSchema.safeParse(JSON.parse(content));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-};
 const publicFailureCode = (content: string): string => {
   try {
     const parsed = z
@@ -403,7 +370,10 @@ const restart = async (
     30_000
   );
   const afterRecovery = await provider();
-  assert.deepEqual(afterRecovery.model, beforeCrash.model);
+  // A settling tool lets its run answer after recovery; otherwise nothing runs.
+  if (settlingToolOperationId === undefined) {
+    assert.deepEqual(afterRecovery.model, beforeCrash.model);
+  }
   assert.deepEqual(
     afterRecovery.tools.map(
       ({ completedAt: _completedAt, ...record }) => record
@@ -645,28 +615,18 @@ afterEach(async () => {
     : owned) {
     const started = performance.now();
     try {
-      const response = await fetch(
-        `${fixture.boot.apiUrl}/api/fixture/runtime/observers`,
-        {
-          body: JSON.stringify({ conversationId: address.conversationId }),
-          headers: {
-            "Content-Type": "application/json",
-            Cookie: owner.cookie,
-            Origin: fixture.boot.webUrl,
-          },
-          method: "POST",
-          signal: AbortSignal.timeout(6000),
-        }
-      );
+      const response = await fixture.request(route(address), owner.cookie);
       const content = await response.text();
       records.push({
         bodySHA256: createHash("sha256").update(content).digest("hex"),
         code: response.status === 200 ? "ok" : publicFailureCode(content),
         conversationId: address.conversationId,
         createdGate,
-        diagnostics:
-          response.status === 200 ? parseFixtureDiagnostics(content) : null,
         elapsedMs: Math.round(performance.now() - started),
+        runs:
+          response.status === 200
+            ? viewSchema.parse(JSON.parse(content)).snapshot.runs
+            : null,
         status: response.status,
       });
     } catch (error) {
@@ -831,7 +791,7 @@ gate(
 );
 
 gate(
-  "audit append, replay, conflict, redaction, and historical exports use current authorization",
+  "audit append, redaction, and historical exports use current authorization",
   async () => {
     const recordsSchema = z.object({
       records: z.array(
@@ -885,26 +845,11 @@ gate(
     const [firstAudit] = exported.records;
     assert.ok(firstAudit);
     const { eventId } = firstAudit;
-    const replayedRows = () =>
-      fixture.sql(
+    assert.equal(
+      await fixture.sql(
         `SELECT count(*) FROM cerebro_audit_event WHERE event_id=${literal(eventId)}`
-      );
-    assert.equal(await replayedRows(), "1");
-    for (let count = 0; count < 2; count += 1) {
-      await fixture.json(
-        "/api/fixture/audit/replay",
-        owner.cookie,
-        z.unknown(),
-        { eventId }
-      );
-    }
-    assert.equal(await replayedRows(), "1");
-    await expectStatus(
-      await fixture.request("/api/fixture/audit/replay", owner.cookie, {
-        changed: true,
-        eventId,
-      }),
-      409
+      ),
+      "1"
     );
     const historical = await rpc(
       "identity.exportData",
@@ -946,16 +891,24 @@ gate(
   "company, agent, tool, source, and principal revocations deny cached content and resumed history",
   async () => {
     const beforeProvider = await provider();
-    const deniedSubmissions: { conversationId: string; eventId: string }[] = [];
+    const deniedSubmissions: {
+      conversationId: string;
+      eventId: string;
+      text: string;
+    }[] = [];
     evidence.deniedSubmissions = deniedSubmissions;
-    const assertNoDeniedAdmission = async () => {
-      for (const denied of deniedSubmissions) {
-        assert.equal(
-          await fixture.sql(
-            `SELECT count(*) FROM channel_inbox WHERE conversation_id=${literal(denied.conversationId)} AND event_key LIKE ${literal(`%:${denied.eventId}`)}`
-          ),
-          "0"
-        );
+    // The session is the only admission point: a denied message never becomes
+    // a user message in any snapshot that is readable again later.
+    const assertNoDeniedAdmission = (snapshots: readonly DomainSnapshot[]) => {
+      for (const snapshot of snapshots) {
+        for (const denied of deniedSubmissions) {
+          assert.equal(
+            snapshot.userMessages.some(
+              (message) => message.text === denied.text
+            ),
+            false
+          );
+        }
       }
     };
     const denyMessage = async (
@@ -967,6 +920,7 @@ gate(
       deniedSubmissions.push({
         conversationId: address.conversationId,
         eventId,
+        text,
       });
       await expectStatus(
         await fixture.request(`${route(address)}/messages`, cookie, {
@@ -976,7 +930,6 @@ gate(
         }),
         403
       );
-      await assertNoDeniedAdmission();
     };
     const foreign = await fixture.signup("Pilot foreign company");
     const foreignCompany = `foreign:${randomUUID()}`;
@@ -1040,7 +993,7 @@ gate(
       viewSchema
     );
     assert.deepEqual(restoredSupportView.snapshot, supportView.snapshot);
-    await assertNoDeniedAdmission();
+    assertNoDeniedAdmission([restoredSupportView.snapshot]);
     const beforeToolRevocation = await read(conversation);
     await fixture.sql(
       `DELETE FROM identity_grant WHERE organization_id=${literal(organizationId)} AND principal_id=${literal(ownerPrincipal)} AND resource_kind='tool' AND resource_id='fixture-read'`
@@ -1061,16 +1014,8 @@ gate(
     }
     const retainedView = await read(conversation);
     assert.deepEqual(retainedView.snapshot, beforeToolRevocation.snapshot);
-    await assertNoDeniedAdmission();
-    const retainedInboxCount = await fixture.sql(
-      `SELECT count(*) FROM channel_inbox WHERE conversation_id=${literal(conversation.conversationId)}`
-    );
+    assertNoDeniedAdmission([retainedView.snapshot]);
     const deniedEventId = randomUUID();
-    const deniedEventKey = `web:${organizationId}:${conversation.conversationId}:${ownerPrincipal}:${deniedEventId}`;
-    const deniedInboxCount = () =>
-      fixture.sql(
-        `SELECT count(*) FROM channel_inbox WHERE event_key=${literal(deniedEventKey)}`
-      );
     await fixture.sql(
       `DELETE FROM identity_grant WHERE organization_id=${literal(organizationId)} AND principal_id=${literal(ownerPrincipal)} AND resource_kind='memory' AND resource_id=${literal(sourceId)}`
     );
@@ -1095,20 +1040,12 @@ gate(
         "Use previous pilot answer",
         deniedEventId
       );
-      assert.equal(await deniedInboxCount(), "0");
-      await assertNoDeniedAdmission();
       const laterSupportView = await fixture.json(
         route(supportConversation),
         support.cookie,
         viewSchema
       );
       assert.deepEqual(laterSupportView.snapshot, supportView.snapshot);
-      assert.equal(
-        await fixture.sql(
-          `SELECT count(*) FROM channel_inbox WHERE conversation_id=${literal(conversation.conversationId)}`
-        ),
-        retainedInboxCount
-      );
       assert.deepEqual(await modelCalls(), beforeProvider.model);
       assert.deepEqual(await toolCalls(), beforeProvider.tools);
     } finally {
@@ -1119,20 +1056,16 @@ gate(
       await delay(1000);
       const restoredView = await read(conversation);
       assert.deepEqual(restoredView.snapshot, retainedView.snapshot);
-      assert.equal(await deniedInboxCount(), "0");
-      await assertNoDeniedAdmission();
       const restoredSupportSnapshot = await fixture.json(
         route(supportConversation),
         support.cookie,
         viewSchema
       );
       assert.deepEqual(restoredSupportSnapshot.snapshot, supportView.snapshot);
-      assert.equal(
-        await fixture.sql(
-          `SELECT count(*) FROM channel_inbox WHERE conversation_id=${literal(conversation.conversationId)}`
-        ),
-        retainedInboxCount
-      );
+      assertNoDeniedAdmission([
+        restoredView.snapshot,
+        restoredSupportSnapshot.snapshot,
+      ]);
       assert.deepEqual(await modelCalls(), beforeProvider.model);
       assert.deepEqual(await toolCalls(), beforeProvider.tools);
     }
@@ -1152,91 +1085,73 @@ gate(
     evidence.revocations = {
       beforeProvider,
       deniedEventId,
-      deniedInboxCount: await deniedInboxCount(),
       deniedSubmissions,
       finalProvider,
-      retainedInboxCount,
       retainedNativeSnapshot: retainedView.snapshot,
     };
   }
 );
 
-gate(
-  "native loader rejects ambient outbound and model input limits cause zero physical dispatch",
-  async () => {
-    const beforeProvider = await provider();
-    const isolated = await fixture.json(
-      "/api/fixture/runtime/isolation",
-      owner.cookie,
-      z.object({
-        deniedAmbientEgress: z.literal(true),
-        gatewayReachable: z.literal(true),
-      }),
-      {}
-    );
-    await expectStatus(
-      await fixture.request(
-        `${route(conversation)}/chat/session`,
-        owner.cookie
-      ),
-      404
-    );
-    const oversizedId = "pilot-oversized-source";
-    const oversizedText = `Oversized pilot context ${"oversized ".repeat(16_000)}`;
-    for (const action of ["read", "write"]) {
-      await seedGrant(ownerPrincipal, action, "memory", oversizedId);
-    }
-    await rpc("memory.ingest", z.object({ status: z.literal("ok") }), {
-      operationId: randomUUID(),
-      organizationId,
-      requestDigest: "sha256:oversized-source",
-      source: {
-        chunks: [{ id: "pilot-oversized-chunk", text: oversizedText }],
-        document: oversizedText,
-        expectedGeneration: null,
-        observedAt: Date.now(),
-        sourceId: oversizedId,
-        uri: "urn:cerebro:pilot:oversized",
-        version: "1",
-        visibility: { kind: "organization" },
-      },
-    });
-    const selected = await fixture.json(
-      "/api/product/agents",
-      owner.cookie,
-      z.object({ agentId: z.string() }),
-      {
-        enabledToolIds: [],
-        grants: [
-          {
-            action: "read",
-            resource: { id: oversizedId, kind: "memory", organizationId },
-          },
-        ],
-        instructions: "Answer from the authorized source.",
-        model: "fixture/slice-1",
-        name: "Oversized provider context",
-        operationId: randomUUID(),
-      }
-    );
-    try {
-      const address = await createConversation(owner.cookie, selected.agentId);
-      const sent = await submit(address, "Read the oversized pilot context.");
-      const view = await state(address, sent.receipt.runId, "failed");
-      assert.deepEqual(await modelCalls(), beforeProvider.model);
-      assert.deepEqual(await toolCalls(), beforeProvider.tools);
-      evidence.inputLimits = {
-        bytes: Buffer.byteLength(oversizedText),
-        isolated,
-        view,
-      };
-    } finally {
-      await fixture.sql(
-        `UPDATE memory_source SET state='revoked' WHERE organization_id=${literal(organizationId)} AND id=${literal(oversizedId)}`
-      );
-    }
+gate("model input limits cause zero physical dispatch", async () => {
+  const beforeProvider = await provider();
+  await expectStatus(
+    await fixture.request(`${route(conversation)}/chat/session`, owner.cookie),
+    404
+  );
+  const oversizedId = "pilot-oversized-source";
+  const oversizedText = `Oversized pilot context ${"oversized ".repeat(16_000)}`;
+  for (const action of ["read", "write"]) {
+    await seedGrant(ownerPrincipal, action, "memory", oversizedId);
   }
-);
+  await rpc("memory.ingest", z.object({ status: z.literal("ok") }), {
+    operationId: randomUUID(),
+    organizationId,
+    requestDigest: "sha256:oversized-source",
+    source: {
+      chunks: [{ id: "pilot-oversized-chunk", text: oversizedText }],
+      document: oversizedText,
+      expectedGeneration: null,
+      observedAt: Date.now(),
+      sourceId: oversizedId,
+      uri: "urn:cerebro:pilot:oversized",
+      version: "1",
+      visibility: { kind: "organization" },
+    },
+  });
+  const selected = await fixture.json(
+    "/api/product/agents",
+    owner.cookie,
+    z.object({ agentId: z.string() }),
+    {
+      enabledToolIds: [],
+      grants: [
+        {
+          action: "read",
+          resource: { id: oversizedId, kind: "memory", organizationId },
+        },
+      ],
+      instructions: "Answer from the authorized source.",
+      model: "fixture/slice-1",
+      name: "Oversized provider context",
+      operationId: randomUUID(),
+    }
+  );
+  try {
+    const address = await createConversation(owner.cookie, selected.agentId);
+    const sent = await submit(address, "Read the oversized pilot context.");
+    const view = await state(address, sent.receipt.runId, "failed");
+    assert.deepEqual(await modelCalls(), beforeProvider.model);
+    assert.deepEqual(await toolCalls(), beforeProvider.tools);
+    evidence.inputLimits = {
+      bytes: Buffer.byteLength(oversizedText),
+      view,
+    };
+  } finally {
+    await fixture.sql(
+      `UPDATE memory_source SET state='revoked' WHERE organization_id=${literal(organizationId)} AND id=${literal(oversizedId)}`
+    );
+  }
+});
 
 gate(
   "durable approval survives SIGKILL and invalid approval causes zero write effects",
@@ -1455,7 +1370,7 @@ gate(
 );
 
 gate(
-  "unknown non-idempotent receipt never replays and authorized reconciliation uses read-only proof",
+  "a non-idempotent write interrupted by SIGKILL is never dispatched again",
   async () => {
     const initial = await provider();
     const armId = `pilot-unknown:${randomUUID()}`;
@@ -1487,72 +1402,31 @@ gate(
     );
     const restartEvidence = await restart(address, approval.operationId);
     const approvalOutcome = await approving;
-    const unknown = await state(address, sent.receipt.runId, "unknown-outcome");
-    assert.equal(unknown.snapshot.tools[0]?.state, "unknown-outcome");
-    const beforeReconcile = await provider();
-    assert.equal(beforeReconcile.tools.length - initial.tools.length, 1);
+    // Pi replays the interrupted call; its dispatch marker stops a second
+    // write and the model is told that the outcome is unknown.
+    const settled = await state(address, sent.receipt.runId, "completed");
+    assert.equal(settled.snapshot.tools[0]?.state, "unknown-outcome");
+    assert.equal(settled.snapshot.outputs.length, 1);
+    const finalProvider = await provider();
+    assert.equal(finalProvider.tools.length - initial.tools.length, 1);
+    assert.equal(
+      finalProvider.tools.filter(
+        (tool) => tool.operationId === approval.operationId
+      ).length,
+      1
+    );
     const exact = await submit(address, text, eventId);
     assert.equal(exact.receipt.replayed, true);
     assert.equal(exact.receipt.runId, sent.receipt.runId);
-    await expectStatus(
-      await fixture.request(`${route(address)}/messages`, owner.cookie, {
-        eventId: randomUUID(),
-        mode: "follow-up",
-        text,
-      }),
-      409
-    );
-    await expectStatus(
-      await fixture.request(
-        `${route(address)}/runs/${encodeURIComponent(approval.runId)}/reconcile`,
-        outsider.cookie,
-        { operationId: approval.operationId }
-      ),
-      403
-    );
-    await fixture.sql(
-      `DELETE FROM identity_grant WHERE organization_id=${literal(organizationId)} AND principal_id=${literal(ownerPrincipal)} AND action='execute' AND resource_kind='tool' AND resource_id='fixture_effect'`
-    );
-    try {
-      await expectStatus(
-        await fixture.request(
-          `${route(address)}/runs/${encodeURIComponent(approval.runId)}/reconcile`,
-          owner.cookie,
-          { operationId: approval.operationId }
-        ),
-        403
-      );
-    } finally {
-      await seedGrant(ownerPrincipal, "execute", "tool", "fixture_effect");
-    }
-    assert.deepEqual(await modelCalls(), beforeReconcile.model);
-    assert.deepEqual(await toolCalls(), beforeReconcile.tools);
-    const reconciled = await fixture.json(
-      `${route(address)}/runs/${encodeURIComponent(approval.runId)}/reconcile`,
-      owner.cookie,
-      z.object({
-        tool: z.object({
-          operationId: z.string(),
-          state: z.literal("succeeded"),
-        }),
-      }),
-      { operationId: approval.operationId }
-    );
-    assert.equal(reconciled.tool.operationId, approval.operationId);
-    await state(address, sent.receipt.runId, "completed");
-    const finalProvider = await provider();
-    assert.deepEqual(finalProvider.tools, beforeReconcile.tools);
-    assert.deepEqual(finalProvider.model, beforeReconcile.model);
-    evidence.unknownReceipt = {
+    assert.deepEqual(await toolCalls(), finalProvider.tools);
+    evidence.unknownWrite = {
       approval,
       approvalOutcome,
       armId,
-      beforeReconcile,
       exact,
       finalProvider,
-      reconciled,
       restartEvidence,
-      unknown,
+      settled,
     };
   }
 );
@@ -1647,10 +1521,12 @@ gate(
         initial.tools.filter((tool) => tool.write).length,
       1
     );
-    const retainedModes = await fixture.sql(
-      `SELECT submission_mode FROM channel_inbox WHERE conversation_id=${literal(address.conversationId)} AND receipt->>'runId'=${literal(replacement.receipt.runId)}`
+    assert.equal(
+      complete.snapshot.userMessages.find(
+        (message) => message.runId === replacement.receipt.runId
+      )?.mode,
+      "replace"
     );
-    assert.equal(retainedModes, "replace");
     evidence.stop = {
       active,
       complete,

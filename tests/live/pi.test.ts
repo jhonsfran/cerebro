@@ -115,7 +115,7 @@ test(
     assert.equal(
       fixtureRoute.status,
       404,
-      "The credentialed gate must use local mode with fixture routes disabled."
+      "The credentialed gate must not expose test-only routes."
     );
     const agent = z
       .object({

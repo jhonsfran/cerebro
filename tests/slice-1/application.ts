@@ -23,6 +23,11 @@ const execute = (
     encoding: "utf-8",
   });
 const root = path.resolve(import.meta.dirname, "../..");
+// Production compose.yaml plus the test-only fake provider and seed services.
+export const stackFiles = [
+  path.join(root, "compose.yaml"),
+  path.join(root, "tests/slice-1/compose.test.yaml"),
+];
 const localUrl = z
   .string()
   .url()
@@ -193,6 +198,16 @@ export const applicationFixture = (boot: ApplicationBoot) => {
     assert.ok(cookie.includes("session_token"));
     return { cookie, email, password, userId: body.user.id };
   };
+  // Local deployments require the generated installation token for setup.
+  const bootstrapToken = async (): Promise<string> => {
+    const result = await execute("docker", [
+      "exec",
+      await container("fixture"),
+      "cat",
+      "/run/cerebro-secrets/bootstrap-token",
+    ]);
+    return result.stdout.trim();
+  };
   const controls = async (body: unknown) => {
     const response = await fetch(`${boot.fixtureUrl}/control`, {
       body: JSON.stringify(body),
@@ -235,6 +250,7 @@ export const applicationFixture = (boot: ApplicationBoot) => {
   };
   return {
     boot,
+    bootstrapToken,
     close,
     container,
     controls,
@@ -246,6 +262,8 @@ export const applicationFixture = (boot: ApplicationBoot) => {
   };
 };
 
+const pilotDocument =
+  "Fixture refund policy: refunds require current company authorization. Cerebro pilot runs use current company grants before each model request and tool dispatch. The local pilot source is stored in PostgreSQL and MinIO. Source revocation removes its content from later answers and source views.";
 const sqlLiteral = (value: string): string =>
   `'${value.replaceAll("'", "''")}'`;
 
@@ -258,7 +276,10 @@ export const initializeFixtureAgent = async (
     "/api/product/setup",
     owner.cookie,
     z.object({ organizationId: z.string(), owner: z.literal(true) }),
-    { operationId: randomUUID() }
+    {
+      bootstrapToken: await fixture.bootstrapToken(),
+      operationId: randomUUID(),
+    }
   );
   const principalId = await fixture.sql(
     `SELECT id FROM identity_principal WHERE organization_id=${sqlLiteral(setup.organizationId)} AND better_auth_user_id=${sqlLiteral(owner.userId)}`
@@ -266,6 +287,7 @@ export const initializeFixtureAgent = async (
   assert.ok(principalId && !principalId.includes("\n"));
   const resources = [
     ["read", "memory", "pilot-source"],
+    ["write", "memory", "pilot-source"],
     ["read", "tool", "fixture-read"],
     ["execute", "tool", "fixture-read"],
     ["read", "tool", "fixture_effect"],
@@ -279,6 +301,29 @@ export const initializeFixtureAgent = async (
       `INSERT INTO identity_grant (organization_id,principal_id,action,resource_kind,resource_id,source) VALUES (${[setup.organizationId, principalId, action, kind, resource, "slice-1-fixture"].map(sqlLiteral).join(",")}) ON CONFLICT DO NOTHING`
     );
   }
+  // The pilot source is ordinary company memory, ingested through the API.
+  await fixture.json(
+    "/rpc/memory/ingest",
+    owner.cookie,
+    z.object({ json: z.object({ status: z.literal("ok") }) }),
+    {
+      json: {
+        operationId: `seed:${setup.organizationId}:pilot-source:1`,
+        organizationId: setup.organizationId,
+        requestDigest: "sha256:pilot-source-1",
+        source: {
+          chunks: [{ id: "pilot-source:1:policy", text: pilotDocument }],
+          document: pilotDocument,
+          expectedGeneration: null,
+          observedAt: 1_790_720_000_000,
+          sourceId: "pilot-source",
+          uri: "cerebro://pilot/source",
+          version: "1",
+          visibility: { kind: "organization" },
+        },
+      },
+    }
+  );
   const agent = await fixture.json(
     "/api/product/agents",
     owner.cookie,

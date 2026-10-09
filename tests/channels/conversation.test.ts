@@ -225,7 +225,7 @@ test("an open thinking panel stays open when the next delta arrives", async () =
         Response.json(
           url.endsWith("/history")
             ? { projectionStatus: "running", runs: [] }
-            : { ...address, cursor: "0", items: [], mode: "fixture", snapshot }
+            : { ...address, cursor: "0", items: [], mode: "local", snapshot }
         )
       );
     },
@@ -349,7 +349,7 @@ test("a confirmed retry clears its client intent when the accepted domain event 
         Response.json(
           url.endsWith("/history")
             ? { projectionStatus: "idle", runs: [] }
-            : { ...address, cursor: "0", items: [], mode: "fixture", snapshot }
+            : { ...address, cursor: "0", items: [], mode: "local", snapshot }
         )
       );
     },

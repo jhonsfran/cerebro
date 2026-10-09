@@ -102,11 +102,11 @@ export const parseEnterpriseIdentityConfig = (
   } catch {
     throw new Error("Enterprise issuer must be a valid URL");
   }
-  const isLocalFixture =
+  const isLoopbackIssuer =
     issuer.protocol === "http:" &&
     ["localhost", "127.0.0.1", "[::1]"].includes(issuer.hostname);
-  if (issuer.protocol !== "https:" && !isLocalFixture) {
-    throw new Error("Enterprise issuer must use HTTPS outside a local fixture");
+  if (issuer.protocol !== "https:" && !isLoopbackIssuer) {
+    throw new Error("Enterprise issuer must use HTTPS outside loopback");
   }
   if (
     ["common", "organizations", "consumers"].includes(

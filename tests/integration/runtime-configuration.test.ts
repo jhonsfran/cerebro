@@ -70,18 +70,34 @@ test("production accepts bounded ports and registers connector credentials for r
   ]);
 });
 
-test("production rejects fixture model, write connector and deployment mode selection", () => {
-  const fixtureModel = configured();
-  fixtureModel.models[0].id = "fixture/pilot";
-  fixtureModel.models[0].provider = "fixture";
-  fixtureModel.models[0].model = "pilot";
-  assert.throws(() => parse(fixtureModel));
+test("production accepts approved HTTPS write connectors and rejects unknown modes", () => {
   const write = configured();
   write.tools[0].effect = "write";
   write.tools[0].requiresApproval = true;
-  write.tools[0].target.kind = "fixture-write";
-  write.tools[0].target.url = "http://fixture:8090/effect";
-  assert.throws(() => parse(write));
+  write.tools[0].retryMode = "at-most-once";
+  write.tools[0].target.kind = "http-write";
+  write.tools[0].target.url = "https://mcp.example.test/effects";
+  assert.equal(parse(write).tools[0].target.kind, "http-write");
+  assert.throws(() =>
+    parse({
+      ...write,
+      tools: [{ ...write.tools[0], requiresApproval: false }],
+    })
+  );
+  assert.throws(() =>
+    parse({
+      ...write,
+      tools: [
+        {
+          ...write.tools[0],
+          target: {
+            ...write.tools[0].target,
+            url: "http://fixture:8090/effect",
+          },
+        },
+      ],
+    })
+  );
   assert.throws(() => parse({ ...configured(), mode: "fixture" }));
   assert.throws(() => parse({ ...configured(), bootstrapToken: undefined }));
 });
@@ -90,8 +106,7 @@ test("production rejects local, insecure and credential-bearing transport target
   for (const baseUrl of [
     "http://provider.example.test/v1",
     "https://localhost/v1",
-    "https://fixture/v1",
-    "https://provider.invalid/v1",
+    "https://127.0.0.1/v1",
     "https://user:private-provider-test-value@provider.example.test/v1",
     "https://provider.example.test/v1?key=private-provider-test-value",
   ]) {
@@ -132,7 +147,7 @@ test("production rejects retired billing, unsupported adapters and conflicting c
 const parseLocal = (value: unknown) =>
   parseRuntimeConfiguration(JSON.stringify(value), "local");
 
-test("local mode preserves real-provider and trusted-setup boundaries", () => {
+test("local mode accepts HTTP and private providers and keeps trusted setup", () => {
   const local = { ...configured(), mode: "local" };
   local.models[0] = {
     ...local.models[0],
@@ -150,5 +165,5 @@ test("local mode preserves real-provider and trusted-setup boundaries", () => {
   assert.throws(() => parseLocal({ ...local, bootstrapToken: undefined }));
   assert.throws(() => parseLocal({ ...local, mode: "fixture" }));
   local.models[0].baseUrl = "http://fixture:8090/v1";
-  assert.throws(() => parseLocal(local));
+  assert.equal(parseLocal(local).models[0].baseUrl, "http://fixture:8090/v1");
 });

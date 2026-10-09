@@ -92,6 +92,7 @@ const sameSessionEvent = (
   }
 };
 
+// A redelivery keeps its ID and content. Its delivery time may differ.
 export const classifyEventDelivery = (
   prior: EventEnvelope | undefined,
   next: EventEnvelope
@@ -105,7 +106,6 @@ export const classifyEventDelivery = (
     prior.conversationId === next.conversationId &&
     prior.sessionId === next.sessionId &&
     prior.schemaVersion === next.schemaVersion &&
-    prior.occurredAt === next.occurredAt &&
     sameExecutionContext(prior.context, next.context) &&
     sameSessionEvent(prior.event, next.event)
     ? "duplicate"

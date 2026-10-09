@@ -18,7 +18,6 @@ import { identitySchema } from "../../packages/db/src/schema/identity.ts";
 import { memorySchema } from "../../packages/db/src/schema/memory.ts";
 import {
   createArtifactStore,
-  createDeterministicFixtureEmbeddings,
   createMemoryStore,
   createS3ObjectStorage,
 } from "../../packages/memory/src/index.ts";
@@ -26,6 +25,7 @@ import type {
   IngestSource,
   MemoryDependencies,
 } from "../../packages/memory/src/types.ts";
+import { createDeterministicFixtureEmbeddings } from "./deterministic-embeddings.ts";
 
 const required = (name: string): string => {
   const value = process.env[name];

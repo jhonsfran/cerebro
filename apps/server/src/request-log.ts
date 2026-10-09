@@ -22,9 +22,6 @@ const staticRoutes = new Set([
   "/api/product/conversations",
   "/api/product/admin",
   "/api/channels/slack/events",
-  "/api/fixture/runtime/isolation",
-  "/api/fixture/runtime/observers",
-  "/api/fixture/audit/replay",
 ]);
 export const requestRoute = (pathname: string): string => {
   if (staticRoutes.has(pathname)) {
@@ -39,9 +36,6 @@ export const requestRoute = (pathname: string): string => {
   }
   if (pathname.startsWith("/rpc/")) {
     return "/rpc/:procedure";
-  }
-  if (pathname.startsWith("/fixture/sessions/")) {
-    return "/fixture/sessions/:name";
   }
   return "unknown";
 };

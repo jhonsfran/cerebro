@@ -95,7 +95,6 @@ const resultSchema = z.discriminatedUnion("status", [
   z.strictObject({
     operationId: z.string().transform((value) => value),
     reason: z.string(),
-    reconcileAfter: z.number().optional(),
     status: z.literal("unknown-outcome"),
   }),
 ]);
@@ -130,7 +129,6 @@ export const createDynamicToolExecutor = (dependencies: {
   readonly audience: string;
   readonly registry: ToolRegistry;
   readonly authorizationPolicy: AuthorizationPolicy;
-  readonly reconcile: ToolExecutor["reconcile"];
   readonly now?: () => number;
 }): ToolExecutor => {
   const now = dependencies.now ?? Date.now;
@@ -286,7 +284,6 @@ export const createDynamicToolExecutor = (dependencies: {
         return result;
       }
     },
-    reconcile: dependencies.reconcile,
   };
 };
 
@@ -355,20 +352,6 @@ export const createDynamicToolExecutorService = (
           }),
         try: (signal) =>
           adapter.execute(call, capability, {
-            ...options,
-            signal: options.signal
-              ? AbortSignal.any([signal, options.signal])
-              : signal,
-          }),
-      }).pipe(Effect.flatMap(effectResult)),
-    reconcile: (operationId, context, options) =>
-      Effect.tryPromise({
-        catch: () =>
-          new Unavailable({
-            reason: "Provider receipt evidence is unavailable.",
-          }),
-        try: (signal) =>
-          adapter.reconcile(operationId, context, {
             ...options,
             signal: options.signal
               ? AbortSignal.any([signal, options.signal])

@@ -140,15 +140,10 @@ hostTest(
 );
 
 hostTest(
-  "current fixture access applies to domain history and receipts after restart",
+  "current fixture access applies to domain history after restart",
   async () => {
     const saved = await inspect(stack, companyA);
-    const operationId = saved.tools[0]?.operationId;
-    assert.ok(operationId);
-    const receipt = await request(stack, "/runtime/fixture/receipt", {
-      address: companyA,
-      operationId,
-    });
+    assert.ok(saved.tools[0]?.operationId);
     await request(stack, "/runtime/fixture/access", {
       address: companyA,
       enabled: false,
@@ -164,34 +159,30 @@ hostTest(
       ).status,
       403
     );
-    assert.equal(
-      (
-        await rawRequest(stack, "/runtime/fixture/receipt", {
-          address: companyA,
-          operationId,
-        })
-      ).status,
-      403
-    );
     await request(stack, "/runtime/fixture/access", {
       address: companyA,
       enabled: true,
     });
     const reopened = await inspect(stack, companyA);
     assert.deepEqual(reopened.outputs, saved.outputs);
+    assert.deepEqual(reopened.tools, saved.tools);
     assert.deepEqual(reopened.userMessages, saved.userMessages);
-    await request(stack, "/runtime/fixture/replay", {
-      address: companyA,
-      operationId,
-    });
-    assert.deepEqual(
-      await request(stack, "/runtime/fixture/receipt", {
-        address: companyA,
-        operationId,
-      }),
-      receipt
+    await evidence(stack, "current-access", { reopened, saved });
+  }
+);
+
+hostTest(
+  "the tool loader has no ambient outbound network and reaches only its gateway",
+  async () => {
+    const response = await fetch(
+      `http://127.0.0.1:${stack.apiPort}/isolation`,
+      { method: "POST" }
     );
-    await evidence(stack, "current-access", { receipt, reopened, saved });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      deniedAmbientEgress: true,
+      gatewayReachable: true,
+    });
   }
 );
 

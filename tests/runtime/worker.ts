@@ -23,6 +23,27 @@ export default {
     if (path === "/health") {
       return Response.json({ ok: true });
     }
+    // A loaded Worker without global outbound must fail to reach the provider
+    // directly while its named gateway binding still works.
+    if (path === "/isolation" && request.method === "POST") {
+      const probe = env.LOADER.get("runtime-isolation-probe-v1", () => ({
+        compatibilityDate: "2026-09-28",
+        env: { GATEWAY: env.TOOL_GATEWAY },
+        globalOutbound: null,
+        mainModule: "probe.js",
+        modules: {
+          "probe.js": `export default { async fetch(request, env) {
+            let deniedAmbientEgress = false;
+            try { await fetch("${env.FIXTURE_URL}/health"); } catch { deniedAmbientEgress = true; }
+            const gateway = await env.GATEWAY.fetch(new Request("https://gateway.internal/health"));
+            return Response.json({ deniedAmbientEgress, gatewayReachable: gateway.ok });
+          } };`,
+        },
+      }));
+      return await probe
+        .getEntrypoint()
+        .fetch(new Request("https://isolation.internal/probe"));
+    }
     if (path === "/audit/replay" && request.method === "POST") {
       const body = await request.text();
       const statuses = await Promise.all(

@@ -15,7 +15,6 @@ import type {
   PendingChatMessage,
 } from "./chat";
 import {
-  reconcileRunCommand,
   sendRunCommand,
   submitMessage,
   useConversationConnection,
@@ -168,11 +167,7 @@ const EvidenceDialog = ({
           Close
         </button>
       </div>
-      <p className="fixture-note">
-        {detail.value.mode === "fixture"
-          ? "Local fixture evidence"
-          : "Company evidence"}
-      </p>
+      <p className="context-note">Company evidence</p>
       {detail.type === "source" ? (
         <>
           <p className="muted-text">Version {detail.value.sourceVersion}</p>
@@ -203,7 +198,6 @@ const ConversationHeader = ({
   sessionId,
   connected,
   connection,
-  fixture,
   toggle,
   retired,
 }: {
@@ -211,7 +205,6 @@ const ConversationHeader = ({
   sessionId: string | undefined;
   connected: boolean;
   connection: Connection;
-  fixture: boolean;
   toggle: () => void;
   retired: boolean;
 }) => (
@@ -239,11 +232,6 @@ const ConversationHeader = ({
         Session {sessionId?.slice(0, 12) ?? "loading"}
       </span>
     </div>
-    {fixture ? (
-      <p className="fixture-note">
-        Local fixture. Answers, tools, and sources use test data.
-      </p>
-    ) : null}
   </>
 );
 
@@ -253,7 +241,6 @@ const ConversationComposer = ({
   sending,
   connected,
   pending,
-  fixture,
   send,
   mode,
   setMode,
@@ -263,7 +250,6 @@ const ConversationComposer = ({
   sending: boolean;
   connected: boolean;
   pending: PendingChatMessage | null;
-  fixture: boolean;
   send: (message: PendingChatMessage) => Promise<void>;
   mode: PendingChatMessage["mode"];
   setMode: (mode: PendingChatMessage["mode"]) => void;
@@ -303,11 +289,7 @@ const ConversationComposer = ({
       </select>
     </label>
     <div className="composer-footer">
-      <span>
-        {fixture
-          ? 'Try "Run the approval fixture" to review an approval.'
-          : "Your conversation is private."}
-      </span>
+      <span>Your conversation is private.</span>
       <button
         className="primary-button"
         type="submit"
@@ -369,14 +351,12 @@ const ConversationSession = ({
   userId,
   agentId,
   agentName,
-  fixture,
   onStartConversation,
 }: {
   conversationId: string;
   userId: string;
   agentId: string;
   agentName: string;
-  fixture: boolean;
   onStartConversation?: () => void;
 }) => {
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -562,8 +542,7 @@ const ConversationSession = ({
   const act = async (
     suffix: string,
     runId: string,
-    decision?: "allow" | "deny",
-    toolOperationId?: string
+    decision?: "allow" | "deny"
   ) => {
     if (retired || !accessValid || connection !== "connected") {
       return;
@@ -579,12 +558,10 @@ const ConversationSession = ({
     setBusy(true);
     setErrorMessage("");
     try {
-      await (toolOperationId
-        ? reconcileRunCommand(path, runId, toolOperationId)
-        : sendRunCommand(path, suffix, operationId, {
-            runId,
-            ...(decision ? { decision } : {}),
-          }));
+      await sendRunCommand(path, suffix, operationId, {
+        runId,
+        ...(decision ? { decision } : {}),
+      });
     } catch (error) {
       setErrorMessage(messageOf(error));
     }
@@ -637,7 +614,6 @@ const ConversationSession = ({
         sessionId={conversation?.sessionId}
         connected={connected}
         connection={displayedConnection}
-        fixture={fixture}
         toggle={() => setConnected((value) => !value)}
         retired={retired}
       />
@@ -657,15 +633,6 @@ const ConversationSession = ({
             <span className="empty-mark">c</span>
             <h3>Start with a question.</h3>
             <p>Responses include their sources and execution status.</p>
-            {fixture ? (
-              <button
-                className="quiet-button"
-                type="button"
-                onClick={() => setText("Run the approval fixture")}
-              >
-                Try the approval fixture
-              </button>
-            ) : null}
           </div>
         ) : null}
         {messages.map((message) => (
@@ -696,22 +663,11 @@ const ConversationSession = ({
                 <div className="tool-status" key={item.cursor}>
                   <span aria-hidden="true">◇</span> {item.name}
                   <span className="status-pill">{item.state}</span>
-                  {item.state === "unknown-outcome" && item.operationId ? (
-                    <button
-                      className="text-button"
-                      type="button"
-                      disabled={disabled}
-                      onClick={() =>
-                        act(
-                          `runs/${encoded(item.runId)}/reconcile`,
-                          item.runId,
-                          undefined,
-                          item.operationId
-                        )
-                      }
-                    >
-                      Check outcome
-                    </button>
+                  {item.state === "unknown-outcome" ? (
+                    <small>
+                      Interrupted after dispatch. Check the target system;
+                      Cerebro will not retry it.
+                    </small>
                   ) : null}
                   <details>
                     <summary>Tool details</summary>
@@ -736,11 +692,7 @@ const ConversationSession = ({
                 >
                   <p className="eyebrow">Approval required</p>
                   <h3>Review before execution.</h3>
-                  <p>
-                    {fixture
-                      ? "This permits one local test action. The fixture does not change an external system."
-                      : "Approve this request to continue the run."}
-                  </p>
+                  <p>Approve this request to continue the run.</p>
                   <div className="button-row">
                     <button
                       className="primary-button"
@@ -825,7 +777,6 @@ const ConversationSession = ({
         sending={sending}
         connected={online}
         pending={pending}
-        fixture={fixture}
         send={send}
         mode={mode}
         setMode={setMode}
@@ -850,9 +801,7 @@ const ConversationSession = ({
           </div>
         ))}
         <p className="muted-text">
-          {history?.projectionStatus === "fixture"
-            ? "Local fixture audit entries."
-            : "The audit projection can update after execution."}
+          The audit projection can update after execution.
         </p>
       </details>
       {detail ? (

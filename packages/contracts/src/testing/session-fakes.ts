@@ -701,25 +701,6 @@ export const createSessionFake = (
         authorize(options, context);
         return structuredClone(snapshot);
       }),
-    reconcile: (command, options) =>
-      attempt(() => {
-        authorize(options, command.context);
-        const tool = snapshot.tools.find(
-          (value) =>
-            value.runId === command.runId &&
-            value.operationId === command.operationId
-        );
-        if (!tool) {
-          throw new NotFound({ resource: "Bound tool operation" });
-        }
-        if (tool.state !== "succeeded" && tool.state !== "failed") {
-          throw new UnknownOutcome({
-            operationId: command.operationId,
-            reason: "The fake has no confirmed provider receipt",
-          });
-        }
-        return structuredClone(tool);
-      }),
     stream: (_address, context, request, options) =>
       Stream.unwrap(
         attempt(() => {

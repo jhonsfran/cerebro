@@ -1,0 +1,53 @@
+# Test-only additions to compose.yaml for the deterministic application stack.
+# The production files know nothing about this: the fake model and connectors
+# are configured through an ordinary local runtime.json.
+x-test-image: &test-image
+  build:
+    context: .
+    dockerfile: tests/slice-1/Dockerfile
+
+services:
+  fixture:
+    <<: *test-image
+    command: [node, provider.mjs]
+    ports:
+      - "127.0.0.1:${CEREBRO_FIXTURE_PORT:-18090}:8090"
+    environment:
+      FIXTURE_DATA_DIR: /data/slice-1-fixture
+      FIXTURE_ID: ${CEREBRO_FIXTURE_ID:-slice-1-local}
+      FIXTURE_SHA: ${CEREBRO_FIXTURE_SHA:-unrecorded}
+    volumes:
+      - celld:/data
+      - secrets:/run/cerebro-secrets:ro
+    depends_on:
+      secrets-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://localhost:8090/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  test-config:
+    <<: *test-image
+    command: [node, runtime-config.mjs]
+    environment:
+      CEREBRO_SECRETS_DIR: /run/cerebro-secrets
+    volumes:
+      - secrets:/run/cerebro-secrets
+    depends_on:
+      secrets-init:
+        condition: service_completed_successfully
+  bootstrap:
+    depends_on:
+      test-config:
+        condition: service_completed_successfully
+  celld:
+    depends_on:
+      fixture:
+        condition: service_healthy

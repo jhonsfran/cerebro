@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 import { Effect } from "effect";
 
 import { drainChannelWork } from "../../packages/channels/src/drain";
-import { createFixtureSessionService } from "../../packages/channels/src/fixture-session";
 import { digest } from "../../packages/channels/src/security";
 import { id } from "../../packages/contracts/src/index";
 import type { RunState } from "../../packages/contracts/src/index";
@@ -12,11 +11,13 @@ import { eq } from "../../packages/db/node_modules/drizzle-orm";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
 import {
   channelConversation,
-  channelFixtureRun,
-  channelInbox,
   channelLinkEvent,
   channelReply,
 } from "../../packages/db/src/schema/agents";
+import {
+  createFixtureSessionService,
+  fixtureRunCount,
+} from "./fixture-session";
 import {
   createTestProduct,
   domainSnapshot,
@@ -49,7 +50,7 @@ const event = (eventId: string, text: string, threadTimestamp?: string) => ({
   type: "event_callback",
 });
 
-test("signed Slack identity linking, inbox replay, thread sessions, and outbox delivery persist in PostgreSQL", async () => {
+test("signed Slack identity linking, event replay, thread sessions, and outbox delivery persist in PostgreSQL", async () => {
   const configuration = slackConfiguration();
   let delivered = 0;
   const app = await createTestProduct(configuration, () => {
@@ -95,9 +96,8 @@ test("signed Slack identity linking, inbox replay, thread sessions, and outbox d
     const receipts = await db.select().from(channelLinkEvent);
     assert.equal(receipts.length, 1);
     assert.equal(JSON.stringify(receipts).includes(code), false);
-    const verifiedResult2 = await db.select().from(channelInbox);
-    assert.equal(verifiedResult2.length, 0);
   });
+  assert.equal(fixtureRunCount(), 0);
   const message = event("message-one", "Describe the pilot source.");
   const headers = await signSlack(message, configuration.signingSecret);
   const accepted = await Promise.all([
@@ -108,22 +108,17 @@ test("signed Slack identity linking, inbox replay, thread sessions, and outbox d
     accepted.map((response) => response.status),
     [200, 200]
   );
+  assert.equal(fixtureRunCount(), 1);
   await app.options.withDatabase(async (db) => {
-    const verifiedResult3 = await db.select().from(channelInbox);
-    assert.equal(verifiedResult3.length, 1);
-    const verifiedResult4 = await db.select().from(channelFixtureRun);
-    assert.equal(verifiedResult4.length, 1);
     const verifiedResult5 = await db.select().from(channelReply);
     assert.equal(verifiedResult5.length, 0);
   });
   assert.deepEqual(await drainChannelWork(app.options), {
     sent: 1,
-    submitted: 0,
     unknown: 0,
   });
   assert.deepEqual(await drainChannelWork(app.options), {
     sent: 0,
-    submitted: 0,
     unknown: 0,
   });
   assert.equal(delivered, 1);
@@ -258,7 +253,6 @@ test("ambiguous Slack delivery and abandoned claims never retry automatically", 
   assert.equal(verifiedResult15.status, 200);
   assert.deepEqual(await drainChannelWork(app.options), {
     sent: 0,
-    submitted: 0,
     unknown: 1,
   });
   await drainChannelWork(app.options);
@@ -277,7 +271,6 @@ test("ambiguous Slack delivery and abandoned claims never retry automatically", 
   });
   assert.deepEqual(await drainChannelWork(app.options), {
     sent: 0,
-    submitted: 0,
     unknown: 1,
   });
   assert.equal(attempts, 1);
@@ -368,7 +361,6 @@ test("one snapshot projects complete canonical text without stream batching", as
   };
   assert.deepEqual(await drainChannelWork(options), {
     sent: 1,
-    submitted: 0,
     unknown: 0,
   });
   assert.equal(sentBodies.length, 1);
@@ -489,7 +481,6 @@ test("one snapshot per pass keeps active work and then projects one joined answe
   };
   assert.deepEqual(await drainChannelWork(options), {
     sent: 0,
-    submitted: 0,
     unknown: 0,
   });
   await app.options.withDatabase(async (db) => {
@@ -500,7 +491,6 @@ test("one snapshot per pass keeps active work and then projects one joined answe
   });
   assert.deepEqual(await drainChannelWork(options), {
     sent: 1,
-    submitted: 0,
     unknown: 0,
   });
   await app.options.withDatabase(async (db) => {

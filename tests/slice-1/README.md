@@ -12,7 +12,7 @@ From the checkout root, after S1-F supplies the server configuration and wiring:
 rtk proxy node tests/slice-1/boot.mjs --project cerebro-s1-local --api-port 28765 --web-port 4001 --fixture-port 28090
 ```
 
-Before wiring, append `--fixture-only`. This builds the independent provider target without application dependencies and reports `apiUrl: null` and `webUrl: null`. It proves provider readiness only. `--dry-run` validates the generated isolated Compose configuration without starting containers.
+The boot combines the production `compose.yaml` with `tests/slice-1/compose.test.yaml`. The test file adds the fake provider (`fixture`, built from `tests/slice-1/Dockerfile`) and a `test-config` step that writes an ordinary local `runtime.json` pointing at it. The application runs in local mode; it has no test mode or test routes. Setup uses the generated bootstrap token, which `applicationFixture().bootstrapToken()` reads from the secret volume. `initializeFixtureAgent` ingests the pilot source through the memory API. Append `--fixture-only` to start only the provider. `--dry-run` validates the generated isolated Compose configuration without starting containers.
 
 Every boot requires a fresh `cerebro-s1-*` project, distinct explicit ports and project-owned volumes. It labels its containers and volumes `cerebro.slice-1=disposable`. Images, fixture identity, tested SHA and boot configuration are saved in `artifacts/slice-1/<sha>/<project>/boot.json`. The fixture stores counters in a separate `slice-1-fixture` directory within that project's disposable celld volume. The seven retained stores are unchanged. Ports remain bound to loopback.
 
@@ -26,9 +26,9 @@ In the managed cloud environment, set `BUILDX_CONFIG=/tmp/cerebro-s1-buildx` whe
 
 ## Provider protocol
 
-The provider has no agent loop and no authority implementation. It emits OpenAI-compatible `/v1/chat/completions` responses, suitable for a controlled Pi provider adapter. Use `Bearer fixture-model-key` and a stable `X-Fixture-Request-Id` (or existing `X-Cerebro-Model-Operation`). Physical calls are never deduplicated. Retries retain the same identity and increment counters. `X-Fixture-Purpose: compaction` emits a fixed summary and records that purpose. `X-Fixture-Tool: fixture-read` or `fixture_effect` requests that registered tool once, then emits text after a tool result. Streaming emits separate delayed text frames before EOF. Defaults are 100 ms per frame and no injected failure.
+The provider has no agent loop and no authority implementation. It emits OpenAI-compatible `/v1/chat/completions` responses, suitable for a controlled Pi provider adapter. Use `Bearer fixture-model-key`. A call's identity is `X-Fixture-Request-Id` when present, otherwise a digest of the messages up to the last user message, so one user turn keeps one identity. Physical calls are never deduplicated. Retries retain the same identity and increment counters. `X-Fixture-Purpose: compaction` emits a fixed summary and records that purpose. The provider requests a registered tool once when the last user message names it: `fixture_effect` or "approval fixture" selects the write, `fixture-read` selects the read. `X-Fixture-Tool` overrides that choice. After a tool result it emits text. Streaming emits separate delayed text frames before EOF. Defaults are 100 ms per frame and no injected failure.
 
-`POST /mcp` accepts a JSON-RPC fixture read. `POST /effects` accepts a write with `operationId` and JSON arguments. Both require `Bearer fixture-connector-key`. Repeated identical writes count as repeated physical effects; the provider does not mask a duplicate dispatch by the runtime. Changed input under the same identity returns 409. `GET /effects?operationId=...` reconciles committed provider evidence without writing again. These are disposable effects only.
+`POST /mcp` accepts a JSON-RPC fixture read. `POST /effects` accepts a write with `operationId` and JSON arguments. Both require `Bearer fixture-connector-key`. Repeated identical writes count as repeated physical effects; the provider does not mask a duplicate dispatch by the runtime. Changed input under the same identity returns 409. These are disposable effects only.
 
 `GET /health` and `GET /observations` are read-only. Observations read the committed state file after pending atomic replacements finish and expose model requests, tool dispatches, first-token/completion timestamps, checkpoints, revision, fixture identity and SHA. They omit request bodies and credentials. State rejects reuse under a different fixture identity or source SHA.
 
@@ -44,12 +44,12 @@ Control requests require `X-Fixture-Control: slice-1-control`:
 
 Send this to `POST /control`. `failFirst` returns one 503 for each stable model identity/purpose before succeeding. `{"release":true,"arm":null}` releases held checkpoint responses. `/control` cannot execute Docker commands or kill an arbitrary process.
 
-The coordinator's fixture adapters call `POST /checkpoints` with `{"boundary":"before-admission","operationId":"request-A"}` at the actual transaction boundaries. Available boundaries are before/after admission, approval, tool dispatch, result persistence and projection. The provider itself also emits its own before/after tool dispatch checkpoints. Provider dispatch checkpoints do not prove Cerebro receipt persistence.
+The provider holds a connector response at its own `before-tool-dispatch` and `after-tool-dispatch` checkpoints, so a test can kill celld while a physical write is in flight. `POST /checkpoints` exists only for the provider self-test.
 
 To arm a boundary and kill only this fixture stack's celld process:
 
 ```sh
-rtk proxy node tests/slice-1/boot.mjs --project cerebro-s1-local --api-port 28765 --web-port 4001 --fixture-port 28090 --kill-at after-result-persistence
+rtk proxy node tests/slice-1/boot.mjs --project cerebro-s1-local --api-port 28765 --web-port 4001 --fixture-port 28090 --kill-at after-tool-dispatch
 ```
 
 Start this monitor before driving the scenario in a second terminal. It waits up to 60 seconds, identifies a newly armed checkpoint by a unique token, checks container ownership, sends SIGKILL and saves counters and the killed container identity. A timeout leaves the host running. Release the barrier and start celld with the generated Compose override to test recovery. Do not poll history during an alarm-only recovery interval; observation could trigger recovery itself.

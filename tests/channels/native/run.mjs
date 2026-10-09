@@ -87,7 +87,6 @@ try {
       "--test",
       "--test-concurrency=1",
       "tests/channels/native/product.test.ts",
-      "tests/channels/native/recovery.test.ts",
     ],
     {
       cwd: root,

@@ -18,7 +18,7 @@ const writeSecret = async (secretPath, value) => {
   await rename(temporaryPath, secretPath);
 };
 
-if (!["local", "fixture", "production"].includes(mode)) {
+if (!["local", "production"].includes(mode)) {
   throw new Error("Invalid deployment mode");
 }
 await mkdir(directory, { mode: 0o700, recursive: true });

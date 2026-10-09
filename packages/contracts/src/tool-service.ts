@@ -2,13 +2,8 @@
 import { Context, Effect } from "effect";
 
 import type { ContractFailure } from "./failures.ts";
-import type {
-  Digest,
-  ExecutionContext,
-  OperationId,
-  RunId,
-} from "./identity.ts";
-import type { EffectOptions, ReadOptions } from "./port.ts";
+import type { Digest, RunId } from "./identity.ts";
+import type { EffectOptions } from "./port.ts";
 import { approvalMatches, digestToolArguments } from "./tools.ts";
 import type {
   Approval,
@@ -75,11 +70,6 @@ export interface ToolExecutor {
     call: BoundToolCall,
     capability: BoundCapability,
     options: EffectOptions
-  ) => Effect.Effect<ToolExecution, ContractFailure>;
-  readonly reconcile: (
-    operationId: OperationId,
-    context: ExecutionContext,
-    options: ReadOptions
   ) => Effect.Effect<ToolExecution, ContractFailure>;
 }
 export const ToolExecutor = Context.Service<ToolExecutor>(

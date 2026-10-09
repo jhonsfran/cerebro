@@ -6,16 +6,9 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
-export const boundaries = [
-  ...[
-    "admission",
-    "approval",
-    "tool-dispatch",
-    "result-persistence",
-    "projection",
-  ].flatMap((name) => [`before-${name}`, `after-${name}`]),
-  "before-engine-submission",
-];
+// The provider holds a connector response at these points so a test can
+// kill celld while a physical write is in flight.
+export const boundaries = ["before-tool-dispatch", "after-tool-dispatch"];
 const canonical = (value) => {
   if (Array.isArray(value)) {
     return value.map(canonical);
@@ -55,6 +48,41 @@ const identity = (value) => {
   }
   return value;
 };
+
+const textParts = (message) => {
+  if (typeof message?.content === "string") {
+    return [message.content];
+  }
+  return Array.isArray(message?.content)
+    ? message.content
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+    : [];
+};
+const messageText = (message) => textParts(message).join("\n");
+// The prompt names the fixture tool it wants, so tests need no host hooks.
+const promptedTool = (input) => {
+  const prompt = messageText(
+    input.messages.findLast((message) => message.role === "user")
+  );
+  if (
+    prompt.includes("fixture_effect") ||
+    prompt.includes("approval fixture")
+  ) {
+    return "fixture_effect";
+  }
+  return prompt.includes("fixture-read") ? "fixture-read" : undefined;
+};
+const requestedTool = (request, input) =>
+  request.headers["x-fixture-tool"] ?? promptedTool(input);
+// One user turn keeps one identity across its model requests.
+const turnIdentity = (input) =>
+  `turn:${digest(
+    input.messages.slice(
+      0,
+      input.messages.findLastIndex((message) => message.role === "user") + 1
+    )
+  ).slice(0, 48)}`;
 
 const requestsTool = (input, purpose, toolName) =>
   purpose === "turn" &&
@@ -162,8 +190,7 @@ export const createFixture = async ({
       throw new TypeError("Messages are required");
     }
     const operationId = identity(
-      request.headers["x-fixture-request-id"] ??
-        request.headers["x-cerebro-model-operation"]
+      request.headers["x-fixture-request-id"] ?? turnIdentity(input)
     );
     const purpose =
       request.headers["x-fixture-purpose"] === "compaction"
@@ -172,19 +199,11 @@ export const createFixture = async ({
     const call = {
       digest: digest(input),
       maxTokens: input.max_completion_tokens ?? input.max_tokens ?? null,
-      messageTextDigests: input.messages.flatMap((message) => {
-        let parts = [];
-        if (typeof message.content === "string") {
-          parts = [message.content];
-        } else if (Array.isArray(message.content)) {
-          parts = message.content
-            .filter((part) => part.type === "text")
-            .map((part) => part.text);
-        }
-        return parts.map((text) =>
+      messageTextDigests: input.messages.flatMap((message) =>
+        textParts(message).map((text) =>
           createHash("sha256").update(text).digest("hex")
-        );
-      }),
+        )
+      ),
       model: input.model,
       operationId,
       purpose,
@@ -206,7 +225,7 @@ export const createFixture = async ({
       });
       return;
     }
-    const toolName = request.headers["x-fixture-tool"];
+    const toolName = requestedTool(request, input);
     const tool = requestsTool(input, purpose, toolName);
     const text =
       purpose === "compaction"
@@ -367,23 +386,6 @@ export const createFixture = async ({
       state.controls.arm = input.arm;
     }
   };
-  const readReceipt = (url, response) => {
-    const entry = state.tools.findLast(
-      (item) =>
-        item.write && item.operationId === url.searchParams.get("operationId")
-    );
-    json(
-      response,
-      entry ? 200 : 404,
-      entry
-        ? {
-            operationId: entry.operationId,
-            receipt: entry.receipt,
-            value: "approved-fixture",
-          }
-        : { error: "No receipt" }
-    );
-  };
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://fixture:8090");
@@ -396,8 +398,6 @@ export const createFixture = async ({
           ...JSON.parse(await readFile(filename, "utf-8")),
           held: held.size,
         });
-      } else if (request.method === "GET" && url.pathname === "/effects") {
-        readReceipt(url, response);
       } else if (
         request.method === "POST" &&
         ["/control", "/checkpoints"].includes(url.pathname)

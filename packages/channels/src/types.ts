@@ -48,7 +48,7 @@ export interface AuditView {
   }[];
 }
 export interface ChannelOptions {
-  readonly mode: "local" | "fixture" | "production";
+  readonly mode: "local" | "production";
   readonly organizationId: string;
   readonly withDatabase: <T>(
     run: (database: Database) => Promise<T>
@@ -84,7 +84,7 @@ export interface ChannelOptions {
     context: ExecutionContext,
     dependencies: ContentDependencies
   ) => Promise<PortResult<void>>;
-  readonly sessions?: (database: Database) => SessionService;
+  readonly sessions: (database: Database) => SessionService;
   readonly observationResponse?: (input: {
     readonly accessGeneration: number;
     readonly address: EventAddress;
@@ -92,11 +92,6 @@ export interface ChannelOptions {
     readonly signal: AbortSignal;
   }) => Promise<Response>;
   readonly authorization?: (database: Database) => AuthorizationPolicy;
-  readonly recordAdapterTime?: (measurement: {
-    readonly adapter: "permission" | "projection";
-    readonly durationMs: number;
-    readonly resourceId: string;
-  }) => void;
   readonly now?: () => number;
   readonly fetch?: typeof fetch;
 }
@@ -121,8 +116,5 @@ export type ChannelPresentationItem = ChannelItemBody & {
   readonly cursor: string;
 };
 export const INSTALLATION_AGENT_PREFIX = "installation:";
-export const FIXTURE_SOURCE_ID = "pilot-source";
-export const FIXTURE_TOOL_ID = "fixture-read";
-export const FIXTURE_MODEL_ID = "fixture-model";
 export const EFFECT_DEADLINE_MS = 2200;
 export const DELIVERY_TIMEOUT_MS = 30_000;

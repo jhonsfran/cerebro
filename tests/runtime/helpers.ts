@@ -388,16 +388,6 @@ export const approve = async (
     },
     options: effectOptions(`approval:${approval.approvalId}:${decision}`),
   });
-export const reconcile = async (
-  stack: Stack,
-  address: EventAddress,
-  approval: ApprovalState
-) =>
-  await request(stack, "/runtime/reconcile", {
-    address,
-    command: { operationId: approval.operationId, runId: approval.runId },
-    options: effectOptions(`reconcile:${approval.operationId}`),
-  });
 export const observe = async (stack: Stack, address: EventAddress) => {
   const abort = new AbortController();
   const response = await fetch(

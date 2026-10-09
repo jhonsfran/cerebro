@@ -7,7 +7,7 @@ export const connector = pgTable(
   "connector",
   {
     id: text("id").notNull(),
-    kind: text("kind").notNull().$type<"mcp-read" | "fixture-write">(),
+    kind: text("kind").notNull().$type<"mcp-read" | "http-write">(),
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id),
@@ -17,10 +17,7 @@ export const connector = pgTable(
   },
   (table) => [
     primaryKey({ columns: [table.organizationId, table.id] }),
-    check(
-      "connector_kind",
-      sql`${table.kind} IN ('mcp-read', 'fixture-write')`
-    ),
+    check("connector_kind", sql`${table.kind} IN ('mcp-read', 'http-write')`),
     check("connector_state", sql`${table.state} IN ('active', 'disabled')`),
   ]
 );

@@ -15,7 +15,7 @@ export const catalogSchema = z.object({
 });
 export const setupSchema = z.object({
   bootstrapTokenRequired: z.boolean().default(false),
-  mode: z.enum(["local", "fixture", "production"]),
+  mode: z.enum(["local", "production"]),
   organizationId: z.string(),
   owner: z.boolean(),
   principalId: z.string().nullable(),
@@ -80,7 +80,6 @@ const runSchema = z.object({
     "completed",
     "failed",
     "cancelled",
-    "unknown-outcome",
   ]),
 });
 export const conversationItemSchema = z.discriminatedUnion("type", [

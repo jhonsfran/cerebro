@@ -14,6 +14,7 @@ import type { ApplicationBoot } from "../slice-1/application.ts";
 import {
   applicationFixture,
   freeFixturePort,
+  stackFiles,
   waitForFixture,
 } from "../slice-1/application.ts";
 
@@ -106,14 +107,13 @@ export const verifyPilotRestore = async (input: RestoreInput) => {
     ...process.env,
     CEREBRO_API_PORT: new URL(input.boot.apiUrl).port,
     CEREBRO_DATABASE_URL: "",
-    CEREBRO_DEPLOY_MODE: "fixture",
+    CEREBRO_DEPLOY_MODE: "local",
     CEREBRO_FIXTURE_ID: input.boot.fixtureId,
     CEREBRO_FIXTURE_PORT: new URL(input.boot.fixtureUrl).port,
     CEREBRO_FIXTURE_SHA: input.boot.sha,
     CEREBRO_PUBLIC_API_URL: input.boot.apiUrl,
     CEREBRO_PUBLIC_WEB_URL: input.boot.webUrl,
     CEREBRO_WEB_PORT: new URL(input.boot.webUrl).port,
-    COMPOSE_PROFILES: "fixture",
   };
   const restoredEnvironment = {
     ...sourceEnvironment,
@@ -121,7 +121,7 @@ export const verifyPilotRestore = async (input: RestoreInput) => {
     CEREBRO_FIXTURE_PORT: String(fixturePort),
     CEREBRO_WEB_PORT: String(webPort),
   };
-  const files = [path.join(root, "compose.yaml"), input.boot.overridePath];
+  const files = [...stackFiles, input.boot.overridePath];
   const imageOverride = path.join(directory, `${target}.images.yaml`);
   const execute = (
     command: string,

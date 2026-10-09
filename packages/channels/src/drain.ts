@@ -1,25 +1,16 @@
 /* oxlint-disable no-await-in-loop -- Serial claims persist each delivery attempt before the next provider effect. */
-import { id } from "@cerebro/contracts";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import {
   channelConversation,
-  channelInbox,
   channelItem,
   channelReply,
 } from "@cerebro/db/schema/agents";
 import { and, asc, eq, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { sessionServiceFor } from "./fixture-session";
-import { submitInbox } from "./inbox-submission";
 import { projectSession } from "./projection";
-import {
-  authorize,
-  authorizeContent,
-  contextByPrincipal,
-  runEffect,
-} from "./security";
-import { ChannelError, DELIVERY_TIMEOUT_MS, EFFECT_DEADLINE_MS } from "./types";
+import { authorize, authorizeContent, contextByPrincipal } from "./security";
+import { ChannelError, DELIVERY_TIMEOUT_MS } from "./types";
 import type { ChannelOptions, SlackConfiguration } from "./types";
 
 const slackResponse = z.object({
@@ -90,7 +81,7 @@ const sendReply = async (
 };
 export const drainChannelWork = async (
   options: ChannelOptions
-): Promise<{ submitted: number; sent: number; unknown: number }> => {
+): Promise<{ sent: number; unknown: number }> => {
   const now = options.now ?? Date.now;
   const recovered = await options.withDatabase((database) =>
     database
@@ -110,87 +101,9 @@ export const drainChannelWork = async (
       )
       .returning({ replyId: channelReply.replyId })
   );
-  let submitted = 0;
   let sent = 0;
   let unknown = recovered.length;
   await options.withDatabase(async (database) => {
-    const pending = await database
-      .select()
-      .from(channelInbox)
-      .where(
-        and(
-          eq(channelInbox.organizationId, options.organizationId),
-          eq(channelInbox.state, "pending")
-        )
-      )
-      .orderBy(asc(channelInbox.lastAttemptAt))
-      .limit(25);
-    for (const row of pending) {
-      try {
-        const [conversation] = await database
-          .select()
-          .from(channelConversation)
-          .where(eq(channelConversation.conversationId, row.conversationId));
-        if (
-          !conversation ||
-          conversation.engine !== "pi-v1" ||
-          conversation.retiredAt
-        ) {
-          await database
-            .update(channelInbox)
-            .set({ state: "quarantined" })
-            .where(eq(channelInbox.eventKey, row.eventKey));
-          continue;
-        }
-        const result = await submitInbox(
-          options,
-          row.eventKey,
-          async (entry) => {
-            const context = await contextByPrincipal(
-              database,
-              options.organizationId,
-              entry.envelope.context.actor.id
-            );
-            await authorize(
-              database,
-              options,
-              context,
-              "execute",
-              "agent",
-              entry.envelope.agentId
-            );
-            return runEffect(
-              sessionServiceFor(database, options).submit(
-                {
-                  event: entry.envelope,
-                  mode: entry.submissionMode,
-                  type: "submit",
-                },
-                {
-                  deadlineAt: now() + EFFECT_DEADLINE_MS,
-                  operationId: id.operation(`submit:${entry.envelope.eventId}`),
-                  requestDigest: id.digest(entry.digest),
-                }
-              )
-            );
-          },
-          "retry"
-        );
-        submitted += Number(result.submitted);
-      } catch (error) {
-        if (error instanceof ChannelError && error.status === 403) {
-          await database
-            .update(channelInbox)
-            .set({ state: "denied" })
-            .where(
-              and(
-                eq(channelInbox.eventKey, row.eventKey),
-                eq(channelInbox.state, "pending")
-              )
-            );
-        }
-      }
-    }
     const conversations = await database
       .select()
       .from(channelConversation)
@@ -248,7 +161,7 @@ export const drainChannelWork = async (
     }
   });
   if (!options.slack?.botToken) {
-    return { sent, submitted, unknown };
+    return { sent, unknown };
   }
   const configuration = options.slack;
   const ready = await options.withDatabase((database) =>
@@ -335,7 +248,7 @@ export const drainChannelWork = async (
           (entry) =>
             entry.item.runId === row.runId && entry.item.type === "output"
         );
-        if (options.mode !== "fixture" && outputs.length === 0) {
+        if (outputs.length === 0) {
           throw new ChannelError(
             403,
             "unauthorized",
@@ -411,5 +324,5 @@ export const drainChannelWork = async (
       unknown += 1;
     }
   }
-  return { sent, submitted, unknown };
+  return { sent, unknown };
 };

@@ -11,7 +11,7 @@ import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { EffectOptions, ReadOptions } from "@cerebro/contracts/port";
-import { DomainSnapshot, ToolState } from "@cerebro/contracts/session-service";
+import { DomainSnapshot } from "@cerebro/contracts/session-service";
 import type { SessionService } from "@cerebro/contracts/session-service";
 import { digestToolArguments } from "@cerebro/contracts/tools";
 import { Effect, Schema, Stream } from "effect";
@@ -49,11 +49,6 @@ const runSchema = z.union([
     endedAt: z.number(),
     runId: identifier.transform(id.run),
     state: z.enum(["failed", "cancelled"]),
-  }),
-  z.strictObject({
-    operationId: identifier.transform(id.operation),
-    runId: identifier.transform(id.run),
-    state: z.literal("unknown-outcome"),
   }),
 ]);
 
@@ -110,13 +105,7 @@ export const createSessionClient = (env: WorkerEnv) => {
   const request = (
     address: EventAddress,
     context: ExecutionContext,
-    path:
-      | "/submit"
-      | "/inspect"
-      | "/stream"
-      | "/approve"
-      | "/cancel"
-      | "/reconcile",
+    path: "/submit" | "/inspect" | "/stream" | "/approve" | "/cancel",
     body: Readonly<Record<string, unknown>>,
     options: ReadOptions
   ) =>
@@ -161,13 +150,7 @@ export const createSessionClient = (env: WorkerEnv) => {
   const invoke = <A>(
     address: EventAddress,
     context: ExecutionContext,
-    path:
-      | "/submit"
-      | "/inspect"
-      | "/stream"
-      | "/approve"
-      | "/cancel"
-      | "/reconcile",
+    path: "/submit" | "/inspect" | "/stream" | "/approve" | "/cancel",
     body: Readonly<Record<string, unknown>>,
     options: ReadOptions,
     decode: (value: unknown) => A
@@ -227,15 +210,6 @@ export const createSessionClient = (env: WorkerEnv) => {
           Schema.decodeUnknownSync(DomainSnapshot)
         );
       }),
-    reconcile: (command, options) =>
-      invoke(
-        command.address,
-        command.context,
-        "/reconcile",
-        { command, options },
-        options,
-        Schema.decodeUnknownSync(ToolState)
-      ),
     stream: (address, context, observation, options) =>
       Stream.unwrap(
         waitForCaller(

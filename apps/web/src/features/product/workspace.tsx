@@ -431,11 +431,6 @@ const WelcomePanel = ({
         Create your first agent
       </button>
     ) : null}
-    {setup.mode === "fixture" ? (
-      <p className="fixture-note">
-        Local fixture mode uses deterministic answers and test sources.
-      </p>
-    ) : null}
   </section>
 );
 const InstallationSetup = ({
@@ -577,7 +572,6 @@ const WorkspaceBody = (props: WorkspaceBodyProps) => {
         userId={userId}
         agentId={selected.agentId}
         agentName={selected.name}
-        fixture={setup.mode === "fixture"}
         onStartConversation={() => {
           void startConversation();
         }}

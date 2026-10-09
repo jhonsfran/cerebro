@@ -4,6 +4,7 @@ import {
   DomainSnapshot,
   DomainUpdate,
 } from "@cerebro/contracts/session-service";
+import type { ToolState } from "@cerebro/contracts/session-service";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import { Schema } from "effect";
 
@@ -53,28 +54,18 @@ const upsert = <A>(
     : values.map((item, position) => (position === index ? value : item));
 };
 
+// An uncertain tool is settled: the model was told and the call never reruns.
+export const settledTool = (state: ToolState["state"]): boolean =>
+  ["succeeded", "failed", "cancelled", "unknown-outcome"].includes(state);
+
 const projectRun = (
   snapshot: DomainSnapshot,
   update: Extract<DomainUpdate, { type: "run" }>
 ): DomainSnapshot => {
   const previous = snapshot.runs.find((run) => run.runId === update.run.runId);
-  const reconciled =
-    previous?.state === "unknown-outcome" &&
-    update.run.state === "running" &&
-    !snapshot.tools.some(
-      (tool) =>
-        tool.runId === previous.runId && tool.state === "unknown-outcome"
-    ) &&
-    snapshot.tools.some(
-      (tool) =>
-        tool.runId === previous.runId &&
-        tool.operationId === previous.operationId &&
-        (tool.state === "succeeded" || tool.state === "failed")
-    );
   if (
     previous &&
     !pendingRun(previous) &&
-    !reconciled &&
     canonicalToolArguments(previous) !== canonicalToolArguments(update.run)
   ) {
     throw new Conflict({
@@ -89,23 +80,14 @@ const projectRun = (
     const execution = snapshot.executions.find((value) =>
       value.runIds.includes(update.run.runId)
     );
-    const unresolved =
-      snapshot.runs.some(
-        (run) =>
-          execution?.runIds.includes(run.runId) &&
-          run.state === "unknown-outcome"
-      ) ||
-      snapshot.tools.some(
-        (tool) =>
-          execution?.runIds.includes(tool.runId) &&
-          tool.state !== "succeeded" &&
-          tool.state !== "failed" &&
-          tool.state !== "cancelled"
-      );
-    if (!hasOutput || unresolved) {
+    const unsettled = snapshot.tools.some(
+      (tool) =>
+        execution?.runIds.includes(tool.runId) && !settledTool(tool.state)
+    );
+    if (!hasOutput || unsettled) {
       throw new Conflict({
         code: "version-mismatch",
-        reason: "Canonical output and confirmed tools must precede success",
+        reason: "Canonical output and settled tools must precede success",
       });
     }
   }
@@ -139,7 +121,7 @@ const projectTool = (
   }
   if (
     prior &&
-    ["succeeded", "failed", "cancelled"].includes(prior.state) &&
+    settledTool(prior.state) &&
     canonicalToolArguments(prior) !== canonicalToolArguments(tool)
   ) {
     throw new Conflict({

@@ -29,7 +29,6 @@ export type PortResult<Value> =
       readonly status: "unknown-outcome";
       readonly operationId: OperationId;
       readonly reason: string;
-      readonly reconcileAfter?: number;
     };
 
 export interface ReadOptions {
@@ -44,7 +43,7 @@ export interface EffectOptions extends ReadOptions {
 }
 
 // Cancellation and deadlines stop local work or waiting. They do not prove that
-// a remote effect did not occur. Such a result is "unknown-outcome" until reconciled.
+// a remote effect did not occur, so such a result is "unknown-outcome".
 export const preflightEffect = (
   options: ReadOptions,
   now: number

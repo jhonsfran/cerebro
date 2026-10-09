@@ -154,17 +154,6 @@ const fixtureProbe = async (url) => {
     409
   );
   assert.equal(
-    (await request(url, `/effects?operationId=${operationId}`)).status,
-    200
-  );
-  const beforeReconcile = (await request(url, "/observations")).body.tools
-    .length;
-  await request(url, `/effects?operationId=${operationId}`);
-  assert.equal(
-    (await request(url, "/observations")).body.tools.length,
-    beforeReconcile
-  );
-  assert.equal(
     (
       await request(
         url,
@@ -269,7 +258,7 @@ if (values["self-test"]) {
       assert.equal(committed.tools.length, 3);
       assert.equal(
         committed.checkpoints.filter((entry) => entry.armed).length,
-        10
+        boundaries.length
       );
     } finally {
       await promisify(restored.server.close.bind(restored.server))();
@@ -279,7 +268,7 @@ if (values["self-test"]) {
       /different identity/u
     );
   });
-  test("SIGKILL after a physical write retains read-only reconciliation evidence", async () => {
+  test("SIGKILL after a physical write retains the recorded write", async () => {
     const directory = await mkdtemp("/tmp/cerebro-s1-kill-");
     const child = spawn(
       process.execPath,
@@ -348,10 +337,6 @@ if (values["self-test"]) {
       await once(restored.server, "listening");
       try {
         const base = `http://127.0.0.1:${restored.server.address().port}`;
-        assert.equal(
-          (await request(base, "/effects?operationId=unknown-write")).status,
-          200
-        );
         assert.equal(
           (await request(base, "/observations")).body.tools.length,
           1
