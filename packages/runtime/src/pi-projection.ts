@@ -246,6 +246,7 @@ const project = (
       };
     }
     case "citation":
+    case "provisional-thinking":
     case "provisional-text": {
       const execution = snapshot.executions.find(
         (value) => value.executionId === update.executionId

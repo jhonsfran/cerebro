@@ -40,6 +40,62 @@ type Detail =
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : "The request failed.";
 
+const TranscriptMessage = ({
+  message,
+  agentName,
+}: {
+  message: ConversationMessage;
+  agentName: string;
+}) => {
+  const text = messageText(message);
+  return message.parts.length ? (
+    <article
+      className={`chat-message ${message.role === "user" ? "user-message" : "answer-message"}`}
+    >
+      <p className="message-label">
+        {message.role === "user" ? "You" : agentName}
+      </p>
+      {message.parts
+        .filter((part) => part.type === "thinking")
+        .map((part) =>
+          part.content ? (
+            <details
+              key={
+                "stepId" in part && typeof part.stepId === "string"
+                  ? part.stepId
+                  : `thinking:${message.id}`
+              }
+            >
+              <summary>Thinking</summary>
+              <p>{part.content}</p>
+            </details>
+          ) : null
+        )}
+      {message.parts
+        .filter((part) => part.type === "tool-call")
+        .map((part) => (
+          <details key={part.id}>
+            <summary>Tool: {part.name}</summary>
+            <pre>{part.arguments}</pre>
+          </details>
+        ))}
+      {message.parts
+        .filter((part) => part.type === "tool-result")
+        .map((part) => (
+          <details key={`result:${part.toolCallId}`}>
+            <summary>Tool result</summary>
+            <pre>
+              {typeof part.content === "string"
+                ? part.content
+                : JSON.stringify(part.content, null, 2)}
+            </pre>
+          </details>
+        ))}
+      {text ? <p>{text}</p> : null}
+    </article>
+  ) : null;
+};
+
 const historicalMessages = (
   conversation: Conversation | null
 ): ConversationMessage[] =>
@@ -622,20 +678,13 @@ const ConversationSession = ({
             ) : null}
           </div>
         ) : null}
-        {messages.map((message) => {
-          const value = messageText(message);
-          return value ? (
-            <article
-              className={`chat-message ${message.role === "user" ? "user-message" : "answer-message"}`}
-              key={message.id}
-            >
-              <p className="message-label">
-                {message.role === "user" ? "You" : agentName}
-              </p>
-              <p>{value}</p>
-            </article>
-          ) : null;
-        })}
+        {messages.map((message) => (
+          <TranscriptMessage
+            agentName={agentName}
+            key={message.id}
+            message={message}
+          />
+        ))}
         <ConversationProgress recovering={isRecovering} busy={busy} />
         {items.map((item) => {
           switch (item.type) {

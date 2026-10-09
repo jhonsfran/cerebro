@@ -170,6 +170,14 @@ export const DomainSnapshot = Schema.Struct({
 );
 export type DomainSnapshot = typeof DomainSnapshot.Type;
 
+export const PartialAssistantMessage = Schema.Struct({
+  executionId,
+  runId,
+  text: Schema.String,
+  thinking: Schema.String,
+});
+export type PartialAssistantMessage = typeof PartialAssistantMessage.Type;
+
 export const DomainUpdate = Schema.Union([
   Schema.Struct({ run, type: Schema.Literal("run") }),
   Schema.Struct({
@@ -182,6 +190,12 @@ export const DomainUpdate = Schema.Union([
     runId,
     text: Schema.String,
     type: Schema.Literal("provisional-text"),
+  }),
+  Schema.Struct({
+    executionId,
+    runId,
+    text: Schema.String,
+    type: Schema.Literal("provisional-thinking"),
   }),
   Schema.Struct({
     output: CanonicalOutput,
@@ -216,6 +230,7 @@ const frameMetadata = {
 export const Observation = Schema.Union([
   Schema.Struct({
     ...frameMetadata,
+    partial: Schema.optional(Schema.Array(PartialAssistantMessage)),
     reason: Schema.Literals(["attach", "overflow", "reconnect"]),
     snapshot: DomainSnapshot,
     type: Schema.Literal("snapshot"),

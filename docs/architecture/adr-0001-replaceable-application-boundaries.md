@@ -18,6 +18,8 @@ Keep one application operation for each business action. HTTP, web chat, Slack, 
 
 Pi owns its private session, durable inbox, steering, model/tool loop, submission deduplication, native Stop semantics and engine recovery. The official PiHarness supplies persistence and Lifecycle wake-up. The thin Effect adapter translates public vendor calls; the conversation coordinator owns trusted command intents, durable product state and repair of its handoff and projection. It does not implement another execution queue or alarm scheduler. Cerebro owns action-approval decisions and operation identities. SDK permission prompts must not create another independent approval authority.
 
+The Durable Object maps authorized observations into AG-UI delivery batches. The HTTP route authenticates the viewer, authorizes each observation once and forwards its mapped chunks. It does not own the Pi loop. TanStack owns the browser transcript and typed message parts. Reconnect reads a fresh snapshot, including current partial content, then observes live updates. Pi's in-memory event stream does not provide cursor replay; exact replay would require a separate durable chunk log.
+
 Each fact has one authority. Product history and tool receipts use Cerebro tables in the session's SQLite store. PostgreSQL owns company records. Browser and channel history are projections. Pi checkpoints are private engine state. A future external meter owns pricing, balances, and reservations. Historical budget records remain preserved.
 
 Preserve intent before external dispatch. Record confirmed results afterward. An uncertain non-idempotent effect stops for reconciliation. Neither actors nor database transactions guarantee exactly-once execution in a remote system.

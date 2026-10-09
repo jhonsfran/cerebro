@@ -3,7 +3,14 @@ import assert from "node:assert/strict";
 
 import { Effect, Stream } from "effect";
 
-import { authorizedObservation } from "../../packages/ag-ui/src/authorized-observation.ts";
+import {
+  authorizedObservation,
+  authorizedProtocolResponse,
+} from "../../packages/ag-ui/src/authorized-observation.ts";
+import {
+  protocolBatches,
+  decodeStreamChunk,
+} from "../../packages/ag-ui/src/protocol.ts";
 import { Denied, Unavailable } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { Observation } from "../../packages/contracts/src/session-service.ts";
@@ -130,4 +137,66 @@ test("frames from an old access generation are discarded", async () => {
   );
   assert.equal(values.length, 1);
   assert.equal(values[0]?.accessGeneration, 3);
+});
+
+test("a mapped batch checks access once, keeps event order, and revokes on idle", async () => {
+  let checks = 0;
+  const snapshot: Observation = {
+    accessGeneration: 3,
+    address,
+    epoch: "batch-host",
+    reason: "attach",
+    schemaVersion: 1,
+    sequence: 0,
+    snapshot: {
+      address,
+      agentVersion: 1,
+      approvals: [],
+      executions: [],
+      outputs: [],
+      revision: 0,
+      runs: [],
+      tools: [],
+      userMessages: [],
+    },
+    type: "snapshot",
+  };
+  const response = authorizedProtocolResponse({
+    accessGeneration: 3,
+    address,
+    authorize: Effect.suspend(() => {
+      checks += 1;
+      return checks === 1 ? Effect.void : Effect.fail(denial);
+    }),
+    source: Stream.concat(
+      protocolBatches(Stream.make(snapshot)),
+      Stream.fromEffect(Effect.never)
+    ),
+  });
+  assert.ok(response.body);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const first = await reader.read();
+  const second = await reader.read();
+  const initial =
+    `${decoder.decode(first.value)}${decoder.decode(second.value)}`
+      .trim()
+      .split("\n")
+      .map((line) => decodeStreamChunk(JSON.parse(line)));
+  assert.equal(checks, 1);
+  assert.deepEqual(
+    initial.map((event) => event.type),
+    ["CUSTOM", "MESSAGES_SNAPSHOT"]
+  );
+  const next = await reader.read();
+  const revoked = decodeStreamChunk(JSON.parse(decoder.decode(next.value)));
+  assert.equal(revoked.type, "CUSTOM");
+  assert.equal(
+    revoked.type === "CUSTOM" ? revoked.name : null,
+    "cerebro.access-denied"
+  );
+  assert.equal(checks, 2);
+  const end = await reader.read();
+  assert.equal(end.done, true);
+  reader.releaseLock();
 });

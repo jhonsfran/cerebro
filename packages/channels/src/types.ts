@@ -4,6 +4,7 @@ import type {
   ExecutionContext,
   PortResult,
 } from "@cerebro/contracts";
+import type { EventAddress } from "@cerebro/contracts/events";
 import type { SessionService } from "@cerebro/contracts/session-service";
 import type { Database } from "@cerebro/db";
 import type { ChannelItemBody } from "@cerebro/db/schema/agents";
@@ -84,6 +85,12 @@ export interface ChannelOptions {
     dependencies: ContentDependencies
   ) => Promise<PortResult<void>>;
   readonly sessions?: (database: Database) => SessionService;
+  readonly observationResponse?: (input: {
+    readonly accessGeneration: number;
+    readonly address: EventAddress;
+    readonly context: ExecutionContext;
+    readonly signal: AbortSignal;
+  }) => Promise<Response>;
   readonly authorization?: (database: Database) => AuthorizationPolicy;
   readonly recordAdapterTime?: (measurement: {
     readonly adapter: "permission" | "projection";

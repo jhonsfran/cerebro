@@ -28,6 +28,7 @@ import {
 import type {
   Observation,
   ObservationRequest,
+  PartialAssistantMessage,
 } from "@cerebro/contracts/session-service";
 import {
   canonicalToolArguments,
@@ -81,9 +82,22 @@ export interface SessionStoreConfiguration {
 interface Observer {
   buffer: ProjectionRecord[];
   overflow: boolean;
+  overflowGeneration: number;
   closed: boolean;
   wake: () => void;
 }
+
+const isProvisionalUpdate = (
+  update: DomainUpdate
+): update is Extract<
+  DomainUpdate,
+  { type: "provisional-text" | "provisional-thinking" }
+> =>
+  update.type === "provisional-text" || update.type === "provisional-thinking";
+
+const shouldDeliver = (record: ProjectionRecord, revision: number): boolean =>
+  record.revision > revision ||
+  (record.revision === revision && isProvisionalUpdate(record.update));
 
 const dependenciesOf = (snapshot: DomainSnapshot): ContentDependencies => ({
   sourceIds: [
@@ -253,6 +267,10 @@ export const createSessionStore = (
       try: () => persistence.flush?.() ?? Promise.resolve(),
     });
   const observers = new Set<Observer>();
+  const partial = new Map<
+    PartialAssistantMessage["executionId"],
+    PartialAssistantMessage
+  >();
   const closeObserver = (observer: Observer) => {
     observer.closed = true;
     observer.buffer = [];
@@ -311,14 +329,32 @@ export const createSessionStore = (
     }
   };
   const notify = (record: ProjectionRecord) => {
+    const { update } = record;
+    if (isProvisionalUpdate(update)) {
+      const prior = partial.get(update.executionId) ?? {
+        executionId: update.executionId,
+        runId: update.runId,
+        text: "",
+        thinking: "",
+      };
+      partial.set(update.executionId, {
+        ...prior,
+        text:
+          prior.text + (update.type === "provisional-text" ? update.text : ""),
+        thinking:
+          prior.thinking +
+          (update.type === "provisional-thinking" ? update.text : ""),
+      });
+    } else if (update.type === "canonical-output") {
+      partial.delete(update.output.executionId);
+    }
     for (const observer of observers) {
       if (observer.buffer.length >= capacity) {
         observer.buffer = [];
         observer.overflow = true;
+        observer.overflowGeneration += 1;
       }
-      if (!observer.overflow) {
-        observer.buffer.push(record);
-      }
+      observer.buffer.push(record);
       observer.wake();
     }
   };
@@ -363,7 +399,7 @@ export const createSessionStore = (
     let projected = state.snapshot;
     for (const update of settled) {
       Schema.decodeUnknownSync(DomainUpdate)(update);
-      if (update.type === "provisional-text" || update.type === "citation") {
+      if (isProvisionalUpdate(update) || update.type === "citation") {
         throw new InvalidInput({
           reason: "Projection batches require durable updates",
         });
@@ -438,24 +474,38 @@ export const createSessionStore = (
     });
     return { next, records };
   };
-  const snapshotRead = (
+  const captureSnapshot = (
     address: EventAddress,
     context: ExecutionContext,
-    options: ReadOptions
+    options: ReadOptions,
+    observer?: Observer
   ) =>
     Effect.gen(function* readProjection() {
       const projection = yield* attempt(() => {
         checkOptions(options);
         access(address, context);
-        return structuredClone(load().snapshot);
+        return {
+          buffered: new Set(observer?.buffer),
+          overflowGeneration: observer?.overflowGeneration,
+          partial: structuredClone([...partial.values()]),
+          snapshot: structuredClone(load().snapshot),
+        };
       });
       yield* configuration.authorize(
         context,
-        dependenciesOf(projection),
+        dependenciesOf(projection.snapshot),
         options
       );
       return projection;
     });
+  const snapshotRead = (
+    address: EventAddress,
+    context: ExecutionContext,
+    options: ReadOptions
+  ) =>
+    captureSnapshot(address, context, options).pipe(
+      Effect.map((captured) => captured.snapshot)
+    );
   const observe = async function* observe(
     observer: Observer,
     address: EventAddress,
@@ -481,11 +531,13 @@ export const createSessionStore = (
     };
     while (!observer.closed) {
       let snapshot: DomainSnapshot;
+      let captured: Effect.Success<ReturnType<typeof captureSnapshot>>;
       let record: ProjectionRecord | undefined;
       try {
-        snapshot = await Effect.runPromise(
-          snapshotRead(address, context, options)
+        captured = await Effect.runPromise(
+          captureSnapshot(address, context, options, observer)
         );
+        ({ snapshot } = captured);
         if (revision >= 0 && !observer.overflow) {
           record = observer.buffer.shift();
           if (record) {
@@ -497,6 +549,9 @@ export const createSessionStore = (
               )
             );
           }
+        }
+        if (observer.overflowGeneration !== captured.overflowGeneration) {
+          continue;
         }
       } catch (error) {
         const failure = contractFailure(
@@ -520,21 +575,33 @@ export const createSessionStore = (
         }
         observer.overflow = false;
         observer.buffer = observer.buffer.filter(
-          (item) => item.revision > snapshot.revision
+          (item) =>
+            item.revision > snapshot.revision ||
+            (isProvisionalUpdate(item.update) && !captured.buffered.has(item))
         );
         ({ revision } = snapshot);
-        yield { ...metadata(), reason, snapshot, type: "snapshot" };
+        yield {
+          ...metadata(),
+          partial: captured.partial.filter(
+            (message) =>
+              snapshot.executions.some(
+                (execution) => execution.executionId === message.executionId
+              ) &&
+              !snapshot.outputs.some(
+                (output) => output.executionId === message.executionId
+              )
+          ),
+          reason,
+          snapshot,
+          type: "snapshot",
+        };
       }
       if (record) {
         if (record.revision > revision + 1) {
           observer.overflow = true;
           continue;
         }
-        if (
-          record.revision > revision ||
-          (record.revision === revision &&
-            record.update.type === "provisional-text")
-        ) {
+        if (shouldDeliver(record, revision)) {
           ({ revision } = record);
           yield {
             ...metadata(),
@@ -668,6 +735,7 @@ export const createSessionStore = (
                 buffer: [],
                 closed: false,
                 overflow: false,
+                overflowGeneration: 0,
                 wake: () => {
                   /* No pending wait before the first frame. */
                 },
@@ -722,7 +790,7 @@ export const createSessionStore = (
             }
             validateTransition(prior, transition);
             const update = transitionUpdate(prior, transition);
-            if (update?.type === "provisional-text") {
+            if (update && isProvisionalUpdate(update)) {
               projectUpdate(state.snapshot, update);
               return {
                 next: prior,
@@ -767,7 +835,7 @@ export const createSessionStore = (
         });
         if (
           transition.type !== "projected" ||
-          transition.update.type !== "provisional-text"
+          !isProvisionalUpdate(transition.update)
         ) {
           yield* flush();
           yield* configuration.onCommit?.() ?? Effect.void;
@@ -847,7 +915,10 @@ export const createSessionStore = (
         if (!handoff) {
           return yield* Effect.fail(new NotFound({ resource: "handoff" }));
         }
-        if (update.type === "provisional-text") {
+        if (
+          update.type === "provisional-text" ||
+          update.type === "provisional-thinking"
+        ) {
           yield* attempt(() => {
             projectUpdate(state.snapshot, update);
             notify({

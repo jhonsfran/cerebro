@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 
 import { JSDOM } from "../../apps/web/node_modules/jsdom";
 import { createElement } from "../../apps/web/node_modules/react";
+import {
+  createProtocolProjection,
+  decodeObservation,
+  observationIdentity,
+} from "../../packages/ag-ui/src/protocol.ts";
 
 mock.module("../../apps/web/src/env.public", () => ({
   ENV: { VITE_SERVER_URL: "http://fixture.invalid" },
@@ -158,6 +163,129 @@ test("retired UI renders all authorized transcript pages and run history without
   assert.equal(starts, 1);
 });
 
+test("an open thinking panel stays open when the next delta arrives", async () => {
+  const address = {
+    agentId: "agent",
+    conversationId: "conversation",
+    organizationId: "company",
+    sessionId: "session",
+  };
+  const snapshot = {
+    address,
+    agentVersion: 1,
+    approvals: [],
+    executions: [{ executionId: "execution", runIds: ["run"] }],
+    outputs: [],
+    revision: 0,
+    runs: [{ runId: "run", state: "running" }],
+    tools: [],
+    userMessages: [],
+  };
+  const project = createProtocolProjection();
+  const pending =
+    Promise.withResolvers<ReadableStreamDefaultController<Uint8Array>>();
+  const send = (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    input: unknown
+  ) => {
+    const observation = decodeObservation(input);
+    controller.enqueue(
+      new TextEncoder().encode(
+        `${project(observation)
+          .map((event) =>
+            JSON.stringify({
+              ...event,
+              metadata: { cerebro: observationIdentity(observation) },
+            })
+          )
+          .join("\n")}\n`
+      )
+    );
+  };
+  Object.defineProperty(globalThis, "fetch", {
+    configurable: true,
+    value: (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/observations")) {
+        return Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start: (controller) => {
+                pending.resolve(controller);
+                send(controller, {
+                  accessGeneration: currentAccessGeneration(),
+                  address,
+                  epoch: "epoch",
+                  partial: [
+                    {
+                      executionId: "execution",
+                      runId: "run",
+                      text: "Answer",
+                      thinking: "First thought",
+                    },
+                  ],
+                  reason: "attach",
+                  schemaVersion: 1,
+                  sequence: 0,
+                  snapshot,
+                  type: "snapshot",
+                });
+              },
+            }),
+            { headers: { "Content-Type": "application/x-ag-ui+ndjson" } }
+          )
+        );
+      }
+      return Promise.resolve(
+        Response.json(
+          url.endsWith("/history")
+            ? { projectionStatus: "running", runs: [] }
+            : { ...address, cursor: "0", items: [], mode: "fixture", snapshot }
+        )
+      );
+    },
+    writable: true,
+  });
+  const view = render(
+    createElement(ConversationPanel, {
+      agentId: "agent",
+      agentName: "Agent",
+      conversationId: "conversation",
+      fixture: true,
+      userId: "user",
+    })
+  );
+  await waitFor(() =>
+    assert.ok(view.container.textContent?.includes("First thought"))
+  );
+  const details = view.getByText("Thinking").closest("details");
+  assert.ok(details);
+  details.open = true;
+  const controller = await pending.promise;
+  await act(() =>
+    send(controller, {
+      accessGeneration: currentAccessGeneration(),
+      address,
+      epoch: "epoch",
+      revision: 0,
+      schemaVersion: 1,
+      sequence: 1,
+      type: "update",
+      update: {
+        executionId: "execution",
+        runId: "run",
+        text: " continued",
+        type: "provisional-thinking",
+      },
+    })
+  );
+  await waitFor(() =>
+    assert.ok(details.textContent?.includes("First thought continued"))
+  );
+  assert.equal(view.getByText("Thinking").closest("details"), details);
+  assert.equal(details.open, true);
+});
+
 test("a confirmed retry clears its client intent when the accepted domain event has a different ID", async () => {
   const key = cacheKey("user", "conversation", "pending");
   sessionStorage.setItem(
@@ -212,21 +340,43 @@ test("a confirmed retry clears its client intent when the accepted domain event 
               start: (controller) => {
                 controller.enqueue(
                   new TextEncoder().encode(
-                    `${JSON.stringify({
-                      accessGeneration: currentAccessGeneration(),
-                      address,
-                      epoch: "epoch",
-                      reason: "attach",
-                      schemaVersion: 1,
-                      sequence: 0,
-                      snapshot,
-                      type: "snapshot",
-                    })}\n`
+                    `${createProtocolProjection()(
+                      decodeObservation({
+                        accessGeneration: currentAccessGeneration(),
+                        address,
+                        epoch: "epoch",
+                        reason: "attach",
+                        schemaVersion: 1,
+                        sequence: 0,
+                        snapshot,
+                        type: "snapshot",
+                      })
+                    )
+                      .map((event) =>
+                        JSON.stringify({
+                          ...event,
+                          metadata: {
+                            cerebro: observationIdentity(
+                              decodeObservation({
+                                accessGeneration: currentAccessGeneration(),
+                                address,
+                                epoch: "epoch",
+                                reason: "attach",
+                                schemaVersion: 1,
+                                sequence: 0,
+                                snapshot,
+                                type: "snapshot",
+                              })
+                            ),
+                          },
+                        })
+                      )
+                      .join("\n")}\n`
                   )
                 );
               },
             }),
-            { headers: { "Content-Type": "application/x-ndjson" } }
+            { headers: { "Content-Type": "application/x-ag-ui+ndjson" } }
           )
         );
       }

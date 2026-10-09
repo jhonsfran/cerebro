@@ -150,6 +150,7 @@ const projectFixtureUpdate = (
       };
     }
     case "citation":
+    case "provisional-thinking":
     case "provisional-text": {
       return snapshot;
     }
@@ -546,7 +547,7 @@ export const createSessionFake = (
   initial: DomainSnapshot,
   frames: readonly Observation[] = []
 ) => {
-  const counts = { submit: 0 };
+  const counts = { approve: 0, cancel: 0, submit: 0 };
   const receipts = new Map<
     string,
     {
@@ -576,6 +577,7 @@ export const createSessionFake = (
   const service: SessionService = {
     approve: (command, options) =>
       attempt(() => {
+        counts.approve += 1;
         authorize(options, command.context);
         const prior = snapshot.runs.find(
           (value) => value.runId === command.runId
@@ -627,6 +629,7 @@ export const createSessionFake = (
       }),
     cancel: (command, options) =>
       attempt(() => {
+        counts.cancel += 1;
         authorize(options, command.context);
         if (!snapshot.runs.some((value) => value.runId === command.runId)) {
           throw new NotFound({ resource: "run" });

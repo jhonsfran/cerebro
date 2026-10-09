@@ -5,7 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { Effect, Stream, Schema } from "effect";
 
-import { createObservationClient } from "../../packages/ag-ui/src/client.ts";
+import { createObservationClient as createProtocolClient } from "../../packages/ag-ui/src/client.ts";
 import {
   projectObservation,
   projectionMessages,
@@ -17,6 +17,7 @@ import {
   decodeCustomObservation,
   decodeObservation,
   observationEvent,
+  observationIdentity,
   observationIterable,
   observationResponse,
   ResnapshotRequiredError,
@@ -33,6 +34,42 @@ import {
   userEvent,
 } from "../../packages/contracts/src/testing/fixtures.ts";
 import { createSessionFake } from "../../packages/contracts/src/testing/session-fakes.ts";
+
+// The test server maps domain frames before the browser client receives them.
+const createObservationClient = (
+  options: Parameters<typeof createProtocolClient>[0]
+) =>
+  createProtocolClient({
+    ...options,
+    open: (generation, signal) => {
+      const project = createProtocolProjection();
+      const source = options.open(generation, signal)[Symbol.asyncIterator]();
+      const events: unknown[] = [];
+      const iterator: AsyncIterator<unknown> = {
+        next: async () => {
+          if (!events.length) {
+            const next = await source.next();
+            if (next.done) {
+              return next;
+            }
+            const observation = decodeObservation(next.value);
+            events.push(
+              ...project(observation).map((event) => ({
+                ...event,
+                metadata: { cerebro: observationIdentity(observation) },
+              }))
+            );
+          }
+          return { done: false, value: events.shift() };
+        },
+        return: async () => {
+          events.length = 0;
+          return (await source.return?.()) ?? { done: true, value: undefined };
+        },
+      };
+      return { [Symbol.asyncIterator]: () => iterator };
+    },
+  });
 
 const snapshot = Schema.decodeUnknownSync(DomainSnapshot)({
   address: {
@@ -1635,3 +1672,165 @@ for (const stage of ["snapshot", "tail"] as const) {
     });
   }
 }
+
+test("a partial snapshot resumes text and thinking once and preserves typed tools across steering", async () => {
+  const partial = decodeObservation({
+    ...frame("partial"),
+    partial: [
+      {
+        executionId: "execution-1",
+        runId: "run-1",
+        text: "Prefix",
+        thinking: "Visible",
+      },
+    ],
+  });
+  const source = fakeSource(snapshot, [
+    partial,
+    update(
+      1,
+      0,
+      {
+        executionId: "execution-1",
+        runId: "run-1",
+        text: " thought",
+        type: "provisional-thinking",
+      },
+      "partial"
+    ),
+    update(
+      2,
+      0,
+      {
+        executionId: "execution-1",
+        runId: "run-1",
+        text: " suffix",
+        type: "provisional-text",
+      },
+      "partial"
+    ),
+    update(
+      3,
+      1,
+      { ...tool, output: { saved: true }, state: "succeeded", type: "tool" },
+      "partial"
+    ),
+    update(
+      4,
+      2,
+      { message: joined.userMessages[1], type: "user-message" },
+      "partial"
+    ),
+    update(
+      5,
+      3,
+      { execution: joined.executions[0], type: "execution" },
+      "partial"
+    ),
+  ]);
+  const observer = createObservationClient({
+    address: snapshot.address,
+    generation: () => 0,
+    onDenied: () => assert.fail("Unexpected denial"),
+    onError: (error) => assert.fail(error.message),
+    onProjection: () => {},
+    open: source.open,
+  });
+  try {
+    observer.attach();
+    await waitFor(() => observer.getProjection()?.snapshot.revision === 3);
+    await waitFor(
+      () =>
+        observer.client
+          .getMessages()
+          .at(-1)
+          ?.parts.some(
+            (part) => part.type === "text" && part.content === "Prefix suffix"
+          ) ?? false
+    );
+    const answer = observer.client.getMessages().at(-1);
+    assert.deepEqual(
+      answer?.parts
+        .filter((part) => part.type === "text")
+        .map((part) => part.content),
+      ["Prefix suffix"]
+    );
+    assert.deepEqual(
+      answer?.parts
+        .filter((part) => part.type === "thinking")
+        .map((part) => part.content),
+      ["Visible thought"]
+    );
+    assert.equal(
+      answer?.parts.filter((part) => part.type === "tool-call").length,
+      1
+    );
+    assert.equal(
+      answer?.parts.filter((part) => part.type === "tool-result").length,
+      1
+    );
+    assert.equal(source.counts.observers, 1);
+    assert.equal(source.fake.counts.submit, 0);
+    assert.equal(source.fake.counts.cancel, 0);
+  } finally {
+    observer.dispose();
+  }
+});
+
+test("RUN_FINISHED leaves the observation attached for the next run", async () => {
+  const source = fakeSource();
+  const observer = createProtocolClient({
+    address: snapshot.address,
+    generation: () => 0,
+    onDenied: () => assert.fail("Unexpected denial"),
+    onError: (error) => assert.fail(error.message),
+    onProjection: () => {},
+    open: (generation, signal) =>
+      (async function* protocol() {
+        const project = createProtocolProjection();
+        for await (const input of source.open(generation, signal)) {
+          const observation = decodeObservation(input);
+          const metadata = { cerebro: observationIdentity(observation) };
+          for (const chunk of project(observation)) {
+            yield { ...chunk, metadata };
+          }
+          yield {
+            metadata,
+            runId: "first",
+            threadId: "conversation-1",
+            type: "RUN_FINISHED",
+          };
+          yield {
+            metadata,
+            runId: "second",
+            threadId: "conversation-1",
+            type: "RUN_STARTED",
+          };
+          yield {
+            messageId: "second-answer",
+            metadata,
+            role: "assistant",
+            type: "TEXT_MESSAGE_START",
+          };
+          yield {
+            delta: "Next run",
+            messageId: "second-answer",
+            metadata,
+            type: "TEXT_MESSAGE_CONTENT",
+          };
+        }
+      })(),
+  });
+  try {
+    observer.attach();
+    await waitFor(() =>
+      JSON.stringify(observer.client.getMessages()).includes("Next run")
+    );
+    assert.equal(source.counts.observers, 1);
+    assert.equal(source.counts.opens, 1);
+    assert.equal(source.fake.counts.cancel, 0);
+    assert.equal(source.fake.counts.submit, 0);
+  } finally {
+    observer.dispose();
+  }
+});

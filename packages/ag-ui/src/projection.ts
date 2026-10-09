@@ -13,6 +13,7 @@ import { Schema } from "effect";
 export interface ConversationProjection {
   readonly snapshot: DomainSnapshot;
   readonly provisional: Readonly<Partial<Record<ExecutionId, string>>>;
+  readonly thinking: Readonly<Partial<Record<ExecutionId, string>>>;
   readonly citations: readonly Extract<DomainUpdate, { type: "citation" }>[];
 }
 
@@ -56,7 +57,10 @@ const mergeAnswer = (snapshot: DomainSnapshot, next: CanonicalOutput) => {
 
 const requirePrimaryExecution = (
   snapshot: DomainSnapshot,
-  update: Extract<DomainUpdate, { type: "citation" | "provisional-text" }>
+  update: Extract<
+    DomainUpdate,
+    { type: "citation" | "provisional-text" | "provisional-thinking" }
+  >
 ) => {
   const execution = snapshot.executions.find(
     (value) => value.executionId === update.executionId
@@ -76,14 +80,29 @@ export const projectObservation = (
     return null;
   }
   if (frame.type === "snapshot") {
-    return { citations: [], provisional: {}, snapshot: frame.snapshot };
+    return {
+      citations: [],
+      provisional: Object.fromEntries(
+        (frame.partial ?? []).map((message) => [
+          message.executionId,
+          message.text,
+        ])
+      ),
+      snapshot: frame.snapshot,
+      thinking: Object.fromEntries(
+        (frame.partial ?? []).map((message) => [
+          message.executionId,
+          message.thinking,
+        ])
+      ),
+    };
   }
   if (!prior) {
     throw new Error("Cannot project an update before its snapshot.");
   }
   const { update } = frame;
   const snapshot = { ...prior.snapshot, revision: frame.revision };
-  let { provisional, citations } = prior;
+  let { provisional, citations, thinking } = prior;
   switch (update.type) {
     case "execution": {
       snapshot.executions = mergeExecution(snapshot, update.execution);
@@ -133,11 +152,31 @@ export const projectObservation = (
       }
       break;
     }
+    case "provisional-thinking": {
+      requirePrimaryExecution(snapshot, update);
+      if (
+        !snapshot.outputs.some(
+          (output) => output.executionId === update.executionId
+        )
+      ) {
+        thinking = {
+          ...thinking,
+          [update.executionId]:
+            (thinking[update.executionId] ?? "") + update.text,
+        };
+      }
+      break;
+    }
     case "canonical-output": {
       snapshot.outputs = mergeAnswer(snapshot, update.output);
       Schema.decodeUnknownSync(DomainSnapshot)(snapshot);
       provisional = Object.fromEntries(
         Object.entries(provisional).filter(
+          ([executionId]) => executionId !== update.output.executionId
+        )
+      );
+      thinking = Object.fromEntries(
+        Object.entries(thinking).filter(
           ([executionId]) => executionId !== update.output.executionId
         )
       );
@@ -167,7 +206,7 @@ export const projectObservation = (
       update satisfies never;
     }
   }
-  return { citations, provisional, snapshot };
+  return { citations, provisional, snapshot, thinking };
 };
 
 export const projectionMessages = (
@@ -176,7 +215,7 @@ export const projectionMessages = (
   if (!projection) {
     return [];
   }
-  const { snapshot, provisional } = projection;
+  const { snapshot, provisional, thinking } = projection;
   const messages: UIMessage[] = [];
   const outputs = new Map(
     snapshot.outputs.map((output) => [output.executionId, output])
@@ -202,10 +241,52 @@ export const projectionMessages = (
     answered.add(executionId);
     const output = outputs.get(executionId);
     const text = output?.text ?? provisional[executionId];
-    if (text !== undefined) {
+    const visibleThinking = thinking[executionId];
+    const thinkingParts = visibleThinking
+      ? [
+          {
+            content: visibleThinking,
+            stepId: `assistant:${executionId}`,
+            type: "thinking" as const,
+          },
+        ]
+      : [];
+    const toolParts: UIMessage["parts"] = snapshot.tools
+      .filter(
+        (tool) => executionsByRun.get(tool.runId)?.executionId === executionId
+      )
+      .flatMap((tool): UIMessage["parts"] => [
+        {
+          arguments: JSON.stringify(tool.arguments),
+          id: tool.operationId,
+          name: tool.toolId,
+          state: "input-complete",
+          type: "tool-call",
+        },
+        ...(tool.state === "succeeded" || tool.state === "failed"
+          ? [
+              {
+                content: JSON.stringify(tool.output),
+                state:
+                  tool.state === "succeeded"
+                    ? ("complete" as const)
+                    : ("error" as const),
+                toolCallId: tool.operationId,
+                type: "tool-result" as const,
+              },
+            ]
+          : []),
+      ]);
+    if (text !== undefined || visibleThinking || toolParts.length) {
       messages.push({
         id: `assistant:${output?.answerId ?? executionId}`,
-        parts: [{ content: text, type: "text" }],
+        parts: [
+          ...thinkingParts,
+          ...toolParts,
+          ...(text === undefined
+            ? []
+            : [{ content: text, type: "text" as const }]),
+        ],
         role: "assistant",
       });
     }

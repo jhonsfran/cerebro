@@ -1,6 +1,8 @@
+import type { ProductHandlerOptions } from "@cerebro/channels/types";
 import type { ExecutionContext, ContentDependencies } from "@cerebro/contracts";
 import type { Database } from "@cerebro/db";
 import { accessView } from "@cerebro/memory/access";
+import { Effect } from "effect";
 import { z } from "zod";
 
 import type { WorkerEnv } from "./env.server";
@@ -91,6 +93,19 @@ export const createChannelOptions = (env: WorkerEnv) => {
       return session?.user ?? null;
     },
     mode: env.DEPLOY_MODE,
+    observationResponse: (
+      input: Parameters<
+        NonNullable<ProductHandlerOptions["observationResponse"]>
+      >[0]
+    ) =>
+      Effect.runPromise(
+        createSessionClient(env).chatResponse(
+          input.address,
+          input.context,
+          input.accessGeneration,
+          { deadlineAt: Number.MAX_SAFE_INTEGER, signal: input.signal }
+        )
+      ),
     organizationId: env.CHANNEL_ORGANIZATION_ID ?? "local-company",
     readAudit: (
       database: Database,

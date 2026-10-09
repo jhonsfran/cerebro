@@ -3,6 +3,7 @@ import { afterEach, beforeEach, mock, test } from "bun:test";
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 
+import { Stream } from "effect";
 import { z } from "zod";
 
 import {
@@ -207,7 +208,17 @@ test("unauthenticated requests clear private state", async () => {
 
 const { readObservations, submitMessage, sendRunCommand } =
   await import("../../apps/web/src/features/product/chat-connection");
-const { decodeObservation } = await import("../../packages/ag-ui/src/protocol");
+const {
+  CHAT_CONTENT_TYPE,
+  MAX_CHAT_FRAME_BYTES,
+  MAX_DOMAIN_FRAME_BYTES,
+  decodeObservation,
+  createProtocolProjection,
+  observationIdentity,
+  protocolBatchResponse,
+  protocolResponse,
+  readProtocolBatches,
+} = await import("../../packages/ag-ui/src/protocol");
 const { projectObservation, projectionMessages } =
   await import("../../packages/ag-ui/src/projection");
 const emptyObservation = () =>
@@ -241,10 +252,22 @@ const emptyObservation = () =>
     },
     type: "snapshot",
   });
-const ndjson = (frames: unknown[]) =>
-  new Response(`${frames.map((frame) => JSON.stringify(frame)).join("\n")}\n`, {
-    headers: { "Content-Type": "application/x-ndjson" },
+const ndjson = (frames: unknown[]) => {
+  const project = createProtocolProjection();
+  const events = frames.flatMap((input) => {
+    const frame = decodeObservation(input);
+    return project(frame).map((event) => ({
+      ...event,
+      metadata: { cerebro: observationIdentity(frame) },
+    }));
   });
+  return new Response(
+    `${events.map((event) => JSON.stringify(event)).join("\n")}\n`,
+    {
+      headers: { "Content-Type": "application/x-ag-ui+ndjson" },
+    }
+  );
+};
 const waitForObservation = async (predicate: () => boolean) => {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) {
@@ -264,8 +287,10 @@ test("a new authorized observation replaces the view with an empty transcript", 
       new AbortController().signal
     )
   );
-  assert.equal(values.length, 1);
-  const projection = projectObservation(null, decodeObservation(values[0]));
+  assert.equal(values.length, 2);
+  const [first] = values;
+  assert.ok(first && typeof first === "object" && "value" in first);
+  const projection = projectObservation(null, decodeObservation(first.value));
   assert.deepEqual(projectionMessages(projection), []);
   assert.deepEqual(conversationItems(projection, "/conversation"), []);
 });
@@ -321,6 +346,125 @@ const joinedBrowserObservation = () => {
     },
   });
 };
+
+const largeHistoryFrame = (kind: "text" | "tool") => {
+  const initial = joinedBrowserObservation();
+  if (initial.type !== "snapshot") {
+    throw new Error("Expected a history snapshot.");
+  }
+  const build = (text: string) =>
+    decodeObservation({
+      ...initial,
+      snapshot: {
+        ...initial.snapshot,
+        outputs: initial.snapshot.outputs.map((output) => ({
+          ...output,
+          text: kind === "text" ? text : output.text,
+        })),
+        tools:
+          kind === "tool"
+            ? [
+                {
+                  arguments: { text },
+                  dependencies: { sourceIds: [], toolIds: ["tool"] },
+                  effect: "read",
+                  operationId: "operation",
+                  output: { text },
+                  runId: "first",
+                  state: "succeeded",
+                  toolId: "tool",
+                  toolVersion: "1",
+                },
+              ]
+            : [],
+      },
+    });
+  const overhead = new TextEncoder().encode(JSON.stringify(build(""))).length;
+  const characterBytes = kind === "tool" ? 4 : 1;
+  const text = (kind === "tool" ? '"' : "A").repeat(
+    Math.floor((MAX_DOMAIN_FRAME_BYTES - overhead - 16) / characterBytes)
+  );
+  return { observation: build(text), text };
+};
+
+for (const kind of ["text", "tool"] as const) {
+  test(`a snapshot near the domain byte limit reaches TanStack once with ${kind} content`, async () => {
+    const { observation, text } = largeHistoryFrame(kind);
+    const sourceBytes = new TextEncoder().encode(
+      JSON.stringify(observation)
+    ).length;
+    assert.ok(sourceBytes < MAX_DOMAIN_FRAME_BYTES);
+    assert.ok(sourceBytes > MAX_DOMAIN_FRAME_BYTES - 32);
+    let attachments = 0;
+    installFetch(() => {
+      attachments += 1;
+      const response = protocolBatchResponse(
+        Stream.make(observation).pipe(Stream.concat(Stream.never))
+      );
+      assert.ok(response.body);
+      return protocolResponse(readProtocolBatches(response.body));
+    });
+    const observer = createObservationClient({
+      address: observation.address,
+      generation: currentAccessGeneration,
+      onDenied: () => assert.fail("Unexpected access denial."),
+      onError: (error) => assert.fail(error.message),
+      onProjection: () => {},
+      open: (generation, signal) =>
+        readObservations("/conversation", generation, signal),
+      retryDelayMs: 1,
+    });
+    try {
+      observer.attach();
+      await waitForObservation(
+        () => observer.client.getMessages().length === 3
+      );
+      const answers = observer.client
+        .getMessages()
+        .filter((message) => message.role === "assistant");
+      assert.equal(answers.length, 1);
+      const [answer] = answers;
+      assert.ok(answer);
+      if (kind === "text") {
+        assert.equal(messageText(answer), text);
+      } else {
+        const call = answer.parts.find((part) => part.type === "tool-call");
+        const result = answer.parts.find((part) => part.type === "tool-result");
+        assert.ok(call && result);
+        assert.deepEqual(JSON.parse(call.arguments), { text });
+        assert.deepEqual(JSON.parse(result.content), { text });
+      }
+      await delay(20);
+      assert.equal(attachments, 1);
+      assert.equal(observer.client.getError(), undefined);
+    } finally {
+      observer.dispose();
+    }
+  });
+}
+
+test("the browser rejects mapped frames by UTF-8 byte size", async () => {
+  const content = JSON.stringify({
+    delta: "é".repeat(MAX_CHAT_FRAME_BYTES / 2),
+  });
+  assert.ok(content.length < MAX_CHAT_FRAME_BYTES);
+  installFetch(
+    () =>
+      new Response(`${content}\n`, {
+        headers: { "Content-Type": CHAT_CONTENT_TYPE },
+      })
+  );
+  await assert.rejects(
+    Array.fromAsync(
+      readObservations(
+        "/conversation",
+        currentAccessGeneration(),
+        new AbortController().signal
+      )
+    ),
+    /transport limit/u
+  );
+});
 
 test("browser transcript and evidence use one answer for distinct joined inputs", () => {
   const projection = projectObservation(null, joinedBrowserObservation());
@@ -512,7 +656,7 @@ test("the observation reader rejects truncated JSON and releases its reader", as
   installFetch(
     () =>
       new Response('{"unfinished":', {
-        headers: { "Content-Type": "application/x-ndjson" },
+        headers: { "Content-Type": "application/x-ag-ui+ndjson" },
       })
   );
   await assert.rejects(

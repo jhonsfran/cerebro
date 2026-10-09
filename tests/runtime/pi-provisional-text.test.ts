@@ -140,3 +140,48 @@ test("a new primary run resets a snapshot with the same timestamp and attempt", 
   assert.equal(project({ ...initial, run: { inputs: [first, second] } }), "");
   assert.equal(project({ ...following, run: { inputs: [second] } }), "Second");
 });
+
+test("visible thinking deltas exclude opaque signatures and redacted content", () => {
+  const project = createProvisionalTextProjection("thinking");
+  assert.equal(
+    project({
+      message: {
+        ...fauxAssistantMessage(""),
+        content: [
+          {
+            thinking: "Visible",
+            thinkingSignature: "opaque-private-signature",
+            type: "thinking",
+          },
+        ],
+      },
+      type: "message_start",
+    }),
+    "Visible"
+  );
+  assert.equal(
+    project({
+      changes: [{ contentIndex: 0, delta: " thought", type: "thinking_delta" }],
+      type: "message_update",
+      usage: fauxAssistantMessage("").usage,
+    }),
+    " thought"
+  );
+  assert.equal(
+    project({
+      message: {
+        ...fauxAssistantMessage(""),
+        content: [
+          {
+            redacted: true,
+            thinking: "encrypted payload",
+            thinkingSignature: "opaque-private-signature",
+            type: "thinking",
+          },
+        ],
+      },
+      type: "message_start",
+    }),
+    ""
+  );
+});

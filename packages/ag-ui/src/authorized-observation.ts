@@ -5,16 +5,27 @@ import type { Observation } from "@cerebro/contracts/session-service";
 import { Context, Effect, Layer, Stream } from "effect";
 import type { Scope } from "effect";
 
-import { observationResponse, sameAddress } from "./protocol.ts";
+import {
+  observationEvent,
+  observationIdentity,
+  observationResponse,
+  protocolResponse,
+  sameAddress,
+} from "./protocol.ts";
+import type { ProtocolBatch } from "./protocol.ts";
 
-interface ObservationAttachment {
+interface ObservationAttachment<Value = Observation> {
   readonly accessGeneration: number;
   readonly address: EventAddress;
   readonly authorize: Effect.Effect<void, ContractFailure>;
-  readonly source: Stream.Stream<Observation, ContractFailure, Scope.Scope>;
+  readonly source: Stream.Stream<Value, ContractFailure, Scope.Scope>;
 }
 
-export const authorizedObservation = (attachment: ObservationAttachment) => {
+const authorizedDelivery = <Value>(
+  attachment: ObservationAttachment<Value>,
+  observation: (value: Value) => Observation,
+  deniedValue: (frame: Observation) => Value
+) => {
   let denied = false;
   let epoch = `access:${crypto.randomUUID()}`;
   let sequence = -1;
@@ -38,7 +49,7 @@ export const authorizedObservation = (attachment: ObservationAttachment) => {
         ),
     })
   );
-  const validate = (frame?: Observation) =>
+  const validate = (value?: Value) =>
     Effect.gen(function* checkDelivery() {
       if (denied) {
         return;
@@ -52,11 +63,12 @@ export const authorizedObservation = (attachment: ObservationAttachment) => {
           return;
         }
         denied = true;
-        return denial();
+        return deniedValue(denial());
       }
-      if (denied || !frame) {
+      if (denied || value === undefined) {
         return;
       }
+      const frame = observation(value);
       if (
         frame.accessGeneration !== attachment.accessGeneration ||
         !sameAddress(frame.address, attachment.address)
@@ -67,15 +79,43 @@ export const authorizedObservation = (attachment: ObservationAttachment) => {
       if (frame.type === "access-denied") {
         denied = true;
       }
-      return frame;
+      return value;
     });
   const delivery = Stream.mapEffect(attachment.source, validate);
-  const idle = Stream.mapEffect(Stream.tick(250), () => validate());
+  const idle = Stream.mapEffect(Stream.drop(Stream.tick(250), 1), () =>
+    validate()
+  );
   return Stream.merge(delivery, idle, { haltStrategy: "left" }).pipe(
-    Stream.filter((frame): frame is Observation => frame !== undefined),
-    Stream.takeUntil((frame) => frame.type === "access-denied")
+    Stream.filter((value): value is Value => value !== undefined),
+    Stream.takeUntil((value) => observation(value).type === "access-denied")
   );
 };
+
+export const authorizedObservation = (attachment: ObservationAttachment) =>
+  authorizedDelivery(
+    attachment,
+    (frame) => frame,
+    (frame) => frame
+  );
+
+export const authorizedProtocolResponse = (
+  attachment: ObservationAttachment<ProtocolBatch>
+): Response =>
+  protocolResponse(
+    authorizedDelivery(
+      attachment,
+      (batch) => batch.observation,
+      (frame) => ({
+        events: [
+          {
+            ...observationEvent(frame),
+            metadata: { cerebro: observationIdentity(frame) },
+          },
+        ],
+        observation: frame,
+      })
+    )
+  );
 
 // oxlint-disable-next-line no-redeclare -- Effect service tags use their interface name.
 export interface ObservationTransport {

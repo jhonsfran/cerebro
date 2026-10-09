@@ -1,7 +1,13 @@
 import {
   ObservationTransport,
   observationTransportLayer,
+  authorizedProtocolResponse,
 } from "@cerebro/ag-ui/authorized-observation";
+import {
+  CHAT_BATCH_CONTENT_TYPE,
+  CHAT_CONTENT_TYPE,
+  readProtocolBatches,
+} from "@cerebro/ag-ui/protocol";
 import { createChannelService } from "@cerebro/channels/service";
 import { ChannelError } from "@cerebro/channels/types";
 import type { ProductHandlerOptions } from "@cerebro/channels/types";
@@ -83,15 +89,46 @@ export const observeConversation = async (
     { accessGeneration: generation },
     { deadlineAt: Number.MAX_SAFE_INTEGER, signal: request.signal }
   );
+  const delivery = {
+    accessGeneration: generation,
+    address: attachment.address,
+    authorize,
+    source,
+  };
+  if (request.headers.get("Accept")?.includes(CHAT_CONTENT_TYPE)) {
+    if (!options.observationResponse) {
+      throw new ChannelError(
+        503,
+        "unavailable",
+        "Chat observation is unavailable."
+      );
+    }
+    const response = await options.observationResponse({
+      accessGeneration: generation,
+      address: attachment.address,
+      context: attachment.context,
+      signal: request.signal,
+    });
+    if (
+      !response.body ||
+      !response.headers.get("Content-Type")?.startsWith(CHAT_BATCH_CONTENT_TYPE)
+    ) {
+      await response.body?.cancel();
+      throw new ChannelError(
+        503,
+        "unavailable",
+        "Chat observation is unavailable."
+      );
+    }
+    return authorizedProtocolResponse({
+      ...delivery,
+      source: readProtocolBatches(response.body),
+    });
+  }
   return await Effect.runPromise(
     Effect.gen(function* response() {
       const transport = yield* ObservationTransport;
-      return transport.response({
-        accessGeneration: generation,
-        address: attachment.address,
-        authorize,
-        source,
-      });
+      return transport.response(delivery);
     }).pipe(Effect.provide(observationTransportLayer))
   );
 };

@@ -2,13 +2,16 @@
 import type { Observation } from "@cerebro/contracts/session-service";
 import type { StreamChunk } from "@tanstack/ai";
 import { ChatClient, stream } from "@tanstack/ai-client";
+import type { UIMessage } from "@tanstack/ai-client";
 
-import { projectObservation, projectionMessages } from "./projection.ts";
+import { projectObservation } from "./projection.ts";
 import type { ConversationProjection } from "./projection.ts";
 import {
   createObservationGuard,
-  createProtocolProjection,
-  decodeObservation,
+  chunkObservation,
+  decodeCustomObservation,
+  decodeStreamChunk,
+  sameObservation,
   ResnapshotRequiredError,
 } from "./protocol.ts";
 
@@ -29,6 +32,7 @@ export interface ObservationClientOptions {
     accessGeneration: number,
     signal: AbortSignal
   ) => AsyncIterable<unknown>;
+  readonly onMessages?: (messages: UIMessage[]) => void;
   readonly onProjection: (projection: ConversationProjection | null) => void;
   readonly onStatus?: (status: ObservationConnectionStatus) => void;
   readonly onDenied: () => void;
@@ -73,7 +77,7 @@ export const createObservationClient = (options: ObservationClientOptions) => {
   let client: ChatClient | null = null;
   let projection: ConversationProjection | null = null;
   let guard: ReturnType<typeof createObservationGuard> | undefined;
-  let protocol = createProtocolProjection();
+  let acceptedFrame: Observation | undefined;
   let attached = false;
   let denied = false;
   let disposed = false;
@@ -88,7 +92,7 @@ export const createObservationClient = (options: ObservationClientOptions) => {
         lifecycle: Attachment;
       }
     | undefined;
-  let initialFrame: Observation | undefined;
+  let initialFrame: StreamChunk | undefined;
   const current = (lifecycle: Attachment) =>
     attachment === lifecycle &&
     attached &&
@@ -96,19 +100,9 @@ export const createObservationClient = (options: ObservationClientOptions) => {
     !disposed &&
     !lifecycle.controller.signal.aborted &&
     lifecycle.generation === options.generation();
-  const notify = (frame: Observation, lifecycle: Attachment) => {
+  const notify = (frame: Observation) => {
     projection = projectObservation(projection, frame);
     options.onProjection(projection);
-    if (
-      current(lifecycle) &&
-      (frame.type === "snapshot" ||
-        (frame.type === "update" &&
-          ["canonical-output", "execution", "user-message"].includes(
-            frame.update.type
-          )))
-    ) {
-      client?.setMessagesManually(projectionMessages(projection));
-    }
   };
   const closeObserver = async (lifecycle: Attachment) => {
     if (observer?.lifecycle !== lifecycle) {
@@ -129,6 +123,7 @@ export const createObservationClient = (options: ObservationClientOptions) => {
     observer?.controller.abort();
     projection = null;
     client?.setMessagesManually([]);
+    options.onMessages?.([]);
     options.onProjection(null);
     options.onStatus?.("denied");
     options.onDenied();
@@ -155,11 +150,18 @@ export const createObservationClient = (options: ObservationClientOptions) => {
   const accept = (
     input: unknown,
     lifecycle: Attachment
-  ): Observation | undefined => {
+  ): StreamChunk | undefined => {
     if (!current(lifecycle)) {
       return;
     }
-    const decoded = decodeObservation(input);
+    const chunk = decodeStreamChunk(input);
+    if (chunk.type !== "CUSTOM" || !chunk.name.startsWith("cerebro.")) {
+      return acceptedFrame &&
+        sameObservation(chunkObservation(chunk), acceptedFrame)
+        ? chunk
+        : undefined;
+    }
+    const decoded = decodeCustomObservation(chunk);
     if (!guard) {
       if (
         decoded.address.conversationId !== options.address.conversationId ||
@@ -173,16 +175,17 @@ export const createObservationClient = (options: ObservationClientOptions) => {
       guard = createObservationGuard(decoded.address, lifecycle.generation);
     }
     const frame = guard(decoded);
+    acceptedFrame = frame;
     if (frame?.type === "access-denied") {
       deny(lifecycle);
       return;
     }
     if (frame) {
-      notify(frame, lifecycle);
+      notify(frame);
+      return chunk;
     }
-    return frame;
   };
-  const openSnapshot = async (lifecycle: Attachment): Promise<Observation> => {
+  const openSnapshot = async (lifecycle: Attachment): Promise<StreamChunk> => {
     if (!current(lifecycle)) {
       throw new DOMException("Observation detached.", "AbortError");
     }
@@ -191,36 +194,27 @@ export const createObservationClient = (options: ObservationClientOptions) => {
       throw new DOMException("Observation detached.", "AbortError");
     }
     const controller = new AbortController();
-    const abort = () => controller.abort();
-    lifecycle.controller.signal.addEventListener("abort", abort, {
-      once: true,
-    });
-    try {
-      const source = options.open(lifecycle.generation, controller.signal);
-      const iterator = source[Symbol.asyncIterator]();
-      observer = { controller, iterator, lifecycle };
-      const next = await iterator.next();
-      if (!current(lifecycle) || controller.signal.aborted) {
-        throw new DOMException("Observation detached.", "AbortError");
-      }
-      const frame = next.done ? undefined : accept(next.value, lifecycle);
-      if (!current(lifecycle)) {
-        throw new DOMException("Observation detached.", "AbortError");
-      }
-      if (!frame || frame.type !== "snapshot") {
-        throw new ResnapshotRequiredError(
-          "Attachment did not return an authorized snapshot."
-        );
-      }
-      options.onStatus?.("connected");
-      if (!current(lifecycle)) {
-        throw new DOMException("Observation detached.", "AbortError");
-      }
-      protocol = createProtocolProjection();
-      return frame;
-    } finally {
-      lifecycle.controller.signal.removeEventListener("abort", abort);
+    const source = options.open(lifecycle.generation, controller.signal);
+    const iterator = source[Symbol.asyncIterator]();
+    observer = { controller, iterator, lifecycle };
+    const next = await iterator.next();
+    if (!current(lifecycle) || controller.signal.aborted) {
+      throw new DOMException("Observation detached.", "AbortError");
     }
+    const chunk = next.done ? undefined : accept(next.value, lifecycle);
+    if (!current(lifecycle)) {
+      throw new DOMException("Observation detached.", "AbortError");
+    }
+    if (!chunk || acceptedFrame?.type !== "snapshot") {
+      throw new ResnapshotRequiredError(
+        "Attachment did not return an authorized snapshot."
+      );
+    }
+    options.onStatus?.("connected");
+    if (!current(lifecycle)) {
+      throw new DOMException("Observation detached.", "AbortError");
+    }
+    return chunk;
   };
   const restore = async (lifecycle: Attachment) => {
     const keepOpen = () => current(lifecycle);
@@ -236,19 +230,17 @@ export const createObservationClient = (options: ObservationClientOptions) => {
       }
     }
   };
-  const events = function* events(frame: Observation, lifecycle: Attachment) {
-    for (const chunk of protocol(frame)) {
+  const events = function* events(chunk: StreamChunk, lifecycle: Attachment) {
+    if (!current(lifecycle)) {
+      return;
+    }
+    if (chunk.type === "RUN_ERROR") {
+      reportError(new Error(chunk.message), lifecycle);
       if (!current(lifecycle)) {
         return;
       }
-      if (chunk.type === "RUN_ERROR") {
-        reportError(new Error(chunk.message), lifecycle);
-        if (!current(lifecycle)) {
-          return;
-        }
-      }
-      yield chunk;
     }
+    yield chunk;
   };
   const connection = stream(
     () => {
@@ -284,7 +276,7 @@ export const createObservationClient = (options: ObservationClientOptions) => {
               `observation:${options.address.sessionId}`,
           },
           interrupts: null,
-          messages: projectionMessages(projection),
+          messages: [],
         };
       },
       async *joinRun(_runId, signal): AsyncIterable<StreamChunk> {
@@ -353,6 +345,11 @@ export const createObservationClient = (options: ObservationClientOptions) => {
   );
   client = new ChatClient({
     connection,
+    onMessagesChange: (messages) => {
+      if (current(attachment)) {
+        options.onMessages?.(messages);
+      }
+    },
     persistence: true,
     threadId: options.address.conversationId,
   });
@@ -369,7 +366,7 @@ export const createObservationClient = (options: ObservationClientOptions) => {
       };
       guard = undefined;
       initialFrame = undefined;
-      protocol = createProtocolProjection();
+      acceptedFrame = undefined;
       // Invalidate TanStack's in-flight hydration before starting a fresh attachment.
       client.clear();
       options.onStatus?.("connecting");

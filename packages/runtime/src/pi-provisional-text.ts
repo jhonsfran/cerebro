@@ -1,7 +1,9 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import type { AgentEvent } from "@earendil-works/pi-durable";
 
-export const createProvisionalTextProjection = () => {
+export const createProvisionalTextProjection = (
+  kind: "text" | "thinking" = "text"
+) => {
   const blocks = new Map<number, string>();
   let delivered = "";
   let messageTimestamp: number | undefined;
@@ -12,8 +14,14 @@ export const createProvisionalTextProjection = () => {
   const replace = (content: AssistantMessage["content"]) => {
     blocks.clear();
     for (const [index, block] of content.entries()) {
-      if (block.type === "text") {
+      if (block.type === "text" && kind === "text") {
         blocks.set(index, block.text);
+      } else if (
+        block.type === "thinking" &&
+        kind === "thinking" &&
+        !block.redacted
+      ) {
+        blocks.set(index, block.thinking);
       }
     }
   };
@@ -21,7 +29,10 @@ export const createProvisionalTextProjection = () => {
     changes: Extract<AgentEvent, { type: "message_update" }>["changes"]
   ) => {
     for (const change of changes) {
-      if (change.type === "text_delta") {
+      if (
+        (change.type === "text_delta" && kind === "text") ||
+        (change.type === "thinking_delta" && kind === "thinking")
+      ) {
         blocks.set(
           change.contentIndex,
           `${blocks.get(change.contentIndex) ?? ""}${change.delta}`
@@ -29,8 +40,14 @@ export const createProvisionalTextProjection = () => {
       } else if (change.type === "message") {
         replace(change.message.content);
       } else if ("block" in change) {
-        if (change.block.type === "text") {
+        if (change.block.type === "text" && kind === "text") {
           blocks.set(change.contentIndex, change.block.text);
+        } else if (
+          change.block.type === "thinking" &&
+          kind === "thinking" &&
+          !change.block.redacted
+        ) {
+          blocks.set(change.contentIndex, change.block.thinking);
         } else {
           blocks.delete(change.contentIndex);
         }

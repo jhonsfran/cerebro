@@ -1,0 +1,3 @@
+ts	phase	decision	why	evidence	result
+2026-10-09T04:06:53Z	frame	Exit condition: cuts 1-4 and a scoped cut 5 landed on main with runtime, contracts, channels, identity, types, build and lint green, the live chat fixture passed when Docker can run it, plans and ADR updated	User is asleep and asked for the full simplification merged to main; a checkable predicate keeps the run honest	docs/implementation/chat-simplification-decisions.tsv	open
+2026-10-09T04:06:53Z	frame	Commit the dirty Pi chat boundary refactor as the baseline before any cut	Each cut must be a separate verifiable commit; the dirty tree already passed 114 AG-UI and UI tests	git status at session start	open

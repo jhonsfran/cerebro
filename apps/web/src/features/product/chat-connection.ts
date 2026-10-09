@@ -1,8 +1,12 @@
 /* oxlint-disable no-await-in-loop -- A response reader delivers frames in wire order. */
 import { createObservationClient } from "@cerebro/ag-ui/client";
 import type { ObservationConnectionStatus } from "@cerebro/ag-ui/client";
-import { projectionMessages } from "@cerebro/ag-ui/projection";
 import type { ConversationProjection } from "@cerebro/ag-ui/projection";
+import {
+  CHAT_CONTENT_TYPE,
+  MAX_CHAT_FRAME_BYTES,
+} from "@cerebro/ag-ui/protocol";
+import type { UIMessage } from "@tanstack/ai-client";
 import { useEffect, useState } from "react";
 import { z } from "zod";
 
@@ -18,7 +22,6 @@ import type { PendingChatMessage } from "./chat";
 import { messageReceiptSchema, stateMutationSchema } from "./types";
 import type { Conversation } from "./types";
 
-const MAX_FRAME_BYTES = 1_048_576;
 export const readObservations = async function* readObservations(
   path: string,
   generation: number,
@@ -28,7 +31,7 @@ export const readObservations = async function* readObservations(
     apiUrl(`${path}/observations?accessGeneration=${generation}`),
     {
       credentials: "include",
-      headers: { Accept: "application/x-ndjson" },
+      headers: { Accept: CHAT_CONTENT_TYPE },
       signal,
     }
   );
@@ -41,36 +44,37 @@ export const readObservations = async function* readObservations(
   }
   if (
     !response.body ||
-    !response.headers.get("Content-Type")?.startsWith("application/x-ndjson")
+    !response.headers.get("Content-Type")?.startsWith(CHAT_CONTENT_TYPE)
   ) {
     await response.body?.cancel();
     throw new Error(
-      "The observation endpoint must return domain NDJSON frames."
+      "The observation endpoint must return AG-UI NDJSON events."
     );
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let frameBytes = 0;
   try {
     while (!signal.aborted) {
       const next = await reader.read();
       assertCurrentAccess(generation);
+      for (const byte of next.value ?? []) {
+        frameBytes = byte === 0x0a ? 0 : frameBytes + 1;
+        if (frameBytes > MAX_CHAT_FRAME_BYTES) {
+          throw new Error("Observation frame exceeds the transport limit.");
+        }
+      }
       buffer += decoder.decode(next.value, { stream: !next.done });
       let newline = buffer.indexOf("\n");
       while (newline >= 0) {
         const line = buffer.slice(0, newline).trim();
         buffer = buffer.slice(newline + 1);
-        if (line.length > MAX_FRAME_BYTES) {
-          throw new Error("Observation frame exceeds the transport limit.");
-        }
         if (line) {
           assertCurrentAccess(generation);
           yield JSON.parse(line) as unknown;
         }
         newline = buffer.indexOf("\n");
-      }
-      if (buffer.length > MAX_FRAME_BYTES) {
-        throw new Error("Observation frame exceeds the transport limit.");
       }
       if (next.done) {
         if (buffer.trim()) {
@@ -124,6 +128,7 @@ export const useConversationConnection = (
   const [projection, setProjection] = useState<ConversationProjection | null>(
     null
   );
+  const [messages, setMessages] = useState<UIMessage[]>([]);
   const [connection, setConnection] =
     useState<ObservationConnectionStatus>("disconnected");
   const [error, setError] = useState("");
@@ -139,6 +144,7 @@ export const useConversationConnection = (
       generation: currentAccessGeneration,
       onDenied: clearProductCache,
       onError: (failure) => setError(failure.message),
+      onMessages: setMessages,
       onProjection: setProjection,
       onStatus: setConnection,
       open: (generation, signal) => readObservations(path, generation, signal),
@@ -146,6 +152,7 @@ export const useConversationConnection = (
     const clear = () => {
       observer.detach();
       setProjection(null);
+      setMessages([]);
       setConnection("denied");
     };
     window.addEventListener("cerebro:access-cleared", clear);
@@ -159,7 +166,7 @@ export const useConversationConnection = (
   return {
     connection: connected ? connection : ("disconnected" as const),
     error,
-    messages: projectionMessages(projection),
+    messages,
     projection,
   };
 };

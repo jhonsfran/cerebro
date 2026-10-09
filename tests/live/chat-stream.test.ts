@@ -8,6 +8,11 @@ import { test } from "node:test";
 import { Schema } from "effect";
 import { z } from "zod";
 
+import {
+  CHAT_CONTENT_TYPE,
+  decodeCustomObservation,
+  decodeStreamChunk,
+} from "../../packages/ag-ui/src/protocol.ts";
 import { Observation } from "../../packages/contracts/src/session-service.ts";
 import {
   applicationFixture,
@@ -37,29 +42,30 @@ const snapshotSchema = z
 const viewSchema = z
   .object({ items: z.array(z.unknown()), snapshot: snapshotSchema })
   .passthrough();
-type Frame = Observation & { readonly receivedAt: number };
-
-const openObservation = async (
+const openFrames = async <Value extends { readonly type: string }>(
   fixture: ReturnType<typeof applicationFixture>,
   route: string,
   cookie: string,
+  contentType: string,
+  decode: (input: unknown) => Value,
   generation = 0
 ) => {
   const controller = new AbortController();
   const response = await fetch(
     `${fixture.boot.apiUrl}${route}/observations?accessGeneration=${generation}`,
     {
-      headers: { Cookie: cookie, Origin: fixture.boot.webUrl },
+      headers: {
+        Accept: contentType,
+        Cookie: cookie,
+        Origin: fixture.boot.webUrl,
+      },
       signal: controller.signal,
     }
   );
   assert.equal(response.status, 200);
-  assert.match(
-    response.headers.get("content-type") ?? "",
-    /application\/x-ndjson/u
-  );
+  assert.ok(response.headers.get("content-type")?.startsWith(contentType));
   assert.ok(response.body);
-  const frames: Frame[] = [];
+  const frames: (Value & { readonly receivedAt: number })[] = [];
   let failure: unknown;
   let ended = false;
   const reader = response.body.getReader();
@@ -83,7 +89,7 @@ const openObservation = async (
           buffer = buffer.slice(index + 1);
           if (line) {
             frames.push({
-              ...Schema.decodeUnknownSync(Observation)(JSON.parse(line)),
+              ...decode(JSON.parse(line)),
               receivedAt: Date.now(),
             });
           }
@@ -91,16 +97,19 @@ const openObservation = async (
       }
     } catch (error) {
       if (!controller.signal.aborted) {
-        failure = error;
+        failure = new Error(
+          `${contentType} observation failed after ${frames.length} frames; last type: ${frames.at(-1)?.type ?? "none"}.`,
+          { cause: error }
+        );
       }
     } finally {
       reader.releaseLock();
     }
   })();
   const waitFor = async (
-    predicate: (frame: Frame) => boolean,
+    predicate: (frame: Value & { readonly receivedAt: number }) => boolean,
     timeoutMs = 30_000
-  ): Promise<Frame> => {
+  ): Promise<Value & { readonly receivedAt: number }> => {
     const values = await waitForFixture(
       () => {
         if (failure) {
@@ -120,6 +129,58 @@ const openObservation = async (
     await completion;
   };
   return { close, completion, ended: () => ended, frames, waitFor };
+};
+
+const openObservation = (
+  fixture: ReturnType<typeof applicationFixture>,
+  route: string,
+  cookie: string,
+  generation = 0
+) =>
+  openFrames(
+    fixture,
+    route,
+    cookie,
+    "application/x-ndjson",
+    Schema.decodeUnknownSync(Observation),
+    generation
+  );
+
+const openChat = (
+  fixture: ReturnType<typeof applicationFixture>,
+  route: string,
+  cookie: string,
+  generation = 0
+) =>
+  openFrames(
+    fixture,
+    route,
+    cookie,
+    CHAT_CONTENT_TYPE,
+    decodeStreamChunk,
+    generation
+  );
+
+const assertPartialChat = async (
+  chat: Awaited<ReturnType<typeof openChat>>,
+  visiblePrefix: string
+): Promise<void> => {
+  await chat.waitFor((frame) => frame.type === "MESSAGES_SNAPSHOT");
+  const restoredPartial = chat.frames.find(
+    (frame) => frame.type === "CUSTOM" && frame.name === "cerebro.snapshot"
+  );
+  assert.ok(restoredPartial?.type === "CUSTOM");
+  const partialDomain = decodeCustomObservation(restoredPartial);
+  assert.ok(partialDomain.type === "snapshot");
+  assert.ok(partialDomain.partial?.[0]?.text.startsWith(visiblePrefix));
+  const resumedPrefix = await chat.waitFor(
+    (frame) => frame.type === "TEXT_MESSAGE_CONTENT"
+  );
+  assert.ok(resumedPrefix.type === "TEXT_MESSAGE_CONTENT");
+  assert.ok(
+    resumedPrefix.delta.startsWith(visiblePrefix),
+    "Reconnect must restore the emitted prefix before live deltas"
+  );
 };
 
 const readProvider = async (fixture: ReturnType<typeof applicationFixture>) =>
@@ -146,6 +207,7 @@ test(
     const fixture = applicationFixture(boot);
     const directory = path.join("artifacts/slice-1", boot.sha, boot.fixtureId);
     const observations: Awaited<ReturnType<typeof openObservation>>[] = [];
+    const chats: Awaited<ReturnType<typeof openChat>>[] = [];
     let passed = false;
     try {
       const auth = await fixture.signup("Chat observation acceptance");
@@ -191,7 +253,7 @@ test(
       const deniedProvider = await readProvider(fixture);
       assert.equal(deniedProvider.model.length, initial.model.length);
       assert.equal(deniedProvider.tools.length, initial.tools.length);
-      await fixture.controls({ delayMs: 600, failFirst: false });
+      await fixture.controls({ delayMs: 1500, failFirst: false });
       const first = await openObservation(fixture, route, auth.cookie);
       observations.push(first);
       const snapshot = await first.waitFor(
@@ -205,6 +267,13 @@ test(
         sessionId: created.sessionId,
       });
       assert.equal(snapshot.snapshot?.runs.length, 0);
+      const chat = await openChat(fixture, route, auth.cookie);
+      chats.push(chat);
+      const initialChat = await chat.waitFor(
+        (frame) => frame.type === "MESSAGES_SNAPSHOT"
+      );
+      assert.ok(initialChat.type === "MESSAGES_SNAPSHOT");
+      assert.equal(initialChat.messages.length, 0);
       const eventId = randomUUID();
       const submittedAt = Date.now();
       const responses = await Promise.all(
@@ -251,6 +320,15 @@ test(
           frame.update?.type === "provisional-text" &&
           Boolean(frame.update.text)
       );
+      const earlyChat = await chat.waitFor(
+        (frame) => frame.type === "TEXT_MESSAGE_CONTENT" && Boolean(frame.delta)
+      );
+      assert.ok(earlyChat.type === "TEXT_MESSAGE_CONTENT");
+      const visiblePrefix = chat.frames
+        .filter((frame) => frame.type === "TEXT_MESSAGE_CONTENT")
+        .map((frame) => frame.delta)
+        .join("");
+      assert.ok(visiblePrefix.length > 0);
       const during = await readProvider(fixture);
       const call = during.model.find(
         (row) => row.operationId === receipts[0].runId
@@ -262,6 +340,10 @@ test(
         "First text must precede provider EOF"
       );
       await first.close();
+      await chat.close();
+      const resumedChat = await openChat(fixture, route, auth.cookie);
+      chats.push(resumedChat);
+      await assertPartialChat(resumedChat, visiblePrefix);
       const resumed = await openObservation(fixture, route, auth.cookie);
       observations.push(resumed);
       const reopened = await resumed.waitFor(
@@ -270,6 +352,12 @@ test(
       assert.ok(reopened.type === "snapshot");
       assert.notEqual(reopened.epoch, snapshot.epoch);
       await resumed.close();
+      await resumedChat.waitFor((frame) => frame.type === "RUN_FINISHED");
+      assert.equal(
+        resumedChat.ended(),
+        false,
+        "A completed run must keep the observation attachment open"
+      );
       const completed = await waitForFixture(
         () => fixture.json(route, auth.cookie, viewSchema),
         (view) => view.snapshot.runs.some((run) => run.state === "completed"),
@@ -300,6 +388,22 @@ test(
       assert.ok(restored.type === "snapshot");
       assert.equal(restored.snapshot?.outputs.length, 1);
       assert.equal(restored.snapshot?.runs[0].state, "completed");
+      const finalChat = await openChat(fixture, route, auth.cookie);
+      chats.push(finalChat);
+      const restoredChat = await finalChat.waitFor(
+        (frame) => frame.type === "MESSAGES_SNAPSHOT"
+      );
+      assert.ok(restoredChat.type === "MESSAGES_SNAPSHOT");
+      assert.equal(
+        restoredChat.messages.filter((message) => message.role === "assistant")
+          .length,
+        1
+      );
+      assert.equal(
+        restoredChat.messages.find((message) => message.role === "assistant")
+          ?.content,
+        "Cerebro slice 1 completed."
+      );
       const finalProvider = await readProvider(fixture);
       assert.equal(
         finalProvider.model.length - initial.model.length,
@@ -336,6 +440,14 @@ test(
       assert.ok(denial.receivedAt - signOutStartedAt <= 1000);
       await waitForFixture(() => finalObserver.ended(), Boolean, 1000);
       assert.equal(finalObserver.frames.at(-1)?.type, "access-denied");
+      const chatDenial = await finalChat.waitFor(
+        (frame) =>
+          frame.type === "CUSTOM" && frame.name === "cerebro.access-denied",
+        1500
+      );
+      assert.ok(chatDenial.receivedAt - signOutStartedAt <= 1000);
+      await waitForFixture(() => finalChat.ended(), Boolean, 1000);
+      assert.equal(finalChat.frames.at(-1)?.type, "CUSTOM");
       const session = await fixture.json(
         "/api/auth/get-session",
         auth.cookie,
@@ -351,12 +463,36 @@ test(
       await mkdir(directory, { recursive: true });
       await writeFile(
         path.join(directory, "chat.json"),
-        `${JSON.stringify({ denial, early, fixtureId: boot.fixtureId, frames: observations.map((value) => value.frames), provider: finalProvider, receipts, restored, sha: boot.sha, signOutStartedAt, sourceCheckoutDirty: boot.sourceCheckoutDirty, submittedAt, view: completed }, null, 2)}\n`
+        `${JSON.stringify({ chatFrames: chats.map((value) => value.frames), denial, early, fixtureId: boot.fixtureId, frames: observations.map((value) => value.frames), provider: finalProvider, receipts, restored, sha: boot.sha, signOutStartedAt, sourceCheckoutDirty: boot.sourceCheckoutDirty, submittedAt, view: completed }, null, 2)}\n`
       );
       passed = true;
+    } catch (error) {
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        path.join(directory, "chat-failure.json"),
+        `${JSON.stringify(
+          {
+            chatFrames: chats.map((value) => value.frames),
+            error:
+              error instanceof Error
+                ? { message: error.message, name: error.name }
+                : String(error),
+            fixtureId: boot.fixtureId,
+            frames: observations.map((value) => value.frames),
+            sha: boot.sha,
+            sourceCheckoutDirty: boot.sourceCheckoutDirty,
+          },
+          null,
+          2
+        )}\n`
+      );
+      throw error;
     } finally {
       for (const observer of observations) {
         await observer.close();
+      }
+      for (const chat of chats) {
+        await chat.close();
       }
       if (passed) {
         await fixture.close();

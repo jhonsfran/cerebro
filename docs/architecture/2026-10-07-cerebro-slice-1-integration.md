@@ -21,7 +21,7 @@ The coordinator owns shared contracts, package pins, Effect Layers, server compo
 
 Native joined execution produces one canonical answer with exact execution and answer identities. Cerebro commits its answer, execution membership and completed runs in one projection batch. Partial text remains ephemeral. The [contract revision](2026-10-05-cerebro-slice-1-contracts.md#joined-execution-and-answer-identity-coordinator-revision-2026-10-07) defines these invariants.
 
-Commands, history and observations use current company access. Private DO calls require a signature bound to the address and body. Delivery rechecks authentication and content grants every 250 ms. A denied access generation clears protected browser state and stops reconnect. The browser observes domain events through TanStack and AG-UI without a model loop.
+Commands, history and observations use current company access. Private DO calls require a signature bound to the address and body. Delivery rechecks authentication and content grants every 250 ms. A denied access generation clears protected browser state and stops reconnect. The Durable Object maps observations into AG-UI batches. The API authorizes each batch once and forwards its chunks. TanStack owns the browser transcript; the browser retains domain state for controls and citations. Reconnect restores a fresh snapshot and live updates without a model submission or persisted cursor replay.
 
 Memory input includes authorized excerpts and provenance before physical model dispatch. The server checks the actual serialized request size. Audit projection uses stable event identities and a retained outbox. Approvals and confirmed or uncertain remote effects retain their original bindings.
 

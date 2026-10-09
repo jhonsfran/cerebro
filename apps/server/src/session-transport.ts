@@ -106,7 +106,7 @@ const responseFailure = (
   }
 };
 
-export const createSessionClient = (env: WorkerEnv): SessionService => {
+export const createSessionClient = (env: WorkerEnv) => {
   const request = (
     address: EventAddress,
     context: ExecutionContext,
@@ -194,7 +194,7 @@ export const createSessionClient = (env: WorkerEnv): SessionService => {
       }),
       options
     );
-  return {
+  const service: SessionService = {
     approve: (command, options) =>
       invoke(
         command.address,
@@ -279,5 +279,37 @@ export const createSessionClient = (env: WorkerEnv): SessionService => {
         options,
         (value) => receiptSchema.parse(value)
       ),
+  };
+  return {
+    ...service,
+    chatResponse: (
+      address: EventAddress,
+      context: ExecutionContext,
+      accessGeneration: number,
+      options: ReadOptions
+    ): Effect.Effect<Response, ContractFailure> =>
+      Effect.gen(function* openChat() {
+        const wireOptions = yield* Effect.promise(() =>
+          readOptions(address, options)
+        );
+        const response = yield* request(
+          address,
+          context,
+          "/stream",
+          { accessGeneration, format: "ag-ui", options: wireOptions },
+          options
+        );
+        if (!response.ok) {
+          const failure = yield* Effect.tryPromise({
+            catch: () =>
+              new Unavailable({
+                reason: "Invalid observation failure response.",
+              }),
+            try: () => response.json(),
+          });
+          return yield* Effect.fail(responseFailure(failure, options));
+        }
+        return response;
+      }),
   };
 };

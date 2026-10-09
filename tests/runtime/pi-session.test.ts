@@ -4085,3 +4085,190 @@ test("receipt metadata checks current owner access without exposing revoked cont
     await fixture.close();
   }
 });
+
+test("snapshot authorization preserves same-revision deltas that arrive after capture", async () => {
+  const fixture = await setup();
+  const entered = Promise.withResolvers<null>();
+  const release = Promise.withResolvers<null>();
+  let iterator: AsyncIterator<Observation> | undefined;
+  try {
+    const receipt = await submit(fixture);
+    await until(() => fixture.store.domain().runs[0]?.state === "running");
+    const { executionId } = answerIdentity(receipt.runId);
+    await Effect.runPromise(
+      fixture.project({
+        execution: { executionId, runIds: [receipt.runId] },
+        type: "execution",
+      })
+    );
+    const durable = fixture.persistence.load();
+    await Effect.runPromise(
+      fixture.store.publish(receipt.runId, {
+        executionId,
+        runId: receipt.runId,
+        text: "Prefix",
+        type: "provisional-text",
+      })
+    );
+    await Effect.runPromise(
+      fixture.store.publish(receipt.runId, {
+        executionId,
+        runId: receipt.runId,
+        text: "Visible",
+        type: "provisional-thinking",
+      })
+    );
+    let reads = 0;
+    fixture.setReadHook(() =>
+      Effect.promise(async () => {
+        reads += 1;
+        if (reads === 2) {
+          entered.resolve(null);
+          await release.promise;
+        }
+      })
+    );
+    iterator = Stream.toAsyncIterable(
+      Stream.scoped(
+        fixture.store.service.attach(
+          address,
+          allowedContext,
+          { accessGeneration: 0 },
+          options()
+        )
+      )
+    )[Symbol.asyncIterator]();
+    const pending = iterator.next();
+    await entered.promise;
+    await Effect.runPromise(
+      fixture.store.publish(receipt.runId, {
+        executionId,
+        runId: receipt.runId,
+        text: " suffix",
+        type: "provisional-text",
+      })
+    );
+    release.resolve(null);
+    const initial = await pending;
+    assert.equal(initial.value?.type, "snapshot");
+    assert.ok(initial.value?.type === "snapshot");
+    assert.deepEqual(initial.value.partial, [
+      {
+        executionId,
+        runId: receipt.runId,
+        text: "Prefix",
+        thinking: "Visible",
+      },
+    ]);
+    const delta = await iterator.next();
+    assert.equal(delta.value?.type, "update");
+    assert.ok(delta.value?.type === "update");
+    assert.equal(delta.value.revision, initial.value.snapshot.revision);
+    assert.equal(delta.value.update.type, "provisional-text");
+    assert.ok(delta.value.update.type === "provisional-text");
+    assert.equal(delta.value.update.text, " suffix");
+    assert.equal(fixture.persistence.load(), durable);
+    assert.equal(fixture.engine.counts.submit, 1);
+    assert.equal(fixture.engine.counts.cancel, 0);
+  } finally {
+    release.resolve(null);
+    await iterator?.return?.();
+    await fixture.close();
+  }
+});
+
+for (const type of ["provisional-text", "provisional-thinking"] as const) {
+  for (const capacity of [1, 2]) {
+    test(`overflow snapshot retains ${type} during authorization with capacity ${capacity}`, async () => {
+      const fixture = await setup();
+      const entered = Promise.withResolvers<null>();
+      const release = Promise.withResolvers<null>();
+      let iterator: AsyncIterator<Observation> | undefined;
+      try {
+        const receipt = await submit(fixture);
+        await until(() => fixture.store.domain().runs[0]?.state === "running");
+        const { executionId } = answerIdentity(receipt.runId);
+        await Effect.runPromise(
+          fixture.project({
+            execution: { executionId, runIds: [receipt.runId] },
+            type: "execution",
+          })
+        );
+        const store = createSessionStore(fixture.persistence, {
+          ...fixture.storeConfiguration,
+          observerCapacity: capacity,
+        });
+        const durable = fixture.persistence.load();
+        const publish = (text: string) =>
+          Effect.runPromise(
+            store.publish(receipt.runId, {
+              executionId,
+              runId: receipt.runId,
+              text,
+              type,
+            })
+          );
+        iterator = Stream.toAsyncIterable(
+          Stream.scoped(
+            store.service.attach(
+              address,
+              allowedContext,
+              { accessGeneration: 0 },
+              options()
+            )
+          )
+        )[Symbol.asyncIterator]();
+        const attached = await iterator.next();
+        assert.ok(attached.value?.type === "snapshot");
+        await publish("Before1");
+        await publish("Before2");
+        if (capacity === 2) {
+          await publish("Before3");
+        }
+        let captured = false;
+        fixture.setReadHook(() =>
+          Effect.promise(async () => {
+            if (!captured) {
+              captured = true;
+              entered.resolve(null);
+              await release.promise;
+            }
+          })
+        );
+        const pending = iterator.next();
+        await entered.promise;
+        await publish("During");
+        release.resolve(null);
+        const snapshot = await pending;
+        assert.ok(snapshot.value?.type === "snapshot");
+        assert.equal(snapshot.value.reason, "overflow");
+        const field = type === "provisional-text" ? "text" : "thinking";
+        let observed = snapshot.value.partial?.[0]?.[field] ?? "";
+        await publish("After");
+        while (!observed.endsWith("After")) {
+          const next = await iterator.next();
+          assert.ok(next.value?.type === "update");
+          assert.equal(next.value.update.type, type);
+          assert.ok(
+            next.value.update.type === "provisional-text" ||
+              next.value.update.type === "provisional-thinking"
+          );
+          observed += next.value.update.text;
+        }
+        assert.equal(
+          observed,
+          capacity === 1
+            ? "Before1Before2DuringAfter"
+            : "Before1Before2Before3DuringAfter"
+        );
+        assert.equal(fixture.persistence.load(), durable);
+        assert.equal(fixture.engine.counts.submit, 1);
+        assert.equal(fixture.engine.counts.cancel, 0);
+      } finally {
+        release.resolve(null);
+        await iterator?.return?.();
+        await fixture.close();
+      }
+    });
+  }
+}

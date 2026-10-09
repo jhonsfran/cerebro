@@ -450,6 +450,8 @@ export const createPiExecutionEngine = (
           );
           let activeInputs = stream.snapshot.run?.inputs ?? [];
           const provisionalText = createProvisionalTextProjection();
+          const provisionalThinking =
+            createProvisionalTextProjection("thinking");
           const sendCanonical = async () => {
             const values = await Effect.runPromise(updates(options));
             Queue.offerAllUnsafe(queue, values);
@@ -492,16 +494,23 @@ export const createPiExecutionEngine = (
                 await sendMembership();
               }
               const text = provisionalText(event);
-              if (text) {
+              const thinking = provisionalThinking(event);
+              if (text || thinking) {
                 // A fast first text batch can precede the authoritative snapshot read.
                 const execution = await sendMembership();
                 if (execution) {
-                  Queue.offerUnsafe(queue, {
-                    executionId: execution.executionId,
-                    runId: execution.runIds[0],
-                    text,
-                    type: "provisional-text",
-                  });
+                  for (const update of [
+                    { text: thinking, type: "provisional-thinking" },
+                    { text, type: "provisional-text" },
+                  ] as const) {
+                    if (update.text) {
+                      Queue.offerUnsafe(queue, {
+                        ...update,
+                        executionId: execution.executionId,
+                        runId: execution.runIds[0],
+                      });
+                    }
+                  }
                 }
               }
             }
