@@ -32,7 +32,7 @@ import {
   identityPolicyRevision,
   identityPrincipal,
 } from "@cerebro/db/schema/identity";
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, max, sql } from "drizzle-orm";
 
 import { sessionServiceFor } from "./fixture-session";
 import { submitInbox } from "./inbox-submission";
@@ -796,12 +796,11 @@ export const createChannelService = (
       text,
       mode
     );
-    const items = await database
-      .select({ cursor: channelItem.cursor })
+    const [latest] = await database
+      .select({ cursor: max(channelItem.cursor) })
       .from(channelItem)
-      .where(eq(channelItem.conversationId, conversationId))
-      .orderBy(asc(channelItem.cursor));
-    return { cursor: String(items.at(-1)?.cursor ?? 0), receipt };
+      .where(eq(channelItem.conversationId, conversationId));
+    return { cursor: String(latest?.cursor ?? 0), receipt };
   };
   const readConversation = async (
     userId: string,
