@@ -23,7 +23,7 @@ import {
   DomainUpdate,
   SessionService,
 } from "../session-service.ts";
-import type { Observation } from "../session-service.ts";
+import type { Observation, CanonicalOutput } from "../session-service.ts";
 import type { RunState } from "../session.ts";
 import { canonicalToolArguments } from "../tools.ts";
 
@@ -182,6 +182,8 @@ const projectionRunIds = (update: DomainUpdate): readonly RunId[] => {
 export const createEngineFake = () => {
   const submissions = new Map<string, EngineSubmission>();
   const runs = new Map<RunId, RunState>();
+  const answers = new Map<RunId, CanonicalOutput>();
+  const projectFailures: ContractFailure[] = [];
   const counts = {
     approve: 0,
     cancel: 0,
@@ -230,6 +232,32 @@ export const createEngineFake = () => {
         return structuredClone([...runs.values()]);
       }),
     observe: () => Stream.empty,
+    project: (options) =>
+      attempt(() => {
+        deadline(options);
+        const failure = projectFailures.shift();
+        if (failure) {
+          throw failure;
+        }
+        const updates: DomainUpdate[] = [];
+        for (const run of runs.values()) {
+          const answer = answers.get(run.runId);
+          if (answer) {
+            updates.push(
+              {
+                execution: {
+                  executionId: answer.executionId,
+                  runIds: answer.runIds,
+                },
+                type: "execution",
+              },
+              { output: structuredClone(answer), type: "canonical-output" }
+            );
+          }
+          updates.push({ run: structuredClone(run), type: "run" });
+        }
+        return updates;
+      }),
     release: Effect.sync(() => {
       counts.release += 1;
     }),
@@ -276,8 +304,24 @@ export const createEngineFake = () => {
       ),
   };
   return {
+    // The next project() call fails with this failure, then recovers.
+    completeRun: (runId: RunId, text = "fake answer") => {
+      runs.set(runId, { completedAt: Date.now(), runId, state: "completed" });
+      answers.set(runId, {
+        answerId: id.answer(`answer:${runId}`),
+        citations: [],
+        dependencies: { sourceIds: [], toolIds: [] },
+        executionId: id.execution(`execution:${runId}`),
+        runId,
+        runIds: [runId],
+        text,
+      });
+    },
     conversation,
     counts,
+    failProject: (failure: ContractFailure) => {
+      projectFailures.push(failure);
+    },
     layer: Layer.succeed(ExecutionEngine, service),
     service,
   };

@@ -38,6 +38,12 @@ export interface EngineConversation {
   readonly observe: (
     options: ReadOptions
   ) => Stream.Stream<DomainUpdate, ContractFailure, Scope.Scope>;
+  // One canonical projection pass over the engine's current state. The
+  // observe stream only reacts to engine events, and a run that ended in the
+  // engine before a Cerebro-side change such as reconciliation emits none.
+  readonly project: (
+    options: ReadOptions
+  ) => Effect.Effect<readonly DomainUpdate[], ContractFailure>;
   readonly approve: (
     approval: BoundApproval,
     options: ReadOptions

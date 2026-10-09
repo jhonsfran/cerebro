@@ -1315,6 +1315,55 @@ test("product reconciliation uses confirmed receipts and never redispatches", as
   }
 });
 
+test("reconciliation completes the run through the repair job after a transient projection failure", async () => {
+  const fixture = await toolFixture(true);
+  const scope = Scope.makeUnsafe();
+  const executor = confirmedReceiptExecutor(fixture);
+  try {
+    await fixture.invoke();
+    const [unknown] = fixture.store.domain().tools;
+    assert.ok(unknown);
+    const runtime = await Effect.runPromise(
+      Scope.provide(scope)(
+        createSessionService({
+          ...fixture.dependencies,
+          executor,
+          receipts: fixture.receipts.service,
+        })
+      )
+    );
+    const command = {
+      address,
+      context: allowedContext,
+      operationId: unknown.operationId,
+      runId: unknown.runId,
+    };
+    fixture.engine.failProject(
+      new Unavailable({ reason: "Content read timed out" })
+    );
+    const resolved = await Effect.runPromise(
+      runtime.service.reconcile(command, options())
+    );
+    assert.equal(resolved.state, "succeeded");
+    const stateOf = () =>
+      fixture
+        .reopen()
+        .domain()
+        .runs.find((run) => run.runId === unknown.runId)?.state;
+    assert.equal(stateOf(), "running");
+    fixture.engine.completeRun(unknown.runId);
+    assert.equal(
+      await Effect.runPromise(runtime.repairProjection(options())),
+      true
+    );
+    assert.equal(stateOf(), "completed");
+    assert.equal(fixture.engine.counts.submit, 1);
+  } finally {
+    await Effect.runPromise(Scope.close(scope, Exit.void));
+    await fixture.close();
+  }
+});
+
 test("reconciliation CAS cannot resume while another tool outcome is unknown", async () => {
   const fixture = await toolFixture(true);
   const scope = Scope.makeUnsafe();
