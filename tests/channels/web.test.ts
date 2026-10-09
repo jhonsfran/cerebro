@@ -8,7 +8,11 @@ import { drainChannelWork } from "../../packages/channels/src/drain";
 import { createFixtureSessionService } from "../../packages/channels/src/fixture-session";
 import { runEffect } from "../../packages/channels/src/security";
 import { createChannelService } from "../../packages/channels/src/service";
-import { Denied, Unavailable } from "../../packages/contracts/src/failures";
+import {
+  Denied,
+  Unavailable,
+  UnknownOutcome,
+} from "../../packages/contracts/src/failures";
 import { id } from "../../packages/contracts/src/index";
 import { and, eq } from "../../packages/db/node_modules/drizzle-orm";
 import { createAgentRepository } from "../../packages/db/src/repositories/agents";
@@ -417,6 +421,81 @@ test("one unavailable pending submission does not stop another admitted session"
       "pending",
     ]);
   });
+});
+
+test("a submission rejected while an effect is uncertain leaves nothing for the drain to retry", async () => {
+  const app = await createTestProduct();
+  await app.install();
+  const created = await app.createAgent();
+  const agentId = string(created.agentId);
+  const response = await app.request("/api/product/conversations", "POST", {
+    agentId,
+    operationId: "uncertain-conversation",
+  });
+  const conversationId = string(object(await response.json()).conversationId);
+  let uncertain = true;
+  const submissions: string[] = [];
+  const options = {
+    ...app.options,
+    sessions: (db: Parameters<typeof createFixtureSessionService>[0]) => {
+      const fixture = createFixtureSessionService(db, app.options);
+      return {
+        ...fixture,
+        submit: (
+          command: Parameters<typeof fixture.submit>[0],
+          effect: Parameters<typeof fixture.submit>[1]
+        ) =>
+          Effect.gen(function* submit() {
+            if (uncertain) {
+              return yield* Effect.fail(
+                new UnknownOutcome({
+                  operationId: id.operation("uncertain-write"),
+                  reason:
+                    "Reconcile the uncertain effect before admitting another input",
+                })
+              );
+            }
+            submissions.push(
+              command.event.event.type === "user.message"
+                ? command.event.event.payload.text
+                : ""
+            );
+            return yield* fixture.submit(command, effect);
+          }),
+      };
+    },
+  };
+  const handler = createProductHandler(options);
+  const submit = (eventId: string, text: string) =>
+    handler(
+      new Request(
+        `http://cerebro.test/api/product/conversations/${conversationId}/messages`,
+        {
+          body: JSON.stringify({ eventId, text }),
+          headers: {
+            "Content-Type": "application/json",
+            "x-test-user": "test-owner",
+          },
+          method: "POST",
+        }
+      )
+    );
+  const rejected = await submit("follow-up", "Follow-up while uncertain");
+  assert.equal(rejected.status, 409);
+  const rows = await app.options.withDatabase((db) =>
+    db
+      .select()
+      .from(channelInbox)
+      .where(eq(channelInbox.conversationId, conversationId))
+  );
+  assert.deepEqual(rows, []);
+  uncertain = false;
+  const drained = await drainChannelWork(options);
+  assert.equal(drained.submitted, 0);
+  assert.deepEqual(submissions, []);
+  const retried = await submit("follow-up", "Follow-up while uncertain");
+  assert.equal(retried.status, 200);
+  assert.deepEqual(submissions, ["Follow-up while uncertain"]);
 });
 
 test("a stale drain selection cannot submit a denied event after access returns", async () => {
