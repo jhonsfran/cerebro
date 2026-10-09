@@ -98,10 +98,12 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 const hash = (value) => createHash("sha256").update(value).digest("hex");
-const root = "/var/lib/celld/state";
 const sessionId = process.argv[1];
 const values = [];
-for (const scope of existsSync(root) ? readdirSync(root) : []) {
+// celld keeps local cell state under /var/lib/celld/state or, with bucket durability, /tmp/celld-<n>.
+const roots = ["/var/lib/celld/state", ...readdirSync("/tmp").filter((name) => name.startsWith("celld-")).map((name) => join("/tmp", name))];
+const scopes = roots.flatMap((root) => existsSync(root) ? readdirSync(root).map((scope) => [root, scope]) : []);
+for (const [root, scope] of scopes) {
   if (!scope.startsWith("SessionAgent:")) continue;
   const ltx = join(root, scope, "ltx");
   if (!existsSync(ltx)) continue;

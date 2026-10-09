@@ -213,15 +213,26 @@ export const request = async <Value>(
   );
   return result.value as Value;
 };
+// Docker Desktop can refuse a published port for a moment after a container signal.
 export const getFixture = async <Value>(
   stack: Stack,
   path = "/observations"
 ): Promise<Value> => {
-  const response = await fetch(`http://127.0.0.1:${stack.fixturePort}${path}`, {
-    signal: AbortSignal.timeout(10_000),
-  });
-  assert.equal(response.status, 200);
-  return (await response.json()) as Value;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${stack.fixturePort}${path}`,
+        { signal: AbortSignal.timeout(10_000) }
+      );
+      assert.equal(response.status, 200);
+      return (await response.json()) as Value;
+    } catch (error) {
+      if (!(error instanceof TypeError) || attempt === 4) {
+        throw error;
+      }
+      await delay(500);
+    }
+  }
 };
 export interface ProviderEvidence {
   readonly fixtureId: string;
