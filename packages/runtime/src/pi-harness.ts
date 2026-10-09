@@ -436,9 +436,12 @@ export const createPiExecutionEngine = (
         return state ?? handoff.run;
       }),
     inspect,
+    // A failed attachment must fail the stream; Stream.callback swallows it.
     observe: (options) =>
-      Stream.callback<DomainUpdate, ContractFailure>((queue) =>
-        Effect.gen(function* observeNative() {
+      Stream.callback<DomainUpdate, ContractFailure>((queue) => {
+        const failAttachment = (error: ContractFailure) =>
+          Effect.sync(() => Queue.failCauseUnsafe(queue, Cause.fail(error)));
+        return Effect.gen(function* observeNative() {
           const stream = yield* Effect.acquireRelease(
             vendorEffect(options, (signal) =>
               session.events(piContext(signal))
@@ -562,8 +565,14 @@ export const createPiExecutionEngine = (
               Queue.endUnsafe(queue);
             })
           );
-        })
-      ),
+        }).pipe(
+          Effect.matchEffect({
+            onFailure: failAttachment,
+            onSuccess: () => Effect.void,
+          })
+        );
+      }),
+    project: (options) => updates(options),
     release: Effect.void,
     stop: (options) =>
       Effect.gen(function* stopNative() {

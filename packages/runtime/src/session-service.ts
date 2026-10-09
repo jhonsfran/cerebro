@@ -319,16 +319,33 @@ export const createSessionService = (
     const mutations = yield* Semaphore.make(1);
     let conversation: EngineConversation | undefined;
     let observationFailure: ContractFailure | undefined;
+    const noteObservationFailure = (error: ContractFailure) =>
+      Effect.gen(function* noteFailure() {
+        observationFailure = error;
+        yield* (dependencies.onProjectionFailure?.(error) ?? Effect.void).pipe(
+          Effect.ignore
+        );
+      });
     const recordObservationFailure = (error: ContractFailure) =>
+      Semaphore.withPermits(mutations, 1)(noteObservationFailure(error));
+    const projectCanonical = (
+      engine: EngineConversation,
+      options: ReadOptions
+    ) =>
+      Effect.gen(function* projectCanonicalState() {
+        for (const update of yield* engine.project(options)) {
+          yield* project(update);
+        }
+      });
+    const projectCanonicalLocked = (options: ReadOptions) =>
       Semaphore.withPermits(
         mutations,
         1
       )(
-        Effect.gen(function* recordFailure() {
-          observationFailure = error;
-          yield* (
-            dependencies.onProjectionFailure?.(error) ?? Effect.void
-          ).pipe(Effect.ignore);
+        Effect.gen(function* projectOpenConversation() {
+          if (conversation) {
+            yield* projectCanonical(conversation, options);
+          }
         })
       );
     const open = (): Effect.Effect<EngineConversation, ContractFailure> =>
@@ -404,8 +421,10 @@ export const createSessionService = (
       Effect.suspend(() =>
         Effect.gen(function* awaitCanonicalRepair() {
           yield* restartProjection();
+          yield* projectCanonicalLocked(options);
           while (yield* projectionPending(options)) {
-            yield* Effect.sleep(100);
+            yield* Effect.sleep(1000);
+            yield* projectCanonicalLocked(options);
           }
           return true;
         }).pipe(
@@ -726,20 +745,11 @@ export const createSessionService = (
                 : [toolUpdate],
             });
             if (resumes) {
+              // The run ended in the engine before reconciliation, so no engine
+              // event follows. Project now; the scheduled repair job retries.
               const engine = yield* open();
-              yield* Effect.forkIn(scope)(
-                Effect.scoped(
-                  Stream.runForEach(
-                    Stream.takeUntil(
-                      engine.observe(hostOptions()),
-                      (update) =>
-                        update.type === "run" &&
-                        update.run.runId === command.runId
-                    ),
-                    (update) =>
-                      Semaphore.withPermits(mutations, 1)(project(update))
-                  )
-                ).pipe(Effect.catch(recordObservationFailure))
+              yield* projectCanonical(engine, hostOptions()).pipe(
+                Effect.catch(noteObservationFailure)
               );
             }
             return resolved;
