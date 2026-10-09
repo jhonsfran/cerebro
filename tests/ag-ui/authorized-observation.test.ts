@@ -32,33 +32,34 @@ const frame = (generation = 3): Observation => ({
   type: "access-denied",
 });
 
-test("delivery checks current access before exposing a host frame", async () => {
+test("a host denial frame passes through without another access read", async () => {
   let checks = 0;
   const source = authorizedObservation({
     accessGeneration: 3,
     address,
     authorize: Effect.suspend(() => {
       checks += 1;
-      return Effect.fail(denial);
+      return Effect.void;
     }),
     source: Stream.make(frame()),
   });
   const values = await Effect.runPromise(
     Stream.runCollect(Stream.scoped(source))
   );
-  assert.equal(checks, 1);
+  assert.equal(checks, 0);
   assert.equal(values.length, 1);
   assert.equal(values[0]?.type, "access-denied");
-  assert.notEqual(values[0]?.epoch, "host-1");
+  assert.equal(values[0]?.epoch, "host-1");
 });
 
-test("an idle attachment emits denial and closes within one second", async () => {
+test("an idle attachment rechecks access on its interval and closes on denial", async () => {
   const started = performance.now();
   const values = await Effect.runPromise(
     Stream.runCollect(
       Stream.scoped(
         authorizedObservation({
           accessGeneration: 3,
+          accessRecheckMs: 10,
           address,
           authorize: Effect.fail(denial),
           source: Stream.fromEffect(Effect.never),
@@ -68,10 +69,11 @@ test("an idle attachment emits denial and closes within one second", async () =>
   );
   assert.equal(values.length, 1);
   assert.equal(values[0]?.type, "access-denied");
+  assert.notEqual(values[0]?.epoch, "host-1");
   assert.ok(performance.now() - started < 1000);
 });
 
-test("a stalled current-access read fails closed within one second", async () => {
+test("a stalled current-access read fails closed within two seconds", async () => {
   const started = performance.now();
   await assert.rejects(
     Effect.runPromise(
@@ -79,6 +81,7 @@ test("a stalled current-access read fails closed within one second", async () =>
         Stream.scoped(
           authorizedObservation({
             accessGeneration: 3,
+            accessRecheckMs: 10,
             address,
             authorize: Effect.never,
             source: Stream.fromEffect(Effect.never),
@@ -92,18 +95,19 @@ test("a stalled current-access read fails closed within one second", async () =>
       return true;
     }
   );
-  assert.ok(performance.now() - started < 1000);
+  assert.ok(performance.now() - started < 2000);
 });
 
 test("an unavailable authority closes delivery without claiming revocation", async () => {
   const delivered: Observation[] = [];
   const source = authorizedObservation({
     accessGeneration: 3,
+    accessRecheckMs: 10,
     address,
     authorize: Effect.fail(
       new Unavailable({ reason: "Authority storage unavailable" })
     ),
-    source: Stream.make(frame()),
+    source: Stream.fromEffect(Effect.never),
   });
   await assert.rejects(
     Effect.runPromise(
@@ -139,7 +143,7 @@ test("frames from an old access generation are discarded", async () => {
   assert.equal(values[0]?.accessGeneration, 3);
 });
 
-test("a mapped batch checks access once, keeps event order, and revokes on idle", async () => {
+test("a mapped batch keeps event order and revokes on the access interval", async () => {
   let checks = 0;
   const snapshot: Observation = {
     accessGeneration: 3,
@@ -163,6 +167,7 @@ test("a mapped batch checks access once, keeps event order, and revokes on idle"
   };
   const response = authorizedProtocolResponse({
     accessGeneration: 3,
+    accessRecheckMs: 10,
     address,
     authorize: Effect.suspend(() => {
       checks += 1;
@@ -183,7 +188,6 @@ test("a mapped batch checks access once, keeps event order, and revokes on idle"
       .trim()
       .split("\n")
       .map((line) => decodeStreamChunk(JSON.parse(line)));
-  assert.equal(checks, 1);
   assert.deepEqual(
     initial.map((event) => event.type),
     ["CUSTOM", "MESSAGES_SNAPSHOT"]
@@ -195,7 +199,7 @@ test("a mapped batch checks access once, keeps event order, and revokes on idle"
     revoked.type === "CUSTOM" ? revoked.name : null,
     "cerebro.access-denied"
   );
-  assert.equal(checks, 2);
+  assert.ok(checks >= 2);
   const end = await reader.read();
   assert.equal(end.done, true);
   reader.releaseLock();

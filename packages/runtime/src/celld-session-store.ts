@@ -278,7 +278,7 @@ export const createSessionStore = (
     observers.delete(observer);
   };
   const capacity = configuration.observerCapacity ?? 64;
-  const interval = configuration.accessIntervalMs ?? 250;
+  const interval = configuration.accessIntervalMs ?? 2000;
   if (!Number.isSafeInteger(capacity) || capacity < 1 || interval < 1) {
     throw new Error("Invalid observation configuration");
   }
@@ -478,7 +478,8 @@ export const createSessionStore = (
     address: EventAddress,
     context: ExecutionContext,
     options: ReadOptions,
-    observer?: Observer
+    observer?: Observer,
+    authorize = true
   ) =>
     Effect.gen(function* readProjection() {
       const projection = yield* attempt(() => {
@@ -491,11 +492,13 @@ export const createSessionStore = (
           snapshot: structuredClone(load().snapshot),
         };
       });
-      yield* configuration.authorize(
-        context,
-        dependenciesOf(projection.snapshot),
-        options
-      );
+      if (authorize) {
+        yield* configuration.authorize(
+          context,
+          dependenciesOf(projection.snapshot),
+          options
+        );
+      }
       return projection;
     });
   const snapshotRead = (
@@ -529,25 +532,41 @@ export const createSessionStore = (
         sequence: frameSequence,
       };
     };
+    // The whole snapshot is authorized when it is emitted and once per interval.
+    // Committed records are authorized individually. Provisional text carries no
+    // governed content, so it rides on the interval check.
+    let checkedAt = 0;
+    const needsFreshCheck = () =>
+      revision < 0 || observer.overflow || Date.now() - checkedAt >= interval;
+    const authorizeRecord = async (value: ProjectionRecord) => {
+      if (isProvisionalUpdate(value.update)) {
+        return;
+      }
+      await Effect.runPromise(
+        configuration.authorize(
+          context,
+          updateDependencies(value.update),
+          options
+        )
+      );
+    };
     while (!observer.closed) {
       let snapshot: DomainSnapshot;
       let captured: Effect.Success<ReturnType<typeof captureSnapshot>>;
       let record: ProjectionRecord | undefined;
       try {
+        const fresh = needsFreshCheck();
         captured = await Effect.runPromise(
-          captureSnapshot(address, context, options, observer)
+          captureSnapshot(address, context, options, observer, fresh)
         );
+        if (fresh) {
+          checkedAt = Date.now();
+        }
         ({ snapshot } = captured);
         if (revision >= 0 && !observer.overflow) {
           record = observer.buffer.shift();
           if (record) {
-            await Effect.runPromise(
-              configuration.authorize(
-                context,
-                updateDependencies(record.update),
-                options
-              )
-            );
+            await authorizeRecord(record);
           }
         }
         if (observer.overflowGeneration !== captured.overflowGeneration) {

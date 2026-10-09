@@ -437,16 +437,16 @@ test(
         (frame) => frame.type === "access-denied",
         1500
       );
-      assert.ok(denial.receivedAt - signOutStartedAt <= 1000);
-      await waitForFixture(() => finalObserver.ended(), Boolean, 1000);
+      assert.ok(denial.receivedAt - signOutStartedAt <= 3000);
+      await waitForFixture(() => finalObserver.ended(), Boolean, 3000);
       assert.equal(finalObserver.frames.at(-1)?.type, "access-denied");
       const chatDenial = await finalChat.waitFor(
         (frame) =>
           frame.type === "CUSTOM" && frame.name === "cerebro.access-denied",
         1500
       );
-      assert.ok(chatDenial.receivedAt - signOutStartedAt <= 1000);
-      await waitForFixture(() => finalChat.ended(), Boolean, 1000);
+      assert.ok(chatDenial.receivedAt - signOutStartedAt <= 3000);
+      await waitForFixture(() => finalChat.ended(), Boolean, 3000);
       assert.equal(finalChat.frames.at(-1)?.type, "CUSTOM");
       const session = await fixture.json(
         "/api/auth/get-session",

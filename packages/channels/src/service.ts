@@ -8,6 +8,7 @@ import type {
   ExecutionContext,
   SessionReceipt,
 } from "@cerebro/contracts";
+import type { ContentDependencies } from "@cerebro/contracts/session";
 import type { SubmissionMode } from "@cerebro/contracts/session-service";
 import type { Database } from "@cerebro/db";
 import {
@@ -896,10 +897,26 @@ export const createChannelService = (
           eq(channelItem.conversationId, conversationId)
         )
       );
-    for (const record of records) {
-      await authorize(database, options, context, "read", "agent", row.agentId);
-      await authorizeContent(database, options, context, record.item);
+    // One agent check and one check per distinct dependency cover every item.
+    const sourceIds = new Set<ContentDependencies["sourceIds"][number]>();
+    const toolIds = new Set<ContentDependencies["toolIds"][number]>();
+    for (const { item } of records) {
+      if (!item.dependencies) {
+        await authorizeContent(database, options, context, item);
+        continue;
+      }
+      for (const sourceId of item.dependencies.sourceIds) {
+        sourceIds.add(sourceId);
+      }
+      for (const toolId of item.dependencies.toolIds) {
+        toolIds.add(toolId);
+      }
     }
+    await authorize(database, options, context, "read", "agent", row.agentId);
+    await authorizeContent(database, options, context, {
+      dependencies: { sourceIds: [...sourceIds], toolIds: [...toolIds] },
+      type: "output",
+    });
     return { address: conversationAddress(row), context };
   };
   const listConversations = async (userId: string) => {

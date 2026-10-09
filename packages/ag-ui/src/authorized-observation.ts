@@ -16,10 +16,14 @@ import type { ProtocolBatch } from "./protocol.ts";
 
 interface ObservationAttachment<Value = Observation> {
   readonly accessGeneration: number;
+  readonly accessRecheckMs?: number;
   readonly address: EventAddress;
   readonly authorize: Effect.Effect<void, ContractFailure>;
   readonly source: Stream.Stream<Value, ContractFailure, Scope.Scope>;
 }
+
+export const ACCESS_RECHECK_MS = 2000;
+const ACCESS_CHECK_TIMEOUT_MS = 1000;
 
 const authorizedDelivery = <Value>(
   attachment: ObservationAttachment<Value>,
@@ -40,7 +44,7 @@ const authorizedDelivery = <Value>(
   });
   const authorize = attachment.authorize.pipe(
     Effect.timeoutOrElse({
-      duration: 500,
+      duration: ACCESS_CHECK_TIMEOUT_MS,
       orElse: () =>
         Effect.fail(
           new Unavailable({
@@ -49,41 +53,42 @@ const authorizedDelivery = <Value>(
         ),
     })
   );
-  const validate = (value?: Value) =>
-    Effect.gen(function* checkDelivery() {
-      if (denied) {
-        return;
+  // Access is checked when the attachment opens and then once per interval.
+  // Frames in between pass on the attachment's generation alone.
+  const recheck = Effect.gen(function* recheckAccess() {
+    if (denied) {
+      return;
+    }
+    const access = yield* Effect.result(authorize);
+    if (access._tag === "Failure") {
+      if (access.failure._tag !== "Denied") {
+        return yield* Effect.fail(access.failure);
       }
-      const access = yield* Effect.result(authorize);
-      if (access._tag === "Failure") {
-        if (access.failure._tag !== "Denied") {
-          return yield* Effect.fail(access.failure);
-        }
-        if (denied) {
-          return;
-        }
-        denied = true;
-        return deniedValue(denial());
-      }
-      if (denied || value === undefined) {
-        return;
-      }
-      const frame = observation(value);
-      if (
-        frame.accessGeneration !== attachment.accessGeneration ||
-        !sameAddress(frame.address, attachment.address)
-      ) {
-        return;
-      }
-      ({ epoch, sequence } = frame);
-      if (frame.type === "access-denied") {
-        denied = true;
-      }
-      return value;
-    });
-  const delivery = Stream.mapEffect(attachment.source, validate);
-  const idle = Stream.mapEffect(Stream.drop(Stream.tick(250), 1), () =>
-    validate()
+      denied = true;
+      return deniedValue(denial());
+    }
+  });
+  const validate = (value: Value): Value | undefined => {
+    if (denied) {
+      return;
+    }
+    const frame = observation(value);
+    if (
+      frame.accessGeneration !== attachment.accessGeneration ||
+      !sameAddress(frame.address, attachment.address)
+    ) {
+      return;
+    }
+    ({ epoch, sequence } = frame);
+    if (frame.type === "access-denied") {
+      denied = true;
+    }
+    return value;
+  };
+  const delivery = attachment.source.pipe(Stream.map(validate));
+  const idle = Stream.mapEffect(
+    Stream.tick(attachment.accessRecheckMs ?? ACCESS_RECHECK_MS),
+    () => recheck
   );
   return Stream.merge(delivery, idle, { haltStrategy: "left" }).pipe(
     Stream.filter((value): value is Value => value !== undefined),
