@@ -60,7 +60,7 @@ No real Slack message or customer record is part of these isolated fixtures. Pri
 
 ## Merge on 2026-10-09
 
-The operator merged the integration branch, with the [chat simplification](../superpowers/specs/2026-10-09-chat-simplification-design.md) on top, to `main` as the experimental baseline. The S1-F gates below remain open. Two Docker recovery fixtures in `tests/runtime/recovery.test.ts` fail on bucket durability expectations, the pilot gate for the unknown-outcome receipt fails on the baseline commit and after, `test:pi:live` has no private configuration, and the browser video and performance gates were not run. The merge records the current state; it is not the acceptance verdict this document describes.
+The operator merged the integration branch, with the [chat simplification](../superpowers/specs/2026-10-09-chat-simplification-design.md) on top, to `main` as the experimental baseline. The S1-F gates below remain open. Two Docker recovery fixtures in `tests/runtime/recovery.test.ts` fail on bucket durability expectations, `test:pi:live` has no private configuration, and the browser video and performance gates were not run. The pilot gate for the unknown-outcome receipt failed from `3176c2b` on because a follow-up rejected with 409 left its inbox row pending and the dispatcher resubmitted it after reconciliation; the synchronous submit path now drops such rows. The same gate then exposed that a transient projection failure after reconciliation was swallowed and never retried; reconcile now projects directly and the repair job projects on each pass. The merge records the current state; it is not the acceptance verdict this document describes.
 
 ## Remaining acceptance
 
