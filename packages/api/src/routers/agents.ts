@@ -43,7 +43,7 @@ const agentInput = z.object({
     .string()
     .min(1)
     .max(256)
-    .regex(/^[^\s/]+(?:\/[^\s/]+)?$/u),
+    .regex(/^[^\s/]+(?:\/[^\s/]+)*$/u),
   name: z.string().trim().min(1).max(120),
   operationId: identifier,
 });
