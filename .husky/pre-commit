@@ -9,7 +9,7 @@ if [ ! -s "$STAGED_FILES_FILE" ]; then
   exit 0
 fi
 
-xargs -0 pnpm exec oxfmt < "$STAGED_FILES_FILE" || exit $?
+xargs -0 pnpm exec oxfmt --no-error-on-unmatched-pattern < "$STAGED_FILES_FILE" || exit $?
 node -e 'const fs = require("node:fs"); const files = fs.readFileSync(process.argv[1], "utf8").split("\0").filter((file) => /\.[cm]?[jt]sx?$/.test(file)); process.stdout.write(files.map((file) => `${file}\0`).join(""));' "$STAGED_FILES_FILE" > "$LINT_FILES_FILE"
 if [ -s "$LINT_FILES_FILE" ]; then
   xargs -0 pnpm exec ultracite fix < "$LINT_FILES_FILE" || exit $?
