@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { z } from "zod";
 
-import { createProductHandler } from "../../packages/api/src/routers/conversations";
+import { createApiHandler } from "../../packages/api/src/handler";
 import { ChannelError } from "../../packages/channels/src/types";
 import type {
   ProductHandlerOptions,
@@ -128,7 +128,7 @@ export const createTestProduct = async (
       )
       .onConflictDoNothing();
   });
-  const handler = createProductHandler(options);
+  const handler = createApiHandler(options);
   const request = (
     path: string,
     method = "GET",
@@ -201,12 +201,11 @@ export const createTestProduct = async (
   };
   return { agentBody, createAgent, handler, install, options, request };
 };
-export const signSlack = async (
-  body: unknown,
+export const signSlackRaw = async (
+  raw: string,
   secret: string,
   timestamp = String(Math.floor(Date.now() / 1000))
 ) => {
-  const raw = JSON.stringify(body);
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -226,6 +225,12 @@ export const signSlack = async (
     "x-slack-signature": `v0=${Array.from(signature, (byte) => byte.toString(16).padStart(2, "0")).join("")}`,
   };
 };
+
+export const signSlack = (
+  body: unknown,
+  secret: string,
+  timestamp = String(Math.floor(Date.now() / 1000))
+) => signSlackRaw(JSON.stringify(body), secret, timestamp);
 
 export const domainSnapshot = (
   address: EventAddress,

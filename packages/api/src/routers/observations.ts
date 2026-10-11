@@ -66,7 +66,7 @@ export const observeConversation = async (
           "Authentication was revoked."
         );
       }
-      await createChannelService(database, options).chatAccess(
+      await createChannelService(database, options).conversationAccess(
         current.id,
         conversationId
       );

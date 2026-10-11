@@ -1,15 +1,9 @@
-import type {
-  AgentId,
-  ExecutionContext,
-  OperationId,
-  OrganizationId,
-  ReservationId,
-} from "./identity.ts";
+import type { AgentId, ExecutionContext, OrganizationId } from "./identity.ts";
 import type { PortResult, ReadOptions } from "./port.ts";
 
 export interface Resource {
   readonly organizationId: OrganizationId;
-  readonly kind: "agent" | "tool" | "memory" | "artifact" | "audit" | "budget";
+  readonly kind: "agent" | "tool" | "memory" | "artifact" | "audit";
   readonly id: string;
 }
 
@@ -58,17 +52,4 @@ export interface EntitlementPolicy {
     request: EntitlementRequest,
     options: ReadOptions
   ) => Promise<PortResult<EntitlementDecision>>;
-}
-
-export interface BudgetAmount {
-  readonly units: number;
-  readonly unit: string;
-}
-
-export interface BudgetReservation {
-  readonly id: ReservationId;
-  readonly organizationId: OrganizationId;
-  readonly operationId: OperationId;
-  readonly maximum: BudgetAmount;
-  readonly state: "reserved" | "settled" | "released";
 }

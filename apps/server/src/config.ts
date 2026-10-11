@@ -2,6 +2,9 @@ import { id } from "@cerebro/contracts";
 import { createToolRegistry } from "@cerebro/tools/registry";
 import { z } from "zod";
 
+// The tool gateway accepts only capabilities signed for this audience.
+export const GATEWAY_AUDIENCE = "cerebro-trusted-tool-gateway-v1";
+
 const positive = z.number().int().positive().max(1_048_576);
 const modelSchema = z.strictObject({
   apiKey: z.string().min(1),
@@ -169,4 +172,39 @@ export const parseRuntimeConfiguration = (
       "Runtime configuration is invalid or uses an unsupported provider or retrieval mode."
     );
   }
+};
+
+let parsed:
+  | { readonly key: string; readonly config: RuntimeConfiguration }
+  | undefined;
+// Parsing validates every model and tool, so each isolate does it once per
+// configuration value instead of on every request and authority check.
+export const runtimeConfiguration = (env: {
+  readonly RUNTIME_CONFIG_JSON: string;
+  readonly DEPLOY_MODE: "local" | "production";
+}): RuntimeConfiguration => {
+  const key = `${env.DEPLOY_MODE}\n${env.RUNTIME_CONFIG_JSON}`;
+  if (parsed?.key !== key) {
+    parsed = {
+      config: parseRuntimeConfiguration(
+        env.RUNTIME_CONFIG_JSON,
+        env.DEPLOY_MODE
+      ),
+      key,
+    };
+  }
+  return parsed.config;
+};
+
+const registries = new WeakMap<
+  RuntimeConfiguration,
+  ReturnType<typeof createRuntimeRegistry>
+>();
+export const runtimeRegistry = (config: RuntimeConfiguration) => {
+  let registry = registries.get(config);
+  if (!registry) {
+    registry = createRuntimeRegistry(config);
+    registries.set(config, registry);
+  }
+  return registry;
 };

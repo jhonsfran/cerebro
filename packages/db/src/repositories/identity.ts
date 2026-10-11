@@ -120,14 +120,10 @@ const validatePermission = (permission: Permission): void => {
   }
   if (
     permission.resourceId === "*" &&
-    !(
-      permission.action === "export" &&
-      (permission.resourceKind === "audit" ||
-        permission.resourceKind === "budget")
-    )
+    !(permission.action === "export" && permission.resourceKind === "audit")
   ) {
     throw new Error(
-      "Wildcard access is limited to organization-wide audit and usage export."
+      "Wildcard access is limited to organization-wide audit export."
     );
   }
 };

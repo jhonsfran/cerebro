@@ -15,15 +15,11 @@ import {
   applicationFixture,
   freeFixturePort,
   stackFiles,
-  waitForFixture,
 } from "../slice-1/application.ts";
 
 const executeFile = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "../..");
 const dataTables = [
-  "usage_account",
-  "usage_reservation",
-  "usage_operation",
   "cerebro_audit_event",
   "channel_item",
   "memory_source",
@@ -180,16 +176,18 @@ export const verifyPilotRestore = async (input: RestoreInput) => {
     return response.json();
   };
   const conversationPath = `/api/product/conversations/${encodeURIComponent(input.conversationId)}`;
-  await waitForFixture(
-    async () => {
-      await request(input.boot.apiUrl, conversationPath);
-      return source.sql(
-        "SELECT count(*) FROM channel_conversation WHERE projection_state <> 'idle'"
-      );
-    },
-    (value) => value === "0",
-    60_000
-  );
+  await request(input.boot.apiUrl, conversationPath);
+  // Sessions deliver audit records shortly after their runs finish, so the
+  // snapshot waits until the source stores stop changing.
+  let settled = JSON.stringify(await fingerprints(source));
+  let unchanged = 0;
+  const settleDeadline = Date.now() + 60_000;
+  while (unchanged < 3 && Date.now() < settleDeadline) {
+    await delay(1200);
+    const next = JSON.stringify(await fingerprints(source));
+    unchanged = next === settled ? unchanged + 1 : 0;
+    settled = next;
+  }
   const previous = await request(input.boot.apiUrl, conversationPath);
   const previousHistory = await request(
     input.boot.apiUrl,

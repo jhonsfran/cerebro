@@ -466,7 +466,6 @@ before(
       fixture.boot.fixtureId
     );
     metrics.boot = fixture.boot;
-    metrics.externalMetering = "unbound";
     assert.equal(
       metrics.sourceIdentityAfterBoot,
       metrics.sourceIdentity,
@@ -502,7 +501,6 @@ before(
       ["approve", "tool", "fixture_effect"],
       ["execute", "tool", "fixture-connector"],
       ["read", "audit", organizationId],
-      ["read", "budget", organizationId],
     ] as const;
     for (const principal of [ownerPrincipal, supportPrincipal]) {
       for (const [action, kind, resource] of resources) {
@@ -510,7 +508,6 @@ before(
       }
     }
     await seedGrant(ownerPrincipal, "export", "audit", organizationId);
-    await seedGrant(ownerPrincipal, "export", "budget", organizationId);
     const published = await fixture.json(
       `/api/product/agents/${encodeURIComponent(agentId)}`,
       owner.cookie,
@@ -585,9 +582,6 @@ before(
         )
       )
     );
-    await fixture.sql(`INSERT INTO usage_account(organization_id,unit,total,available,held,spent) VALUES(${literal(organizationId)},'historical-credits',1000,976,0,24);
-      INSERT INTO usage_reservation(id,incurred,maximum,operation_id,organization_id,state,unit) VALUES('historical-model-1',12,100,'historical-operation-1',${literal(organizationId)},'settled','historical-credits'),('historical-model-2',12,100,'historical-operation-2',${literal(organizationId)},'settled','historical-credits');
-      INSERT INTO usage_operation(id,canonical_input,digest,kind,result) VALUES('historical-operation-1','historical acceptance row','sha256:historical-1','settle','{"status":"ok"}'),('historical-operation-2','historical acceptance row','sha256:historical-2','settle','{"status":"ok"}');`);
     conversation = await createConversation();
     await writeFile(
       `/tmp/${fixture.boot.fixtureId}-private.json`,
@@ -665,9 +659,6 @@ gate(
   "selected Pi application retrieves real memory, canonical citations, MCP, and exact receipts",
   async () => {
     const initial = await provider();
-    const historical = await fixture.sql(
-      "SELECT md5(jsonb_agg(to_jsonb(t) ORDER BY id)::text) FROM usage_reservation t"
-    );
     const empty = await read(conversation);
     assert.deepEqual(empty.snapshot.runs, []);
     assert.deepEqual(empty.snapshot.outputs, []);
@@ -743,12 +734,6 @@ gate(
       calls.every((call) => call.messageTextDigests.includes(preparedDigest)),
       "The physical provider must receive the complete authorized document"
     );
-    assert.equal(
-      await fixture.sql(
-        "SELECT md5(jsonb_agg(to_jsonb(t) ORDER BY id)::text) FROM usage_reservation t"
-      ),
-      historical
-    );
     const replay = await submit(
       conversation,
       firstEvent.text,
@@ -791,7 +776,7 @@ gate(
 );
 
 gate(
-  "audit append, redaction, and historical exports use current authorization",
+  "audit append, redaction, and exports use current authorization",
   async () => {
     const recordsSchema = z.object({
       records: z.array(
@@ -851,39 +836,13 @@ gate(
       ),
       "1"
     );
-    const historical = await rpc(
-      "identity.exportData",
-      z.object({
-        records: z.array(
-          z.object({
-            id: z.string(),
-            incurred: z.number(),
-            organizationId: z.string(),
-            state: z.literal("settled"),
-          })
-        ),
+    await expectStatus(
+      await fixture.request("/rpc/identity/exportData", support.cookie, {
+        json: { kind: "audit", limit: 20, organizationId },
       }),
-      { kind: "usage", limit: 20, organizationId }
+      403
     );
-    assert.deepEqual(
-      historical.records.map((record) => record.id),
-      ["historical-model-1", "historical-model-2"]
-    );
-    assert.ok(
-      historical.records.every(
-        (record) =>
-          record.organizationId === organizationId && record.incurred === 12
-      )
-    );
-    for (const kind of ["audit", "usage"]) {
-      await expectStatus(
-        await fixture.request("/rpc/identity/exportData", support.cookie, {
-          json: { kind, limit: 20, organizationId },
-        }),
-        403
-      );
-    }
-    evidence.audit = { eventId, exported, historical, rows: consistent.rows };
+    evidence.audit = { eventId, exported, rows: consistent.rows };
   }
 );
 

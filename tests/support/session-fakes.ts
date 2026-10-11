@@ -1,31 +1,40 @@
 import { Effect, Layer, Schema, Stream } from "effect";
 
-import { classifyEventDelivery } from "../events.ts";
-import { ExecutionEngine, SessionStore } from "../execution.ts";
+import { classifyEventDelivery } from "../../packages/contracts/src/events.ts";
+import {
+  ExecutionEngine,
+  SessionStore,
+} from "../../packages/contracts/src/execution.ts";
 import type {
   DurableHandoff,
   EngineConversation,
   EngineSubmission,
-} from "../execution.ts";
+} from "../../packages/contracts/src/execution.ts";
 import {
   Conflict,
   Denied,
   NotFound,
   Unavailable,
   UnknownOutcome,
-} from "../failures.ts";
-import type { ContractFailure } from "../failures.ts";
-import { id, isExecutionContextActiveAt } from "../identity.ts";
-import type { RunId } from "../identity.ts";
-import type { ReadOptions } from "../port.ts";
+} from "../../packages/contracts/src/failures.ts";
+import type { ContractFailure } from "../../packages/contracts/src/failures.ts";
+import {
+  id,
+  isExecutionContextActiveAt,
+} from "../../packages/contracts/src/identity.ts";
+import type { RunId } from "../../packages/contracts/src/identity.ts";
+import type { ReadOptions } from "../../packages/contracts/src/port.ts";
 import {
   DomainSnapshot,
   DomainUpdate,
   SessionService,
-} from "../session-service.ts";
-import type { Observation, CanonicalOutput } from "../session-service.ts";
-import type { RunState } from "../session.ts";
-import { canonicalToolArguments } from "../tools.ts";
+} from "../../packages/contracts/src/session-service.ts";
+import type {
+  Observation,
+  CanonicalOutput,
+} from "../../packages/contracts/src/session-service.ts";
+import type { RunState } from "../../packages/contracts/src/session.ts";
+import { canonicalToolArguments } from "../../packages/contracts/src/tools.ts";
 
 const attempt = <A>(run: () => A): Effect.Effect<A, ContractFailure> =>
   Effect.try({

@@ -1,19 +1,7 @@
-/* oxlint-disable no-await-in-loop -- Projection records commit in snapshot order. */
-import type { ExecutionContext } from "@cerebro/contracts";
 import type { DomainSnapshot } from "@cerebro/contracts/session-service";
-import type { Database } from "@cerebro/db";
-import {
-  channelConversation,
-  channelItem,
-  channelReply,
-} from "@cerebro/db/schema/agents";
 import type { ChannelItemBody } from "@cerebro/db/schema/agents";
-import { and, eq, isNull, sql } from "drizzle-orm";
 
-import { authorize, authorizeContent, runEffect } from "./security";
-import { conversationAddress } from "./service";
-import { EFFECT_DEADLINE_MS } from "./types";
-import type { ChannelOptions } from "./types";
+// Flattens a session snapshot into the conversation items the API returns.
 
 export const snapshotItems = (
   snapshot: DomainSnapshot
@@ -95,105 +83,4 @@ export const snapshotItems = (
     });
   }
   return entries;
-};
-
-export const projectSession = async (
-  database: Database,
-  options: ChannelOptions,
-  conversation: typeof channelConversation.$inferSelect,
-  context: ExecutionContext
-): Promise<void> => {
-  if (conversation.engine !== "pi-v1" || conversation.retiredAt) {
-    return;
-  }
-  const snapshot = await runEffect(
-    options
-      .sessions(database)
-      .inspect(conversationAddress(conversation), context, {
-        deadlineAt: (options.now?.() ?? Date.now()) + EFFECT_DEADLINE_MS,
-      })
-  );
-  const items = snapshotItems(snapshot);
-  for (const entry of items) {
-    await authorize(
-      database,
-      options,
-      context,
-      "read",
-      "agent",
-      conversation.agentId
-    );
-    await authorizeContent(database, options, context, entry.item);
-  }
-  await database.transaction(async (tx) => {
-    const [claimed] = await tx
-      .update(channelConversation)
-      .set({
-        lastProjectedAt: new Date(options.now?.() ?? Date.now()),
-        projectionState: "active",
-        streamCursor:
-          snapshot.revision === 0 ? null : String(snapshot.revision),
-      })
-      .where(
-        and(
-          eq(channelConversation.conversationId, conversation.conversationId),
-          eq(channelConversation.engine, "pi-v1"),
-          isNull(channelConversation.retiredAt),
-          eq(channelConversation.activityVersion, conversation.activityVersion),
-          sql`${channelConversation.streamCursor} is not distinct from ${conversation.streamCursor}`
-        )
-      )
-      .returning({ conversationId: channelConversation.conversationId });
-    if (!claimed) {
-      return;
-    }
-    for (const entry of items) {
-      await tx
-        .insert(channelItem)
-        .values({
-          conversationId: conversation.conversationId,
-          item: entry.item,
-          itemKey: `runtime:${conversation.sessionId}:${entry.itemKey}`,
-          organizationId: conversation.organizationId,
-        })
-        .onConflictDoUpdate({
-          set: { item: entry.item },
-          target: channelItem.itemKey,
-        });
-    }
-    const complete = snapshot.runs.every((run) =>
-      ["completed", "failed", "cancelled"].includes(run.state)
-    );
-    if (complete) {
-      await tx
-        .update(channelConversation)
-        .set({ projectionState: "idle" })
-        .where(
-          eq(channelConversation.conversationId, conversation.conversationId)
-        );
-    }
-    if (conversation.kind !== "slack") {
-      return;
-    }
-    const states = new Map(snapshot.runs.map((run) => [run.runId, run.state]));
-    for (const output of snapshot.outputs) {
-      if (
-        !output.runIds.every((runId) => states.get(runId) === "completed") ||
-        !output.text
-      ) {
-        continue;
-      }
-      await tx
-        .insert(channelReply)
-        .values({
-          conversationId: conversation.conversationId,
-          organizationId: conversation.organizationId,
-          replyId: `reply:${output.answerId}`,
-          runId: output.runId,
-          state: "ready",
-          text: output.text,
-        })
-        .onConflictDoNothing();
-    }
-  });
 };

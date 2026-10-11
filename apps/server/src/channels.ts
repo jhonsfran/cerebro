@@ -1,20 +1,21 @@
+import { createAuth } from "@cerebro/auth";
 import type { ProductHandlerOptions } from "@cerebro/channels/types";
 import type { ExecutionContext, ContentDependencies } from "@cerebro/contracts";
 import type { Database } from "@cerebro/db";
+import { withDatabase } from "@cerebro/db";
 import { accessView } from "@cerebro/memory/access";
 import { Effect } from "effect";
 import { z } from "zod";
 
-import type { WorkerEnv } from "./env.server";
 import {
   memoryDependencies,
   checkContentDependencies,
   readAudit,
   readSource,
-  runtimeConfiguration,
-} from "./runtime-services";
-import { createAuth, withDatabase } from "./services";
-import { createSessionClient } from "./session-transport";
+} from "./access";
+import type { WorkerEnv } from "./bindings";
+import { runtimeConfiguration } from "./config";
+import { createSessionClient } from "./session/client";
 
 const slackConfiguration = z
   .object({
@@ -27,14 +28,19 @@ const slackConfiguration = z
   })
   .strict();
 
-export const createChannelOptions = (env: WorkerEnv) => {
-  const config = runtimeConfiguration(env);
+export const slackSettings = (env: WorkerEnv) => {
   const slack = env.SLACK_CHANNEL_JSON
     ? slackConfiguration.parse(JSON.parse(env.SLACK_CHANNEL_JSON))
     : undefined;
   if (env.DEPLOY_MODE === "production" && slack?.apiUrl) {
     throw new Error("Production uses the public Slack API URL.");
   }
+  return slack;
+};
+
+export const createChannelOptions = (env: WorkerEnv) => {
+  const config = runtimeConfiguration(env);
+  const slack = slackSettings(env);
   return {
     bootstrapToken: config.bootstrapToken,
     catalog: {

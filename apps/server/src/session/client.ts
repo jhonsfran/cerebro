@@ -23,10 +23,10 @@ import {
 import { Effect, Schema, Stream } from "effect";
 import { z } from "zod";
 
-import type { WorkerEnv } from "./env.server";
+import type { WorkerEnv } from "../bindings";
+import { runtimeConfiguration } from "../config";
 import { readObservationStream } from "./observation-stream";
-import { runtimeConfiguration } from "./runtime-services";
-import { signSessionRequest } from "./session-proof.ts";
+import { signSessionRequest } from "./proof";
 
 const identifier = z.string().trim().min(1).max(512);
 const receiptSchema = z.strictObject({

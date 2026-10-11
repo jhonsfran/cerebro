@@ -1,29 +1,45 @@
 // oxlint-disable eslint/require-await -- Fixture ports keep state changes synchronous and expose the asynchronous port signatures.
-import { id, isExecutionContextActiveAt } from "../identity.ts";
+import {
+  id,
+  isExecutionContextActiveAt,
+} from "../../packages/contracts/src/identity.ts";
 import type {
   Digest,
   ExecutionContext,
   OperationId,
   PrincipalId,
-} from "../identity.ts";
+} from "../../packages/contracts/src/identity.ts";
 import type {
   ArtifactRef,
   ArtifactStore,
   MemoryRecord,
   MemoryStore,
   Visibility,
-} from "../memory.ts";
+} from "../../packages/contracts/src/memory.ts";
 import type {
   AuthorizationDecision,
   AuthorizationPolicy,
   EntitlementDecision,
   EntitlementPolicy,
-} from "../policy.ts";
-import { preflightEffect } from "../port.ts";
-import type { EffectOptions, PortResult, ReadOptions } from "../port.ts";
-import type { AgentDefinition, AgentRepository } from "../session.ts";
-import { canonicalToolArguments, toolCapabilityMatches } from "../tools.ts";
-import type { ToolExecution, ToolExecutor } from "../tools.ts";
+} from "../../packages/contracts/src/policy.ts";
+import { preflightEffect } from "../../packages/contracts/src/port.ts";
+import type {
+  EffectOptions,
+  PortResult,
+  ReadOptions,
+} from "../../packages/contracts/src/port.ts";
+import type {
+  AgentDefinition,
+  AgentRepository,
+} from "../../packages/contracts/src/session.ts";
+import {
+  canonicalToolArguments,
+  toolCapabilityMatches,
+} from "../../packages/contracts/src/tools.ts";
+import type {
+  ToolExecution,
+  ToolExecutor,
+} from "../../packages/contracts/src/tools.ts";
 import {
   allowedUser,
   fixtureAgentId,

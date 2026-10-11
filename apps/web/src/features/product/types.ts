@@ -36,7 +36,7 @@ const grantSchema = z.object({
   action: z.enum(["read", "execute", "write", "approve", "manage", "export"]),
   resource: z.object({
     id: z.string(),
-    kind: z.enum(["agent", "tool", "memory", "artifact", "audit", "budget"]),
+    kind: z.enum(["agent", "tool", "memory", "artifact", "audit"]),
     organizationId: z.string(),
   }),
 });

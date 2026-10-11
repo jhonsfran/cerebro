@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { parseRuntimeConfiguration } from "../../apps/server/src/runtime-configuration.ts";
+import { parseRuntimeConfiguration } from "../../apps/server/src/config.ts";
 
 const configured = () => ({
   artifacts: {

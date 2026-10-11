@@ -4,14 +4,11 @@ import { createRequire } from "node:module";
 
 import { Effect } from "effect";
 
-import { requireChatSession } from "../../apps/server/src/chat-session";
-import { createProductHandler } from "../../packages/api/src/routers/conversations";
+import { createApiHandler } from "../../packages/api/src/handler";
 import { createIdentityRouter } from "../../packages/api/src/routers/identity";
-import { drainChannelWork } from "../../packages/channels/src/drain";
 import { unwrap } from "../../packages/channels/src/security";
 import { createChannelService } from "../../packages/channels/src/service";
 import type { ProductHandlerOptions } from "../../packages/channels/src/types";
-import { Unavailable } from "../../packages/contracts/src/failures";
 import { id } from "../../packages/contracts/src/index";
 import { eq } from "../../packages/db/node_modules/drizzle-orm";
 import {
@@ -22,16 +19,13 @@ import { createIdentityRepository } from "../../packages/db/src/repositories/ide
 import {
   channelConversation,
   channelItem,
-  channelReply,
 } from "../../packages/db/src/schema/agents";
 import { auditEvent } from "../../packages/db/src/schema/audit";
-import { session as authSession } from "../../packages/db/src/schema/auth";
 import { organization } from "../../packages/db/src/schema/core";
 import {
   identityPrincipal,
   identitySlackLink,
 } from "../../packages/db/src/schema/identity";
-import { usageReservation } from "../../packages/db/src/schema/usage";
 import { createFixtureSessionService } from "./fixture-session";
 import {
   array,
@@ -46,7 +40,7 @@ const requireFromApi = createRequire(
 );
 const { call } = requireFromApi("@orpc/server");
 const configuredRequest = (options: ProductHandlerOptions) => {
-  const handler = createProductHandler(options);
+  const handler = createApiHandler(options);
   return (
     path: string,
     method = "GET",
@@ -61,45 +55,6 @@ const configuredRequest = (options: ProductHandlerOptions) => {
       })
     );
 };
-test("chat connections reject foreign, expired and deleted Better Auth sessions", async () => {
-  const app = await createTestProduct();
-  const identity = { authSessionId: crypto.randomUUID(), userId: "test-owner" };
-  await app.options.withDatabase(async (database) => {
-    await database.insert(authSession).values({
-      expiresAt: new Date(Date.now() + 60_000),
-      id: identity.authSessionId,
-      token: crypto.randomUUID(),
-      updatedAt: new Date(),
-      userId: identity.userId,
-    });
-    await requireChatSession(database, identity);
-    await assert.rejects(
-      requireChatSession(database, { ...identity, userId: "test-other" }),
-      { code: "unauthorized", status: 401 }
-    );
-    await database
-      .update(authSession)
-      .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(eq(authSession.id, identity.authSessionId));
-    await assert.rejects(requireChatSession(database, identity), {
-      code: "unauthorized",
-      status: 401,
-    });
-    await database
-      .update(authSession)
-      .set({ expiresAt: new Date(Date.now() + 60_000) })
-      .where(eq(authSession.id, identity.authSessionId));
-    await requireChatSession(database, identity);
-    await database
-      .delete(authSession)
-      .where(eq(authSession.id, identity.authSessionId));
-    await assert.rejects(requireChatSession(database, identity), {
-      code: "unauthorized",
-      status: 401,
-    });
-  });
-});
-
 test("chat access checks the conversation owner and current agent read access", async () => {
   const app = await createTestProduct();
   const setup = await app.install();
@@ -153,6 +108,43 @@ test("chat access denies revoked content beyond the first transcript page", asyn
   const created = object(await response.json());
   const conversationId = string(created.conversationId);
   const sourceId = id.source("chat-private-source");
+  const runs = Array.from({ length: 201 }, (_, index) =>
+    id.run(`chat-run-${index}`)
+  );
+  const options: ProductHandlerOptions = {
+    ...app.options,
+    sessions: (db) => ({
+      ...createFixtureSessionService(db, app.options),
+      inspect: (address) =>
+        Effect.succeed(
+          domainSnapshot(address, {
+            executions: runs.map((runId) => ({
+              executionId: `execution:${runId}`,
+              runIds: [runId],
+            })),
+            outputs: runs.map((runId, index) => ({
+              answerId: `answer:${runId}`,
+              citations: [],
+              dependencies: {
+                sourceIds: index === 200 ? [sourceId] : [],
+                toolIds: [],
+              },
+              executionId: `execution:${runId}`,
+              runId,
+              runIds: [runId],
+              text:
+                index === 200 ? "Private company content" : "Public content",
+            })),
+            revision: 1,
+            runs: runs.map((runId) => ({
+              completedAt: 1,
+              runId,
+              state: "completed",
+            })),
+          })
+        ),
+    }),
+  };
   await app.options.withDatabase(async (db) => {
     const identity = createIdentityRepository(db);
     await identity.setManualGrant(
@@ -161,23 +153,7 @@ test("chat access denies revoked content beyond the first transcript page", asyn
       { action: "read", resourceId: sourceId, resourceKind: "memory" },
       true
     );
-    await db.insert(channelItem).values(
-      Array.from({ length: 201 }, (_, index) => ({
-        conversationId,
-        item: {
-          dependencies: {
-            sourceIds: index === 200 ? [sourceId] : [],
-            toolIds: [],
-          },
-          runId: `chat-run-${index}`,
-          text: index === 200 ? "Private company content" : "Public content",
-          type: "output" as const,
-        },
-        itemKey: `chat-history-${index}`,
-        organizationId: app.options.organizationId,
-      }))
-    );
-    const service = createChannelService(db, app.options);
+    const service = createChannelService(db, options);
     await service.chatAccess("test-owner", conversationId);
     await identity.setManualGrant(
       app.options.organizationId,
@@ -309,7 +285,6 @@ test("configured catalog, source and audit readers replace fixture views and den
   const dependencies = { sourceIds: [sourceId], toolIds: ["fixture-read"] };
   let sourceCalls = 0;
   let auditCalls = 0;
-  let deliveries = 0;
   const options: ProductHandlerOptions = {
     ...app.options,
     catalog: {
@@ -337,9 +312,7 @@ test("configured catalog, source and audit readers replace fixture views and den
       return Promise.resolve({
         status: "ok",
         value: {
-          entries: [
-            { at: 42, description: "Provider usage settled.", type: "usage" },
-          ],
+          entries: [{ at: 42, description: "Run completed.", type: "audit" }],
           runId: input.runId,
           state: "completed",
         },
@@ -460,7 +433,6 @@ test("configured catalog, source and audit readers replace fixture views and den
   assert.deepEqual(configuredAgent.sourceChoices, [
     { id: "company-source", label: "Company policy" },
   ]);
-  await drainChannelWork(options);
   const transcriptResponse = await request(`conversations/${conversationId}`);
   const view = object(await transcriptResponse.json());
   assert.deepEqual(
@@ -483,7 +455,7 @@ test("configured catalog, source and audit readers replace fixture views and den
     `conversations/${conversationId}/audit/${runId}`
   );
   assert.deepEqual(object(await auditResponse.json()).entries, [
-    { at: 42, description: "Provider usage settled.", type: "usage" },
+    { at: 42, description: "Run completed.", type: "audit" },
   ]);
   assert.equal(sourceCalls, 1);
   assert.equal(auditCalls, 1);
@@ -510,29 +482,8 @@ test("configured catalog, source and audit readers replace fixture views and den
     configuredAgentBody
   );
   assert.equal(revokedPublication.status, 403);
-  await drainChannelWork({
-    ...options,
-    fetch: () => {
-      deliveries += 1;
-      return Promise.resolve(
-        Response.json({ channel: "channel", ok: true, ts: "124" })
-      );
-    },
-    slack: {
-      agentId,
-      appId: "app",
-      botToken: "test",
-      signingSecret: "test",
-      workspaceId: "workspace",
-    },
-  });
-  assert.equal(deliveries, 0);
-  await app.options.withDatabase(async (db) => {
-    const queuedReplies = await db.select().from(channelReply);
-    assert.equal(queuedReplies[0]?.state, "failed");
-  });
 });
-test("production with missing adapters never returns fixture source, audit, budget or untracked output", async () => {
+test("production with missing adapters never returns fixture source, audit or untracked output", async () => {
   const app = await createTestProduct();
   await app.install();
   const agentResult = await app.createAgent();
@@ -558,8 +509,6 @@ test("production with missing adapters never returns fixture source, audit, budg
   });
   const missingCatalogResponse = await request("catalog");
   assert.equal(missingCatalogResponse.status, 503);
-  const missingBudgetResponse = await request("budget");
-  assert.equal(missingBudgetResponse.status, 404);
   const missingSourceResponse = await request(
     `conversations/${conversationId}/sources/pilot-source`
   );
@@ -587,15 +536,6 @@ test("production with missing adapters never returns fixture source, audit, budg
   assert.throws(
     () =>
       unwrap({
-        code: "budget-exhausted",
-        reason: "No budget remains.",
-        status: "denied",
-      }),
-    { code: "budget-exhausted", status: 403 }
-  );
-  assert.throws(
-    () =>
-      unwrap({
         code: "provider-unavailable",
         reason: "The provider is down.",
         status: "unavailable",
@@ -603,7 +543,7 @@ test("production with missing adapters never returns fixture source, audit, budg
     { code: "provider-unavailable", status: 503 }
   );
 });
-test("audit and usage exports require current export grants and return bounded company rows", async () => {
+test("audit export requires a current export grant and returns bounded company rows", async () => {
   const app = await createTestProduct();
   const setupResult = await app.install();
   const principalId = string(setupResult.principalId);
@@ -612,9 +552,6 @@ test("audit and usage exports require current export grants and return bounded c
     await db
       .delete(auditEvent)
       .where(eq(auditEvent.organizationId, app.options.organizationId));
-    await db
-      .delete(usageReservation)
-      .where(eq(usageReservation.organizationId, app.options.organizationId));
     await db
       .insert(organization)
       .values({ id: otherCompanyId, name: "Other" })
@@ -633,20 +570,6 @@ test("audit and usage exports require current export grants and return bounded c
         sessionId: "session",
       }))
     );
-    await db.insert(usageReservation).values(
-      ["usage-a", "usage-b", "usage-other"].map((reservationId) => ({
-        id: reservationId,
-        incurred: 3,
-        maximum: 5,
-        operationId: reservationId,
-        organizationId:
-          reservationId === "usage-other"
-            ? otherCompanyId
-            : app.options.organizationId,
-        state: "settled" as const,
-        unit: "credits",
-      }))
-    );
     const context = { db, session: { user: { id: "test-owner" } } };
     const router = createIdentityRouter();
     await assert.rejects(
@@ -658,19 +581,15 @@ test("audit and usage exports require current export grants and return bounded c
       { code: "FORBIDDEN" }
     );
     const identity = createIdentityRepository(db);
-    await Promise.all(
-      (["audit", "budget"] as const).map((resourceKind) =>
-        identity.setManualGrant(
-          app.options.organizationId,
-          principalId,
-          {
-            action: "export",
-            resourceId: app.options.organizationId,
-            resourceKind,
-          },
-          true
-        )
-      )
+    await identity.setManualGrant(
+      app.options.organizationId,
+      principalId,
+      {
+        action: "export",
+        resourceId: app.options.organizationId,
+        resourceKind: "audit",
+      },
+      true
     );
     const first = await call(
       router.exportData,
@@ -697,21 +616,6 @@ test("audit and usage exports require current export grants and return bounded c
       ["b"]
     );
     assert.equal(second.nextCursor, null);
-    const usage = await call(
-      router.exportData,
-      { kind: "usage", limit: 200, organizationId: app.options.organizationId },
-      { context }
-    );
-    assert.deepEqual(
-      usage.records.map((row: { id: string; incurred: number }) => [
-        row.id,
-        row.incurred,
-      ]),
-      [
-        ["usage-a", 3],
-        ["usage-b", 3],
-      ]
-    );
     await identity.setManualGrant(
       app.options.organizationId,
       principalId,
@@ -733,7 +637,7 @@ test("audit and usage exports require current export grants and return bounded c
     await assert.rejects(
       call(
         router.exportData,
-        { kind: "usage", organizationId: otherCompanyId },
+        { kind: "audit", organizationId: otherCompanyId },
         { context }
       ),
       { code: "FORBIDDEN" }
@@ -741,7 +645,7 @@ test("audit and usage exports require current export grants and return bounded c
   });
 });
 
-test("an uncertain tool settles channel projection and stays visible", async () => {
+test("an uncertain tool outcome stays visible in the conversation", async () => {
   const app = await createTestProduct();
   await app.install();
   const agent = await app.createAgent();
@@ -754,13 +658,7 @@ test("an uncertain tool settles channel projection and stays visible", async () 
   const conversationId = string(conversation.conversationId);
   const runId = id.run("unknown-run");
   const dependencies = { sourceIds: [], toolIds: ["fixture-read"] };
-  await app.options.withDatabase((db) =>
-    db
-      .update(channelConversation)
-      .set({ projectionState: "active" })
-      .where(eq(channelConversation.conversationId, conversationId))
-  );
-  await drainChannelWork({
+  const request = configuredRequest({
     ...app.options,
     sessions: (db) => ({
       ...createFixtureSessionService(db, app.options),
@@ -798,150 +696,12 @@ test("an uncertain tool settles channel projection and stays visible", async () 
         ),
     }),
   });
-  await app.options.withDatabase(async (db) => {
-    const [projection] = await db
-      .select()
-      .from(channelConversation)
-      .where(eq(channelConversation.conversationId, conversationId));
-    assert.equal(projection?.projectionState, "idle");
-    const items = await db
-      .select()
-      .from(channelItem)
-      .where(eq(channelItem.conversationId, conversationId));
-    const tool = items.find((entry) => entry.item.type === "tool")?.item;
-    assert.equal(
-      tool?.type === "tool" ? tool.state : undefined,
-      "unknown-outcome"
-    );
-  });
-});
-
-test("empty runtime sessions become idle and only an admitted message reactivates projection", async () => {
-  const app = await createTestProduct();
-  await app.install();
-  const agent = await app.createAgent();
-  const response = await app.request("/api/product/conversations", "POST", {
-    agentId: string(agent.agentId),
-    operationId: "empty-projection",
-  });
-  const conversation = object(await response.json());
-  const conversationId = string(conversation.conversationId);
-  let available = false;
-  const options: ProductHandlerOptions = {
-    ...app.options,
-    sessions: (db) => {
-      const fixture = createFixtureSessionService(db, app.options);
-      return {
-        ...fixture,
-        inspect: (address) => Effect.succeed(domainSnapshot(address)),
-        submit: (command, effect) =>
-          available
-            ? fixture.submit(command, effect)
-            : Effect.fail(new Unavailable({ reason: "Admission delayed." })),
-      };
-    },
-  };
-  const projectionState = () =>
-    app.options.withDatabase(async (db) => {
-      const [row] = await db
-        .select()
-        .from(channelConversation)
-        .where(eq(channelConversation.conversationId, conversationId));
-      return row?.projectionState;
-    });
-  await drainChannelWork(options);
-  assert.equal(await projectionState(), "idle");
-  await app.options.withDatabase(async (db) => {
-    const items = await db
-      .select()
-      .from(channelItem)
-      .where(eq(channelItem.conversationId, conversationId));
-    assert.deepEqual(items, []);
-  });
-  const request = configuredRequest(options);
-  const message = {
-    eventId: "delayed-empty-admission",
-    text: "Wait for admission.",
-  };
-  const path = `conversations/${encodeURIComponent(conversationId)}/messages`;
-  const delayed = await request(path, "POST", message);
-  assert.equal(delayed.status, 503);
-  assert.equal(await projectionState(), "idle");
-  available = true;
-  const admitted = await request(path, "POST", message);
-  assert.equal(admitted.status, 200);
-  assert.equal(await projectionState(), "active");
-});
-
-test("local Slack delivery denies a queued reply without an authorized output projection", async () => {
-  let delivered = 0;
-  const app = await createTestProduct();
-  const setup = await app.install();
-  const principalId = string(setup.principalId);
-  const agent = await app.createAgent();
-  const agentId = string(agent.agentId);
-  const createdResponse = await app.request(
-    "/api/product/conversations",
-    "POST",
-    { agentId, operationId: "missing-local-output" }
-  );
-  assert.equal(createdResponse.status, 200);
-  const created = object(await createdResponse.json());
-  const conversationId = string(created.conversationId);
-  await app.options.withDatabase(async (db) => {
-    await db
-      .update(channelConversation)
-      .set({
-        channelId: "channel",
-        kind: "slack",
-        projectionState: "idle",
-        rootTimestamp: "123",
-        slackUserId: "slack-user",
-        workspaceId: "workspace",
-      })
-      .where(eq(channelConversation.conversationId, conversationId));
-    await db.insert(identitySlackLink).values({
-      id: "local-output-link",
-      organizationId: app.options.organizationId,
-      principalId,
-      slackUserId: "slack-user",
-      workspaceId: "workspace",
-    });
-    await db.insert(channelReply).values({
-      conversationId,
-      organizationId: app.options.organizationId,
-      replyId: "missing-output-reply",
-      runId: "missing-output-run",
-      state: "ready",
-      text: "Private untracked output",
-    });
-  });
-  const result = await drainChannelWork({
-    ...app.options,
-    fetch: () => {
-      delivered += 1;
-      return Promise.resolve(
-        Response.json({ channel: "channel", ok: true, ts: "124" })
-      );
-    },
-    mode: "local",
-    slack: {
-      agentId,
-      appId: "app",
-      botToken: "test",
-      signingSecret: "test",
-      workspaceId: "workspace",
-    },
-  });
-  assert.equal(result.sent, 0);
-  assert.equal(delivered, 0);
-  await app.options.withDatabase(async (db) => {
-    const [reply] = await db.select().from(channelReply);
-    assert.equal(reply.state, "failed");
-    assert.deepEqual(reply.providerReceipt, {
-      reason: "Current authorization denied reply delivery.",
-    });
-  });
+  const read = await request(`conversations/${conversationId}`);
+  const view = object(await read.json());
+  const tool = array(view.items)
+    .map(object)
+    .find((entry) => entry.type === "tool");
+  assert.equal(tool?.state, "unknown-outcome");
 });
 
 test("audit projection stores a replayed event once and rejects a changed one", async () => {

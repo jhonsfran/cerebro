@@ -1,7 +1,14 @@
+import { agentAuthorityLayer } from "@cerebro/authorization/agent-authority";
 import { AuthorityService } from "@cerebro/contracts/authority-service";
 import type { EventAddress } from "@cerebro/contracts/events";
 import type { DurableHandoff } from "@cerebro/contracts/execution";
-import { Denied, InvalidInput, Unavailable } from "@cerebro/contracts/failures";
+import {
+  Denied,
+  InvalidInput,
+  Unavailable,
+  fromPortResult,
+  tryAdapter,
+} from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
@@ -13,9 +20,10 @@ import type {
 import { DomainSnapshot } from "@cerebro/contracts/session-service";
 import type { BoundApproval } from "@cerebro/contracts/tool-service";
 import { ToolExecutor } from "@cerebro/contracts/tool-service";
+import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { channelConversation } from "@cerebro/db/schema/agents";
-import { agentAuthorityLayer } from "@cerebro/policy/agent-authority";
+import { SessionAgent as SessionHost } from "@cerebro/runtime/session-agent";
 import type { SessionHostConfiguration } from "@cerebro/runtime/session-agent";
 import { controlledToolLayer } from "@cerebro/tools/broker";
 import { createCapabilitySigner } from "@cerebro/tools/capability";
@@ -27,29 +35,32 @@ import { createProvider } from "@earendil-works/pi-ai/models";
 import { and, eq } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 
-import type { WorkerEnv } from "./env.server";
-import { databaseEffect, fromPortResult } from "./port-effect";
-import { createRuntimeRegistry } from "./runtime-configuration";
-import { SessionContent, sessionContentLayer } from "./runtime-content";
 import {
   checkContentDependencies,
   createCurrentAuthority,
   createCurrentAuthorization,
   createCurrentEntitlements,
+} from "../access";
+import type { WorkerEnv } from "../bindings";
+import { slackSettings } from "../channels";
+import {
+  GATEWAY_AUDIENCE,
   runtimeConfiguration,
-} from "./runtime-services";
-import { withDatabase } from "./services";
-import { authenticateSessionRequest } from "./session-proof.ts";
+  runtimeRegistry,
+} from "../config";
+import { SessionContent, sessionContentLayer } from "./content";
+import { authenticateSessionRequest } from "./proof";
+import { createSlackNotifier } from "./slack";
 
-export const GATEWAY_AUDIENCE = "cerebro-trusted-tool-gateway-v1";
 const readOptions = (): ReadOptions => ({ deadlineAt: Date.now() + 10_000 });
+const AUDIT_TIMEOUT_MS = 10_000;
 
 export const resolveSessionAddress = (
   env: WorkerEnv,
   name: string | undefined
 ) =>
-  databaseEffect(() =>
-    withDatabase(env, async (database): Promise<EventAddress> => {
+  tryAdapter(() =>
+    withDatabase(env, async (database) => {
       const identity: unknown = JSON.parse(name ?? "null");
       if (
         !Array.isArray(identity) ||
@@ -79,22 +90,25 @@ export const resolveSessionAddress = (
       if (!row || row.engine !== "pi-v1" || row.retiredAt) {
         throw new Error("The session conversation is retired or unavailable");
       }
-      return {
+      const address: EventAddress = {
         agentId: id.agent(row.agentId),
         conversationId: id.conversation(row.conversationId),
         organizationId: id.organization(row.organizationId),
         sessionId: id.session(row.sessionId),
       };
+      return { address, conversation: row };
     })
   );
 
 export const createRuntimeComposition = (
   env: WorkerEnv,
   storage: DurableObjectStorage,
-  address: EventAddress
+  address: EventAddress,
+  conversation?: typeof channelConversation.$inferSelect
 ): Effect.Effect<SessionHostConfiguration, ContractFailure> =>
   Effect.gen(function* composeSession() {
     const config = runtimeConfiguration(env);
+    const slack = slackSettings(env);
     storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS cerebro_pi_session (id INTEGER PRIMARY KEY CHECK (id=1), state TEXT NOT NULL)"
     );
@@ -108,7 +122,7 @@ export const createRuntimeComposition = (
           JSON.parse(existing.state).snapshot
         )
       : undefined;
-    const agent: AgentDefinition = yield* databaseEffect(() =>
+    const agent: AgentDefinition = yield* tryAdapter(() =>
       withDatabase(env, (database) =>
         createAgentRepository(database).get(
           address.organizationId,
@@ -126,7 +140,7 @@ export const createRuntimeComposition = (
         new InvalidInput({ reason: "The pinned model is not configured." })
       );
     }
-    const registry = createRuntimeRegistry(config);
+    const registry = runtimeRegistry(config);
     const registered = yield* Effect.forEach(registry.list(), (entry) =>
       bindRegisteredTool(entry)
     );
@@ -135,9 +149,9 @@ export const createRuntimeComposition = (
       Effect.provide(
         agentAuthorityLayer({
           checkSession: (request, options) =>
-            databaseEffect(() =>
+            tryAdapter(() =>
               withDatabase(env, async (database) => {
-                const [conversation] = await database
+                const [owned] = await database
                   .select()
                   .from(channelConversation)
                   .where(
@@ -155,10 +169,10 @@ export const createRuntimeComposition = (
                     )
                   );
                 if (
-                  !conversation ||
-                  conversation.engine !== "pi-v1" ||
-                  conversation.retiredAt ||
-                  conversation.ownerPrincipalId !== request.context.actor.id
+                  !owned ||
+                  owned.engine !== "pi-v1" ||
+                  owned.retiredAt ||
+                  owned.ownerPrincipalId !== request.context.actor.id
                 ) {
                   throw new Denied({
                     code: "unauthorized",
@@ -197,7 +211,7 @@ export const createRuntimeComposition = (
       requested: ContentDependencies,
       options: ReadOptions
     ) =>
-      databaseEffect(() =>
+      tryAdapter(() =>
         withDatabase(env, (database) =>
           checkContentDependencies(
             env,
@@ -233,7 +247,7 @@ export const createRuntimeComposition = (
         .flatMap((handoff) => handoff.approvals)
         .find((approval) => approval.operationId === operationId);
     };
-    const signer = yield* databaseEffect(() =>
+    const signer = yield* tryAdapter(() =>
       createCapabilitySigner(config.gatewaySigningKey)
     );
     const driver = createDynamicToolExecutorService({
@@ -253,7 +267,7 @@ export const createRuntimeComposition = (
           authority,
           checkApprover: (approval, invocation, options) =>
             Effect.gen(function* currentApprover() {
-              const context = yield* databaseEffect(() =>
+              const context = yield* tryAdapter(() =>
                 withDatabase(env, async (database) => {
                   const { contextByPrincipal } =
                     await import("@cerebro/channels/security");
@@ -327,15 +341,29 @@ export const createRuntimeComposition = (
       checkDependencies: dependencies,
       content: content.content,
       executor,
+      ...(slack?.botToken && conversation?.kind === "slack"
+        ? {
+            notify: createSlackNotifier({
+              address,
+              agent,
+              authority,
+              checkDependencies: dependencies,
+              conversation,
+              env,
+              slack,
+              storage,
+            }),
+          }
+        : {}),
       prepareInput: content.prepareInput,
       projectAudit: (event) =>
-        databaseEffect(async () => {
+        tryAdapter(async () => {
           const response = await env.AUDIT_SINK.fetch(
             new Request("https://audit.internal/project", {
               body: JSON.stringify(event),
               headers: { "Content-Type": "application/json" },
               method: "POST",
-              signal: AbortSignal.timeout(10_000),
+              signal: AbortSignal.timeout(AUDIT_TIMEOUT_MS),
             })
           );
           if (!response.ok) {
@@ -343,7 +371,17 @@ export const createRuntimeComposition = (
               reason: "Audit sink did not acknowledge the event",
             });
           }
-        }),
+        }).pipe(
+          // A sink call lost by the runtime may never settle, even when its
+          // signal aborts; the job must still return so it can retry.
+          Effect.timeoutOrElse({
+            duration: AUDIT_TIMEOUT_MS,
+            orElse: () =>
+              Effect.fail(
+                new Unavailable({ reason: "Audit sink did not answer in time" })
+              ),
+          })
+        ),
       provider: {
         beforeFetch: () => content.beforeFetch(),
         deadlineMs: modelConfig.deadlineMs,
@@ -374,3 +412,19 @@ export const createRuntimeComposition = (
       })),
     };
   });
+
+// One Durable Object hosts one conversation; its name encodes the address.
+export class SessionAgent extends SessionHost<WorkerEnv> {
+  protected override configure() {
+    return Effect.flatMap(
+      resolveSessionAddress(this.env, this.ctx.id.name),
+      ({ address, conversation }) =>
+        createRuntimeComposition(
+          this.env,
+          this.ctx.storage,
+          address,
+          conversation
+        )
+    );
+  }
+}

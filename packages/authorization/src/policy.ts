@@ -71,10 +71,7 @@ const exportResourceMatchesOrganization = (
   action: Action,
   resource: Resource
 ): boolean => {
-  if (
-    action !== "export" ||
-    (resource.kind !== "audit" && resource.kind !== "budget")
-  ) {
+  if (action !== "export" || resource.kind !== "audit") {
     return true;
   }
   return resource.id === resource.organizationId;

@@ -8,7 +8,6 @@ export type PortResult<Value> =
         | "unauthorized"
         | "expired-delegation"
         | "entitlement"
-        | "budget-exhausted"
         | "approval-required";
       readonly reason: string;
     }

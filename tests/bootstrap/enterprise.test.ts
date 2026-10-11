@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import type { WorkerEnv } from "../../apps/server/src/env.server";
+import type { WorkerEnv } from "../../apps/server/src/bindings";
 import app from "../../apps/server/src/index";
 
 const environment: WorkerEnv = {

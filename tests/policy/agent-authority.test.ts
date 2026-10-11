@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { Effect, Fiber } from "effect";
 import { z } from "zod";
 
+import { createAgentAuthority } from "../../packages/authorization/src/agent-authority.ts";
 import type { AuthorityRequest } from "../../packages/contracts/src/authority-service.ts";
 import {
   Denied,
@@ -13,15 +14,6 @@ import {
 } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { AgentDefinition } from "../../packages/contracts/src/session.ts";
-import {
-  createAuthorityFake,
-  createToolFake,
-} from "../../packages/contracts/src/testing/effect-fakes.ts";
-import {
-  allowedContext,
-  userEvent,
-  fixtureRunId,
-} from "../../packages/contracts/src/testing/fixtures.ts";
 import type {
   BoundApproval,
   BoundCapability,
@@ -29,13 +21,21 @@ import type {
   ToolExecutor,
 } from "../../packages/contracts/src/tool-service.ts";
 import { digestToolArguments } from "../../packages/contracts/src/tools.ts";
-import { createAgentAuthority } from "../../packages/policy/src/agent-authority.ts";
 import { createControlledToolExecutor } from "../../packages/tools/src/broker.ts";
 import type { ControlledToolDependencies } from "../../packages/tools/src/broker.ts";
 import {
   bindRegisteredTool,
   createToolRegistry,
 } from "../../packages/tools/src/registry.ts";
+import {
+  createAuthorityFake,
+  createToolFake,
+} from "../support/effect-fakes.ts";
+import {
+  allowedContext,
+  userEvent,
+  fixtureRunId,
+} from "../support/fixtures.ts";
 
 const clock = () => 1_800_000_000_000;
 const options = { deadlineAt: clock() + 10_000 };

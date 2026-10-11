@@ -1,6 +1,6 @@
 import type { WorkerLoader } from "@cerebro/tools/dynamic-worker";
 
-import type { SessionAgent } from "./deployed-session-agent";
+import type { SessionAgent } from "./session/agent";
 
 export interface WorkerEnv {
   readonly [binding: string]: unknown;
@@ -10,7 +10,6 @@ export interface WorkerEnv {
   ENTERPRISE_IDENTITY_JSON?: string;
   CORS_ORIGIN: string;
   DEPLOY_MODE: "local" | "production";
-  CHANNEL_DISPATCHER: DurableObjectNamespace;
   CHANNEL_ORGANIZATION_ID?: string;
   SLACK_CHANNEL_JSON?: string;
   SESSION: DurableObjectNamespace<SessionAgent>;

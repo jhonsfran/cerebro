@@ -1,21 +1,22 @@
 import { AuthorityService } from "@cerebro/contracts/authority-service";
 import type { EventAddress } from "@cerebro/contracts/events";
 import type { DurableHandoff } from "@cerebro/contracts/execution";
-import { InvalidInput, Unavailable } from "@cerebro/contracts/failures";
+import {
+  InvalidInput,
+  Unavailable,
+  fromPortResult,
+  tryAdapter,
+} from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { AgentDefinition } from "@cerebro/contracts/session";
 import { DomainSnapshot } from "@cerebro/contracts/session-service";
+import { withDatabase } from "@cerebro/db";
 import { Context, Effect, Layer, Schema } from "effect";
 import { z } from "zod";
 
-import type { WorkerEnv } from "./env.server";
-import { databaseEffect, fromPortResult } from "./port-effect";
-import {
-  checkContentDependencies,
-  createMemoryServices,
-} from "./runtime-services";
-import { withDatabase } from "./services";
-import { contextSchema } from "./session-proof.ts";
+import { checkContentDependencies, createMemoryServices } from "../access";
+import type { WorkerEnv } from "../bindings";
+import { contextSchema } from "./proof";
 
 const preparedSchema = z.strictObject({
   citations: z.array(
@@ -102,7 +103,7 @@ export const createRuntimeContent = (
           options
         );
       }
-      yield* databaseEffect(() =>
+      yield* tryAdapter(() =>
         withDatabase(env, (database) =>
           checkContentDependencies(
             env,
@@ -180,7 +181,7 @@ export const createRuntimeContent = (
             ? event.payload.text
             : event.payload.task;
         const { context } = handoff.submission.event;
-        const hits = yield* databaseEffect(() =>
+        const hits = yield* tryAdapter(() =>
           withDatabase(env, (database) =>
             createMemoryServices(env, database).memory.retrieve(
               {
@@ -238,7 +239,7 @@ export const createRuntimeContent = (
             )
             .toArray()
         );
-        yield* databaseEffect(() => storage.sync());
+        yield* tryAdapter(() => storage.sync());
         return prepared.text;
       }),
   };

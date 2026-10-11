@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 
 import { Effect } from "effect";
 
-import { createProductHandler } from "../../packages/api/src/routers/conversations";
-import { drainChannelWork } from "../../packages/channels/src/drain";
+import { createApiHandler } from "../../packages/api/src/handler";
 import { runEffect } from "../../packages/channels/src/security";
 import { createChannelService } from "../../packages/channels/src/service";
 import { Unavailable } from "../../packages/contracts/src/failures";
@@ -24,7 +23,6 @@ import {
 import {
   array,
   createTestProduct,
-  domainSnapshot,
   object,
   string,
   TEST_BOOTSTRAP_TOKEN,
@@ -155,18 +153,6 @@ test("agent versions, message replay, SSE reconnect, citations, approval, and re
     ["user", "tool", "output", "citation", "run"]
   );
   assert.equal(object(view.snapshot).address !== undefined, true);
-  const cursor = string(items[1]?.cursor);
-  const stream = await app.request(
-    `/api/product/conversations/${conversationId}/events`,
-    "GET",
-    undefined,
-    "test-owner",
-    { "Last-Event-ID": cursor }
-  );
-  assert.equal(stream.headers.get("Content-Type"), "text/event-stream");
-  const streamed = await stream.text();
-  assert.equal(streamed.includes(`id: ${cursor}\n`), false);
-  assert.equal(streamed.includes('"type":"citation"'), true);
   const citation = items.find((item) => item.type === "citation");
   const verifiedResult10 = await app.request(string(citation?.href));
   assert.equal(verifiedResult10.status, 200);
@@ -227,96 +213,6 @@ test("agent versions, message replay, SSE reconnect, citations, approval, and re
   assert.equal(verifiedResult17.status, 403);
 });
 
-test("revoked subscriptions become idle so later healthy subscriptions progress", async () => {
-  const app = await createTestProduct();
-  const verifiedResult18 = await app.install();
-  const ownerPrincipalId = string(verifiedResult18.principalId);
-  const verifiedResult19 = await app.createAgent();
-  const agentId = string(verifiedResult19.agentId);
-  const target = await app.options.withDatabase((db) =>
-    createIdentityRepository(db).provisionHumanPrincipal(
-      app.options.organizationId,
-      "test-other"
-    )
-  );
-  await app.options.withDatabase(async (db) => {
-    const identity = createIdentityRepository(db);
-    await identity.setManualGrant(
-      app.options.organizationId,
-      target.id,
-      { action: "read", resourceId: agentId, resourceKind: "agent" },
-      true
-    );
-    await identity.setManualGrant(
-      app.options.organizationId,
-      ownerPrincipalId,
-      { action: "read", resourceId: agentId, resourceKind: "agent" },
-      false
-    );
-    await db.insert(channelConversation).values(
-      Array.from({ length: 25 }, (_, index) => ({
-        agentId,
-        bindingKey: `denied-binding-${index}`,
-        conversationId: `denied-${index}`,
-        engine: "pi-v1" as const,
-        kind: "web" as const,
-        lastProjectedAt: new Date(0),
-        organizationId: app.options.organizationId,
-        ownerPrincipalId,
-        projectionState: "active" as const,
-        sessionId: `denied-session-${index}`,
-      }))
-    );
-    await db.insert(channelConversation).values({
-      agentId,
-      bindingKey: "healthy-binding",
-      conversationId: "healthy",
-      engine: "pi-v1",
-      kind: "web",
-      lastProjectedAt: new Date(1),
-      organizationId: app.options.organizationId,
-      ownerPrincipalId: target.id,
-      projectionState: "active",
-      sessionId: "healthy-session",
-    });
-  });
-  const options = {
-    ...app.options,
-    sessions: (db: Parameters<typeof createFixtureSessionService>[0]) => ({
-      ...createFixtureSessionService(db, app.options),
-      inspect: (
-        address: Parameters<
-          ReturnType<typeof createFixtureSessionService>["inspect"]
-        >[0]
-      ) =>
-        Effect.succeed(
-          domainSnapshot(address, {
-            revision: 1,
-            runs: [
-              {
-                completedAt: Date.now(),
-                runId: id.run("healthy-run"),
-                state: "completed",
-              },
-            ],
-          })
-        ),
-    }),
-  };
-  await drainChannelWork(options);
-  await drainChannelWork(options);
-  await app.options.withDatabase(async (db) => {
-    const rows = await db.select().from(channelConversation);
-    assert.equal(
-      rows.every((row) => row.projectionState === "idle"),
-      true
-    );
-    const items = await db.select().from(channelItem);
-    assert.equal(items.length, 1);
-    assert.equal(items[0]?.conversationId, "healthy");
-  });
-});
-
 test("stale access operation replay cannot restore a later revoked grant", async () => {
   const app = await createTestProduct();
   const setup = await app.install();
@@ -369,7 +265,7 @@ test("an unavailable session rejects a message and a client retry admits it once
   const conversationId = string(object(await response.json()).conversationId);
   let available = false;
   const submissions: string[] = [];
-  const handler = createProductHandler({
+  const handler = createApiHandler({
     ...app.options,
     sessions: (db) => {
       const fixture = createFixtureSessionService(db, app.options);
@@ -685,15 +581,14 @@ test("submission mode is part of the event identity", async () => {
       { status: 409 }
     );
   });
-  await drainChannelWork(app.options);
-  await app.options.withDatabase(async (db) => {
-    const records = await db
-      .select()
-      .from(channelItem)
-      .where(eq(channelItem.conversationId, conversationId));
-    const message = records.find((entry) => entry.item.type === "user")?.item;
-    assert.equal(message?.type === "user" ? message.mode : undefined, "steer");
-  });
+  const read = await app.request(
+    `/api/product/conversations/${conversationId}`
+  );
+  const view = object(await read.json());
+  const message = array(view.items)
+    .map(object)
+    .find((entry) => entry.type === "user");
+  assert.equal(message?.mode, "steer");
 });
 
 test("fixture approval denial keeps its decision and operation identity in the domain snapshot", async () => {
@@ -761,4 +656,58 @@ test("fixture approval denial keeps its decision and operation identity in the d
     assert.equal(snapshot.tools[0]?.state, "cancelled");
     assert.equal(snapshot.outputs.length, 0);
   });
+});
+
+test("approvals and cancels refuse fields they do not define", async () => {
+  const app = await createTestProduct();
+  await app.install();
+  const agent = await app.createAgent();
+  const created = await app.request("/api/product/conversations", "POST", {
+    agentId: string(agent.agentId),
+    operationId: "strict-inputs",
+  });
+  const conversationId = string(object(await created.json()).conversationId);
+  const path = `/api/product/conversations/${conversationId}`;
+  const sent = await app.request(`${path}/messages`, "POST", {
+    eventId: "strict-approval",
+    text: "Request approval before continuing.",
+  });
+  const runId = string(object(object(await sent.json()).receipt).runId);
+  const approval = await app.request(
+    `${path}/approvals/${encodeURIComponent(`approval:${runId}`)}`,
+    "POST",
+    {
+      arguments: { value: "changed" },
+      decision: "allow",
+      operationId: "strict-approve",
+      runId,
+    }
+  );
+  assert.equal(approval.status, 422);
+  const cancel = await app.request(
+    `${path}/runs/${encodeURIComponent(runId)}/cancel`,
+    "POST",
+    { operationId: "strict-cancel", text: "changed" }
+  );
+  assert.equal(cancel.status, 422);
+});
+
+test("only product and Slack request bodies have the 100 KB limit", async () => {
+  const app = await createTestProduct();
+  const large = "x".repeat(150_000);
+  const product = await app.request("/api/product/agents", "POST", {
+    instructions: large,
+  });
+  assert.equal(product.status, 413);
+  const rpc = await app.handler(
+    new Request("http://cerebro.test/rpc/identity/currentPrincipal", {
+      body: JSON.stringify({ json: { organizationId: large } }),
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-user": "test-owner",
+      },
+      method: "POST",
+    })
+  );
+  assert.notEqual(rpc.status, 413);
 });

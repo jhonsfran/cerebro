@@ -1,6 +1,6 @@
 # Runtime configuration
 
-`runtime.json` configures the models, tools, and storage that one installation uses. `deploy/bootstrap.mjs` reads it from the secrets directory, validates it with `parseRuntimeConfiguration` in `apps/server/src/runtime-configuration.ts`, and publishes it to the Worker as `RUNTIME_CONFIG_JSON`. A change takes effect the next time bootstrap runs.
+`runtime.json` configures the models, tools, and storage that one installation uses. `deploy/bootstrap.mjs` reads it from the secrets directory, validates it with `parseRuntimeConfiguration` in `apps/server/src/config.ts`, and publishes it to the Worker as `RUNTIME_CONFIG_JSON`. The Worker parses it once per isolate. A change takes effect the next time bootstrap runs.
 
 In local mode, `pnpm start` writes this file from the model settings in `.env` (`deploy/local-runtime.mjs`). In production you supply it. The file contains credentials. Do not commit it.
 

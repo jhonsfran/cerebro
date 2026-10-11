@@ -2,7 +2,7 @@
 
 Cerebro gives a company one controlled place where people and agents use company data and do work. The company keeps its identities, permissions, knowledge, approvals, and records. Model providers only supply inference.
 
-Chat is the first way in. Slack direct messages use the same operations, and other channels and agents can use them later. Changing the model, the agent engine, or the host must not require a new implementation of company policy. The [architecture decision record](adr-0001-replaceable-application-boundaries.md) states that rule and the dependency rules that follow from it.
+Chat is the first way in. Slack direct messages use the same operations, and other channels and agents can use them later. [How to connect Slack](../operations/slack.md) explains the Slack app. Changing the model, the agent engine, or the host must not require a new implementation of company policy. The [architecture decision record](adr-0001-replaceable-application-boundaries.md) states that rule and the dependency rules that follow from it.
 
 ## The parts
 
@@ -10,6 +10,7 @@ Chat is the first way in. Slack direct messages use the same operations, and oth
 flowchart TD
     Web[Web app] --> API[API Worker: Hono and oRPC]
     Slack[Slack direct messages] --> API
+    Session -. replies and approval buttons .-> Slack
     API --> Session[SessionAgent Durable Object]
     Session --> Policy[Current company policy]
     Session --> Pi[Pi Durable agent loop]
@@ -25,7 +26,25 @@ Everything server-side runs as one Worker on celld, a self-hosted Workers runtim
 
 Each conversation is one `SessionAgent` Durable Object (`packages/runtime/src/session-agent.ts`) with one Pi Durable conversation inside it. Pi runs the agent loop: it calls the model, runs tools, queues and steers follow-up messages, and resumes work after a crash. Cerebro wraps that loop with company rules. Every model request and every tool call checks current permissions first, and a write waits for a person to approve it.
 
-The browser and Slack never talk to Pi. The Durable Object emits Cerebro observation frames, the API checks access and forwards the bytes, and the web app applies the frames to one projection of the conversation.
+The browser and Slack never talk to Pi. The Durable Object emits Cerebro observation frames, the API checks access and forwards the bytes, and the web app applies the frames to one projection of the conversation. For a Slack conversation, the same Durable Object posts progress, answers, and approval buttons into the thread after each commit, once it has checked that the recipient is still linked and may still read the content.
+
+## Where the code lives
+
+| Folder | What it holds |
+| --- | --- |
+| `apps/server/src` | The API Worker. `index.ts` mounts the routes in `routes/`: `health.ts`, `auth.ts`, and `api.ts` for everything else. |
+| `apps/server/src/session` | The conversation Durable Object: `agent.ts` composes it, `content.ts` prepares model input from company memory, `client.ts` calls it from the API, and `slack.ts` posts its Slack replies. |
+| `apps/server/src` (other files) | `config.ts` parses `runtime.json`, `access.ts` checks current permissions in PostgreSQL, `channels.ts` wires the product API to them, and `gateways.ts` holds the tool gateway and audit sink entrypoints. |
+| `apps/web` | The web app. |
+| `packages/api` | The one API router (product, identity, and memory procedures) and the HTTP handler that serves it as `/rpc` and `/api`. |
+| `packages/channels` | Product operations shared by web and Slack (`service.ts`), Slack events and buttons (`slack.ts`), and Slack replies (`slack-replies.ts`, `slack-api.ts`). |
+| `packages/runtime` | The session host on Pi Durable: admission, approvals, tool memos, and recovery. |
+| `packages/tools` | The tool registry, the isolated tool executor and gateway, and the MCP transport. |
+| `packages/authorization` | Identity grants and the agent authority that every model request and tool call checks. |
+| `packages/contracts` | Types and Effect services shared by the packages. |
+| `packages/db`, `memory`, `auth`, `ui` | PostgreSQL schema and repositories, company memory, Better Auth, and shared UI components. |
+| `tests` | Tests by area. `tests/support` holds the shared fakes and fixtures. |
+| `deploy` | The scripts that build, start, back up, and cut over a stack. |
 
 ## Who owns which state
 
@@ -36,6 +55,7 @@ The browser and Slack never talk to Pi. The Durable Object emits Cerebro observa
 | Tool dispatch markers and recorded tool outcomes | Pi task memos |
 | Product run state, approvals, and the canonical answer history | Cerebro's session store, in the same SQLite |
 | The browser transcript and Slack replies | Projections. They never admit work or decide that a run finished. |
+| What was posted to a Slack thread | The session's SQLite, so a retry edits a message instead of posting it again |
 | Source documents and artifacts | Artifact MinIO |
 
 No transaction spans these stores. Each fact has one owner, and everything else reads from it.
@@ -69,6 +89,5 @@ There are two modes. `local` accepts HTTP and private hosts for models and conne
 | Stage | Outcome |
 | --- | --- |
 | Stage 2 | Distinct internal and external agent identity, delegation, argument-derived resource grants, a qualified production write connector, and capability administration |
-| Stage 3 | Slack through the selected channel adapter, with the same session commands, policy, approvals, and audience checks |
+| Stage 3 | Slack beyond direct messages: OAuth installation for several workspaces, streamed partial answers, and channel answers with audience checks |
 | Stage 4 | A company workflow that requires native Node or Python tools, browser review, or multiple agents |
-| External metering | A selected vendor binds the metering port and proves reservation, denial, idempotency, settlement, release, and outage behavior |

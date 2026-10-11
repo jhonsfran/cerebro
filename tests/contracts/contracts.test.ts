@@ -10,7 +10,14 @@ import {
   classifyRetry,
   preflightEffect,
 } from "../../packages/contracts/src/port.ts";
-import { createFixtureAdapters } from "../../packages/contracts/src/testing/adapters.ts";
+import {
+  approvalMatches,
+  canonicalToolArguments,
+  digestToolArguments,
+  toolCapabilityMatches,
+} from "../../packages/contracts/src/tools.ts";
+import type { Approval } from "../../packages/contracts/src/tools.ts";
+import { createFixtureAdapters } from "../support/adapters.ts";
 import {
   activeDeniedContext,
   allowedContext,
@@ -24,14 +31,7 @@ import {
   unknownOutcomeCapability,
   unknownOutcomeInvocation,
   userEvent,
-} from "../../packages/contracts/src/testing/fixtures.ts";
-import {
-  approvalMatches,
-  canonicalToolArguments,
-  digestToolArguments,
-  toolCapabilityMatches,
-} from "../../packages/contracts/src/tools.ts";
-import type { Approval } from "../../packages/contracts/src/tools.ts";
+} from "../support/fixtures.ts";
 
 test("a disabled principal and an expired delegation cannot enter a session", () => {
   assert.equal(

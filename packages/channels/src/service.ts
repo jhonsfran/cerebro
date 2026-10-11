@@ -8,7 +8,6 @@ import type {
   ExecutionContext,
   SessionReceipt,
 } from "@cerebro/contracts";
-import type { ContentDependencies } from "@cerebro/contracts/session";
 import type { SubmissionMode } from "@cerebro/contracts/session-service";
 import type { Database } from "@cerebro/db";
 import {
@@ -30,8 +29,9 @@ import {
   identityPolicyRevision,
   identityPrincipal,
 } from "@cerebro/db/schema/identity";
-import { and, asc, eq, gt, max, sql } from "drizzle-orm";
+import { and, asc, eq, gt, sql } from "drizzle-orm";
 
+import { snapshotItems } from "./projection";
 import {
   authorize,
   authorizeContent,
@@ -46,6 +46,7 @@ import {
   ChannelError,
   EFFECT_DEADLINE_MS,
   INSTALLATION_AGENT_PREFIX,
+  SESSION_DEADLINE_MS,
 } from "./types";
 import type {
   AccessAction,
@@ -54,6 +55,7 @@ import type {
 } from "./types";
 
 export type Conversation = typeof channelConversation.$inferSelect;
+const PAGE_SIZE = 200;
 export interface AgentInput {
   readonly operationId: string;
   readonly name: string;
@@ -92,6 +94,7 @@ export const createChannelService = (
 ) => {
   const now = options.now ?? Date.now;
   const readOptions = () => ({ deadlineAt: now() + EFFECT_DEADLINE_MS });
+  const sessionOptions = () => ({ deadlineAt: now() + SESSION_DEADLINE_MS });
   const current = (userId: string) =>
     principalContext(database, options.organizationId, userId);
   const requireConversation = async (
@@ -203,7 +206,6 @@ export const createChannelService = (
               "agent",
               `${INSTALLATION_AGENT_PREFIX}${options.organizationId}`,
             ],
-            ["read", "budget", options.organizationId],
             ["read", "audit", options.organizationId],
           ] as const
         ).map(([action, resourceKind, resourceId]) => ({
@@ -640,21 +642,12 @@ export const createChannelService = (
       options.sessions(database).submit(
         { event, mode, type: "submit" },
         {
-          ...readOptions(),
+          ...sessionOptions(),
           operationId: id.operation(`submit:${eventId}`),
           requestDigest: id.digest(contentDigest),
         }
       )
     );
-    await database
-      .update(channelConversation)
-      .set({
-        activityVersion: sql`${channelConversation.activityVersion} + 1`,
-        projectionState: "active",
-      })
-      .where(
-        eq(channelConversation.conversationId, conversation.conversationId)
-      );
     return receipt;
   };
   const submit = async (
@@ -673,12 +666,34 @@ export const createChannelService = (
       text,
       mode
     );
-    const [latest] = await database
-      .select({ cursor: max(channelItem.cursor) })
-      .from(channelItem)
-      .where(eq(channelItem.conversationId, conversationId));
-    return { cursor: String(latest?.cursor ?? 0), receipt };
+    return { cursor: "0", receipt };
   };
+  // Every item counts, not only one page: one check covers the union of the
+  // sources and tools behind the whole conversation.
+  const authorizeSnapshot = async (
+    context: ExecutionContext,
+    snapshot: Parameters<typeof snapshotItems>[0]
+  ) => {
+    const sourceIds = new Set<string>();
+    const toolIds = new Set<string>();
+    for (const { item } of snapshotItems(snapshot)) {
+      for (const sourceId of item.dependencies?.sourceIds ?? []) {
+        sourceIds.add(sourceId);
+      }
+      for (const toolId of item.dependencies?.toolIds ?? []) {
+        toolIds.add(toolId);
+      }
+    }
+    await authorizeContent(database, options, context, {
+      dependencies: {
+        sourceIds: [...sourceIds].map(id.source),
+        toolIds: [...toolIds],
+      },
+      type: "output",
+    });
+  };
+  // A live conversation is read from its session; only a retired one reads the
+  // history that the previous engine stored in channel_item.
   const readConversation = async (
     userId: string,
     conversationId: string,
@@ -694,6 +709,26 @@ export const createChannelService = (
         "The stream cursor is invalid."
       );
     }
+    if (row.engine === "pi-v1" && !row.retiredAt) {
+      const snapshot = await runEffect(
+        options
+          .sessions(database)
+          .inspect(conversationAddress(row), context, sessionOptions())
+      );
+      await authorizeSnapshot(context, snapshot);
+      const items: ChannelPresentationItem[] = snapshotItems(snapshot)
+        .map((entry, index) => ({ ...entry.item, cursor: String(index + 1) }))
+        .slice(offset, offset + PAGE_SIZE);
+      return {
+        agentId: row.agentId,
+        conversationId,
+        cursor: items.at(-1)?.cursor ?? cursor ?? "0",
+        items,
+        mode: options.mode,
+        sessionId: row.sessionId,
+        snapshot,
+      };
+    }
     const records = await database
       .select()
       .from(channelItem)
@@ -705,92 +740,70 @@ export const createChannelService = (
         )
       )
       .orderBy(asc(channelItem.cursor))
-      .limit(200);
+      .limit(PAGE_SIZE);
     const items: ChannelPresentationItem[] = [];
     for (const record of records) {
-      await authorize(database, options, context, "read", "agent", row.agentId);
       await authorizeContent(database, options, context, record.item);
       items.push({ ...record.item, cursor: String(record.cursor) });
     }
-    const retired = row.engine !== "pi-v1" || Boolean(row.retiredAt);
-    const historicalRuns = retired
-      ? await database
-          .select({ item: channelItem.item })
-          .from(channelItem)
-          .where(
-            and(
-              eq(channelItem.organizationId, options.organizationId),
-              eq(channelItem.conversationId, conversationId),
-              sql`${channelItem.item}->>'type' = 'run'`
-            )
-          )
-          .orderBy(asc(channelItem.cursor))
-      : [];
-    for (const record of historicalRuns) {
-      await authorizeContent(database, options, context, record.item);
-    }
-    const snapshot = retired
-      ? {
-          address: conversationAddress(row),
-          agentVersion: 1,
-          runs: [
-            ...new Map(
-              historicalRuns.flatMap((entry) =>
-                entry.item.type === "run"
-                  ? [[entry.item.run.runId, entry.item.run] as const]
-                  : []
-              )
-            ).values(),
-          ],
-        }
-      : await runEffect(
-          options
-            .sessions(database)
-            .inspect(conversationAddress(row), context, readOptions())
-        );
-    return {
-      agentId: row.agentId,
-      conversationId,
-      cursor: items.at(-1)?.cursor ?? cursor ?? "0",
-      items,
-      mode: retired ? "retired" : options.mode,
-      sessionId: row.sessionId,
-      snapshot,
-    };
-  };
-  const chatAccess = async (userId: string, conversationId: string) => {
-    const context = await current(userId);
-    const row = await requireConversation(conversationId, context, "read");
-    requireActive(row);
-    const records = await database
+    const historicalRuns = await database
       .select({ item: channelItem.item })
       .from(channelItem)
       .where(
         and(
           eq(channelItem.organizationId, options.organizationId),
-          eq(channelItem.conversationId, conversationId)
+          eq(channelItem.conversationId, conversationId),
+          sql`${channelItem.item}->>'type' = 'run'`
         )
-      );
-    // One agent check and one check per distinct dependency cover every item.
-    const sourceIds = new Set<ContentDependencies["sourceIds"][number]>();
-    const toolIds = new Set<ContentDependencies["toolIds"][number]>();
-    for (const { item } of records) {
-      if (!item.dependencies) {
-        await authorizeContent(database, options, context, item);
-        continue;
-      }
-      for (const sourceId of item.dependencies.sourceIds) {
-        sourceIds.add(sourceId);
-      }
-      for (const toolId of item.dependencies.toolIds) {
-        toolIds.add(toolId);
-      }
+      )
+      .orderBy(asc(channelItem.cursor));
+    for (const record of historicalRuns) {
+      await authorizeContent(database, options, context, record.item);
     }
-    await authorize(database, options, context, "read", "agent", row.agentId);
-    await authorizeContent(database, options, context, {
-      dependencies: { sourceIds: [...sourceIds], toolIds: [...toolIds] },
-      type: "output",
-    });
+    return {
+      agentId: row.agentId,
+      conversationId,
+      cursor: items.at(-1)?.cursor ?? cursor ?? "0",
+      items,
+      mode: "retired" as const,
+      sessionId: row.sessionId,
+      snapshot: {
+        address: conversationAddress(row),
+        agentVersion: 1,
+        runs: [
+          ...new Map(
+            historicalRuns.flatMap((entry) =>
+              entry.item.type === "run"
+                ? [[entry.item.run.runId, entry.item.run] as const]
+                : []
+            )
+          ).values(),
+        ],
+      },
+    };
+  };
+  // Owner and agent access, from PostgreSQL only. An open observation repeats
+  // this check; the session stream rechecks content access on its own.
+  const conversationAccess = async (userId: string, conversationId: string) => {
+    const context = await current(userId);
+    const row = await requireConversation(conversationId, context, "read");
+    requireActive(row);
+    return { address: conversationAddress(row), context };
+  };
+  // The session's inspect checks the agent and every source and tool result
+  // the conversation holds; the same union is checked here as well.
+  const chatAccess = async (userId: string, conversationId: string) => {
+    const context = await current(userId);
+    const row = await requireConversation(conversationId, context, "read");
+    requireActive(row);
+    await authorizeSnapshot(
+      context,
+      await runEffect(
+        options
+          .sessions(database)
+          .inspect(conversationAddress(row), context, sessionOptions())
+      )
+    );
     return { address: conversationAddress(row), context };
   };
   const listConversations = async (userId: string) => {
@@ -825,15 +838,14 @@ export const createChannelService = (
     }
     return { conversations };
   };
-  const approve = async (
-    userId: string,
+  const approveAs = async (
+    context: ExecutionContext,
     conversationId: string,
     approvalId: string,
     operationId: string,
     runId: string,
     decision: "allow" | "deny"
   ) => {
-    const context = await current(userId);
     const row = await requireConversation(conversationId, context, "approve");
     requireActive(row);
     const command = {
@@ -847,7 +859,7 @@ export const createChannelService = (
     return {
       run: await runEffect(
         options.sessions(database).approve(command, {
-          ...readOptions(),
+          ...sessionOptions(),
           operationId: id.operation(
             `approve:${context.actor.id}:${operationId}`
           ),
@@ -856,6 +868,22 @@ export const createChannelService = (
       ),
     };
   };
+  const approve = async (
+    userId: string,
+    conversationId: string,
+    approvalId: string,
+    operationId: string,
+    runId: string,
+    decision: "allow" | "deny"
+  ) =>
+    approveAs(
+      await current(userId),
+      conversationId,
+      approvalId,
+      operationId,
+      runId,
+      decision
+    );
   const cancel = async (
     userId: string,
     conversationId: string,
@@ -874,7 +902,7 @@ export const createChannelService = (
     return {
       run: await runEffect(
         options.sessions(database).cancel(command, {
-          ...readOptions(),
+          ...sessionOptions(),
           operationId: id.operation(
             `cancel:${context.actor.id}:${operationId}`
           ),
@@ -964,10 +992,12 @@ export const createChannelService = (
   return {
     admit,
     approve,
+    approveAs,
     audit,
     cancel,
     catalog,
     chatAccess,
+    conversationAccess,
     createConversation,
     getAgent,
     history,

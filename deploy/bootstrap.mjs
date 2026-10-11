@@ -7,7 +7,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 
-import { parseRuntimeConfiguration } from "../apps/server/src/runtime-configuration.ts";
+import { parseRuntimeConfiguration } from "../apps/server/src/config.ts";
 import { parseEnterpriseIdentityJSON } from "../packages/auth/src/enterprise.ts";
 
 const directory = process.env.CEREBRO_SECRETS_DIR ?? "/run/cerebro-secrets";
@@ -167,14 +167,12 @@ const config = {
   compatibility_date: "2026-09-28",
   compatibility_flags: ["nodejs_compat"],
   durable_objects: {
-    bindings: [
-      { class_name: "ChannelDispatcher", name: "CHANNEL_DISPATCHER" },
-      { class_name: "SessionAgent", name: "SESSION" },
-    ],
+    bindings: [{ class_name: "SessionAgent", name: "SESSION" }],
   },
   main: "apps/server/src/index.ts",
   // Applied migration tags are history. celld cannot delete classes, so the
-  // retired SessionFixture and GatewayJournal stay named here but unexported.
+  // retired SessionFixture, ChannelDispatcher, and GatewayJournal stay named
+  // here but unexported.
   migrations: [
     { new_sqlite_classes: ["SessionFixture"], tag: "v1" },
     { new_sqlite_classes: ["ChannelDispatcher"], tag: "v2" },

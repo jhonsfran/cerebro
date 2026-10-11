@@ -40,20 +40,6 @@ import type {
   DomainSnapshot,
 } from "../../packages/contracts/src/session-service.ts";
 import type { ContentDependencies } from "../../packages/contracts/src/session.ts";
-import {
-  createAuthorityFake,
-  createToolFake,
-} from "../../packages/contracts/src/testing/effect-fakes.ts";
-import {
-  allowedContext,
-  userEvent,
-  unknownOutcomeInvocation,
-  unknownOutcomeCapability,
-} from "../../packages/contracts/src/testing/fixtures.ts";
-import {
-  createEngineFake,
-  createStoreFake,
-} from "../../packages/contracts/src/testing/session-fakes.ts";
 import type {
   BoundApproval,
   ToolExecutor,
@@ -102,6 +88,17 @@ import {
   sessionServiceLayer,
 } from "../../packages/runtime/src/session-service.ts";
 import type { SessionCoordinatorRuntime } from "../../packages/runtime/src/session-service.ts";
+import {
+  createAuthorityFake,
+  createToolFake,
+} from "../support/effect-fakes.ts";
+import {
+  allowedContext,
+  userEvent,
+  unknownOutcomeInvocation,
+  unknownOutcomeCapability,
+} from "../support/fixtures.ts";
+import { createEngineFake, createStoreFake } from "../support/session-fakes.ts";
 
 const address = {
   agentId: userEvent.agentId,

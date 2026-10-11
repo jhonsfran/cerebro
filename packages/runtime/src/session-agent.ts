@@ -75,6 +75,12 @@ export interface SessionHostConfiguration {
   readonly projectAudit?: (
     event: AuditProjection
   ) => Effect.Effect<void, ContractFailure>;
+  // Runs after durable commits with the current snapshot, for example to post
+  // a channel reply. It must be idempotent: a persisted job retries a failure,
+  // and several commits may share one call.
+  readonly notify?: (
+    snapshot: DomainSnapshot
+  ) => Effect.Effect<void, ContractFailure>;
   readonly provider: Omit<ControlledProviderConfiguration, "authorize">;
   readonly tools: readonly PiRegisteredTool[];
   readonly authenticate: (
@@ -98,6 +104,10 @@ export interface SessionHostConfiguration {
 }
 
 const hostOptions = () => ({ deadlineAt: Date.now() + 30_000 });
+// Lifecycle runs one object's due jobs one at a time, so a host job must return
+// quickly: Pi's own wake job resumes tools and approvals behind it. A repair
+// pass that finds work still pending reschedules instead of waiting.
+const REPAIR_PASS_MS = 2000;
 const validApproval = (command: ApprovalCommand): boolean =>
   typeof command?.approvalId === "string" &&
   typeof command.runId === "string" &&
@@ -132,6 +142,8 @@ export class SessionAgent<
   private readonly hostScope = Scope.makeUnsafe();
   private piStorage: Storage | undefined;
   private auditWork: Promise<void> | undefined;
+  private notifyWork: Promise<void> | undefined;
+  private notifyAgain = false;
   private projectionWork: Promise<LifecycleJobOutcome> | undefined;
   private initialized:
     | Promise<
@@ -234,16 +246,24 @@ export class SessionAgent<
             );
           }),
         authorizeMetadata,
-        onCommit: configuration.projectAudit
-          ? () =>
-              Effect.tryPromise({
-                catch: () =>
-                  new Unavailable({
-                    reason: "Audit retry could not be persisted",
-                  }),
-                try: () => this.scheduleAudit(),
-              })
-          : undefined,
+        onCommit:
+          configuration.projectAudit || configuration.notify
+            ? () =>
+                Effect.tryPromise({
+                  catch: () =>
+                    new Unavailable({
+                      reason: "Commit follow-up could not be persisted",
+                    }),
+                  try: async () => {
+                    if (configuration.projectAudit) {
+                      await this.scheduleAudit();
+                    }
+                    if (configuration.notify) {
+                      await this.scheduleNotify();
+                    }
+                  },
+                })
+            : undefined,
       });
       if (
         canonicalToolArguments(store.pinnedAgent()) !==
@@ -503,6 +523,53 @@ export class SessionAgent<
     return this.auditWork;
   }
 
+  private async scheduleNotify(): Promise<void> {
+    await this.lifecycle.jobs.push({
+      fn: "cerebro-notify",
+      id: "cerebro-notify",
+      recoveryLoop: true,
+      singleflight: true,
+      time: Date.now() + 1000,
+    });
+    await this.ctx.storage.sync();
+    this.ctx.waitUntil(
+      (async () => {
+        try {
+          await this.drainNotify();
+        } catch {
+          // The persisted Lifecycle job retries the notification.
+        }
+      })()
+    );
+  }
+
+  // One notification runs at a time; a commit during a run asks for one more
+  // pass so the latest snapshot is always delivered.
+  private drainNotify(): Promise<void> {
+    if (this.notifyWork) {
+      this.notifyAgain = true;
+      return this.notifyWork;
+    }
+    this.notifyWork = (async () => {
+      try {
+        do {
+          this.notifyAgain = false;
+          // oxlint-disable-next-line no-await-in-loop -- Each pass delivers the snapshot after the previous one finished.
+          const runtime = await this.ready();
+          const { notify } = runtime.configuration;
+          if (!notify) {
+            return;
+          }
+          // oxlint-disable-next-line no-await-in-loop -- Notifications for one session run one at a time.
+          await Effect.runPromise(notify(runtime.store.domain()));
+        } while (this.notifyAgain);
+      } finally {
+        this.notifyWork = undefined;
+      }
+    })();
+    return this.notifyWork;
+  }
+
   async onStart(): Promise<void> {
     const runtime = await this.ready();
     if (
@@ -514,11 +581,22 @@ export class SessionAgent<
     if (runtime.configuration.projectAudit && runtime.store.outbox().length) {
       await this.scheduleAudit();
     }
+    if (runtime.configuration.notify && runtime.store.domain().runs.length) {
+      await this.scheduleNotify();
+    }
   }
 
   async onJob({ job }: LifecycleJobContext): Promise<LifecycleJobOutcome> {
     if (job.fn === "cerebro-projection") {
       return this.repairProjection();
+    }
+    if (job.fn === "cerebro-notify") {
+      try {
+        await this.drainNotify();
+      } catch {
+        return { rescheduleAt: Date.now() + 5000 };
+      }
+      return;
     }
     if (job.fn !== "cerebro-audit") {
       return;
@@ -571,7 +649,11 @@ export class SessionAgent<
           }
         }
         const result = await Effect.runPromise(
-          Effect.result(runtime.repairProjection(hostOptions()))
+          Effect.result(
+            runtime.repairProjection({
+              deadlineAt: Date.now() + REPAIR_PASS_MS,
+            })
+          )
         );
         if (Result.isFailure(result)) {
           const recorded = await Effect.runPromise(

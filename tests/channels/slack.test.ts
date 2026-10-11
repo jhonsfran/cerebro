@@ -1,40 +1,50 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
-import { Effect } from "effect";
-
-import { drainChannelWork } from "../../packages/channels/src/drain";
 import { digest } from "../../packages/channels/src/security";
+import {
+  createSlackApi,
+  toSlackText,
+} from "../../packages/channels/src/slack-api";
+import type {
+  SlackApi,
+  SlackResult,
+} from "../../packages/channels/src/slack-api";
+import {
+  APPROVE_ACTION,
+  deliverSlackReplies,
+} from "../../packages/channels/src/slack-replies";
+import type { SlackDelivery } from "../../packages/channels/src/slack-replies";
 import { id } from "../../packages/contracts/src/index";
-import type { RunState } from "../../packages/contracts/src/index";
-import { eq } from "../../packages/db/node_modules/drizzle-orm";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
 import {
   channelConversation,
   channelLinkEvent,
-  channelReply,
 } from "../../packages/db/src/schema/agents";
-import {
-  createFixtureSessionService,
-  fixtureRunCount,
-} from "./fixture-session";
+import { fixtureRunCount } from "./fixture-session";
 import {
   createTestProduct,
   domainSnapshot,
   object,
   signSlack,
+  signSlackRaw,
   string,
 } from "./helpers";
 
 const slackConfiguration = () => ({
   agentId: "unset",
-  apiUrl: "http://slack.test/post",
+  apiUrl: "http://slack.test/api",
   appId: "test-app",
   botToken: "test-bot-token",
   signingSecret: "test-signing-secret",
   workspaceId: "test-workspace",
 });
-const event = (eventId: string, text: string, threadTimestamp?: string) => ({
+const event = (
+  eventId: string,
+  text: string,
+  threadTimestamp?: string,
+  overrides: Record<string, unknown> = {}
+) => ({
   api_app_id: "test-app",
   event: {
     channel: "D-test",
@@ -44,52 +54,65 @@ const event = (eventId: string, text: string, threadTimestamp?: string) => ({
     ts: eventId === "link" ? "1.0" : "2.0",
     type: "message",
     user: "slack-user",
+    ...overrides,
   },
   event_id: eventId,
   team_id: "test-workspace",
   type: "event_callback",
 });
 
-test("signed Slack identity linking, event replay, thread sessions, and outbox delivery persist in PostgreSQL", async () => {
+// Records every Slack Web API call the product makes.
+const slackRecorder = () => {
+  const calls: { method: string; body: Record<string, unknown> }[] = [];
+  const fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const method = String(input).split("/").at(-1) ?? "";
+    calls.push({ body: JSON.parse(String(init?.body)), method });
+    return Promise.resolve(
+      Response.json({ channel: "D-test", ok: true, ts: `${calls.length}.0` })
+    );
+  };
+  return { calls, fetch: fetch as typeof globalThis.fetch };
+};
+
+const linkedProduct = async () => {
   const configuration = slackConfiguration();
-  let delivered = 0;
-  const app = await createTestProduct(configuration, () => {
-    delivered += 1;
-    return Response.json({ channel: "D-test", ok: true, ts: "reply-1" });
-  });
+  const slack = slackRecorder();
+  const app = await createTestProduct(configuration, slack.fetch);
   const setup = await app.install();
   const principalId = string(setup.principalId);
-  const verifiedResult1 = await app.createAgent();
-  configuration.agentId = string(verifiedResult1.agentId);
+  const agent = await app.createAgent();
+  configuration.agentId = string(agent.agentId);
   const code = "a".repeat(64);
-  const codeDigest = await digest(code);
-  await app.options.withDatabase((db) =>
+  await app.options.withDatabase(async (db) =>
     createIdentityRepository(db).createSlackLinkChallenge(
       app.options.organizationId,
       principalId,
-      codeDigest,
+      await digest(code),
       new Date(Date.now() + 60_000)
     )
   );
+  const send = async (body: unknown, headers?: Record<string, string>) =>
+    app.request(
+      "/api/channels/slack/events",
+      "POST",
+      body,
+      null,
+      headers ?? (await signSlack(body, configuration.signingSecret))
+    );
+  return { app, code, configuration, principalId, send, slack };
+};
+
+test("Slack linking, event replay, and thread sessions persist in PostgreSQL", async () => {
+  const { app, code, configuration, principalId, send, slack } =
+    await linkedProduct();
   const linkEvent = event("link", `link ${code}`);
-  const linkResponses = await Promise.all([
-    app.request(
-      "/api/channels/slack/events",
-      "POST",
-      linkEvent,
-      null,
-      await signSlack(linkEvent, configuration.signingSecret)
-    ),
-    app.request(
-      "/api/channels/slack/events",
-      "POST",
-      linkEvent,
-      null,
-      await signSlack(linkEvent, configuration.signingSecret)
-    ),
+  const linkHeaders = await signSlack(linkEvent, configuration.signingSecret);
+  const linked = await Promise.all([
+    send(linkEvent, linkHeaders),
+    send(linkEvent, linkHeaders),
   ]);
   assert.deepEqual(
-    linkResponses.map((response) => response.status),
+    linked.map((response) => response.status),
     [200, 200]
   );
   await app.options.withDatabase(async (db) => {
@@ -97,85 +120,44 @@ test("signed Slack identity linking, event replay, thread sessions, and outbox d
     assert.equal(receipts.length, 1);
     assert.equal(JSON.stringify(receipts).includes(code), false);
   });
+  // Only the first delivery of the link event confirms it in Slack.
+  assert.equal(
+    slack.calls.filter((call) =>
+      String(call.body.text).startsWith("Your Slack account is linked")
+    ).length,
+    1
+  );
   assert.equal(fixtureRunCount(), 0);
   const message = event("message-one", "Describe the pilot source.");
   const headers = await signSlack(message, configuration.signingSecret);
   const accepted = await Promise.all([
-    app.request("/api/channels/slack/events", "POST", message, null, headers),
-    app.request("/api/channels/slack/events", "POST", message, null, headers),
+    send(message, headers),
+    send(message, headers),
   ]);
   assert.deepEqual(
     accepted.map((response) => response.status),
     [200, 200]
   );
   assert.equal(fixtureRunCount(), 1);
-  await app.options.withDatabase(async (db) => {
-    const verifiedResult5 = await db.select().from(channelReply);
-    assert.equal(verifiedResult5.length, 0);
-  });
-  assert.deepEqual(await drainChannelWork(app.options), {
-    sent: 1,
-    unknown: 0,
-  });
-  assert.deepEqual(await drainChannelWork(app.options), {
-    sent: 0,
-    unknown: 0,
-  });
-  assert.equal(delivered, 1);
   const followup = event("message-two", "Continue in this thread.", "2.0");
-  const verifiedResult6 = await app.request(
-    "/api/channels/slack/events",
-    "POST",
-    followup,
-    null,
-    await signSlack(followup, configuration.signingSecret)
-  );
-  assert.equal(verifiedResult6.status, 200);
+  const continued = await send(followup);
+  assert.equal(continued.status, 200);
   await app.options.withDatabase(async (db) => {
-    const verifiedResult7 = await db.select().from(channelConversation);
-    assert.equal(verifiedResult7.length, 1);
+    const conversations = await db.select().from(channelConversation);
+    assert.equal(conversations.length, 1);
   });
-  const changed = event("message-one", "Changed text");
-  const verifiedResult8 = await app.request(
-    "/api/channels/slack/events",
-    "POST",
-    changed,
-    null,
-    await signSlack(changed, configuration.signingSecret)
-  );
-  assert.equal(verifiedResult8.status, 409);
-  const verifiedResult9 = await app.request(
-    "/api/channels/slack/events",
-    "POST",
+  const changed = await send(event("message-one", "Changed text"));
+  assert.equal(changed.status, 409);
+  const forged = await send(message, {
+    ...headers,
+    "x-slack-signature": `v0=${"0".repeat(64)}`,
+  });
+  assert.equal(forged.status, 401);
+  const stale = await send(
     message,
-    null,
-    {
-      ...headers,
-      "x-slack-signature": `v0=${"0".repeat(64)}`,
-    }
-  );
-  assert.equal(verifiedResult9.status, 401);
-  const verifiedResult10 = await app.request(
-    "/api/channels/slack/events",
-    "POST",
-    message,
-    null,
     await signSlack(message, configuration.signingSecret, "1")
   );
-  assert.equal(verifiedResult10.status, 401);
-  const shared = {
-    ...message,
-    event: { ...message.event, channel: "C-test", channel_type: "channel" },
-    event_id: "shared",
-  };
-  const verifiedResult11 = await app.request(
-    "/api/channels/slack/events",
-    "POST",
-    shared,
-    null,
-    await signSlack(shared, configuration.signingSecret)
-  );
-  assert.equal(verifiedResult11.status, 403);
+  assert.equal(stale.status, 401);
   await app.options.withDatabase((db) =>
     createIdentityRepository(db).setManualGrant(
       app.options.organizationId,
@@ -188,318 +170,409 @@ test("signed Slack identity linking, event replay, thread sessions, and outbox d
       false
     )
   );
-  const denied = event("denied", "Denied message", "2.0");
-  const verifiedResult12 = await app.request(
-    "/api/channels/slack/events",
-    "POST",
-    denied,
-    null,
-    await signSlack(denied, configuration.signingSecret)
+  const denied = await send(event("denied", "Denied message", "2.0"));
+  assert.equal(denied.status, 403);
+});
+
+test("Slack answers unlinked people, bad link codes, and channel mentions with a hint", async () => {
+  const { send, slack } = await linkedProduct();
+  const unlinked = await send(event("unlinked", "Hello"));
+  assert.equal(unlinked.status, 200);
+  assert.deepEqual(object(await unlinked.json()), { linked: false });
+  const badLink = await send(event("bad-link", `link ${"b".repeat(64)}`));
+  assert.equal(badLink.status, 200);
+  const mention = await send(
+    event("mention", "<@bot> help", undefined, {
+      channel: "C-test",
+      channel_type: "channel",
+      type: "app_mention",
+    })
   );
-  assert.equal(verifiedResult12.status, 403);
+  assert.equal(mention.status, 200);
+  const shared = await send(
+    event("shared", "Hello channel", undefined, {
+      channel: "C-test",
+      channel_type: "channel",
+    })
+  );
+  assert.deepEqual(object(await shared.json()), { ignored: true });
+  assert.deepEqual(
+    slack.calls.map((call) => [call.method, String(call.body.text)]),
+    [
+      [
+        "chat.postMessage",
+        "Link your Slack account first: in Cerebro, choose *Link your Slack account* and send me the `link <code>` message it shows.",
+      ],
+      [
+        "chat.postMessage",
+        "That link code is invalid, expired, or already used. Create a new one in Cerebro.",
+      ],
+      [
+        "chat.postEphemeral",
+        "I answer in direct messages, so only you can see the answer. Open a DM with me to ask.",
+      ],
+    ]
+  );
+  // A retried event never repeats its hint.
+  const retried = event("unlinked", "Hello");
+  await send(retried, {
+    ...(await signSlack(retried, slackConfiguration().signingSecret)),
+    "x-slack-retry-num": "1",
+  });
+  assert.equal(slack.calls.length, 3);
+});
+
+test("Slack events are acknowledged before the work runs", async () => {
+  const { app, code, configuration, principalId, send, slack } =
+    await linkedProduct();
+  await send(event("link", `link ${code}`));
+  const pending: Promise<unknown>[] = [];
+  const background = {
+    waitUntil: (promise: Promise<unknown>) => {
+      pending.push(promise);
+    },
+  };
+  const message = event("background", "Answer later.");
+  const raw = JSON.stringify(message);
+  const response = await app.handler(
+    new Request("http://cerebro.test/api/channels/slack/events", {
+      body: raw,
+      headers: {
+        "Content-Type": "application/json",
+        ...(await signSlackRaw(raw, configuration.signingSecret)),
+      },
+      method: "POST",
+    }),
+    background
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(object(await response.json()), { ok: true });
+  await Promise.all(pending);
+  assert.equal(fixtureRunCount(), 1);
+  // A failure after the acknowledgement is reported in the thread.
   await app.options.withDatabase((db) =>
     createIdentityRepository(db).setManualGrant(
       app.options.organizationId,
       principalId,
       {
-        action: "read",
+        action: "execute",
         resourceId: configuration.agentId,
         resourceKind: "agent",
       },
       false
     )
   );
-  await drainChannelWork(app.options);
-  assert.equal(delivered, 1);
+  const failing = event("failing", "This cannot start.");
+  const failingRaw = JSON.stringify(failing);
+  await app.handler(
+    new Request("http://cerebro.test/api/channels/slack/events", {
+      body: failingRaw,
+      headers: {
+        "Content-Type": "application/json",
+        ...(await signSlackRaw(failingRaw, configuration.signingSecret)),
+      },
+      method: "POST",
+    }),
+    background
+  );
+  await Promise.all(pending);
+  assert.equal(
+    slack.calls.at(-1)?.body.text,
+    "Sorry, I could not start on that. Please send it again."
+  );
 });
 
-test("ambiguous Slack delivery and abandoned claims never retry automatically", async () => {
-  const configuration = slackConfiguration();
-  let attempts = 0;
-  const app = await createTestProduct(configuration, () => {
-    attempts += 1;
-    throw new Error("The provider accepted before connection loss.");
-  });
-  const verifiedResult13 = await app.install();
-  const principalId = string(verifiedResult13.principalId);
-  const verifiedResult14 = await app.createAgent();
-  configuration.agentId = string(verifiedResult14.agentId);
-  const code = "b".repeat(64);
-  const codeDigest = await digest(code);
-  await app.options.withDatabase((db) =>
-    createIdentityRepository(db).createSlackLinkChallenge(
-      app.options.organizationId,
-      principalId,
-      codeDigest,
-      new Date(Date.now() + 60_000)
-    )
+test("a Slack button decides an approval as the linked person", async () => {
+  const { app, code, configuration, send } = await linkedProduct();
+  await send(event("link", `link ${code}`));
+  const requested = await send(
+    event("approval", "Request approval before continuing.")
   );
-  const linkEvent = event("link", `link ${code}`);
-  await app.request(
-    "/api/channels/slack/events",
-    "POST",
-    linkEvent,
-    null,
-    await signSlack(linkEvent, configuration.signingSecret)
-  );
-  const message = event("uncertain", "Describe the source");
-  const verifiedResult15 = await app.request(
-    "/api/channels/slack/events",
-    "POST",
-    message,
-    null,
-    await signSlack(message, configuration.signingSecret)
-  );
-  assert.equal(verifiedResult15.status, 200);
-  assert.deepEqual(await drainChannelWork(app.options), {
-    sent: 0,
-    unknown: 1,
-  });
-  await drainChannelWork(app.options);
-  assert.equal(attempts, 1);
-  await app.options.withDatabase(async (db) => {
-    const rows = await db.select().from(channelReply);
-    assert.equal(rows[0]?.state, "unknown-outcome");
-    await db
-      .update(channelReply)
-      .set({
-        attemptId: "abandoned",
-        startedAt: new Date(Date.now() - 60_000),
-        state: "sending",
+  const accepted = object(await requested.json());
+  const conversationId = string(accepted.conversationId);
+  const runId = string(object(accepted.receipt).runId);
+  const press = async (user: string, appId = "test-app") => {
+    const payload = {
+      actions: [
+        {
+          action_id: APPROVE_ACTION,
+          action_ts: `${user}.1`,
+          value: JSON.stringify({
+            approvalId: `approval:${runId}`,
+            conversationId,
+            runId,
+          }),
+        },
+      ],
+      api_app_id: appId,
+      team: { id: "test-workspace" },
+      type: "block_actions",
+      user: { id: user },
+    };
+    const raw = new URLSearchParams({
+      payload: JSON.stringify(payload),
+    }).toString();
+    return await app.handler(
+      new Request("http://cerebro.test/api/channels/slack/interactions", {
+        body: raw,
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          ...(await signSlackRaw(raw, configuration.signingSecret)),
+        },
+        method: "POST",
       })
-      .where(eq(channelReply.replyId, rows[0]?.replyId ?? ""));
-  });
-  assert.deepEqual(await drainChannelWork(app.options), {
-    sent: 0,
-    unknown: 1,
-  });
-  assert.equal(attempts, 1);
+    );
+  };
+  const unlinked = await press("someone-else");
+  assert.equal(unlinked.status, 403);
+  const otherApp = await press("slack-user", "other-app");
+  assert.equal(otherApp.status, 403);
+  const approved = await press("slack-user");
+  assert.equal(approved.status, 200);
+  assert.equal(object(object(await approved.json()).run).state, "completed");
 });
 
-test("one snapshot projects complete canonical text without stream batching", async () => {
-  const configuration = slackConfiguration();
-  const sentBodies: string[] = [];
-  const app = await createTestProduct(configuration, (_request, init) => {
-    sentBodies.push(String(init?.body));
-    return Response.json({ channel: "D-test", ok: true, ts: "complete-reply" });
-  });
-  const verifiedResult16 = await app.install();
-  const principalId = string(verifiedResult16.principalId);
-  const verifiedResult17 = await app.createAgent();
-  configuration.agentId = string(verifiedResult17.agentId);
-  const code = "c".repeat(64);
-  const digestCode = await digest(code);
-  await app.options.withDatabase((db) =>
-    createIdentityRepository(db).createSlackLinkChallenge(
-      app.options.organizationId,
-      principalId,
-      digestCode,
-      new Date(Date.now() + 60_000)
-    )
-  );
-  const linked = event("link", `link ${code}`);
-  const verifiedResult18 = await app.request(
-    "/api/channels/slack/events",
-    "POST",
-    linked,
-    null,
-    await signSlack(linked, configuration.signingSecret)
-  );
-  assert.equal(verifiedResult18.status, 200);
-  await app.options.withDatabase((db) =>
-    db.insert(channelConversation).values({
-      agentId: configuration.agentId,
-      bindingKey: "remote-binding",
-      channelId: "D-test",
-      conversationId: "remote-conversation",
-      engine: "pi-v1",
-      kind: "slack",
-      organizationId: app.options.organizationId,
-      ownerPrincipalId: principalId,
-      projectionState: "active",
-      rootTimestamp: "4.0",
-      sessionId: "remote-session",
-      slackUserId: "slack-user",
-      workspaceId: configuration.workspaceId,
-    })
-  );
-  const run: RunState = {
-    completedAt: Date.now(),
-    runId: id.run("remote-run"),
-    state: "completed",
+const memoryStore = () => {
+  const values = new Map<string, SlackDelivery>();
+  return {
+    get: (key: string) => values.get(key),
+    set: (key: string, delivery: SlackDelivery) => {
+      values.set(key, delivery);
+    },
+    values,
   };
-  const options = {
-    ...app.options,
-    sessions: (db: Parameters<typeof createFixtureSessionService>[0]) => ({
-      ...createFixtureSessionService(db, app.options),
-      inspect: (
-        address: Parameters<
-          ReturnType<typeof createFixtureSessionService>["inspect"]
-        >[0]
-      ) =>
-        Effect.succeed(
-          domainSnapshot(address, {
-            executions: [
-              { executionId: "remote-execution", runIds: [run.runId] },
-            ],
-            outputs: [
-              {
-                answerId: "remote-answer",
-                citations: [],
-                dependencies: { sourceIds: [], toolIds: [] },
-                executionId: "remote-execution",
-                runId: run.runId,
-                runIds: [run.runId],
-                text: "x".repeat(105),
-              },
-            ],
-            revision: 106,
-            runs: [run],
-          })
-        ),
-    }),
+};
+const fakeSlack = (results: SlackResult[] = []) => {
+  const calls: { method: string; text: string; ts?: string }[] = [];
+  const next = (): SlackResult =>
+    results.shift() ?? { state: "sent", ts: `${calls.length}.0` };
+  const api: SlackApi = {
+    edit: (message) => {
+      calls.push({ method: "update", text: message.text, ts: message.ts });
+      return Promise.resolve(next());
+    },
+    send: (message) => {
+      calls.push({ method: "postMessage", text: message.text });
+      return Promise.resolve(next());
+    },
+    sendEphemeral: (message) => {
+      calls.push({ method: "postEphemeral", text: message.text });
+      return Promise.resolve(next());
+    },
   };
-  assert.deepEqual(await drainChannelWork(options), {
-    sent: 1,
-    unknown: 0,
-  });
-  assert.equal(sentBodies.length, 1);
-  assert.equal(object(JSON.parse(sentBodies[0] ?? "{}")).text, "x".repeat(105));
-  await drainChannelWork(options);
-  assert.equal(sentBodies.length, 1);
+  return { api, calls };
+};
+const address = {
+  agentId: id.agent("agent"),
+  conversationId: id.conversation("conversation"),
+  organizationId: id.organization("company"),
+  sessionId: id.session("session"),
+};
+const thread = {
+  channelId: "D-test",
+  conversationId: "conversation",
+  threadTs: "1.0",
+};
+const runId = id.run("run-1");
+const output = (text: string) => ({
+  answerId: "answer-1",
+  citations: [
+    {
+      observedAt: 1,
+      sourceId: "policy",
+      sourceUri: "Refund policy",
+      sourceVersion: "1",
+    },
+  ],
+  dependencies: { sourceIds: ["policy"], toolIds: [] },
+  executionId: "execution-1",
+  runId,
+  runIds: [runId],
+  text,
 });
 
-test("one snapshot per pass keeps active work and then projects one joined answer", async () => {
-  const configuration = slackConfiguration();
-  const app = await createTestProduct(configuration, () =>
-    Promise.resolve(
-      Response.json({ channel: "D-test", ok: true, ts: "race-reply" })
-    )
+test("Slack delivery posts progress once and edits it into the answer", async () => {
+  const store = memoryStore();
+  const slack = fakeSlack();
+  const deliver = (values: Record<string, unknown>, canShare = true) =>
+    deliverSlackReplies({
+      canShare: () => Promise.resolve(canShare),
+      slack: slack.api,
+      snapshot: domainSnapshot(address, values),
+      store,
+      thread,
+    });
+  const running = {
+    executions: [{ executionId: "execution-1", runIds: [runId] }],
+    runs: [{ runId, state: "running" }],
+  };
+  await deliver(running);
+  await deliver(running);
+  assert.deepEqual(slack.calls, [
+    { method: "postMessage", text: "Working on it…" },
+  ]);
+  await deliver({
+    ...running,
+    outputs: [output("**Refunds** take [five days](https://example.test).")],
+    revision: 1,
+    runs: [{ completedAt: 2, runId, state: "completed" }],
+  });
+  assert.deepEqual(slack.calls.at(-1), {
+    method: "update",
+    text: "*Refunds* take <https://example.test|five days>.\n\n_Sources: Refund policy_",
+    ts: "1.0",
+  });
+  assert.equal(slack.calls.length, 2);
+});
+
+test("Slack delivery withholds an answer the recipient may no longer read", async () => {
+  const slack = fakeSlack();
+  await deliverSlackReplies({
+    canShare: () => Promise.resolve(false),
+    slack: slack.api,
+    snapshot: domainSnapshot(address, {
+      executions: [{ executionId: "execution-1", runIds: [runId] }],
+      outputs: [output("Private answer")],
+      runs: [{ completedAt: 2, runId, state: "completed" }],
+    }),
+    store: memoryStore(),
+    thread,
+  });
+  assert.deepEqual(slack.calls, [
+    {
+      method: "postMessage",
+      text: "I can no longer share this answer because your access changed.",
+    },
+  ]);
+});
+
+const approvalSnapshot = (state: string) =>
+  domainSnapshot(address, {
+    approvals: [
+      {
+        approvalId: "approval-1",
+        expiresAt: 10,
+        operationId: "operation-1",
+        runId,
+        state,
+      },
+    ],
+    runs: [
+      {
+        runId,
+        state: state === "pending" ? "waiting-for-approval" : "running",
+      },
+    ],
+    tools: [
+      {
+        arguments: { ticket: "T-1" },
+        dependencies: { sourceIds: [], toolIds: [] },
+        effect: "write",
+        operationId: "operation-1",
+        output: null,
+        runId,
+        state: "waiting-for-approval",
+        toolId: "create_ticket",
+        toolVersion: "1",
+      },
+    ],
+  });
+
+test("Slack delivery shows approval buttons and then the decision", async () => {
+  const store = memoryStore();
+  const slack = fakeSlack();
+  const deliver = (state: string) =>
+    deliverSlackReplies({
+      canShare: () => Promise.resolve(true),
+      slack: slack.api,
+      snapshot: approvalSnapshot(state),
+      store,
+      thread,
+    });
+  await deliver("pending");
+  assert.deepEqual(
+    slack.calls.map((call) => call.text),
+    ["Waiting for your approval…", "Approve `create_ticket`?"]
   );
-  const setup = await app.install();
-  const principalId = string(setup.principalId);
-  const verifiedResult1001 = await app.createAgent();
-  const agentId = string(verifiedResult1001.agentId);
-  configuration.agentId = agentId;
-  const code = "d".repeat(64);
-  const codeDigest = await digest(code);
-  await app.options.withDatabase((db) =>
-    createIdentityRepository(db).createSlackLinkChallenge(
-      app.options.organizationId,
-      principalId,
-      codeDigest,
-      new Date(Date.now() + 60_000)
-    )
+  await deliver("allowed");
+  assert.deepEqual(
+    slack.calls.slice(2).map((call) => [call.method, call.text]),
+    [
+      ["update", "Working on it…"],
+      ["update", "Approved: `create_ticket`"],
+    ]
   );
-  const linkEvent = event("link", `link ${code}`);
-  const verifiedResult1002 = await app.request(
-    "/api/channels/slack/events",
-    "POST",
-    linkEvent,
-    null,
-    await signSlack(linkEvent, configuration.signingSecret)
-  );
-  assert.equal(verifiedResult1002.status, 200);
-  await app.options.withDatabase((db) =>
-    db.insert(channelConversation).values({
-      agentId,
-      bindingKey: "race-binding",
-      channelId: "D-test",
-      conversationId: "race-conversation",
-      engine: "pi-v1",
-      kind: "slack",
-      organizationId: app.options.organizationId,
-      ownerPrincipalId: principalId,
-      projectionState: "active",
-      rootTimestamp: "5.0",
-      sessionId: "race-session",
-      slackUserId: "slack-user",
-      workspaceId: configuration.workspaceId,
+});
+
+test("Slack delivery never repeats an uncertain post and retries when rate limited", async () => {
+  const store = memoryStore();
+  const running = domainSnapshot(address, {
+    runs: [{ runId, state: "running" }],
+  });
+  const uncertain = fakeSlack([{ state: "unknown" }]);
+  const deliver = (api: SlackApi) =>
+    deliverSlackReplies({
+      canShare: () => Promise.resolve(true),
+      slack: api,
+      snapshot: running,
+      store,
+      thread,
+    });
+  await deliver(uncertain.api);
+  await deliver(uncertain.api);
+  assert.equal(uncertain.calls.length, 1);
+  const limited = fakeSlack([{ state: "retry" }]);
+  const fresh = memoryStore();
+  await assert.rejects(
+    deliverSlackReplies({
+      canShare: () => Promise.resolve(true),
+      slack: limited.api,
+      snapshot: running,
+      store: fresh,
+      thread,
     })
   );
-  const runId = id.run("race-run");
-  const completed: RunState = {
-    completedAt: Date.now(),
-    runId,
-    state: "completed",
-  };
-  let inspections = 0;
-  const joinedRunId = id.run("joined-run");
-  const options = {
-    ...app.options,
-    sessions: (db: Parameters<typeof createFixtureSessionService>[0]) => ({
-      ...createFixtureSessionService(db, app.options),
-      inspect: (
-        address: Parameters<
-          ReturnType<typeof createFixtureSessionService>["inspect"]
-        >[0]
-      ) => {
-        inspections += 1;
-        return Effect.succeed(
-          domainSnapshot(address, {
-            executions: [
-              { executionId: "joined-execution", runIds: [runId, joinedRunId] },
-            ],
-            outputs:
-              inspections === 1
-                ? []
-                : [
-                    {
-                      answerId: "joined-answer",
-                      citations: [],
-                      dependencies: { sourceIds: [], toolIds: [] },
-                      executionId: "joined-execution",
-                      runId,
-                      runIds: [runId, joinedRunId],
-                      text: "Complete result",
-                    },
-                  ],
-            revision: inspections,
-            runs:
-              inspections === 1
-                ? [
-                    { runId, state: "running" },
-                    { runId: joinedRunId, state: "queued" },
-                  ]
-                : [
-                    completed,
-                    {
-                      completedAt: Date.now(),
-                      runId: joinedRunId,
-                      state: "completed",
-                    },
-                  ],
-          })
-        );
-      },
-      stream: () => {
-        throw new Error(
-          "Channel projection must not open a live observation stream."
-        );
-      },
-    }),
-  };
-  assert.deepEqual(await drainChannelWork(options), {
-    sent: 0,
-    unknown: 0,
+  assert.equal(fresh.values.size, 0);
+  await deliverSlackReplies({
+    canShare: () => Promise.resolve(true),
+    slack: limited.api,
+    snapshot: running,
+    store: fresh,
+    thread,
   });
-  await app.options.withDatabase(async (db) => {
-    const conversations = await db.select().from(channelConversation);
-    assert.equal(conversations[0]?.projectionState, "active");
-    const verifiedResult1003 = await db.select().from(channelReply);
-    assert.equal(verifiedResult1003.length, 0);
+  assert.equal(fresh.values.get(`run:${runId}`)?.state, "sent");
+});
+
+test("the Slack client classifies delivery results", async () => {
+  const responses = [
+    Response.json({ ok: true, ts: "1.0" }),
+    Response.json({ error: "channel_not_found", ok: false }),
+    new Response("slow down", { status: 429 }),
+    new Response("down", { status: 503 }),
+  ];
+  const urls: string[] = [];
+  const api = createSlackApi(
+    {
+      ...slackConfiguration(),
+      apiUrl: "http://slack.test/api/chat.postMessage",
+    },
+    (input) => {
+      urls.push(String(input));
+      const response = responses.shift();
+      return response
+        ? Promise.resolve(response)
+        : Promise.reject(new Error("offline"));
+    }
+  );
+  const message = { channel: "D-test", text: "Hi" };
+  assert.deepEqual(await api.send(message), { state: "sent", ts: "1.0" });
+  assert.deepEqual(await api.send(message), {
+    error: "channel_not_found",
+    state: "failed",
   });
-  assert.deepEqual(await drainChannelWork(options), {
-    sent: 1,
-    unknown: 0,
-  });
-  await app.options.withDatabase(async (db) => {
-    const conversations = await db.select().from(channelConversation);
-    assert.equal(conversations[0]?.projectionState, "idle");
-    const replies = await db.select().from(channelReply);
-    assert.equal(replies.length, 1);
-    assert.equal(replies[0]?.replyId, "reply:joined-answer");
-    assert.equal(replies[0]?.text, "Complete result");
-    assert.equal(inspections, 2);
-  });
+  assert.deepEqual(await api.send(message), { state: "retry" });
+  assert.deepEqual(await api.send(message), { state: "unknown" });
+  assert.deepEqual(await api.send(message), { state: "unknown" });
+  assert.equal(urls[0], "http://slack.test/api/chat.postMessage");
+  assert.equal(toSlackText("# Title"), "*Title*");
 });

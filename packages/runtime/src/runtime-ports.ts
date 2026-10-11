@@ -1,11 +1,4 @@
-import {
-  Conflict,
-  Denied,
-  InvalidInput,
-  NotFound,
-  Unavailable,
-  UnknownOutcome,
-} from "@cerebro/contracts/failures";
+import { Unavailable, toContractFailure } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import type { ReadOptions } from "@cerebro/contracts/port";
 import { Effect } from "effect";
@@ -18,14 +11,7 @@ export type HostCheckpoint = (
 ) => Effect.Effect<void, ContractFailure>;
 
 export const contractFailure = (cause: unknown): ContractFailure =>
-  cause instanceof Conflict ||
-  cause instanceof Denied ||
-  cause instanceof InvalidInput ||
-  cause instanceof NotFound ||
-  cause instanceof Unavailable ||
-  cause instanceof UnknownOutcome
-    ? cause
-    : new Unavailable({ reason: "Runtime adapter unavailable" });
+  toContractFailure(cause, "Runtime adapter unavailable");
 
 export const checkOptions = (options: ReadOptions): void => {
   if (

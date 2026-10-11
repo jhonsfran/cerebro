@@ -22,17 +22,6 @@ import {
   Observation,
 } from "../../packages/contracts/src/session-service.ts";
 import {
-  createAuthorityFake,
-  createToolFake,
-} from "../../packages/contracts/src/testing/effect-fakes.ts";
-import {
-  allowedContext,
-  allowedUser,
-  unknownOutcomeInvocation,
-  unknownOutcomeCapability,
-  userEvent,
-} from "../../packages/contracts/src/testing/fixtures.ts";
-import {
   boundApprovalMatches,
   connectorFingerprint,
 } from "../../packages/contracts/src/tool-service.ts";
@@ -40,6 +29,17 @@ import type {
   BoundApproval,
   BoundInvocation,
 } from "../../packages/contracts/src/tool-service.ts";
+import {
+  createAuthorityFake,
+  createToolFake,
+} from "../support/effect-fakes.ts";
+import {
+  allowedContext,
+  allowedUser,
+  unknownOutcomeInvocation,
+  unknownOutcomeCapability,
+  userEvent,
+} from "../support/fixtures.ts";
 
 const now = 1_800_000_000_000;
 const invocation: BoundInvocation = {
@@ -565,8 +565,7 @@ test("joined runs reload one canonical answer and reject ambiguous execution mem
 });
 
 test("atomic projection contract settles joined runs together and rolls back an invalid answer", async () => {
-  const { createStoreFake } =
-    await import("../../packages/contracts/src/testing/session-fakes.ts");
+  const { createStoreFake } = await import("../support/session-fakes.ts");
   const seed = reloadSnapshot();
   const fake = createStoreFake({
     ...seed,
@@ -684,7 +683,7 @@ test("atomic projection contract settles joined runs together and rolls back an 
 test("fresh inspect and attachment restore full authorized state without submitting or reusing caller objects", async () => {
   const { Stream } = await import("effect");
   const { createSessionFake, createStoreFake } =
-    await import("../../packages/contracts/src/testing/session-fakes.ts");
+    await import("../support/session-fakes.ts");
   const snapshot = decodeReloadSnapshot(reloadSnapshot());
   const session = createSessionFake(snapshot);
   const store = createStoreFake(snapshot);
@@ -756,8 +755,7 @@ test("fresh inspect and attachment restore full authorized state without submitt
 });
 
 test("Effect scope releases resources; native cancellation withdraws active work and queued inputs", async () => {
-  const { createEngineFake } =
-    await import("../../packages/contracts/src/testing/session-fakes.ts");
+  const { createEngineFake } = await import("../support/session-fakes.ts");
   const fake = createEngineFake();
   const future = { deadlineAt: Date.now() + 60_000 };
   await Effect.runPromise(
@@ -811,7 +809,7 @@ test("Effect scope releases resources; native cancellation withdraws active work
 
 test("handoff acknowledgment requires Pi acceptance for queued work; observer close submits nothing", async () => {
   const { createStoreFake, createSessionFake } =
-    await import("../../packages/contracts/src/testing/session-fakes.ts");
+    await import("../support/session-fakes.ts");
   const { Stream } = await import("effect");
   const snapshot = {
     address: userEvent,
@@ -893,8 +891,7 @@ test("handoff acknowledgment requires Pi acceptance for queued work; observer cl
 });
 
 test("replacement cancels previous pending work once; replay preserves later requests and mode changes conflict", async () => {
-  const { createSessionFake } =
-    await import("../../packages/contracts/src/testing/session-fakes.ts");
+  const { createSessionFake } = await import("../support/session-fakes.ts");
   const fake = createSessionFake({
     address: userEvent,
     agentVersion: 1,
@@ -950,8 +947,7 @@ test("replacement cancels previous pending work once; replay preserves later req
 });
 
 test("replacement intent records mode and stop before engine acceptance; changed input or mode conflicts", async () => {
-  const { createStoreFake } =
-    await import("../../packages/contracts/src/testing/session-fakes.ts");
+  const { createStoreFake } = await import("../support/session-fakes.ts");
   const fake = createStoreFake({
     address: userEvent,
     agentVersion: 1,

@@ -6,9 +6,9 @@ import { Effect } from "effect";
 import {
   authenticateSessionRequest,
   signSessionRequest,
-} from "../../apps/server/src/session-proof.ts";
+} from "../../apps/server/src/session/proof.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
-import { userEvent } from "../../packages/contracts/src/testing/fixtures.ts";
+import { userEvent } from "../support/fixtures.ts";
 
 const secret = "fixture-secret-for-transport-tests-0001";
 const address = {

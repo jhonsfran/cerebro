@@ -1,6 +1,9 @@
 import { Effect, Layer, Stream } from "effect";
 
-import { AuthorityService, enforceDecision } from "../authority-service.ts";
+import {
+  AuthorityService,
+  enforceDecision,
+} from "../../packages/contracts/src/authority-service.ts";
 import {
   Conflict,
   Denied,
@@ -8,13 +11,13 @@ import {
   NotFound,
   Unavailable,
   UnknownOutcome,
-} from "../failures.ts";
-import type { ContractFailure } from "../failures.ts";
-import { isExecutionContextActiveAt } from "../identity.ts";
-import type { AuthorizationDecision } from "../policy.ts";
-import type { ReadOptions } from "../port.ts";
-import { ToolExecutor } from "../tool-service.ts";
-import { toolCapabilityMatches } from "../tools.ts";
+} from "../../packages/contracts/src/failures.ts";
+import type { ContractFailure } from "../../packages/contracts/src/failures.ts";
+import { isExecutionContextActiveAt } from "../../packages/contracts/src/identity.ts";
+import type { AuthorizationDecision } from "../../packages/contracts/src/policy.ts";
+import type { ReadOptions } from "../../packages/contracts/src/port.ts";
+import { ToolExecutor } from "../../packages/contracts/src/tool-service.ts";
+import { toolCapabilityMatches } from "../../packages/contracts/src/tools.ts";
 
 const contractEffect = <A>(run: () => A): Effect.Effect<A, ContractFailure> =>
   Effect.try({

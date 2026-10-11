@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { Effect, Stream } from "effect";
 
-import { readObservationStream } from "../../apps/server/src/observation-stream.ts";
+import { readObservationStream } from "../../apps/server/src/session/observation-stream.ts";
 import { guardedObservation } from "../../packages/api/src/observation-delivery.ts";
 import { Denied, Unavailable } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";

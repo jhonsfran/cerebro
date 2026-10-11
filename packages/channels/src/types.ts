@@ -117,4 +117,8 @@ export type ChannelPresentationItem = ChannelItemBody & {
 };
 export const INSTALLATION_AGENT_PREFIX = "installation:";
 export const EFFECT_DEADLINE_MS = 2200;
+// A call into a conversation's session must outlast celld's ownership recovery
+// after a restart (its node lease lasts 10 seconds). A call abandoned during
+// that recovery can leave the restored session unable to resume its work.
+export const SESSION_DEADLINE_MS = 15_000;
 export const DELIVERY_TIMEOUT_MS = 30_000;

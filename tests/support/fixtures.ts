@@ -1,13 +1,15 @@
-import type { EventEnvelope } from "../events.ts";
-import { id } from "../identity.ts";
-import type { ExecutionContext, Principal } from "../identity.ts";
-import type { BudgetReservation } from "../policy.ts";
-import type { PortResult } from "../port.ts";
+import type { EventEnvelope } from "../../packages/contracts/src/events.ts";
+import { id } from "../../packages/contracts/src/identity.ts";
+import type {
+  ExecutionContext,
+  Principal,
+} from "../../packages/contracts/src/identity.ts";
+import type { PortResult } from "../../packages/contracts/src/port.ts";
 import type {
   ToolCapability,
   ToolExecution,
   ToolInvocation,
-} from "../tools.ts";
+} from "../../packages/contracts/src/tools.ts";
 
 export const fixtureOrganizationId = id.organization("organization-1");
 export const fixtureAgentId = id.agent("agent-1");
@@ -105,12 +107,6 @@ export const unknownToolOutcome: PortResult<ToolExecution> = {
   reason:
     "The provider may have completed the effect before the connection failed.",
   status: "unknown-outcome",
-};
-
-export const depletedBudget: PortResult<BudgetReservation> = {
-  code: "budget-exhausted",
-  reason: "No capacity remains for this organization.",
-  status: "denied",
 };
 
 export const unknownOutcomeCapability: ToolCapability = {

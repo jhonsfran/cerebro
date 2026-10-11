@@ -12,6 +12,7 @@ import type {
   ReadOptions,
 } from "@cerebro/contracts";
 import type { Database } from "@cerebro/db";
+import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import { createMemoryRepository } from "@cerebro/db/repositories/memory";
@@ -26,12 +27,9 @@ import { accessView } from "@cerebro/memory/access";
 import { artifactRef } from "@cerebro/memory/artifact-store";
 import { and, asc, eq, like } from "drizzle-orm";
 
-import type { WorkerEnv } from "./env.server";
-import { parseRuntimeConfiguration } from "./runtime-configuration";
-import { withDatabase } from "./services";
+import type { WorkerEnv } from "./bindings";
+import { runtimeConfiguration } from "./config";
 
-export const runtimeConfiguration = (env: WorkerEnv) =>
-  parseRuntimeConfiguration(env.RUNTIME_CONFIG_JSON, env.DEPLOY_MODE);
 export const memoryDependencies = (env: WorkerEnv, database: Database) => ({
   identity: createIdentityRepository(database),
   objects: createS3ObjectStorage(runtimeConfiguration(env).artifacts),

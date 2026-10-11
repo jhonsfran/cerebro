@@ -1,4 +1,6 @@
 /* eslint-disable max-classes-per-file -- The tool gateway and audit sink are separate service entrypoints. */
+import { withDatabase } from "@cerebro/db";
+/* eslint-disable max-classes-per-file -- The tool gateway and audit sink are separate service entrypoints. */
 import {
   AuditProjectionConflictError,
   projectAuditEvent,
@@ -9,20 +11,21 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
-import type { WorkerEnv } from "./env.server";
-import { GATEWAY_AUDIENCE } from "./runtime-composition";
-import { createRuntimeRegistry } from "./runtime-configuration";
 import {
   createCurrentAuthorization,
   createCurrentEntitlements,
+} from "./access";
+import type { WorkerEnv } from "./bindings";
+import {
+  GATEWAY_AUDIENCE,
   runtimeConfiguration,
-} from "./runtime-services";
-import { withDatabase } from "./services";
+  runtimeRegistry,
+} from "./config";
 
 const auditSchema = z.strictObject({
   agentId: z.string(),
   eventId: z.string(),
-  kind: z.enum(["audit", "usage"]),
+  kind: z.literal("audit"),
   name: z.string(),
   occurredAt: z.number().finite(),
   organizationId: z.string(),
@@ -54,7 +57,7 @@ const createGateway = async (env: WorkerEnv) => {
       return Promise.resolve(credentials);
     },
     entitlementPolicy: createCurrentEntitlements(env),
-    registry: createRuntimeRegistry(config),
+    registry: runtimeRegistry(config),
     signer: await createCapabilitySigner(config.gatewaySigningKey),
   });
 };
