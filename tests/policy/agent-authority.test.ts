@@ -3,39 +3,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Effect, Fiber } from "effect";
+import { Effect } from "effect";
 import { z } from "zod";
 
 import { createAgentAuthority } from "../../packages/authorization/src/agent-authority.ts";
 import type { AuthorityRequest } from "../../packages/contracts/src/authority-service.ts";
-import {
-  Denied,
-  UnknownOutcome,
-} from "../../packages/contracts/src/failures.ts";
+import { Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { AgentDefinition } from "../../packages/contracts/src/session.ts";
-import type {
-  BoundApproval,
-  BoundCapability,
-  BoundToolCall,
-  ToolExecutor,
-} from "../../packages/contracts/src/tool-service.ts";
-import { digestToolArguments } from "../../packages/contracts/src/tools.ts";
-import { createControlledToolExecutor } from "../../packages/tools/src/broker.ts";
-import type { ControlledToolDependencies } from "../../packages/tools/src/broker.ts";
 import {
   bindRegisteredTool,
   createToolRegistry,
 } from "../../packages/tools/src/registry.ts";
-import {
-  createAuthorityFake,
-  createToolFake,
-} from "../support/effect-fakes.ts";
-import {
-  allowedContext,
-  userEvent,
-  fixtureRunId,
-} from "../support/fixtures.ts";
+import { createAuthorityFake } from "../support/effect-fakes.ts";
+import { allowedContext, userEvent } from "../support/fixtures.ts";
 
 const clock = () => 1_800_000_000_000;
 const options = { deadlineAt: clock() + 10_000 };
@@ -147,68 +128,10 @@ const fixture = async (write = false) => {
     now: clock,
     tools: [tool],
   });
-  const call: BoundToolCall = {
-    agentId: agent.agentId,
-    arguments: { query: "support" },
-    context: allowedContext,
-    organizationId: agent.organizationId,
-    runId: fixtureRunId,
-    tool,
-  };
-  const effect = {
-    ...options,
-    operationId: id.operation("operation-1"),
-    requestDigest: await digestToolArguments(call.arguments),
-  };
-  const capability: BoundCapability = {
-    actorPrincipalId: call.context.actor.id,
-    agentId: call.agentId,
-    argumentDigest: effect.requestDigest,
-    connectorFingerprint: tool.connectorFingerprint,
-    connectorId: tool.connectorId,
-    effect: tool.effect,
-    expiresAt: options.deadlineAt,
-    operationId: effect.operationId,
-    organizationId: call.organizationId,
-    policyVersion: "fixture-v1",
-    principalId: call.context.actor.id,
-    runId: call.runId,
-    toolId: tool.id,
-    toolVersion: tool.version,
-  };
-  const approval: BoundApproval = {
-    ...capability,
-    approverId: call.context.actor.id,
-    id: "approval-1",
-  };
-  const driver = createToolFake(clock);
-  const dependencies: ControlledToolDependencies = {
-    address: request.address,
-    approval: () => Effect.succeed(approval),
-    authority,
-    checkApprover: () =>
-      state.approver
-        ? Effect.void
-        : Effect.fail(
-            new Denied({ code: "revoked", reason: "Approver revoked" })
-          ),
-    driver: driver.service,
-    now: clock,
-    pinnedAgent: agent,
-    registry,
-  };
-  const executor = createControlledToolExecutor(dependencies);
   return {
     agent,
-    approval,
     authority,
-    call,
-    capability,
     current,
-    dependencies,
-    driver,
-    effect,
-    executor,
     registry,
     request,
     state,
@@ -329,259 +252,6 @@ test("model dispatch authority checks the pinned and configured model on every e
   );
 });
 
-test("controlled reads dispatch through the driver and deny after revocation", async () => {
-  const f = await fixture();
-  assert.deepEqual(
-    await Effect.runPromise(f.executor.execute(f.call, f.capability, f.effect)),
-    { output: "fixture result", providerReceipt: "fixture receipt" }
-  );
-  assert.equal(f.driver.counts.dispatch, 1);
-  f.current.setDecision({
-    decision: "deny",
-    policyVersion: "revoked",
-    reason: "Revoked",
-  });
-  assert.equal(
-    await failureTag(f.executor.execute(f.call, f.capability, f.effect)),
-    "Denied"
-  );
-  assert.equal(f.driver.counts.dispatch, 1);
-});
-
-test("run, connector, arguments, actor, represented principal, delegation, version, policy and expiry bindings deny writes", async () => {
-  const changes: Partial<BoundApproval>[] = [
-    { runId: id.run("foreign") },
-    { connectorFingerprint: id.digest(`sha256:${"0".repeat(64)}`) },
-    { argumentDigest: id.digest(`sha256:${"0".repeat(64)}`) },
-    { actorPrincipalId: id.principal("foreign") },
-    { principalId: id.principal("foreign") },
-    { delegationId: id.delegation("foreign") },
-    { toolVersion: "foreign" },
-    { policyVersion: "foreign" },
-    { expiresAt: clock() },
-    { organizationId: id.organization("foreign") },
-    { operationId: id.operation("foreign") },
-  ];
-  for (const change of changes) {
-    const f = await fixture(true);
-    const executor = createControlledToolExecutor({
-      ...f.dependencies,
-      approval: () => Effect.succeed({ ...f.approval, ...change }),
-    });
-    assert.equal(
-      await failureTag(executor.execute(f.call, f.capability, f.effect)),
-      "Denied"
-    );
-    assert.equal(f.driver.counts.dispatch, 0);
-  }
-});
-
-test("authority and approver are rechecked after approval wait and immediately before dispatch", async () => {
-  const f = await fixture(true);
-  const executor = createControlledToolExecutor({
-    ...f.dependencies,
-    approval: () =>
-      Effect.sync(() => {
-        f.current.setDecision({
-          decision: "deny",
-          policyVersion: "revoked",
-          reason: "Revoked during approval wait",
-        });
-        return f.approval;
-      }),
-  });
-  assert.equal(
-    await failureTag(executor.execute(f.call, f.capability, f.effect)),
-    "Denied"
-  );
-  assert.equal(f.driver.counts.dispatch, 0);
-  const g = await fixture(true);
-  g.state.approver = false;
-  assert.equal(
-    await failureTag(g.executor.execute(g.call, g.capability, g.effect)),
-    "Denied"
-  );
-  assert.equal(g.driver.counts.dispatch, 0);
-  const h = await fixture(true);
-  const final = createControlledToolExecutor({
-    ...h.dependencies,
-    checkApprover: () =>
-      Effect.sync(() =>
-        h.current.setDecision({
-          decision: "deny",
-          policyVersion: "revoked",
-          reason: "Revoked before physical dispatch",
-        })
-      ),
-  });
-  assert.equal(
-    await failureTag(final.execute(h.call, h.capability, h.effect)),
-    "Denied"
-  );
-  assert.equal(h.driver.counts.dispatch, 0);
-});
-
-test("an uncertain write reports UnknownOutcome after one dispatch", async () => {
-  const f = await fixture(true);
-  let effects = 0;
-  const driver: ToolExecutor = {
-    execute: () =>
-      Effect.flatMap(
-        Effect.sync(() => {
-          effects += 1;
-        }),
-        () =>
-          Effect.fail(
-            new UnknownOutcome({
-              operationId: f.effect.operationId,
-              reason: "Provider reply lost",
-            })
-          )
-      ),
-  };
-  const executor = createControlledToolExecutor({ ...f.dependencies, driver });
-  assert.equal(
-    await failureTag(executor.execute(f.call, f.capability, f.effect)),
-    "UnknownOutcome"
-  );
-  assert.equal(effects, 1);
-});
-
-test("invalid driver output after dispatch is an unknown outcome", async () => {
-  const f = await fixture(true);
-  const driver: ToolExecutor = {
-    execute: () => Effect.succeed({ output: "x".repeat(1025) }),
-  };
-  const executor = createControlledToolExecutor({ ...f.dependencies, driver });
-  assert.equal(
-    await failureTag(executor.execute(f.call, f.capability, f.effect)),
-    "UnknownOutcome"
-  );
-});
-
-test("Effect interruption stops the driver after the caller stops", async () => {
-  const f = await fixture(true);
-  const entered = Promise.withResolvers<null>();
-  let interrupted = false;
-  const driver: ToolExecutor = {
-    ...f.driver.service,
-    execute: () =>
-      Effect.sync(() => entered.resolve(null)).pipe(
-        Effect.flatMap(() => Effect.never),
-        Effect.onInterrupt(() =>
-          Effect.sync(() => {
-            interrupted = true;
-          })
-        )
-      ),
-  };
-  const executor = createControlledToolExecutor({ ...f.dependencies, driver });
-  const fiber = Effect.runFork(
-    executor.execute(f.call, f.capability, f.effect)
-  );
-  await entered.promise;
-  await Effect.runPromise(Fiber.interrupt(fiber));
-  assert.equal(interrupted, true);
-});
-
-test("unavailable, expired or foreign capability never dispatches", async () => {
-  const f = await fixture();
-  f.current.setAvailable(false);
-  assert.equal(
-    await failureTag(f.executor.execute(f.call, f.capability, f.effect)),
-    "Unavailable"
-  );
-  f.current.setAvailable(true);
-  assert.equal(
-    await failureTag(
-      f.executor.execute(
-        f.call,
-        { ...f.capability, expiresAt: clock() },
-        f.effect
-      )
-    ),
-    "Denied"
-  );
-  assert.equal(
-    await failureTag(
-      f.executor.execute(
-        { ...f.call, organizationId: id.organization("foreign") },
-        f.capability,
-        f.effect
-      )
-    ),
-    "Denied"
-  );
-  assert.equal(
-    await failureTag(
-      f.executor.execute(f.call, f.capability, {
-        ...f.effect,
-        deadlineAt: clock(),
-      })
-    ),
-    "Unavailable"
-  );
-  assert.equal(f.driver.counts.dispatch, 0);
-});
-
-test("caller cancellation and deadlines stop an approval wait with zero dispatches", async () => {
-  const f = await fixture(true);
-  const entered = Promise.withResolvers<null>();
-  const controller = new AbortController();
-  const executor = createControlledToolExecutor({
-    ...f.dependencies,
-    approval: () =>
-      Effect.sync(() => entered.resolve()).pipe(
-        Effect.flatMap(() => Effect.never)
-      ),
-  });
-  const pending = failureTag(
-    executor.execute(f.call, f.capability, {
-      ...f.effect,
-      signal: controller.signal,
-    })
-  );
-  await entered.promise;
-  controller.abort();
-  assert.equal(await pending, "Unavailable");
-  assert.equal(f.driver.counts.dispatch, 0);
-  assert.equal(
-    await failureTag(
-      executor.execute(f.call, f.capability, {
-        ...f.effect,
-        deadlineAt: clock() + 20,
-      })
-    ),
-    "Unavailable"
-  );
-  assert.equal(f.driver.counts.dispatch, 0);
-});
-
-test("an expired capability after the approval wait cannot dispatch", async () => {
-  const f = await fixture(true);
-  let now = clock();
-  const executor = createControlledToolExecutor({
-    ...f.dependencies,
-    approval: () =>
-      Effect.sync(() => {
-        now += 100;
-        return f.approval;
-      }),
-    now: () => now,
-  });
-  assert.equal(
-    await failureTag(
-      executor.execute(
-        f.call,
-        { ...f.capability, expiresAt: clock() + 50 },
-        f.effect
-      )
-    ),
-    "Denied"
-  );
-  assert.equal(f.driver.counts.dispatch, 0);
-});
-
 test("authority stops waiting for unavailable session and capability adapters", async () => {
   const f = await fixture();
   const session = createAgentAuthority({
@@ -619,19 +289,12 @@ test("authority stops waiting for unavailable session and capability adapters", 
   assert.equal(await pending, "Unavailable");
 });
 
-test("invalid deadlines fail in the typed channel before authority or tool dispatch", async () => {
+test("invalid deadlines fail in the typed channel before authority", async () => {
   const f = await fixture();
   for (const deadlineAt of [Number.NaN, Number.POSITIVE_INFINITY]) {
-    assert.equal(
-      await failureTag(
-        f.executor.execute(f.call, f.capability, { ...f.effect, deadlineAt })
-      ),
-      "Unavailable"
-    );
     assert.equal(
       await failureTag(f.authority.require(f.request, { deadlineAt })),
       "Unavailable"
     );
   }
-  assert.equal(f.driver.counts.dispatch, 0);
 });

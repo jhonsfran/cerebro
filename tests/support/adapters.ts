@@ -32,21 +32,12 @@ import type {
   AgentDefinition,
   AgentRepository,
 } from "../../packages/contracts/src/session.ts";
-import {
-  canonicalToolArguments,
-  toolCapabilityMatches,
-} from "../../packages/contracts/src/tools.ts";
-import type {
-  ToolExecution,
-  ToolExecutor,
-} from "../../packages/contracts/src/tools.ts";
+import { canonicalToolArguments } from "../../packages/contracts/src/tools.ts";
 import {
   allowedUser,
   fixtureAgentId,
   fixtureOrganizationId,
   serviceActor,
-  unknownToolOutcome,
-  unknownOutcomeInvocation,
 } from "./fixtures.ts";
 
 type PortFailure = Exclude<PortResult<never>, { readonly status: "ok" }>;
@@ -62,7 +53,6 @@ export interface FixtureAdapters {
   readonly artifactStore: ArtifactStore;
   readonly authorizationPolicy: AuthorizationPolicy;
   readonly entitlementPolicy: EntitlementPolicy;
-  readonly toolExecutor: ToolExecutor;
   readonly memoryStore: MemoryStore;
 }
 
@@ -307,55 +297,6 @@ export const createFixtureAdapters = (
         value: copyFixture(snapshot),
       };
       publishedAgents.set(effect.operationId, {
-        digest: effect.requestDigest,
-        request,
-        result: copyFixture(result),
-      });
-      return result;
-    },
-  };
-
-  const toolResults = new Map<
-    OperationId,
-    {
-      readonly digest: Digest;
-      readonly request: string;
-      readonly result: PortResult<ToolExecution>;
-    }
-  >();
-  const toolExecutor: ToolExecutor = {
-    execute: async (call, capability, effect) => {
-      if (
-        !hasGrant(call.context, call.organizationId) ||
-        !(await toolCapabilityMatches(capability, call, effect, now))
-      ) {
-        return denied("The tool capability does not authorize this call.");
-      }
-      const request = requestKey(call, capability);
-      const prior = toolResults.get(effect.operationId);
-      if (prior) {
-        return prior.digest === effect.requestDigest &&
-          prior.request === request
-          ? copyFixture(prior.result)
-          : conflict("The operation ID already has different tool arguments.");
-      }
-      const failure = effectFailure(effect, now);
-      if (failure) {
-        return failure;
-      }
-      const result: PortResult<ToolExecution> =
-        effect.operationId === unknownOutcomeInvocation.operationId
-          ? unknownToolOutcome
-          : {
-              status: "ok",
-              value: {
-                output: {
-                  arguments: copyFixture(call.arguments),
-                  toolId: call.tool.id,
-                },
-              },
-            };
-      toolResults.set(effect.operationId, {
         digest: effect.requestDigest,
         request,
         result: copyFixture(result),
@@ -614,6 +555,5 @@ export const createFixtureAdapters = (
     authorizationPolicy,
     entitlementPolicy,
     memoryStore,
-    toolExecutor,
   };
 };

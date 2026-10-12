@@ -1,7 +1,7 @@
 /* oxlint-disable no-await-in-loop -- Approval waits read the durable company decision until the native task is interrupted. */
 import type { AuthorityService } from "@cerebro/contracts/authority-service";
 import type { EventAddress } from "@cerebro/contracts/events";
-import { Denied } from "@cerebro/contracts/failures";
+import { Denied, UnknownOutcome } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
@@ -13,7 +13,6 @@ import type {
 import { boundApprovalMatches } from "@cerebro/contracts/tool-service";
 import type {
   BoundApproval,
-  BoundCapability,
   BoundInvocation,
   RegisteredTool,
   ToolExecutor,
@@ -287,27 +286,6 @@ export const createPiTools = (
               )
             );
           }
-          permit = yield* configuration.authority.require(request, options);
-          const capability: BoundCapability = {
-            actorPrincipalId: executionContext.actor.id,
-            agentId: configuration.agent.agentId,
-            argumentDigest,
-            connectorFingerprint: tool.connectorFingerprint,
-            connectorId: tool.connectorId,
-            ...(executionContext.delegation
-              ? { delegationId: executionContext.delegation.id }
-              : {}),
-            effect: tool.effect,
-            expiresAt: options.deadlineAt,
-            operationId,
-            organizationId: configuration.address.organizationId,
-            policyVersion: permit.policyVersion,
-            principalId:
-              executionContext.represented?.id ?? executionContext.actor.id,
-            runId,
-            toolId: tool.id,
-            toolVersion: tool.version,
-          };
           yield* configuration.checkDependencies(
             executionContext,
             yield* configuration.dependencies(tool, prepared),
@@ -327,8 +305,22 @@ export const createPiTools = (
               runId,
               tool,
             },
-            capability,
             { ...options, operationId, requestDigest: argumentDigest }
+          );
+          // A revocation during the call withholds a read's output. A write may
+          // already have happened, so its outcome becomes unknown.
+          yield* configuration.authority.require(request, window()).pipe(
+            Effect.catch((error) =>
+              Effect.fail(
+                tool.effect === "write"
+                  ? new UnknownOutcome({
+                      operationId,
+                      reason:
+                        "Access changed while the connector call ran. Its outcome is unknown.",
+                    })
+                  : error
+              )
+            )
           );
           yield* vendorEffect(options, () =>
             api.memo<RecordedOutcome>(

@@ -180,11 +180,6 @@ const config = {
   ],
   name: "cerebro-api",
   services: [
-    {
-      binding: "TOOL_GATEWAY",
-      entrypoint: "TrustedGateway",
-      service: "cerebro-api",
-    },
     { binding: "AUDIT_SINK", entrypoint: "AuditSink", service: "cerebro-api" },
   ],
   vars: {
@@ -205,7 +200,6 @@ const config = {
       ? { ENTERPRISE_IDENTITY_JSON: enterpriseIdentityJson }
       : {}),
   },
-  worker_loaders: [{ binding: "LOADER" }],
 };
 const configPath = path.join(process.cwd(), "wrangler.jsonc");
 await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, {

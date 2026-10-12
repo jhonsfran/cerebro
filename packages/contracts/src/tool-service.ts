@@ -8,7 +8,6 @@ import { approvalMatches, digestToolArguments } from "./tools.ts";
 import type {
   Approval,
   ToolCall,
-  ToolCapability,
   ToolDefinition,
   ToolExecution,
   ToolInvocation,
@@ -33,11 +32,6 @@ export type RegisteredTool = ToolDefinition & {
 export type BoundToolCall = ToolCall & {
   readonly runId: RunId;
   readonly tool: RegisteredTool;
-};
-export type BoundCapability = ToolCapability & {
-  readonly runId: RunId;
-  readonly connectorFingerprint: Digest;
-  readonly policyVersion: string;
 };
 export type BoundApproval = Approval & {
   readonly runId: RunId;
@@ -68,7 +62,6 @@ export const boundApprovalMatches = (
 export interface ToolExecutor {
   readonly execute: (
     call: BoundToolCall,
-    capability: BoundCapability,
     options: EffectOptions
   ) => Effect.Effect<ToolExecution, ContractFailure>;
 }

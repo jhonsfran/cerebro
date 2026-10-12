@@ -15,15 +15,9 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionAgent"] }],
   "services": [
     {
-      "binding": "TOOL_GATEWAY",
-      "service": "cerebro-runtime-test",
-      "entrypoint": "FixtureEffectGateway",
-    },
-    {
       "binding": "AUDIT_SINK",
       "service": "cerebro-runtime-test",
       "entrypoint": "AuditSink",
     },
   ],
-  "worker_loaders": [{ "binding": "LOADER" }],
 }

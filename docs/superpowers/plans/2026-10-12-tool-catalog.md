@@ -186,28 +186,26 @@ Each live lane runs in its own git worktree at the PR head with its own Compose 
 
 **Files.**
 
-- [ ] Delete `packages/tools/src/broker.ts`.
-- [ ] Delete `packages/tools/src/dynamic-worker.ts`.
-- [ ] Delete `packages/tools/src/capability.ts` after moving the schemas `mcp-gateway.ts` still needs into it.
-- [ ] Delete `packages/infra` and the untracked `packages/ag-ui` leftovers.
-- [ ] Edit `packages/tools/src/mcp-gateway.ts`, `packages/contracts/src/tool-service.ts`, `packages/runtime/src/pi-tools.ts`.
-- [ ] Edit `apps/server/src/gateways.ts`, `apps/server/src/index.ts`, `apps/server/src/bindings.ts`, `apps/server/src/config.ts`, `apps/server/src/session/agent.ts`, `apps/server/src/routes/health.ts`.
-- [ ] Edit `deploy/bootstrap.mjs` to drop the `TOOL_GATEWAY` service binding and `worker_loaders`.
-- [ ] Edit `tests/runtime/worker.ts`, `tests/runtime/environment.ts`, `tests/runtime/fixture-session.ts`.
-- [ ] Edit `docs/architecture/overview.md` and `docs/reference/runtime-configuration.md` to drop `gatewaySigningKey`.
+- [ ] Delete `packages/tools/src/broker.ts`, `packages/tools/src/dynamic-worker.ts`, and `packages/tools/src/capability.ts`.
+- [ ] Rename `packages/tools/src/mcp-gateway.ts` to `connector.ts` and `apps/server/src/gateways.ts` to `audit-sink.ts`.
+- [ ] Edit `packages/contracts/src/tool-service.ts`, `packages/contracts/src/tools.ts`, `packages/runtime/src/pi-tools.ts`.
+- [ ] Edit `apps/server/src/{index,bindings,config}.ts`, `apps/server/src/session/agent.ts`, `apps/server/src/routes/health.ts`, `deploy/bootstrap.mjs`.
+- [ ] Edit the runtime fixture, `tests/policy/*`, `tests/contracts/*`, `tests/support/*`, and the docs.
 
 **Build.**
 
-- [ ] `createPiTools` calls the connector client in `mcp-gateway.ts` directly with the tool, arguments, and operation ID. The client keeps credential injection, byte limits, secret removal, and audit. It drops its own `authorizeTool` call, because `createPiTools` already checks authority after approval.
+- [ ] `createConnectorExecutor` in `connector.ts` looks up the tool, supplies credentials, dispatches, redacts, and bounds the output. Any failure after the request is sent is `UnknownOutcome`. `ToolExecutor.execute` loses its capability argument, and `ToolCapability`, `toolCapabilityMatches`, and the Promise executor port are deleted.
+- [ ] `createPiTools` keeps the authority check after approval and adds one after dispatch. A failed check withholds a read's output and turns a write into `UnknownOutcome`. The broker's approver recheck at dispatch is dropped, because decide already authorizes the person deciding.
+- [ ] `gatewaySigningKey` stays. It also signs API requests to session objects, which is separate from tool dispatch.
 
 **You see.**
 
-- [ ] The Worker deploys without `TOOL_GATEWAY`, `LOADER`, or `gatewaySigningKey`, and a read tool answers in chat.
+- [ ] The Worker deploys without `TOOL_GATEWAY` or `LOADER`, and a read tool answers in chat.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] All ten journeys in `tests/runtime/native-journey.test.ts` pass. Run `pnpm test:runtime`.
-- [ ] `tests/runtime/isolation.test.ts` passes without the loader probe in `tests/runtime/worker.ts`. Run `pnpm test:runtime`.
+- [ ] All journeys in `tests/runtime/native-journey.test.ts` pass against the real connector executor, plus "access revoked while a write runs reports an unknown outcome after one dispatch". Run `pnpm test:runtime`.
+- [ ] `tests/runtime/isolation.test.ts` passes without the loader scenario, which tested a layer that no longer exists. Run `pnpm test:runtime`.
 - [ ] Policy and channel suites pass. Run `pnpm test:policy && pnpm test:channels`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.

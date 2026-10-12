@@ -660,6 +660,49 @@ journey(
 );
 
 journey(
+  "access revoked while a write runs reports an unknown outcome after one dispatch",
+  async () => {
+    const address = addressFor("company-journey", "revoked-during-write");
+    await control(stack, { arm: { boundary: "after-tool-dispatch" } });
+    await send(
+      stack,
+      address,
+      "revoked-during-input",
+      "Apply fixture_effect once."
+    );
+    const approval = await pending(stack, address);
+    await decide(stack, address, approval);
+    await waitFor(
+      () => provider(stack),
+      (value) =>
+        value.held === 1 &&
+        value.tools.some(
+          (tool) => tool.operationId === approval.operationId && tool.write
+        )
+    );
+    await request(stack, "/runtime/fixture/access", {
+      address,
+      enabled: false,
+    });
+    await control(stack, { arm: null, release: true });
+    // Reads are denied while access is off; the check after dispatch runs within milliseconds.
+    await delay(1000);
+    await request(stack, "/runtime/fixture/access", { address, enabled: true });
+    const final = await waitFor(
+      () => read(stack, address),
+      (value) => !value.busy
+    );
+    assert.equal(await writeCount(approval.operationId), 1);
+    assert.ok(
+      final.messages.some(
+        (message) =>
+          message.role === "tool" && /outcome is unknown/u.test(message.text)
+      )
+    );
+  }
+);
+
+journey(
   "a process crash after physical write retains the Pi dispatch memo and reports an unknown result",
   async () => {
     const address = addressFor("company-journey", "dispatch-crash");

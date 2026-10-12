@@ -69,10 +69,10 @@ Migrations only move forward. To roll back, restore the full backup with its rec
 Do this in a maintenance window, after active runs finish.
 
 - **Model or connector credentials**: update `runtime.json`, start the stack again, and run one permitted call.
-- **`gatewaySigningKey`**: wait for in-flight tool calls to finish, then replace the key. Capabilities signed with the old key stop working.
+- **`gatewaySigningKey`**: replace the key and start the stack again. Session requests signed with the old key stop working, so open chats reconnect.
 - **`auth-secret`**: every user signs in again.
 - **Database or MinIO passwords**: change each service and its clients in the same window. Keep the old credentials with old backups.
 
 ## Check an unknown tool outcome
 
-A tool shown as an unknown outcome was dispatched, and Cerebro could not record its result. Cerebro does not retry an `at-most-once` tool. Look up the operation ID in the target system. The gateway sends it as `Idempotency-Key` and `X-Cerebro-Operation-Id`. Asking the agent to repeat the action creates a new operation that needs its own approval.
+A tool shown as an unknown outcome was dispatched, and Cerebro could not record its result. Cerebro does not retry an `at-most-once` tool. Look up the operation ID in the target system. The connector executor sends it as `Idempotency-Key` and `X-Cerebro-Operation-Id`. Asking the agent to repeat the action creates a new operation that needs its own approval.

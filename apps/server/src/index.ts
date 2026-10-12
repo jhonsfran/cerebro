@@ -9,7 +9,7 @@ import { apiRoutes } from "./routes/api";
 import { authRoutes } from "./routes/auth";
 import { healthRoutes } from "./routes/health";
 
-export { AuditSink, TrustedGateway } from "./gateways";
+export { AuditSink } from "./audit-sink";
 export { SessionAgent } from "./session/agent";
 
 const app = new Hono<{ Bindings: WorkerEnv }>();

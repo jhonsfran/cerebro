@@ -22,17 +22,16 @@ const databaseReady = (env: WorkerEnv) =>
 
 const runtimeReady = async (env: WorkerEnv) => {
   const config = runtimeConfiguration(env);
-  if (!env.SESSION || !env.LOADER || !env.TOOL_GATEWAY || !env.AUDIT_SINK) {
+  if (!env.SESSION || !env.AUDIT_SINK) {
     throw new Error("Runtime bindings are incomplete");
   }
   await createS3ObjectStorage(config.artifacts).ensureBucket({
     deadlineAt: Date.now() + 5000,
   });
-  const checks = await Promise.all([
-    env.TOOL_GATEWAY.fetch(new Request("https://gateway.internal/ready")),
-    env.AUDIT_SINK.fetch(new Request("https://audit.internal/ready")),
-  ]);
-  if (checks.some((response) => !response.ok)) {
+  const audit = await env.AUDIT_SINK.fetch(
+    new Request("https://audit.internal/ready")
+  );
+  if (!audit.ok) {
     throw new Error("Runtime graph is unavailable");
   }
 };

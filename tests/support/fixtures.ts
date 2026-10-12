@@ -4,12 +4,7 @@ import type {
   ExecutionContext,
   Principal,
 } from "../../packages/contracts/src/identity.ts";
-import type { PortResult } from "../../packages/contracts/src/port.ts";
-import type {
-  ToolCapability,
-  ToolExecution,
-  ToolInvocation,
-} from "../../packages/contracts/src/tools.ts";
+import type { ToolInvocation } from "../../packages/contracts/src/tools.ts";
 
 export const fixtureOrganizationId = id.organization("organization-1");
 export const fixtureAgentId = id.agent("agent-1");
@@ -89,25 +84,4 @@ export const unknownOutcomeInvocation: ToolInvocation = {
     id: fixtureToolId,
     version: "1",
   },
-};
-
-export const unknownToolOutcome: PortResult<ToolExecution> = {
-  operationId: unknownOutcomeInvocation.operationId,
-  reason:
-    "The provider may have completed the effect before the connection failed.",
-  status: "unknown-outcome",
-};
-
-export const unknownOutcomeCapability: ToolCapability = {
-  actorPrincipalId: allowedUser.id,
-  agentId: fixtureAgentId,
-  argumentDigest: unknownOutcomeInvocation.argumentDigest,
-  connectorId: unknownOutcomeInvocation.tool.connectorId,
-  effect: unknownOutcomeInvocation.tool.effect,
-  expiresAt: 1_900_000_000_000,
-  operationId: unknownOutcomeInvocation.operationId,
-  organizationId: fixtureOrganizationId,
-  principalId: allowedUser.id,
-  toolId: fixtureToolId,
-  toolVersion: unknownOutcomeInvocation.tool.version,
 };
