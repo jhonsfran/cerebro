@@ -11,5 +11,6 @@ export default defineConfig({
     "./src/schema/memory.ts",
     "./src/schema/connectors.ts",
     "./src/schema/audit.ts",
+    "./src/schema/accounts.ts",
   ],
 });

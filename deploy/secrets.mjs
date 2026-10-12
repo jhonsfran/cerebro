@@ -10,6 +10,7 @@ const names = [
   "postgres-password",
   "minio-password",
   "auth-secret",
+  "account-key",
   ...(mode === "local" ? ["bootstrap-token", "gateway-signing-key"] : []),
 ];
 

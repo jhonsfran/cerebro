@@ -1,6 +1,6 @@
 # Runtime configuration
 
-`runtime.json` configures the models, tools, and storage that one installation uses. `deploy/bootstrap.mjs` reads it from the secrets directory, validates it with `parseRuntimeConfiguration` in `apps/server/src/config.ts`, and publishes it to the Worker as `RUNTIME_CONFIG_JSON`. The Worker parses it once per isolate. A change takes effect the next time bootstrap runs.
+`runtime.json` configures the models, tools, and storage that one installation uses. `deploy/bootstrap.mjs` reads it from the secrets directory, validates it with `parseRuntimeConfiguration` in `apps/server/src/config.ts`, and publishes it to the Worker as `RUNTIME_CONFIG_JSON`. The Worker parses it once per isolate. A change takes effect the next time bootstrap runs. Bootstrap removes connector `credentials` before it publishes the file.
 
 In local mode, `pnpm start` writes this file from the model settings in `.env` (`deploy/local-runtime.mjs`). In production you supply it. The file contains credentials. Do not commit it.
 
@@ -55,7 +55,7 @@ Integer limits are positive and at most 1,048,576.
 | `maxOutputBytes` | integer | At most 1 MiB. Measured after secrets are removed. |
 | `requiresApproval` | boolean | A write always requires approval. |
 | `retryMode` | `"idempotent"` or `"at-most-once"` | What happens when a call is interrupted after dispatch. See [interrupted calls](#interrupted-calls). |
-| `credentials` | object | `headers` sent to the connector and extra `secrets` to remove from output. Header values are removed from output too. |
+| `credentials` | object | Optional. `headers` sent to the connector and extra `secrets` to remove from output. Header values are removed from output too. Bootstrap seals them into the connector account in PostgreSQL with the `account-key` secret, and the Worker never receives them. Once imported, you can remove them from the file. |
 | `target` | object | `kind`, `method`, and `url`. See [targets](#targets). |
 
 ### Targets

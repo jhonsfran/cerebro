@@ -7,8 +7,16 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 
-import { parseRuntimeConfiguration } from "../apps/server/src/config.ts";
+import {
+  connectorCredentialImports,
+  parseRuntimeConfiguration,
+  withoutCredentials,
+} from "../apps/server/src/config.ts";
 import { parseEnterpriseIdentityJSON } from "../packages/auth/src/enterprise.ts";
+import {
+  connectorAccountId,
+  sealCredentials,
+} from "../packages/tools/src/accounts.ts";
 
 const directory = process.env.CEREBRO_SECRETS_DIR ?? "/run/cerebro-secrets";
 const mode = process.env.DEPLOY_MODE ?? "local";
@@ -24,7 +32,12 @@ const minioPasswordFile = await readFile(
   path.join(directory, "minio-password"),
   "utf-8"
 );
+const accountKeyFile = await readFile(
+  path.join(directory, "account-key"),
+  "utf-8"
+);
 const authSecret = authSecretFile.trim();
+const accountKey = accountKeyFile.trim();
 const postgresPassword = postgresPasswordFile.trim();
 const minioPassword = minioPasswordFile.trim();
 const localDatabaseUrl = `postgres://cerebro:${encodeURIComponent(postgresPassword)}@postgres:5432/cerebro`;
@@ -107,7 +120,9 @@ const runtimeConfiguration = parseRuntimeConfiguration(
   await readRuntimeConfiguration(),
   mode
 );
-const runtimeConfigurationJson = JSON.stringify(runtimeConfiguration);
+const runtimeConfigurationJson = JSON.stringify(
+  withoutCredentials(runtimeConfiguration)
+);
 
 const aws = new AwsClient({
   accessKeyId: "cerebro",
@@ -146,6 +161,26 @@ try {
       .pathname,
   });
   await client`INSERT INTO organization (id, name) VALUES (${organizationId}, ${organizationId}) ON CONFLICT (id) DO NOTHING`;
+  // Credentials in runtime.json are sealed into connector accounts. Once
+  // imported they can be removed from the file; the account stays.
+  await Promise.all(
+    connectorCredentialImports(runtimeConfiguration).map(
+      async ({ connectorId, credentials }) => {
+        const accountId = connectorAccountId(connectorId);
+        const sealed = await sealCredentials(
+          accountKey,
+          { accountId, organizationId },
+          credentials
+        );
+        await client`
+          INSERT INTO connector_account (organization_id, id, label, sealed)
+          VALUES (${organizationId}, ${accountId}, ${connectorId}, ${sealed})
+          ON CONFLICT (organization_id, id)
+          DO UPDATE SET sealed = EXCLUDED.sealed, updated_at = now()
+        `;
+      }
+    )
+  );
   if (enterpriseIdentity) {
     try {
       await client`
@@ -183,6 +218,7 @@ const config = {
     { binding: "AUDIT_SINK", entrypoint: "AuditSink", service: "cerebro-api" },
   ],
   vars: {
+    ACCOUNT_KEY: accountKey,
     BETTER_AUTH_SECRET: authSecret,
     BETTER_AUTH_URL: authUrl,
     CHANNEL_ORGANIZATION_ID:
@@ -231,6 +267,7 @@ try {
   );
   let output = `${deployment.stdout ?? ""}${deployment.stderr ?? ""}`
     .replaceAll(authSecret, "[secret removed]")
+    .replaceAll(accountKey, "[secret removed]")
     .replaceAll(minioPassword, "[secret removed]")
     .replaceAll(postgresPassword, "[secret removed]")
     .replaceAll(databaseUrl, "[database URL removed]")
@@ -239,7 +276,9 @@ try {
     runtimeConfiguration.artifacts.secretAccessKey,
     runtimeConfiguration.gatewaySigningKey,
     ...runtimeConfiguration.models.map((model) => model.apiKey),
-    ...runtimeConfiguration.tools.flatMap((tool) => tool.credentials.secrets),
+    ...runtimeConfiguration.tools.flatMap(
+      (tool) => tool.credentials?.secrets ?? []
+    ),
     runtimeConfiguration.bootstrapToken,
   ].filter(Boolean)) {
     output = output.replaceAll(secret, "[runtime secret removed]");

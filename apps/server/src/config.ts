@@ -22,10 +22,14 @@ const jsonSchema = z.custom<Parameters<typeof z.fromJSONSchema>[0]>(
 );
 const toolSchema = z.strictObject({
   connectorId: z.string().min(1),
-  credentials: z.strictObject({
-    headers: z.record(z.string(), z.string()),
-    secrets: z.array(z.string().min(1)),
-  }),
+  // Imported into an encrypted connector account at bootstrap, then removed
+  // from the configuration the Worker receives.
+  credentials: z
+    .strictObject({
+      headers: z.record(z.string(), z.string()),
+      secrets: z.array(z.string().min(1)),
+    })
+    .optional(),
   description: z.string().min(1),
   effect: z.enum(["read", "write"]),
   id: z.string().min(1),
@@ -133,9 +137,11 @@ export const parseRuntimeConfiguration = (
     const connectorIdentities = new Map<string, string>();
     for (const tool of config.tools) {
       const identity = JSON.stringify({
-        headers: Object.entries(tool.credentials.headers).toSorted(
-          ([first], [second]) => first.localeCompare(second)
-        ),
+        headers: tool.credentials
+          ? Object.entries(tool.credentials.headers).toSorted(
+              ([first], [second]) => first.localeCompare(second)
+            )
+          : null,
         origin: new URL(tool.target.url).origin,
       });
       const prior = connectorIdentities.get(tool.connectorId);
@@ -146,21 +152,27 @@ export const parseRuntimeConfiguration = (
     }
     const normalized = {
       ...config,
-      tools: config.tools.map((tool) => ({
-        ...tool,
-        credentials: {
-          ...tool.credentials,
-          secrets: [
-            ...new Set([
-              ...tool.credentials.secrets,
-              ...Object.values(tool.credentials.headers).flatMap((value) => [
-                value,
-                value.replace(/^(?:Bearer|Basic)\s+/iu, ""),
-              ]),
-            ]),
-          ].filter(Boolean),
-        },
-      })),
+      tools: config.tools.map((tool) =>
+        tool.credentials
+          ? {
+              ...tool,
+              credentials: {
+                ...tool.credentials,
+                secrets: [
+                  ...new Set([
+                    ...tool.credentials.secrets,
+                    ...Object.values(tool.credentials.headers).flatMap(
+                      (value) => [
+                        value,
+                        value.replace(/^(?:Bearer|Basic)\s+/iu, ""),
+                      ]
+                    ),
+                  ]),
+                ].filter(Boolean),
+              },
+            }
+          : tool
+      ),
     };
     createRuntimeRegistry(normalized);
     return normalized;
@@ -197,25 +209,37 @@ const registries = new WeakMap<
   RuntimeConfiguration,
   ReturnType<typeof createRuntimeRegistry>
 >();
-// Credentials belong to one organization until accounts replace this file.
-export const connectorCredentials =
-  (config: RuntimeConfiguration, organizationId: string) =>
-  (requested: string, connectorId: string) => {
-    const tools = config.tools.filter(
-      (entry) => entry.connectorId === connectorId
-    );
-    const [first] = tools;
-    return Promise.resolve(
-      first && requested === organizationId
-        ? {
-            headers: first.credentials.headers,
-            secrets: [
-              ...new Set(tools.flatMap((tool) => tool.credentials.secrets)),
-            ],
-          }
-        : undefined
-    );
-  };
+// The credentials bootstrap seals into connector accounts, one per connector.
+export const connectorCredentialImports = (config: RuntimeConfiguration) =>
+  [...Map.groupBy(config.tools, (tool) => tool.connectorId)].flatMap(
+    ([connectorId, tools]) => {
+      const withCredentials = tools.flatMap((tool) =>
+        tool.credentials ? [tool.credentials] : []
+      );
+      const [first] = withCredentials;
+      return first
+        ? [
+            {
+              connectorId,
+              credentials: {
+                headers: first.headers,
+                secrets: [
+                  ...new Set(withCredentials.flatMap((item) => item.secrets)),
+                ],
+              },
+            },
+          ]
+        : [];
+    }
+  );
+
+// The configuration the Worker receives never contains connector credentials.
+export const withoutCredentials = (
+  config: RuntimeConfiguration
+): RuntimeConfiguration => ({
+  ...config,
+  tools: config.tools.map(({ credentials: _credentials, ...tool }) => tool),
+});
 
 export const runtimeRegistry = (config: RuntimeConfiguration) => {
   let registry = registries.get(config);

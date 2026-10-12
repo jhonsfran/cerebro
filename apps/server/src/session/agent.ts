@@ -17,10 +17,12 @@ import type {
   ContentDependencies,
 } from "@cerebro/contracts/session";
 import { withDatabase } from "@cerebro/db";
+import { findSealedAccount } from "@cerebro/db/repositories/accounts";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { channelConversation } from "@cerebro/db/schema/agents";
 import { SessionAgent as SessionHost } from "@cerebro/runtime/session-agent";
 import type { SessionHostConfiguration } from "@cerebro/runtime/session-agent";
+import { connectorAccountId, openCredentials } from "@cerebro/tools/accounts";
 import { createConnectorExecutor } from "@cerebro/tools/connector";
 import { bindRegisteredTool } from "@cerebro/tools/registry";
 import type { Model } from "@earendil-works/pi-ai";
@@ -36,11 +38,7 @@ import {
 } from "../access";
 import type { WorkerEnv } from "../bindings";
 import { slackSettings } from "../channels";
-import {
-  connectorCredentials,
-  runtimeConfiguration,
-  runtimeRegistry,
-} from "../config";
+import { runtimeConfiguration, runtimeRegistry } from "../config";
 import {
   SessionContent,
   migrateLegacySessionMetadata,
@@ -249,10 +247,18 @@ export const createRuntimeComposition = (
         )
       ).pipe(Effect.flatMap(fromPortResult));
     const executor = createConnectorExecutor({
-      credentials: connectorCredentials(
-        config,
-        env.CHANNEL_ORGANIZATION_ID ?? "local-company"
-      ),
+      credentials: async (organizationId, connectorId) => {
+        const scope = {
+          accountId: connectorAccountId(connectorId),
+          organizationId,
+        };
+        const sealed = await withDatabase(env, (database) =>
+          findSealedAccount(database, scope.organizationId, scope.accountId)
+        );
+        return sealed
+          ? await openCredentials(env.ACCOUNT_KEY, scope, sealed)
+          : undefined;
+      },
       registry,
     });
     const model: Model<"openai-completions"> = {

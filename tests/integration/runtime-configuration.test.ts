@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { parseRuntimeConfiguration } from "../../apps/server/src/config.ts";
+import {
+  connectorCredentialImports,
+  parseRuntimeConfiguration,
+  withoutCredentials,
+} from "../../apps/server/src/config.ts";
 
 const configured = () => ({
   artifacts: {
@@ -64,10 +68,35 @@ test("production accepts bounded ports and registers connector credentials for r
   const result = parse(configured());
   assert.equal(result.models[0].id, "company/model");
   assert.equal(result.models[0].maxRequestsPerRun, 16);
-  assert.deepEqual(result.tools[0].credentials.secrets, [
+  assert.deepEqual(result.tools[0].credentials?.secrets, [
     "Bearer private-connector-test-value",
     "private-connector-test-value",
   ]);
+});
+
+test("connector credentials are imported once per connector and never reach the Worker", () => {
+  const result = parse(configured());
+  assert.deepEqual(connectorCredentialImports(result), [
+    {
+      connectorId: "company-mcp",
+      credentials: {
+        headers: { Authorization: "Bearer private-connector-test-value" },
+        secrets: [
+          "Bearer private-connector-test-value",
+          "private-connector-test-value",
+        ],
+      },
+    },
+  ]);
+  assert.equal(
+    JSON.stringify(withoutCredentials(result)).includes(
+      "private-connector-test-value"
+    ),
+    false
+  );
+  const imported = configured();
+  Reflect.deleteProperty(imported.tools[0], "credentials");
+  assert.deepEqual(connectorCredentialImports(parse(imported)), []);
 });
 
 test("production accepts approved HTTPS write connectors and rejects unknown modes", () => {
