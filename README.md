@@ -75,7 +75,6 @@ Integration tests start isolated stacks with `tests/slice-1/compose.test.yaml`, 
 ## Learn more
 
 - [How Cerebro fits together](docs/architecture/overview.md)
-- [Architecture decision: keep company rules independent of replaceable components](docs/architecture/adr-0001-replaceable-application-boundaries.md)
 - [How to run Cerebro in production](docs/operations/production.md)
 - [How to connect Slack](docs/operations/slack.md)
 - [How to back up and restore a stack](docs/operations/backup.md)
