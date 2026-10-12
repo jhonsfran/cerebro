@@ -1,5 +1,12 @@
 import { sql } from "drizzle-orm";
-import { check, pgTable, primaryKey, text } from "drizzle-orm/pg-core";
+import {
+  check,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+} from "drizzle-orm/pg-core";
 
 import { organization } from "./core.ts";
 
@@ -21,4 +28,20 @@ export const connector = pgTable(
     check("connector_state", sql`${table.state} IN ('active', 'disabled')`),
   ]
 );
-export const connectorSchema = { connector };
+// One tool an agent can enable. `definition` is the validated tool document;
+// `source` names who replaces the row, so each source owns only its own tools.
+export const connectorTool = pgTable(
+  "connector_tool",
+  {
+    connectorId: text("connector_id").notNull(),
+    definition: jsonb("definition").$type<unknown>().notNull(),
+    id: text("id").notNull(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id),
+    source: text("source").notNull().$type<"runtime.json">(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.id] })]
+);
+export const connectorSchema = { connector, connectorTool };

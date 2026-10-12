@@ -117,6 +117,12 @@ test(
     );
     assert.match(sealedAccount, /^v1\./u);
     assert.equal(sealedAccount.includes("fixture-connector-key"), false);
+    assert.equal(
+      await fixture.sql(
+        "SELECT string_agg(id, ',' ORDER BY id COLLATE \"C\") FROM connector_tool WHERE source='runtime.json'"
+      ),
+      "fixture-read,fixture_effect"
+    );
     const directory = path.resolve(
       "artifacts/slice-1",
       boot.sha,

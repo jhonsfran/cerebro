@@ -14,6 +14,7 @@ import type {
 import type { Database } from "@cerebro/db";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
+import { connectorToolExists } from "@cerebro/db/repositories/catalog";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import { createMemoryRepository } from "@cerebro/db/repositories/memory";
 import { memoryArtifact } from "@cerebro/db/schema/memory";
@@ -79,7 +80,11 @@ export const createCurrentEntitlements = (
           : current.value.enabledToolIds.includes(
               id.tool(request.capability)
             ) &&
-            configured.tools.some((tool) => tool.id === request.capability));
+            (await connectorToolExists(
+              database,
+              request.organizationId,
+              request.capability
+            )));
       return {
         status: "ok",
         value: allowed

@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  catalogImports,
   connectorCredentialImports,
   parseRuntimeConfiguration,
-  withoutCredentials,
+  workerConfiguration,
 } from "../../apps/server/src/config.ts";
 
 const configured = () => ({
@@ -74,7 +75,7 @@ test("production accepts bounded ports and registers connector credentials for r
   ]);
 });
 
-test("connector credentials are imported once per connector and never reach the Worker", () => {
+test("tools and credentials go to the catalog and accounts, never to the Worker", () => {
   const result = parse(configured());
   assert.deepEqual(connectorCredentialImports(result), [
     {
@@ -88,8 +89,13 @@ test("connector credentials are imported once per connector and never reach the 
       },
     },
   ]);
+  assert.deepEqual(workerConfiguration(result).tools, []);
+  assert.deepEqual(
+    catalogImports(result).map((tool) => tool.id),
+    ["read-record"]
+  );
   assert.equal(
-    JSON.stringify(withoutCredentials(result)).includes(
+    JSON.stringify(catalogImports(result)).includes(
       "private-connector-test-value"
     ),
     false

@@ -296,27 +296,25 @@ Each live lane runs in its own git worktree at the PR head with its own Compose 
 
 **Files.**
 
-- [ ] Edit `packages/db/src/schema/connectors.ts` to add `source` and `listingVersion`, and create `connector_tool` with its migration.
-- [ ] Create `packages/contracts/src/tool-catalog.ts`.
-- [ ] Create `packages/tools/src/catalog.ts`.
-- [ ] Delete `packages/tools/src/registry.ts`.
-- [ ] Edit `packages/runtime/src/session-agent.ts`, `apps/server/src/session/agent.ts`, `apps/server/src/config.ts`, `packages/api/src/routers/product.ts`, `deploy/bootstrap.mjs`.
-- [ ] Edit `docs/reference/runtime-configuration.md` and `docs/architecture/overview.md`.
+- [ ] Add `connector_tool` to `packages/db/src/schema/connectors.ts`, create `packages/db/src/repositories/catalog.ts`, and migration `0012_tool_catalog.sql`.
+- [ ] Create `apps/server/src/catalog.ts`.
+- [ ] Edit `apps/server/src/config.ts`, `apps/server/src/channels.ts`, `apps/server/src/session/agent.ts`, `deploy/bootstrap.mjs`, and the docs.
+- [ ] Edit `tests/channels/helpers.ts` and `tests/integration/pilot-restore.ts`, which named the dropped tables.
 
 **Build.**
 
-- [ ] `connector.source` is a discriminated union, `{ kind: "mcp", url }` or `{ kind: "http", url }`. A `connector_tool` row holds name, description, input and output schemas, effect, `requiresApproval`, `retryMode`, byte limits, and a version equal to the hash of those fields.
-- [ ] `ToolCatalog.forAgent(principal, agent)` returns the enabled tools the principal may use. `session-agent.ts` builds `PiRegisteredTool[]` from it at run start instead of `runtime.tools`. `connectorFingerprint` and `toolVersion` come from the row.
-- [ ] Bootstrap imports `runtime.json` tools into the catalog once, then the config schema rejects `tools`.
+- [ ] A `connector_tool` row holds the organization, tool ID, connector ID, `source`, and the validated tool document as `definition`. `parseCatalogTool` validates it on read, and `createCatalogRegistry` builds the registry from catalog tools.
+- [ ] Bootstrap replaces the rows whose `source` is `runtime.json` in one transaction, and publishes a Worker configuration with no tools. The session agent and the agent editor read the catalog. The `connector` table is left for PR-5, where MCP connectors need a URL and an account.
+- [ ] The same migration drops schema drift that nothing reads. It drops `channel_item`, `channel_reply`, and four `channel_conversation` columns with `IF EXISTS`.
 
 **You see.**
 
-- [ ] The agent editor lists tools from the catalog, and an agent uses a tool added to the catalog without a redeploy.
+- [ ] The agent editor lists tools from the catalog, and a conversation started after a catalog change sees it without a redeploy.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] All ten native journeys pass with tools served from the catalog. Run `pnpm test:runtime`.
-- [ ] `tests/integration/runtime-configuration.test.ts` gains a case where `tools` is rejected. Run `pnpm test:integration`.
+- [ ] The pilot's tool calls and approvals pass with tools served from the catalog. Run `pnpm test:integration`.
+- [ ] `tests/integration/runtime-configuration.test.ts` checks that the Worker configuration has no tools and catalog imports carry no credentials. The pilot checks the catalog rows. Run `pnpm test:integration`.
 - [ ] Channel UI tests pass with catalog-backed `connectorChoices`. Run `pnpm test:channels`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.

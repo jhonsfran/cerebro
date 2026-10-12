@@ -21,7 +21,8 @@ const executeFile = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "../..");
 const dataTables = [
   "cerebro_audit_event",
-  "channel_item",
+  "connector_account",
+  "connector_tool",
   "memory_source",
   "memory_record",
   "memory_artifact",

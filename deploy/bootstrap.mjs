@@ -8,9 +8,10 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 
 import {
+  catalogImports,
   connectorCredentialImports,
   parseRuntimeConfiguration,
-  withoutCredentials,
+  workerConfiguration,
 } from "../apps/server/src/config.ts";
 import { parseEnterpriseIdentityJSON } from "../packages/auth/src/enterprise.ts";
 import {
@@ -121,7 +122,7 @@ const runtimeConfiguration = parseRuntimeConfiguration(
   mode
 );
 const runtimeConfigurationJson = JSON.stringify(
-  withoutCredentials(runtimeConfiguration)
+  workerConfiguration(runtimeConfiguration)
 );
 
 const aws = new AwsClient({
@@ -181,6 +182,18 @@ try {
       }
     )
   );
+  // runtime.json owns the catalog rows it declares; each start replaces them.
+  await client.begin(async (transaction) => {
+    await transaction`DELETE FROM connector_tool WHERE organization_id = ${organizationId} AND source = 'runtime.json'`;
+    await Promise.all(
+      catalogImports(runtimeConfiguration).map(
+        (tool) => transaction`
+          INSERT INTO connector_tool (organization_id, id, connector_id, source, definition)
+          VALUES (${organizationId}, ${tool.id}, ${tool.connectorId}, 'runtime.json', ${JSON.stringify(tool)}::jsonb)
+        `
+      )
+    );
+  });
   if (enterpriseIdentity) {
     try {
       await client`

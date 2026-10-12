@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { memoryDependencies, readSource } from "./access";
 import type { WorkerEnv } from "./bindings";
+import { catalogTools } from "./catalog";
 import { runtimeConfiguration } from "./config";
 import { createSessionClient } from "./session/client";
 
@@ -37,17 +38,6 @@ export const createChannelOptions = (env: WorkerEnv) => {
   const slack = slackSettings(env);
   return {
     bootstrapToken: config.bootstrapToken,
-    catalog: {
-      connectorChoices: config.tools.map((tool) => ({
-        connectorId: tool.connectorId,
-        id: tool.id,
-        label: tool.description,
-      })),
-      modelChoices: config.models.map((model) => ({
-        id: model.id,
-        label: model.id,
-      })),
-    },
     catalogFor: async (database: Database, context: ExecutionContext) => {
       const access = await accessView(
         memoryDependencies(env, database),
@@ -57,10 +47,11 @@ export const createChannelOptions = (env: WorkerEnv) => {
       if (access.status !== "ok") {
         return access;
       }
+      const tools = await catalogTools(database, context.actor.organizationId);
       return {
         status: "ok" as const,
         value: {
-          connectorChoices: config.tools.map((tool) => ({
+          connectorChoices: tools.map((tool) => ({
             connectorId: tool.connectorId,
             id: tool.id,
             label: tool.description,

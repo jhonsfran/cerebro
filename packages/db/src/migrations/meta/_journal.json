@@ -85,6 +85,13 @@
       "when": 1791818537986,
       "tag": "0011_connector_account",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1791820201961,
+      "tag": "0012_tool_catalog",
+      "breakpoints": true
     }
   ]
 }

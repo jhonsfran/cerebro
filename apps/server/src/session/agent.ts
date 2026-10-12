@@ -37,8 +37,9 @@ import {
   createCurrentEntitlements,
 } from "../access";
 import type { WorkerEnv } from "../bindings";
+import { catalogTools } from "../catalog";
 import { slackSettings } from "../channels";
-import { runtimeConfiguration, runtimeRegistry } from "../config";
+import { createCatalogRegistry, runtimeConfiguration } from "../config";
 import {
   SessionContent,
   migrateLegacySessionMetadata,
@@ -156,7 +157,12 @@ export const createRuntimeComposition = (
         new InvalidInput({ reason: "The pinned model is not configured." })
       );
     }
-    const registry = runtimeRegistry(config);
+    const catalog = yield* tryAdapter(() =>
+      withDatabase(env, (database) =>
+        catalogTools(database, address.organizationId)
+      )
+    );
+    const registry = createCatalogRegistry(catalog, config.mode);
     const registered = yield* Effect.forEach(registry.list(), (entry) =>
       bindRegisteredTool(entry)
     );
