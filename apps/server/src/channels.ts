@@ -10,6 +10,7 @@ import { memoryDependencies, readSource } from "./access";
 import type { WorkerEnv } from "./bindings";
 import { catalogTools } from "./catalog";
 import { runtimeConfiguration } from "./config";
+import { createConnectorAdmin } from "./connectors";
 import { createSessionClient } from "./session/client";
 
 const slackConfiguration = z
@@ -67,6 +68,7 @@ export const createChannelOptions = (env: WorkerEnv) => {
         },
       };
     },
+    connectors: createConnectorAdmin(env),
     getUser: async (request: Request, database: Database) => {
       const session = await createAuth(env, database).api.getSession({
         headers: request.headers,

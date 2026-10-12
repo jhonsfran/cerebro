@@ -23,12 +23,15 @@ import type { ToolExecutor } from "@cerebro/contracts/tool-service";
 import { createModels } from "@earendil-works/pi-ai/models";
 import { Harness, createRegistry } from "@earendil-works/pi-durable";
 import type { ConversationView } from "@earendil-works/pi-durable";
-import { PiHarness } from "agents/harness/pi";
+import { PiHarness, skills } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
 import type {
   LifecycleJobContext,
   LifecycleJobOutcome,
 } from "agents/lifecycle";
+// Types only: the agents/skills entry imports optional script runners that the
+// Worker bundle does not include.
+import type { SkillSource } from "agents/skills";
 import { DurableObject } from "cloudflare:workers";
 import { Effect, Result, Schema } from "effect";
 
@@ -40,6 +43,21 @@ import { createPiTools } from "./pi-tools.ts";
 import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
 
 export type SessionEnvironment = Readonly<Record<string, unknown>>;
+export interface CompanySkill {
+  readonly name: string;
+  readonly description: string;
+  readonly body: string;
+}
+const companySkillSource = (entries: readonly CompanySkill[]): SkillSource => ({
+  fingerprint: JSON.stringify(entries),
+  id: "cerebro-company-skills",
+  list: () =>
+    Promise.resolve(
+      entries.map(({ description, name }) => ({ description, name }))
+    ),
+  load: (name) =>
+    Promise.resolve(entries.find((entry) => entry.name === name) ?? null),
+});
 export interface SessionHostConfiguration {
   readonly address: EventAddress;
   readonly agent: AgentDefinition;
@@ -47,6 +65,8 @@ export interface SessionHostConfiguration {
   readonly executor: ToolExecutor;
   readonly provider: Omit<ControlledProviderConfiguration, "authorize">;
   readonly tools: readonly PiRegisteredTool[];
+  // Company skills the model can activate by name; their bodies load on demand.
+  readonly skills?: readonly CompanySkill[];
   readonly authenticate: (request: Request) => Promise<ExecutionContext>;
   readonly ownerContext: () => Effect.Effect<ExecutionContext, ContractFailure>;
   readonly notify?: (snapshot: ChatSnapshot) => Promise<void>;
@@ -114,6 +134,10 @@ export class SessionAgent<
       const registry = createRegistry();
       const { configuration } = runtime;
       registry.install({ name: "cerebro-controlled", tools: runtime.tools });
+      const companySkills = configuration.skills ?? [];
+      if (companySkills.length > 0) {
+        registry.install(await skills([companySkillSource(companySkills)]));
+      }
       const models = createModels();
       models.setProvider(runtime.provider);
       const pi = await Harness.open(

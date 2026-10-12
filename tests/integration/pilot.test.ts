@@ -759,6 +759,194 @@ test(
           evidence.audit = exported;
         }
       );
+      await t.test(
+        "administrators add, refresh, and remove an MCP connector",
+        async () => {
+          const change = z.object({
+            id: z.string(),
+            skipped: z.array(z.string()),
+            toolCount: z.number(),
+          });
+          const input = {
+            headers: { Authorization: "Bearer fixture-connector-key" },
+            id: "crm",
+            url: "http://fixture:8090/mcp",
+          };
+          await expectStatus(
+            await fixture.request(
+              "/api/product/connectors",
+              support.cookie,
+              input,
+              "POST"
+            ),
+            403
+          );
+          assert.deepEqual(
+            await fixture.json(
+              "/api/product/connectors",
+              owner.cookie,
+              change,
+              input,
+              "POST"
+            ),
+            { id: "crm", skipped: [], toolCount: 2 }
+          );
+          await expectStatus(
+            await fixture.request(
+              "/api/product/connectors",
+              owner.cookie,
+              input,
+              "POST"
+            ),
+            409
+          );
+          const listed = await fixture.json(
+            "/api/product/connectors",
+            owner.cookie,
+            z.object({
+              connectors: z.array(
+                z.object({
+                  id: z.string(),
+                  source: z.string(),
+                  toolCount: z.number(),
+                  url: z.string().nullable(),
+                })
+              ),
+            })
+          );
+          assert.deepEqual(
+            listed.connectors.find((connector) => connector.id === "crm"),
+            {
+              id: "crm",
+              source: "admin",
+              toolCount: 2,
+              url: "http://fixture:8090/mcp",
+            }
+          );
+          const sealed = await fixture.sql(
+            "SELECT sealed FROM connector_account WHERE id='connector:crm'"
+          );
+          assert.match(sealed, /^v1\./u);
+          assert.equal(sealed.includes("fixture-connector-key"), false);
+          const catalog = await fixture.json(
+            "/api/product/catalog",
+            owner.cookie,
+            z.object({
+              connectorChoices: z.array(z.object({ id: z.string() })),
+            })
+          );
+          assert.ok(
+            ["crm_archive", "crm_lookup"].every((toolId) =>
+              catalog.connectorChoices.some((choice) => choice.id === toolId)
+            )
+          );
+          // Read and execute on both tools, and execute on the connector.
+          assert.equal(
+            await fixture.sql(
+              "SELECT count(*) FROM identity_grant WHERE source='connector:crm'"
+            ),
+            "5"
+          );
+          const refreshed = await fixture.json(
+            "/api/product/connectors/crm/refresh",
+            owner.cookie,
+            change,
+            {},
+            "POST"
+          );
+          assert.equal(refreshed.toolCount, 2);
+          await fixture.json(
+            "/api/product/connectors/crm",
+            owner.cookie,
+            z.object({ id: z.literal("crm"), removed: z.literal(true) }),
+            {},
+            "DELETE"
+          );
+          assert.equal(
+            await fixture.sql(
+              "SELECT (SELECT count(*) FROM connector_tool WHERE source='admin:crm') + (SELECT count(*) FROM identity_grant WHERE source='connector:crm') + (SELECT count(*) FROM connector_account WHERE id='connector:crm')"
+            ),
+            "0"
+          );
+        }
+      );
+      await t.test(
+        "administrators save skills that new conversations offer",
+        async () => {
+          const skill = {
+            body: "Check the order date, then offer store credit.",
+            description: "Use when a customer asks for a refund.",
+          };
+          await expectStatus(
+            await fixture.request(
+              "/api/product/skills/refund-policy",
+              support.cookie,
+              skill,
+              "PUT"
+            ),
+            403
+          );
+          await expectStatus(
+            await fixture.request(
+              "/api/product/skills/Refund%20Policy",
+              owner.cookie,
+              skill,
+              "PUT"
+            ),
+            422
+          );
+          assert.deepEqual(
+            await fixture.json(
+              "/api/product/skills/refund-policy",
+              owner.cookie,
+              z.object({ name: z.string(), saved: z.literal(true) }),
+              skill,
+              "PUT"
+            ),
+            { name: "refund-policy", saved: true }
+          );
+          const skillList = z.object({
+            skills: z.array(
+              z.object({
+                body: z.string(),
+                description: z.string(),
+                name: z.string(),
+              })
+            ),
+          });
+          assert.deepEqual(
+            await fixture.json("/api/product/skills", owner.cookie, skillList),
+            { skills: [{ ...skill, name: "refund-policy" }] }
+          );
+          // A conversation started now offers the skill tools to the model.
+          const before = await provider();
+          const skillConversation = await createConversation();
+          await send(skillConversation, "Explain the current policy.");
+          await completed(skillConversation);
+          const calls = z
+            .object({
+              model: z.array(
+                z.object({ toolNames: z.array(z.string()).optional() })
+              ),
+            })
+            .parse(await fixture.observations())
+            .model.slice(before.model.length);
+          assert.ok(
+            calls.some((call) => call.toolNames?.includes("activate_skill"))
+          );
+          await fixture.json(
+            "/api/product/skills/refund-policy",
+            owner.cookie,
+            z.object({ name: z.string(), removed: z.literal(true) }),
+            {},
+            "DELETE"
+          );
+          assert.deepEqual(
+            await fixture.json("/api/product/skills", owner.cookie, skillList),
+            { skills: [] }
+          );
+        }
+      );
     } finally {
       await fixture.controls({
         arm: null,

@@ -21,6 +21,7 @@ export const catalogSchema = z.object({
 });
 export const setupSchema = z.object({
   bootstrapTokenRequired: z.boolean().default(false),
+  canAdminister: z.boolean().default(false),
   mode: z.enum(["local", "production"]),
   organizationId: z.string(),
   owner: z.boolean(),
@@ -122,3 +123,41 @@ export const conversationReferenceSchema = conversationSchema.pick({
   conversationId: true,
 });
 export type ConversationReference = z.infer<typeof conversationReferenceSchema>;
+
+export const connectorListSchema = z.object({
+  connectors: z.array(
+    z.object({
+      id: z.string(),
+      source: z.enum(["admin", "runtime.json"]),
+      toolCount: z.number(),
+      url: z.string().nullable(),
+    })
+  ),
+});
+export type ConnectorView = z.infer<
+  typeof connectorListSchema
+>["connectors"][number];
+export const connectorChangeSchema = z.object({
+  id: z.string(),
+  skipped: z.array(z.string()),
+  toolCount: z.number(),
+});
+export const connectorRemovedSchema = z.object({
+  id: z.string(),
+  removed: z.literal(true),
+});
+
+export const skillListSchema = z.object({
+  skills: z.array(
+    z.object({ body: z.string(), description: z.string(), name: z.string() })
+  ),
+});
+export type SkillView = z.infer<typeof skillListSchema>["skills"][number];
+export const skillSavedSchema = z.object({
+  name: z.string(),
+  saved: z.literal(true),
+});
+export const skillRemovedSchema = z.object({
+  name: z.string(),
+  removed: z.literal(true),
+});

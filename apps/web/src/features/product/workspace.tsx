@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { client } from "../../utils/orpc";
+import { AdminNav, AdminPanel } from "./admin";
+import type { AdminView } from "./admin";
 import {
   assertCurrentAccess,
   currentAccessGeneration,
@@ -659,6 +661,7 @@ export const ProductWorkspace = ({
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const [tab, setTab] = useState<Tab>("conversation");
   const [creating, setCreating] = useState(false);
+  const [adminView, setAdminView] = useState<AdminView | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [slackCode, setSlackCode] = useState<{
@@ -883,6 +886,14 @@ export const ProductWorkspace = ({
             <span className="status-pill">{setup?.mode ?? "loading"}</span>
           </div>
         </div>
+        <AdminNav
+          visible={setup?.canAdminister === true}
+          active={adminView}
+          open={(view) => {
+            setAdminView(view);
+            setCreating(false);
+          }}
+        />
         <div className="sidebar-section agent-list-heading">
           <p className="eyebrow">Agents</p>
           {setup?.owner ? (
@@ -892,6 +903,7 @@ export const ProductWorkspace = ({
               type="button"
               onClick={() => {
                 setCreating(true);
+                setAdminView(null);
                 setTab("configuration");
               }}
             >
@@ -902,7 +914,7 @@ export const ProductWorkspace = ({
         <nav className="agent-list" aria-label="Agents">
           {agents.map((entry) => (
             <button
-              className={`agent-list-item ${entry.agentId === activeAgentId ? "selected" : ""}`}
+              className={`agent-list-item ${entry.agentId === activeAgentId && !adminView ? "selected" : ""}`}
               key={entry.agentId}
               type="button"
               onClick={() => {
@@ -911,6 +923,7 @@ export const ProductWorkspace = ({
                 onConversation();
                 setSelectedId(entry.agentId);
                 setCreating(false);
+                setAdminView(null);
                 setTab("configuration");
               }}
             >
@@ -961,7 +974,7 @@ export const ProductWorkspace = ({
       </aside>
       <div className="product-main">
         <WorkspaceHeader
-          selected={selected}
+          selected={adminView ? undefined : selected}
           creating={creating}
           busy={busy}
           pending={conversationPending && !errorMessage}
@@ -972,37 +985,41 @@ export const ProductWorkspace = ({
             {errorMessage}
           </p>
         ) : null}
-        <WorkspaceBody
-          setup={setup}
-          selected={selected}
-          agent={activeAgent}
-          creating={creating}
-          tab={tab}
-          busy={busy}
-          conversationId={conversationId}
-          conversationPending={conversationPending && !errorMessage}
-          userId={userId}
-          setTab={setTab}
-          setCreating={setCreating}
-          claimSetup={claimSetup}
-          bootstrapToken={bootstrapToken}
-          setBootstrapToken={setBootstrapToken}
-          startConversation={startConversation}
-          refreshAgent={refreshAgent}
-          onSaved={async (agentId) => {
-            const generation = currentAccessGeneration();
-            await loadAgents();
-            assertCurrentAccess(generation);
-            setSelectedId(agentId);
-            setCreating(false);
-            const value = await request(
-              productPath(`agents/${encoded(agentId)}`),
-              agentDetailSchema
-            );
-            assertCurrentAccess(generation);
-            setAgent(value);
-          }}
-        />
+        {adminView ? (
+          <AdminPanel view={adminView} />
+        ) : (
+          <WorkspaceBody
+            setup={setup}
+            selected={selected}
+            agent={activeAgent}
+            creating={creating}
+            tab={tab}
+            busy={busy}
+            conversationId={conversationId}
+            conversationPending={conversationPending && !errorMessage}
+            userId={userId}
+            setTab={setTab}
+            setCreating={setCreating}
+            claimSetup={claimSetup}
+            bootstrapToken={bootstrapToken}
+            setBootstrapToken={setBootstrapToken}
+            startConversation={startConversation}
+            refreshAgent={refreshAgent}
+            onSaved={async (agentId) => {
+              const generation = currentAccessGeneration();
+              await loadAgents();
+              assertCurrentAccess(generation);
+              setSelectedId(agentId);
+              setCreating(false);
+              const value = await request(
+                productPath(`agents/${encoded(agentId)}`),
+                agentDetailSchema
+              );
+              assertCurrentAccess(generation);
+              setAgent(value);
+            }}
+          />
+        )}
       </div>
     </main>
   );

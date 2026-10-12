@@ -115,11 +115,11 @@ const loopbackHost = (value: string): boolean =>
   ["localhost", "127.0.0.1", "[::1]"].includes(new URL(value).hostname);
 // Local deployments may use HTTP and private hosts, such as a model on the
 // developer's machine. Production requires public HTTPS endpoints.
-const productionEndpoint = (value: string): boolean =>
+export const productionEndpoint = (value: string): boolean =>
   new URL(value).protocol === "https:" && !loopbackHost(value);
 type Credentials = z.infer<typeof credentialsSchema>;
 // Header values, and bearer tokens without their scheme, are removed from output.
-const withRedactions = (credentials: Credentials): Credentials => ({
+export const withRedactions = (credentials: Credentials): Credentials => ({
   ...credentials,
   secrets: [
     ...new Set([

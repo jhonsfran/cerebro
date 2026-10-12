@@ -17,6 +17,12 @@ import {
 } from "@cerebro/db/repositories/agents";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import {
+  deleteSkill as deleteSkillRecord,
+  listSkills as listSkillRecords,
+  putSkill as putSkillRecord,
+} from "@cerebro/db/repositories/skills";
+import type { SkillRecord } from "@cerebro/db/repositories/skills";
+import {
   channelConversation,
   channelEffect,
   installationSetup,
@@ -42,7 +48,7 @@ import {
   EFFECT_DEADLINE_MS,
   INSTALLATION_AGENT_PREFIX,
 } from "./types";
-import type { AccessAction, ChannelOptions } from "./types";
+import type { AccessAction, ChannelOptions, ConnectorInput } from "./types";
 
 export type Conversation = typeof channelConversation.$inferSelect;
 export interface AgentInput {
@@ -105,6 +111,91 @@ export const createChannelService = (
     return row;
   };
 
+  // Connectors and skills need the installation-wide manage grant, the same
+  // grant that creates agents.
+  const installationAdmin = async (userId: string): Promise<string> => {
+    const context = await current(userId);
+    await authorize(
+      database,
+      options,
+      context,
+      "manage",
+      "agent",
+      `${INSTALLATION_AGENT_PREFIX}${options.organizationId}`
+    );
+    return context.actor.id;
+  };
+  const connectorAdmin = async (userId: string) => {
+    if (!options.connectors) {
+      throw new ChannelError(
+        503,
+        "provider-unavailable",
+        "Connectors are not configured."
+      );
+    }
+    return {
+      admin: options.connectors,
+      principalId: await installationAdmin(userId),
+    };
+  };
+  const canAdminister = async (userId: string): Promise<boolean> => {
+    try {
+      await installationAdmin(userId);
+      return true;
+    } catch (error) {
+      if (error instanceof ChannelError) {
+        return false;
+      }
+      throw error;
+    }
+  };
+  const listConnectors = async (userId: string) => {
+    const { admin } = await connectorAdmin(userId);
+    return { connectors: await admin.list(database, options.organizationId) };
+  };
+  const addConnector = async (userId: string, input: ConnectorInput) => {
+    const { admin, principalId } = await connectorAdmin(userId);
+    return await admin.add(
+      database,
+      options.organizationId,
+      principalId,
+      input
+    );
+  };
+  const refreshConnector = async (userId: string, connectorId: string) => {
+    const { admin, principalId } = await connectorAdmin(userId);
+    return await admin.refresh(
+      database,
+      options.organizationId,
+      principalId,
+      connectorId
+    );
+  };
+  const removeConnector = async (userId: string, connectorId: string) => {
+    const { admin } = await connectorAdmin(userId);
+    await admin.remove(database, options.organizationId, connectorId);
+    return { id: connectorId, removed: true };
+  };
+  const listSkills = async (userId: string) => {
+    await installationAdmin(userId);
+    return { skills: await listSkillRecords(database, options.organizationId) };
+  };
+  const putSkill = async (userId: string, input: SkillRecord) => {
+    const principalId = await installationAdmin(userId);
+    await putSkillRecord(database, {
+      ...input,
+      organizationId: options.organizationId,
+      principalId,
+    });
+    return { name: input.name, saved: true };
+  };
+  const deleteSkill = async (userId: string, name: string) => {
+    await installationAdmin(userId);
+    if (!(await deleteSkillRecord(database, options.organizationId, name))) {
+      throw new ChannelError(404, "not-found", "The skill was not found.");
+    }
+    return { name, removed: true };
+  };
   const setup = async (userId: string) => {
     const [record] = await database
       .select()
@@ -115,6 +206,7 @@ export const createChannelService = (
     ).findPrincipalByUser(options.organizationId, userId);
     return {
       bootstrapTokenRequired: Boolean(options.bootstrapToken),
+      canAdminister: await canAdminister(userId),
       mode: options.mode,
       organizationId: options.organizationId,
       owner: record?.ownerUserId === userId,
@@ -755,6 +847,7 @@ export const createChannelService = (
     );
   };
   return {
+    addConnector,
     admit,
     approve,
     approveAs,
@@ -762,13 +855,19 @@ export const createChannelService = (
     chatAccess,
     conversationAccess,
     createConversation,
+    deleteSkill,
     getAgent,
     history,
     install,
     listAgents,
+    listConnectors,
     listConversations,
+    listSkills,
     publishAgent,
+    putSkill,
     readConversation,
+    refreshConnector,
+    removeConnector,
     setAccess,
     setup,
     source,

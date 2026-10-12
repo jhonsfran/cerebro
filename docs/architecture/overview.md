@@ -19,9 +19,11 @@ Each conversation has one SessionAgent Durable Object and one native Pi conversa
 
 ## Tools and the external door
 
-Tools come from connectors and live in the `connector_tool` catalog in PostgreSQL. Each row names its source. On every start, bootstrap replaces the rows `runtime.json` declares and the tools it discovers from configured MCP servers. A session reads the catalog when its host starts, so new conversations see catalog changes without a redeploy. See the [tool catalog plan](../superpowers/plans/2026-10-12-tool-catalog.md).
+Tools come from connectors and live in the `connector_tool` catalog in PostgreSQL. Each row names its source. On every start, bootstrap replaces the rows `runtime.json` declares and the tools it discovers from configured MCP servers. Administrators add, refresh, and remove other MCP connectors in the product. Those rows have the source `admin:<id>`, and the administrator who adds a connector receives read and execute grants on its tools. A session reads the catalog when its host starts, so new conversations see catalog changes without a redeploy. See the [tool catalog plan](../superpowers/plans/2026-10-12-tool-catalog.md).
 
 Pi is the authority for conversations it runs, not for tools. A later MCP endpoint for external agents will read the same catalog, accounts, and approvals without a Pi conversation. Keep tool, account, and approval code free of Pi types so that door stays open.
+
+Skills are company playbooks that administrators write in the product. When a session's host starts, it reads the organization's skills and installs the `agents.skills` extension from `agents/harness/pi`. The model sees each skill's name and description, and loads the instructions with `activate_skill` when a task matches. Every agent in the organization sees every skill.
 
 ## State owners
 
@@ -30,6 +32,7 @@ Pi is the authority for conversations it runs, not for tools. A later MCP endpoi
 | Identities, memberships, grants, agent definitions, connectors, searchable memory, and audit | Company services | PostgreSQL |
 | Connector credentials | Connector accounts, sealed with `account-key` | PostgreSQL |
 | Tools agents can enable | Tool catalog (`connector_tool`) | PostgreSQL |
+| Company skills | `skill` | PostgreSQL |
 | Transcript, inbox, generation, tool tasks, and recovery | Pi Durable | Conversation SQLite through PiHarness |
 | External dispatch markers and outcomes | Pi task memos | Conversation SQLite |
 | Owner, agent version, content access dependencies, and approvals | Cerebro | Company metadata beside Pi state |
