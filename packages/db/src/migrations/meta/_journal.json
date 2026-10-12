@@ -78,6 +78,13 @@
       "when": 1791579662167,
       "tag": "0010_drop_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791818537986,
+      "tag": "0011_connector_account",
+      "breakpoints": true
     }
   ]
 }

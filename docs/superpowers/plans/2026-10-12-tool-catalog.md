@@ -243,25 +243,23 @@ Each live lane runs in its own git worktree at the PR head with its own Compose 
 
 **Files.**
 
-- [ ] Create `packages/db/src/schema/accounts.ts` and its migration with `pnpm db:generate`.
-- [ ] Edit `packages/db/src/schema/connectors.ts` to replace `secretReference` with `accountId`.
+- [ ] Create `packages/db/src/schema/accounts.ts`, `packages/db/src/repositories/accounts.ts`, and migration `0011_connector_account.sql`, additive only.
 - [ ] Create `packages/tools/src/accounts.ts`.
-- [ ] Edit `packages/tools/src/mcp-gateway.ts`, `apps/server/src/config.ts`, `deploy/bootstrap.mjs`, `deploy/secrets.mjs`.
-- [ ] Edit `docs/reference/runtime-configuration.md` and `docs/architecture/overview.md`.
+- [ ] Edit `apps/server/src/{bindings,config}.ts`, `apps/server/src/session/agent.ts`, `deploy/bootstrap.mjs`, `deploy/secrets.mjs`, and the docs.
 
 **Build.**
 
-- [ ] An `account` row holds `organizationId`, `id`, `label`, and `sealed` credential bytes. `AccountStore` seals and opens with AES-GCM under a key file that `deploy/secrets.mjs` creates in `CEREBRO_SECRETS_DIR`. The connector client opens the account for its connector on each call.
-- [ ] Bootstrap imports each `tools[].credentials` entry into one account per `connectorId`, keyed so a rerun changes nothing, then the config schema rejects `credentials`.
+- [ ] A `connector_account` row holds `organization_id`, `id`, `label`, and `sealed`. The name avoids Better Auth's `account` table. `sealCredentials` and `openCredentials` use AES-GCM with the organization and account ID as additional data, keyed by the `account-key` secret.
+- [ ] Bootstrap seals each connector's `credentials` from `runtime.json` into `connector:<connectorId>` and publishes the configuration without them. `credentials` becomes optional, so it can be removed after import. The Worker receives `ACCOUNT_KEY` and opens the account per call.
 
 **You see.**
 
-- [ ] `runtime.json` has no tool credentials and a tool call still authenticates upstream.
+- [ ] `RUNTIME_CONFIG_JSON` has no connector credentials, and a tool call still authenticates upstream.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `tests/integration/runtime-configuration.test.ts` gains a case where `credentials` is rejected. Run `pnpm test:integration`.
-- [ ] A runtime journey reads the `account` table and asserts that `sealed` does not contain the fixture token. Run `pnpm test:runtime`.
+- [ ] `tests/integration/runtime-configuration.test.ts` checks that credentials import once per connector and never reach the Worker configuration. Run `pnpm test:integration`.
+- [ ] The pilot reads `connector_account` and asserts that `sealed` does not contain the fixture token, then makes an approved write through it. `tests/policy/tool-boundary.test.ts` checks that a sealed value opens only with its key, organization, and account. Run `pnpm test:integration && pnpm test:policy`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.
 

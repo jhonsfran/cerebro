@@ -12,6 +12,11 @@ import { id } from "../../packages/contracts/src/identity.ts";
 import type { EffectOptions } from "../../packages/contracts/src/port.ts";
 import { digestToolArguments } from "../../packages/contracts/src/tools.ts";
 import type { ToolCall } from "../../packages/contracts/src/tools.ts";
+import {
+  connectorAccountId,
+  openCredentials,
+  sealCredentials,
+} from "../../packages/tools/src/accounts.ts";
 import { readBoundedJson } from "../../packages/tools/src/bounded-json.ts";
 import { createConnectorExecutor } from "../../packages/tools/src/connector.ts";
 import type { ConnectorCredentials } from "../../packages/tools/src/connector.ts";
@@ -182,6 +187,28 @@ test("the connector sends one normalized MCP tools/call and redacts its output",
       },
     },
   ]);
+});
+
+test("sealed connector credentials open only with their key, organization, and account", async () => {
+  const credentials = {
+    headers: { Authorization: `Bearer ${secret}` },
+    secrets: [secret],
+  };
+  const key = "fixture-account-key-with-at-least-32-characters";
+  const scope = {
+    accountId: connectorAccountId("fixture_connector"),
+    organizationId: "company-a",
+  };
+  const sealed = await sealCredentials(key, scope, credentials);
+  assert.equal(sealed.includes(secret), false);
+  assert.deepEqual(await openCredentials(key, scope, sealed), credentials);
+  await assert.rejects(
+    openCredentials(key, { ...scope, organizationId: "company-b" }, sealed)
+  );
+  await assert.rejects(
+    openCredentials(key, { ...scope, accountId: "connector:other" }, sealed)
+  );
+  await assert.rejects(openCredentials(`${key}-rotated`, scope, sealed));
 });
 
 test("an uncertain write reports UnknownOutcome after one dispatch", async () => {

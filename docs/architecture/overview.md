@@ -28,6 +28,7 @@ Pi is the authority for conversations it runs, not for tools. A later MCP endpoi
 | State | Authority | Storage |
 | --- | --- | --- |
 | Identities, memberships, grants, agent definitions, connectors, searchable memory, and audit | Company services | PostgreSQL |
+| Connector credentials | Connector accounts, sealed with `account-key` | PostgreSQL |
 | Transcript, inbox, generation, tool tasks, and recovery | Pi Durable | Conversation SQLite through PiHarness |
 | External dispatch markers and outcomes | Pi task memos | Conversation SQLite |
 | Owner, agent version, content access dependencies, and approvals | Cerebro | Company metadata beside Pi state |

@@ -39,6 +39,7 @@ const freePort = async (): Promise<number> => {
 
 test("production configuration requires verified PostgreSQL TLS", () => {
   const environment = {
+    ACCOUNT_KEY: "k".repeat(32),
     BETTER_AUTH_SECRET: "a".repeat(32),
     BETTER_AUTH_URL: "https://api.example.test",
     CORS_ORIGIN: "https://web.example.test",

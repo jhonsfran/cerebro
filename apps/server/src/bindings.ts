@@ -12,6 +12,7 @@ export interface WorkerEnv {
   SLACK_CHANNEL_JSON?: string;
   SESSION: DurableObjectNamespace<SessionAgent>;
   AUDIT_SINK: Fetcher;
+  ACCOUNT_KEY: string;
   RUNTIME_CONFIG_JSON: string;
 }
 
@@ -21,6 +22,9 @@ export const assertWorkerEnv = (env: WorkerEnv): void => {
   }
   if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 32) {
     throw new Error("Authentication secret is missing or too short");
+  }
+  if (!env.ACCOUNT_KEY || env.ACCOUNT_KEY.length < 32) {
+    throw new Error("Account key is missing or too short");
   }
   if (!["local", "production"].includes(env.DEPLOY_MODE)) {
     throw new Error("Invalid deployment mode");

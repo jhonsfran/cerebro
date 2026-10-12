@@ -112,6 +112,11 @@ test(
   async (t) => {
     const { agent, fixture, owner } = await application();
     const { boot } = fixture;
+    const sealedAccount = await fixture.sql(
+      "SELECT sealed FROM connector_account WHERE id='connector:fixture-connector'"
+    );
+    assert.match(sealedAccount, /^v1\./u);
+    assert.equal(sealedAccount.includes("fixture-connector-key"), false);
     const directory = path.resolve(
       "artifacts/slice-1",
       boot.sha,

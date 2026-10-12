@@ -11,6 +11,7 @@ Create a private directory outside the repository and put these files in it:
 | File | Contents |
 | --- | --- |
 | `auth-secret` | A random value of at least 32 characters for Better Auth sessions |
+| `account-key` | A random value of at least 32 characters. Encrypts connector credentials in PostgreSQL. Back it up: without it the stored credentials cannot be read. |
 | `postgres-password` | The PostgreSQL password, at least 32 characters |
 | `minio-password` | The MinIO password, at least 32 characters |
 | `runtime.json` | Models, tools, and storage. See the [runtime configuration reference](../reference/runtime-configuration.md). |
@@ -68,7 +69,8 @@ Migrations only move forward. To roll back, restore the full backup with its rec
 
 Do this in a maintenance window, after active runs finish.
 
-- **Model or connector credentials**: update `runtime.json`, start the stack again, and run one permitted call.
+- **Model credentials**: update `runtime.json`, start the stack again, and run one permitted call.
+- **Connector credentials**: put the new value in the tool's `credentials` in `runtime.json` and start the stack again. Bootstrap seals it into the connector account. You can then remove `credentials` from the file; the account keeps the value.
 - **`gatewaySigningKey`**: replace the key and start the stack again. Session requests signed with the old key stop working, so open chats reconnect.
 - **`auth-secret`**: every user signs in again.
 - **Database or MinIO passwords**: change each service and its clients in the same window. Keep the old credentials with old backups.
