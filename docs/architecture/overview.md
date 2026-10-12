@@ -17,6 +17,12 @@ flowchart TD
 
 Each conversation has one SessionAgent Durable Object and one native Pi conversation. The official PiHarness connects Pi to SQLite and Lifecycle wake-up jobs. Pi controls inputs, busy-input queuing, generation, tool tasks, Stop, retries, and crash recovery. Cerebro composes the model, instructions, enabled tools, and grants. Current company authorization controls admission, model requests, tool calls, approval decisions, and reads.
 
+## Tools and the external door
+
+Tools come from connectors. Today `runtime.json` lists them. The [tool catalog plan](../superpowers/plans/2026-10-12-tool-catalog.md) moves connectors, their tools, and their credentials into PostgreSQL, so an agent can use a new tool without a deploy.
+
+Pi is the authority for conversations it runs, not for tools. A later MCP endpoint for external agents will read the same catalog, accounts, and approvals without a Pi conversation. Keep tool, account, and approval code free of Pi types so that door stays open.
+
 ## State owners
 
 | State | Authority | Storage |
