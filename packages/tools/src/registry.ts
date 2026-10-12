@@ -7,10 +7,8 @@ import type { ToolCall, ToolDefinition } from "@cerebro/contracts/tools";
 import { Effect } from "effect";
 import { z } from "zod";
 
-import { MCP_PROTOCOL_VERSION } from "./mcp-transport.ts";
-
 export type ConnectorTarget =
-  | { readonly kind: "mcp-read"; readonly url: string; readonly method: string }
+  | { readonly kind: "mcp"; readonly url: string; readonly method: string }
   | {
       readonly kind: "http-write";
       readonly url: string;
@@ -40,20 +38,6 @@ const freezeJson = (value: unknown): void => {
     Object.freeze(value);
   }
 };
-const rejectMcpHeaderAnnotations = (value: unknown): void => {
-  if (value && typeof value === "object") {
-    if (Object.hasOwn(value, "x-mcp-header")) {
-      throw new Error(
-        "Custom MCP parameter header annotations are unsupported."
-      );
-    }
-    for (const child of Object.values(value)) {
-      rejectMcpHeaderAnnotations(child);
-    }
-  }
-};
-const mcpProtocolFingerprint = (target: ConnectorTarget) =>
-  target.kind === "mcp-read" ? { protocolVersion: MCP_PROTOCOL_VERSION } : {};
 const jsonSchema = (schema: z.ZodType) =>
   structuredClone(z.toJSONSchema(schema));
 
@@ -99,14 +83,11 @@ const validateTarget = (
   if (mode === "production" && url.protocol !== "https:") {
     throw new Error("Production connectors require HTTPS.");
   }
-  if (target.kind === "mcp-read" && definition.effect !== "read") {
-    throw new Error("MCP read connectors require read-only tool definitions.");
+  if (target.kind === "http-write" && definition.effect !== "write") {
+    throw new Error("HTTP write connectors require write tools.");
   }
-  if (
-    target.kind === "http-write" &&
-    (definition.effect !== "write" || !requiresApproval)
-  ) {
-    throw new Error("Write connectors require write tools with approval.");
+  if (definition.effect === "write" && !requiresApproval) {
+    throw new Error("Write tools require approval.");
   }
 };
 
@@ -136,9 +117,6 @@ export const createToolRegistry = (
     const { input, output, normalize } = registration;
     const { maxInputBytes } = registration;
     const inputJsonSchema = jsonSchema(input);
-    if (target.kind === "mcp-read") {
-      rejectMcpHeaderAnnotations(inputJsonSchema);
-    }
     freezeJson(inputJsonSchema);
     const fingerprint = canonicalToolArguments({
       connectorVersion: registration.connectorVersion ?? definition.version,
@@ -147,7 +125,6 @@ export const createToolRegistry = (
       maxInputBytes,
       maxOutputBytes: registration.maxOutputBytes,
       output: jsonSchema(output),
-      ...mcpProtocolFingerprint(target),
       requiresApproval: registration.requiresApproval,
       retryMode: registration.retryMode,
       target,

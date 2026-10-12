@@ -20,16 +20,15 @@ const jsonSchema = z.custom<Parameters<typeof z.fromJSONSchema>[0]>(
     typeof value === "boolean" ||
     Boolean(value && typeof value === "object" && !Array.isArray(value))
 );
+const credentialsSchema = z.strictObject({
+  headers: z.record(z.string(), z.string()),
+  secrets: z.array(z.string().min(1)),
+});
 const toolSchema = z.strictObject({
   connectorId: z.string().min(1),
   // Imported into an encrypted connector account at bootstrap, then removed
   // from the configuration the Worker receives.
-  credentials: z
-    .strictObject({
-      headers: z.record(z.string(), z.string()),
-      secrets: z.array(z.string().min(1)),
-    })
-    .optional(),
+  credentials: credentialsSchema.optional(),
   description: z.string().min(1),
   effect: z.enum(["read", "write"]),
   id: z.string().min(1),
@@ -41,7 +40,9 @@ const toolSchema = z.strictObject({
   retryMode: z.enum(["idempotent", "at-most-once"]),
   target: z.discriminatedUnion("kind", [
     z.strictObject({
-      kind: z.literal("mcp-read"),
+      // "mcp-read" is the name from before MCP tools could write. Accepted for
+      // one release, then removed.
+      kind: z.enum(["mcp", "mcp-read"]).transform((): "mcp" => "mcp"),
       method: z.string().min(1),
       url: z.url(),
     }),
@@ -53,6 +54,13 @@ const toolSchema = z.strictObject({
   ]),
   version: z.string().min(1),
 });
+// An MCP server whose tools bootstrap discovers into the catalog.
+const connectorSchema = z.strictObject({
+  credentials: credentialsSchema.optional(),
+  id: z.string().min(1),
+  url: z.url(),
+});
+export type McpConnector = z.infer<typeof connectorSchema>;
 const schema = z.strictObject({
   artifacts: z.strictObject({
     accessKeyId: z.string().min(1),
@@ -62,6 +70,7 @@ const schema = z.strictObject({
     secretAccessKey: z.string().min(1),
   }),
   bootstrapToken: z.string().min(32).optional(),
+  connectors: z.array(connectorSchema).default([]),
   gatewaySigningKey: z.string().min(32),
   mode: z.enum(["local", "production"]),
   models: z.array(modelSchema).min(1),
@@ -108,6 +117,21 @@ const loopbackHost = (value: string): boolean =>
 // developer's machine. Production requires public HTTPS endpoints.
 const productionEndpoint = (value: string): boolean =>
   new URL(value).protocol === "https:" && !loopbackHost(value);
+type Credentials = z.infer<typeof credentialsSchema>;
+// Header values, and bearer tokens without their scheme, are removed from output.
+const withRedactions = (credentials: Credentials): Credentials => ({
+  ...credentials,
+  secrets: [
+    ...new Set([
+      ...credentials.secrets,
+      ...Object.values(credentials.headers).flatMap((value) => [
+        value,
+        value.replace(/^(?:Bearer|Basic)\s+/iu, ""),
+      ]),
+    ]),
+  ].filter(Boolean),
+});
+
 export const parseRuntimeConfiguration = (
   serialized: string,
   mode: "local" | "production"
@@ -140,9 +164,24 @@ export const parseRuntimeConfiguration = (
     if (
       mode === "production" &&
       (config.models.some((model) => !productionEndpoint(model.baseUrl)) ||
-        config.tools.some((tool) => !productionEndpoint(tool.target.url)))
+        config.tools.some((tool) => !productionEndpoint(tool.target.url)) ||
+        config.connectors.some(
+          (connector) => !productionEndpoint(connector.url)
+        ))
     ) {
       throw new Error("Production models and tools must use public HTTPS.");
+    }
+    const toolConnectors = new Set(
+      config.tools.map((tool) => tool.connectorId)
+    );
+    if (
+      new Set(config.connectors.map((connector) => connector.id)).size !==
+        config.connectors.length ||
+      config.connectors.some((connector) => toolConnectors.has(connector.id))
+    ) {
+      throw new Error(
+        "Connector IDs must be unique across tools and connectors."
+      );
     }
     const connectorIdentities = new Map<string, string>();
     for (const tool of config.tools) {
@@ -162,25 +201,14 @@ export const parseRuntimeConfiguration = (
     }
     const normalized = {
       ...config,
+      connectors: config.connectors.map((connector) =>
+        connector.credentials
+          ? { ...connector, credentials: withRedactions(connector.credentials) }
+          : connector
+      ),
       tools: config.tools.map((tool) =>
         tool.credentials
-          ? {
-              ...tool,
-              credentials: {
-                ...tool.credentials,
-                secrets: [
-                  ...new Set([
-                    ...tool.credentials.secrets,
-                    ...Object.values(tool.credentials.headers).flatMap(
-                      (value) => [
-                        value,
-                        value.replace(/^(?:Bearer|Basic)\s+/iu, ""),
-                      ]
-                    ),
-                  ]),
-                ].filter(Boolean),
-              },
-            }
+          ? { ...tool, credentials: withRedactions(tool.credentials) }
           : tool
       ),
     };
@@ -216,8 +244,13 @@ export const runtimeConfiguration = (env: {
 };
 
 // The credentials bootstrap seals into connector accounts, one per connector.
-export const connectorCredentialImports = (config: RuntimeConfiguration) =>
-  [...Map.groupBy(config.tools, (tool) => tool.connectorId)].flatMap(
+export const connectorCredentialImports = (config: RuntimeConfiguration) => [
+  ...config.connectors.flatMap((connector) =>
+    connector.credentials
+      ? [{ connectorId: connector.id, credentials: connector.credentials }]
+      : []
+  ),
+  ...[...Map.groupBy(config.tools, (tool) => tool.connectorId)].flatMap(
     ([connectorId, tools]) => {
       const withCredentials = tools.flatMap((tool) =>
         tool.credentials ? [tool.credentials] : []
@@ -237,7 +270,8 @@ export const connectorCredentialImports = (config: RuntimeConfiguration) =>
           ]
         : [];
     }
-  );
+  ),
+];
 
 // The tools bootstrap writes to the catalog. runtime.json owns these rows and
 // replaces them on every start.

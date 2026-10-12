@@ -13,9 +13,11 @@ import {
   parseRuntimeConfiguration,
   workerConfiguration,
 } from "../apps/server/src/config.ts";
+import { discoverMcpTools } from "../apps/server/src/mcp-discovery.ts";
 import { parseEnterpriseIdentityJSON } from "../packages/auth/src/enterprise.ts";
 import {
   connectorAccountId,
+  openCredentials,
   sealCredentials,
 } from "../packages/tools/src/accounts.ts";
 
@@ -193,6 +195,59 @@ try {
         `
       )
     );
+  });
+  // Each connector's discovered tools replace its previous ones. A server that
+  // cannot be reached keeps its rows, so a restart never loses working tools.
+  const storedHeaders = async (connectorId) => {
+    const accountId = connectorAccountId(connectorId);
+    const [row] =
+      await client`SELECT sealed FROM connector_account WHERE organization_id = ${organizationId} AND id = ${accountId}`;
+    if (!row) {
+      return {};
+    }
+    const credentials = await openCredentials(
+      accountKey,
+      { accountId, organizationId },
+      row.sealed
+    );
+    return credentials.headers;
+  };
+  const discovered = await Promise.all(
+    runtimeConfiguration.connectors.map(async (connector) => {
+      try {
+        const headers =
+          connector.credentials?.headers ?? (await storedHeaders(connector.id));
+        const result = await discoverMcpTools(connector, headers, mode);
+        if (result.skipped.length > 0) {
+          process.stdout.write(
+            `MCP connector ${connector.id} skipped tools it cannot load: ${result.skipped.join(", ")}\n`
+          );
+        }
+        return { connector, tools: result.tools };
+      } catch {
+        process.stdout.write(
+          `MCP discovery failed for ${connector.id}; its catalog rows are kept.\n`
+        );
+      }
+    })
+  );
+  const configuredSources = runtimeConfiguration.connectors.map(
+    (connector) => `mcp:${connector.id}`
+  );
+  await client.begin(async (transaction) => {
+    await transaction`DELETE FROM connector_tool WHERE organization_id = ${organizationId} AND source LIKE 'mcp:%' AND NOT (source = ANY(${configuredSources}::text[]))`;
+    for (const entry of discovered.filter(Boolean)) {
+      const source = `mcp:${entry.connector.id}`;
+      // oxlint-disable-next-line no-await-in-loop -- One transaction, one connection.
+      await transaction`DELETE FROM connector_tool WHERE organization_id = ${organizationId} AND source = ${source}`;
+      for (const tool of entry.tools) {
+        // oxlint-disable-next-line no-await-in-loop -- One transaction, one connection.
+        await transaction`
+          INSERT INTO connector_tool (organization_id, id, connector_id, source, definition)
+          VALUES (${organizationId}, ${tool.id}, ${tool.connectorId}, ${source}, ${JSON.stringify(tool)}::jsonb)
+        `;
+      }
+    }
   });
   if (enterpriseIdentity) {
     try {

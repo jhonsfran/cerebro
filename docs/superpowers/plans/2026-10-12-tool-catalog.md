@@ -356,26 +356,24 @@ Each live lane runs in its own git worktree at the PR head with its own Compose 
 
 **Files.**
 
-- [ ] Edit `packages/tools/package.json` to add `@earendil-works/pi-mcp` at exactly `1.1.0`.
-- [ ] Delete `packages/tools/src/mcp-transport.ts`.
-- [ ] Create `packages/tools/src/mcp-discovery.ts`.
-- [ ] Edit `packages/tools/src/catalog.ts`, `packages/tools/src/mcp-gateway.ts`, `packages/api/src/routers/product.ts`.
-- [ ] Edit `docs/reference/runtime-configuration.md`.
+- [ ] Add `@earendil-works/pi-mcp` at exactly `1.1.0` to `packages/tools/package.json` and `tests/runtime/package.json`.
+- [ ] Delete `packages/tools/src/mcp-transport.ts`. Create `packages/tools/src/mcp.ts` and `apps/server/src/mcp-discovery.ts`.
+- [ ] Edit `packages/tools/src/{connector,registry}.ts`, `apps/server/src/config.ts`, `deploy/bootstrap.mjs`, `tests/slice-1/{provider,runtime-config}.mjs`, and the docs.
 
 **Build.**
 
-- [ ] `refresh(connectorId)` connects with `pi-mcp` over Streamable HTTP, pages `tools/list`, and replaces the connector's `connector_tool` rows in one transaction. `readOnlyHint: true` maps to `read`. Every other tool maps to `write` with `requiresApproval: true`.
-- [ ] The connector client calls tools through `pi-mcp` `callTool` instead of the hand-rolled JSON-RPC request.
-- [ ] A product route adds an MCP connector by URL and account, then runs `refresh`.
+- [ ] `callMcpTool` and `listMcpTools` open one `pi-mcp` session per operation over Streamable HTTP, without the GET stream, with redirects refused. The target kind `mcp` replaces `mcp-read` and allows writes. Every write tool needs approval.
+- [ ] `runtime.json` gains `connectors`, each an MCP server URL with optional credentials. On every start bootstrap lists each connector's tools and replaces its `mcp:<id>` catalog rows. `readOnlyHint: true` maps to `read`, and every other tool is a `write` with approval. A server that cannot be reached keeps its rows, and tools the registry cannot load are skipped and logged.
+- [ ] A product route to add a connector at runtime waits for the admin UI. It needs its own authorization design.
 
 **You see.**
 
-- [ ] Adding the fixture MCP server by URL lists its tools in the agent editor with read and write effects.
+- [ ] The fixture MCP connector's `lookup` appears in the catalog as a read and `archive` as a write with approval, and `fixture-read` answers through `pi-mcp`.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] A runtime journey adds a fixture MCP connector with one read tool and one tool without hints, and asserts the effects `read` and `write`. Run `pnpm test:runtime`.
-- [ ] All ten native journeys pass over `pi-mcp`. Run `pnpm test:runtime`.
+- [ ] The pilot asserts the discovered rows and their effects. `tests/policy/tool-boundary.test.ts` covers a real HTTP MCP server answering over SSE, a tool error, and discovery mapping and skipping. Run `pnpm test:integration && pnpm test:policy`.
+- [ ] `pnpm test:channels:native` calls `fixture-read` through `pi-mcp` in the Worker, and `pnpm test:runtime` deploys a Worker that bundles it.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.
 
