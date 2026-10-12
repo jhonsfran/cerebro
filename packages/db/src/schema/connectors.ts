@@ -39,7 +39,7 @@ export const connectorTool = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id),
-    source: text("source").notNull().$type<"runtime.json">(),
+    source: text("source").notNull().$type<"runtime.json" | `mcp:${string}`>(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.organizationId, table.id] })]

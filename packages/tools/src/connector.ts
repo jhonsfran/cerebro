@@ -14,7 +14,7 @@ import type { ToolExecution } from "@cerebro/contracts/tools";
 import { Effect } from "effect";
 
 import { readBoundedJson, redactSecrets } from "./bounded-json.ts";
-import { mcpToolRequest, readMcpToolResult } from "./mcp-transport.ts";
+import { callMcpTool } from "./mcp.ts";
 import type { RegisteredTool, ToolRegistry } from "./registry.ts";
 
 export interface ConnectorCredentials {
@@ -27,34 +27,21 @@ const deadlineSignal = (options: EffectOptions): AbortSignal => {
   );
   return options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
 };
-const output = async (
-  response: Response,
+// Every result is redacted, validated, and bounded the same way, whatever the
+// protocol that produced it.
+const finish = (
+  value: unknown,
   entry: RegisteredTool,
   secrets: readonly string[],
-  operationId: string,
-  signal: AbortSignal
-): Promise<ToolExecution> => {
-  if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error("Connector provider rejected the operation.");
-  }
-  const parsed =
-    entry.target.kind === "mcp-read"
-      ? await readMcpToolResult(
-          response,
-          entry.maxOutputBytes,
-          operationId,
-          signal
-        )
-      : await readBoundedJson(response, entry.maxOutputBytes, signal);
-  const validated = entry.output.parse(redactSecrets(parsed, secrets));
+  receipt: string | null
+): ToolExecution => {
+  const validated = entry.output.parse(redactSecrets(value, secrets));
   if (
     new TextEncoder().encode(JSON.stringify(validated)).byteLength >
     entry.maxOutputBytes
   ) {
     throw new Error("Redacted tool output exceeds the byte limit.");
   }
-  const receipt = response.headers.get("x-provider-receipt");
   const safeReceipt = receipt
     ? String(redactSecrets(receipt, secrets)).slice(0, 512)
     : undefined;
@@ -71,37 +58,48 @@ const dispatch = async (
   credentials: ConnectorCredentials,
   options: EffectOptions
 ): Promise<ToolExecution> => {
-  const mcp =
-    entry.target.kind === "mcp-read"
-      ? mcpToolRequest(entry.target.method, call.arguments, options.operationId)
-      : undefined;
-  const body = mcp?.body ?? {
-    arguments: call.arguments,
-    operationId: options.operationId,
-    tool: entry.target.method,
-  };
-  const headers = new Headers(credentials.headers);
-  for (const [name, value] of Object.entries({
-    "Content-Type": "application/json",
+  const headers = {
+    ...credentials.headers,
     "Idempotency-Key": options.operationId,
     "X-Cerebro-Operation-Id": options.operationId,
-    ...mcp?.headers,
-  })) {
-    headers.set(name, value);
+  };
+  const signal = deadlineSignal(options);
+  // Redirects could carry credentials to another origin.
+  const fetchWithoutRedirects: typeof fetch = (input, init) =>
+    providerFetch(input, { ...init, redirect: "error" });
+  if (entry.target.kind === "mcp") {
+    const value = await callMcpTool(
+      {
+        fetch: fetchWithoutRedirects,
+        headers,
+        maxMessageBytes: entry.maxOutputBytes + 65_536,
+        signal,
+        url: entry.target.url,
+      },
+      entry.target.method,
+      call.arguments as Record<string, unknown>
+    );
+    return finish(value, entry, credentials.secrets, null);
   }
-  const response = await providerFetch(entry.target.url, {
-    body: JSON.stringify(body),
-    headers,
+  const response = await fetchWithoutRedirects(entry.target.url, {
+    body: JSON.stringify({
+      arguments: call.arguments,
+      operationId: options.operationId,
+      tool: entry.target.method,
+    }),
+    headers: { ...headers, "Content-Type": "application/json" },
     method: "POST",
-    redirect: "error",
-    signal: deadlineSignal(options),
+    signal,
   });
-  return await output(
-    response,
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error("Connector provider rejected the operation.");
+  }
+  return finish(
+    await readBoundedJson(response, entry.maxOutputBytes, signal),
     entry,
     credentials.secrets,
-    options.operationId,
-    deadlineSignal(options)
+    response.headers.get("x-provider-receipt")
   );
 };
 

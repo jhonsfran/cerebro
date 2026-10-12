@@ -105,6 +105,30 @@ test("tools and credentials go to the catalog and accounts, never to the Worker"
   assert.deepEqual(connectorCredentialImports(parse(imported)), []);
 });
 
+test("MCP connectors are validated and the old mcp-read kind still loads", () => {
+  const result = parse(configured());
+  assert.equal(result.tools[0].target.kind, "mcp");
+  const withConnector = {
+    ...configured(),
+    connectors: [{ id: "crm", url: "https://crm.example.test/mcp" }],
+  };
+  assert.deepEqual(parse(withConnector).connectors, [
+    { id: "crm", url: "https://crm.example.test/mcp" },
+  ]);
+  assert.throws(() =>
+    parse({
+      ...withConnector,
+      connectors: [{ id: "crm", url: "http://crm.example.test/mcp" }],
+    })
+  );
+  assert.throws(() =>
+    parse({
+      ...withConnector,
+      connectors: [{ id: "company-mcp", url: "https://crm.example.test/mcp" }],
+    })
+  );
+});
+
 test("production accepts approved HTTPS write connectors and rejects unknown modes", () => {
   const write = configured();
   write.tools[0].effect = "write";

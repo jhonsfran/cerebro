@@ -13,6 +13,7 @@ Unknown fields are rejected.
 | `mode` | `"local"` or `"production"` | yes | Must match `DEPLOY_MODE`. |
 | `models` | array of [models](#models) | yes | At least one. Model IDs are unique. |
 | `tools` | array of [tools](#tools) | yes | The catalog tools this file owns. Each start replaces them, so removing a tool here removes it from the catalog. Conversations started after the change see it. An empty array removes them all. |
+| `connectors` | array of [MCP connectors](#mcp-connectors) | no | MCP servers whose tools bootstrap discovers into the catalog. |
 | `artifacts` | object | yes | `endpoint`, `bucket`, `accessKeyId`, `secretAccessKey`, and `region` of the artifact MinIO or S3 store. |
 | `gatewaySigningKey` | string | yes | At least 32 characters. Signs requests from the API to session objects. |
 | `retrievalMode` | `"full-text"` | yes | The only supported value. |
@@ -62,10 +63,20 @@ Integer limits are positive and at most 1,048,576.
 
 | `kind` | `effect` | Request |
 | --- | --- | --- |
-| `mcp-read` | `read` | MCP `tools/call` over HTTP with protocol `2026-07-28`. `method` is the MCP tool name. |
-| `http-write` | `write`, with `requiresApproval: true` | `POST` of `{ "arguments", "operationId", "tool" }` as JSON. `tool` is the `method` value. |
+| `mcp` | `read` or `write` | MCP `tools/call` over Streamable HTTP after `initialize`, with protocol `2025-11-25` or an older version the server negotiates. `method` is the MCP tool name. `mcp-read` is still accepted as an old name for `mcp`. |
+| `http-write` | `write` | `POST` of `{ "arguments", "operationId", "tool" }` as JSON. `tool` is the `method` value. |
 
-Every request carries `Idempotency-Key` and `X-Cerebro-Operation-Id` with the call's operation ID.
+Every `write` tool requires `requiresApproval: true`. Every request carries `Idempotency-Key` and `X-Cerebro-Operation-Id` with the call's operation ID. Redirects are refused.
+
+## MCP connectors
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `id` | string | Connector ID. Must differ from every tool's `connectorId`. |
+| `url` | URL | The Streamable HTTP endpoint. Production requires public HTTPS. |
+| `credentials` | object | Optional. `headers` and `secrets`, sealed into the connector account like tool credentials. |
+
+On every start, bootstrap calls `tools/list` on each connector and replaces that connector's catalog tools. A tool ID is `<connector id>_<MCP tool name>`, with characters outside `[A-Za-z0-9_-]` replaced by `_`, up to 64 characters. A tool the server marks `readOnlyHint: true` is a read. Every other tool is a write that needs approval. Tools the registry cannot load, such as a duplicate ID, are skipped and logged. If the server cannot be reached, the connector keeps its previous tools. Removing a connector from this file removes its tools.
 
 ### Interrupted calls
 

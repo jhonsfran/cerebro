@@ -310,13 +310,10 @@ export const createFixture = async ({
       });
     }
   };
-  const tool = async (request, response, write) => {
-    if (request.headers.authorization !== "Bearer fixture-connector-key") {
-      json(response, 401, { error: "Fixture connector credentials required" });
-      return;
-    }
-    const input = await body(request);
-    const operationId = identity(input.operationId ?? input.id);
+  const tool = async (request, response, write, input, rpcId) => {
+    const operationId = identity(
+      request.headers["x-cerebro-operation-id"] ?? input.operationId
+    );
     const inputDigest = digest(input);
     const previous = state.tools.find(
       (item) => item.operationId === operationId
@@ -353,7 +350,7 @@ export const createFixture = async ({
       write
         ? output
         : {
-            id: operationId,
+            id: rpcId,
             jsonrpc: "2.0",
             result: {
               content: [{ text: output.value, type: "text" }],
@@ -361,6 +358,62 @@ export const createFixture = async ({
             },
           }
     );
+  };
+  // The tools a discovered fixture MCP connector lists. Only `lookup` is
+  // marked read-only, so `archive` becomes a write that needs approval.
+  const listedTools = [
+    {
+      annotations: { readOnlyHint: true },
+      description: "Look up a fixture record",
+      inputSchema: {
+        additionalProperties: false,
+        properties: { query: { type: "string" } },
+        required: ["query"],
+        type: "object",
+      },
+      name: "lookup",
+    },
+    {
+      description: "Archive a fixture record",
+      inputSchema: {
+        additionalProperties: false,
+        properties: { id: { type: "string" } },
+        required: ["id"],
+        type: "object",
+      },
+      name: "archive",
+    },
+  ];
+  const mcp = async (request, response) => {
+    const message = await body(request);
+    if (message.method === "notifications/initialized") {
+      response.writeHead(202);
+      response.end();
+    } else if (message.method === "initialize") {
+      json(response, 200, {
+        id: message.id,
+        jsonrpc: "2.0",
+        result: {
+          capabilities: { tools: {} },
+          protocolVersion: message.params.protocolVersion,
+          serverInfo: { name: "cerebro-fixture", version: "1.0.0" },
+        },
+      });
+    } else if (message.method === "tools/list") {
+      json(response, 200, {
+        id: message.id,
+        jsonrpc: "2.0",
+        result: { tools: listedTools },
+      });
+    } else if (message.method === "tools/call") {
+      await tool(request, response, false, message.params, message.id);
+    } else {
+      json(response, 200, {
+        error: { code: -32_601, message: "Method not found" },
+        id: message.id,
+        jsonrpc: "2.0",
+      });
+    }
   };
   const applyControls = (input) => {
     if (input.delayMs !== undefined) {
@@ -428,7 +481,15 @@ export const createFixture = async ({
         request.method === "POST" &&
         ["/mcp", "/effects"].includes(url.pathname)
       ) {
-        await tool(request, response, url.pathname === "/effects");
+        if (request.headers.authorization !== "Bearer fixture-connector-key") {
+          json(response, 401, {
+            error: "Fixture connector credentials required",
+          });
+        } else if (url.pathname === "/mcp") {
+          await mcp(request, response);
+        } else {
+          await tool(request, response, true, await body(request));
+        }
       } else {
         json(response, 404, { error: "Unknown fixture route" });
       }

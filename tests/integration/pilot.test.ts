@@ -123,6 +123,13 @@ test(
       ),
       "fixture-read,fixture_effect"
     );
+    // Discovered MCP tools: only the read-only one is a read without approval.
+    assert.equal(
+      await fixture.sql(
+        "SELECT string_agg(id || ':' || (definition->>'effect') || ':' || (definition->>'requiresApproval'), ',' ORDER BY id COLLATE \"C\") FROM connector_tool WHERE source='mcp:fixture-mcp'"
+      ),
+      "fixture-mcp_archive:write:true,fixture-mcp_lookup:read:false"
+    );
     const directory = path.resolve(
       "artifacts/slice-1",
       boot.sha,

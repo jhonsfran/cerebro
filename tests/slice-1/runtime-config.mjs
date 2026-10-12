@@ -29,6 +29,13 @@ const configuration = {
     secretAccessKey: minioPassword,
   },
   bootstrapToken: await secret("bootstrap-token"),
+  connectors: [
+    {
+      credentials: connector.credentials,
+      id: "fixture-mcp",
+      url: "http://fixture:8090/mcp",
+    },
+  ],
   gatewaySigningKey: minioPassword,
   mode: "local",
   models: [
@@ -61,7 +68,7 @@ const configuration = {
       requiresApproval: false,
       retryMode: "idempotent",
       target: {
-        kind: "mcp-read",
+        kind: "mcp",
         method: "fixture-read",
         url: "http://fixture:8090/mcp",
       },

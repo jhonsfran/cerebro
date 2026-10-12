@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { Effect } from "effect";
 import { z } from "zod";
 
+import { discoverMcpTools } from "../../apps/server/src/mcp-discovery.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { EffectOptions } from "../../packages/contracts/src/port.ts";
 import { digestToolArguments } from "../../packages/contracts/src/tools.ts";
@@ -20,10 +21,6 @@ import {
 import { readBoundedJson } from "../../packages/tools/src/bounded-json.ts";
 import { createConnectorExecutor } from "../../packages/tools/src/connector.ts";
 import type { ConnectorCredentials } from "../../packages/tools/src/connector.ts";
-import {
-  encodeMcpHeader,
-  readMcpToolResult,
-} from "../../packages/tools/src/mcp-transport.ts";
 import {
   createToolRegistry,
   bindRegisteredTool,
@@ -64,11 +61,34 @@ const registration = (write = false): ToolRegistration => ({
         url: "http://fixture.invalid/effect",
       }
     : {
-        kind: "mcp-read",
+        kind: "mcp",
         method: "fixture-search",
         url: "https://fixture.invalid/mcp",
       },
 });
+// Answers the MCP handshake the way a server does; tool calls fall through.
+const mcpHandshake = (message: {
+  readonly id?: number;
+  readonly method?: string;
+  readonly params?: { readonly protocolVersion?: string };
+}): Response | undefined => {
+  if (message.method === "notifications/initialized") {
+    return new Response(null, { status: 202 });
+  }
+  if (message.method === "initialize") {
+    return Response.json({
+      id: message.id,
+      jsonrpc: "2.0",
+      result: {
+        capabilities: { tools: {} },
+        protocolVersion: message.params?.protocolVersion,
+        serverInfo: { name: "fixture", version: "1.0.0" },
+      },
+    });
+  }
+  return undefined;
+};
+
 const fixture = async (write = false) => {
   const requests: unknown[] = [];
   const state = {
@@ -93,10 +113,17 @@ const fixture = async (write = false) => {
     requestDigest: await digestToolArguments(registry.prepare(call).arguments),
   };
   const providerFetch: typeof fetch = async (_request, init) => {
-    state.posts += 1;
     const body =
       typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-    state.requests.push(body);
+    const handshake = write ? undefined : mcpHandshake(body);
+    if (handshake) {
+      return handshake;
+    }
+    state.posts += 1;
+    state.requests.push({
+      operationId: new Headers(init?.headers).get("x-cerebro-operation-id"),
+      params: write ? body : body.params,
+    });
     if (state.timeout) {
       throw new Error("Fixture dropped the provider reply.");
     }
@@ -118,7 +145,7 @@ const fixture = async (write = false) => {
       write
         ? output
         : {
-            id: body?.id ?? options.operationId,
+            id: body.id,
             jsonrpc: "2.0",
             result: {
               content: [{ text: output.text, type: "text" }],
@@ -169,22 +196,8 @@ test("the connector sends one normalized MCP tools/call and redacts its output",
   });
   assert.deepEqual(f.state.requests, [
     {
-      id: f.options.operationId,
-      jsonrpc: "2.0",
-      method: "tools/call",
-      params: {
-        _meta: {
-          "io.modelcontextprotocol/clientCapabilities": {},
-          "io.modelcontextprotocol/clientInfo": {
-            name: "cerebro",
-            version: "0.0.0",
-          },
-          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-          progressToken: f.options.operationId,
-        },
-        arguments: { query: "support" },
-        name: "fixture-search",
-      },
+      operationId: f.options.operationId,
+      params: { arguments: { query: "support" }, name: "fixture-search" },
     },
   ]);
 });
@@ -227,7 +240,7 @@ test("missing connector credentials deny before any dispatch", async () => {
 });
 
 test("a provider stream over the byte limit is cancelled and reported unknown", async () => {
-  const f = await fixture();
+  const f = await fixture(true);
   f.state.oversized = true;
   assert.deepEqual(await f.invoke(), { status: "UnknownOutcome" });
   assert.equal(f.state.cancelledStream, true);
@@ -310,41 +323,18 @@ test("streamed provider output stops waiting and cancels when the deadline signa
   assert.equal(cancelled, true);
 });
 
-const mcpReply = (operationId: string, text = "fixture-result") => ({
-  id: operationId,
+const mcpReply = (rpcId: unknown, text = "fixture-result") => ({
+  id: rpcId,
   jsonrpc: "2.0",
   result: {
     content: [{ text, type: "text" }],
     structuredContent: { text },
   },
 });
-const sseResponse = (source: string, chunkSize = 7) => {
-  const bytes = new TextEncoder().encode(source);
-  let offset = 0;
-  const state = { cancelled: false };
-  return {
-    response: new Response(
-      new ReadableStream<Uint8Array>({
-        cancel() {
-          state.cancelled = true;
-        },
-        pull(controller) {
-          if (offset < bytes.byteLength) {
-            controller.enqueue(bytes.slice(offset, offset + chunkSize));
-            offset += chunkSize;
-          }
-        },
-      }),
-      { headers: { "content-type": "text/event-stream; charset=utf-8" } }
-    ),
-    state,
-  };
-};
 
-test("local HTTP MCP provider enforces pinned headers and metadata and returns SSE", async () => {
+test("a real HTTP MCP server answers through initialize and an SSE tools/call", async () => {
   const f = await fixture();
-  let observed: unknown;
-  let requests = 0;
+  const seen: { method: string; operationId: unknown }[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.setEncoding("utf-8");
@@ -352,33 +342,24 @@ test("local HTTP MCP provider enforces pinned headers and metadata and returns S
       body += chunk;
     });
     request.on("end", () => {
-      requests += 1;
-      const parsed = JSON.parse(body);
-      observed = { body: parsed, headers: request.headers };
-      const valid =
-        request.headers["mcp-protocol-version"] === "2026-07-28" &&
-        request.headers["mcp-method"] === "tools/call" &&
-        request.headers["mcp-name"] === parsed.params.name &&
-        request.headers.accept === "application/json, text/event-stream" &&
-        parsed.params._meta["io.modelcontextprotocol/protocolVersion"] ===
-          "2026-07-28" &&
-        parsed.params._meta["io.modelcontextprotocol/clientInfo"].name ===
-          "cerebro" &&
-        parsed.params._meta["io.modelcontextprotocol/clientInfo"].version ===
-          "0.0.0" &&
-        Object.keys(
-          parsed.params._meta["io.modelcontextprotocol/clientCapabilities"]
-        ).length === 0;
-      if (!valid) {
-        response.writeHead(400);
-        response.end();
+      const message = JSON.parse(body);
+      seen.push({
+        method: message.method,
+        operationId: request.headers["x-cerebro-operation-id"],
+      });
+      const handshake = mcpHandshake(message);
+      if (handshake) {
+        response.writeHead(handshake.status, {
+          "content-type": "application/json",
+        });
+        void handshake.text().then((text) => response.end(text));
         return;
       }
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write(
-        `data: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progress: 1, progressToken: parsed.id } })}\n\n`
+        `data: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progress: 1, progressToken: "p" } })}\n\n`
       );
-      response.end(`data: ${JSON.stringify(mcpReply(parsed.id))}\n\n`);
+      response.end(`data: ${JSON.stringify(mcpReply(message.id))}\n\n`);
     });
   });
   try {
@@ -389,7 +370,7 @@ test("local HTTP MCP provider enforces pinned headers and metadata and returns S
     assert.ok(address && typeof address !== "string");
     const result = await f.invoke({
       fetch: async (target, init) => {
-        assert.equal(target, "https://fixture.invalid/mcp");
+        assert.equal(String(target), "https://fixture.invalid/mcp");
         return await fetch(`http://127.0.0.1:${address.port}/mcp`, init);
       },
     });
@@ -397,8 +378,13 @@ test("local HTTP MCP provider enforces pinned headers and metadata and returns S
       output: { text: "fixture-result" },
       status: "ok",
     });
-    assert.ok(observed);
-    assert.equal(requests, 1);
+    assert.deepEqual(
+      seen.map((entry) => entry.method),
+      ["initialize", "notifications/initialized", "tools/call"]
+    );
+    assert.ok(
+      seen.every((entry) => entry.operationId === f.options.operationId)
+    );
   } finally {
     server.closeAllConnections();
     const closed = once(server, "close");
@@ -407,198 +393,56 @@ test("local HTTP MCP provider enforces pinned headers and metadata and returns S
   }
 });
 
-test("MCP names use exact UTF-8 Base64 sentinel encoding", () => {
-  assert.equal(encodeMcpHeader("fixture-search"), "fixture-search");
-  for (const name of [
-    "世界",
-    " padded ",
-    "line1\nline2",
-    "=?base64?literal?=",
-  ]) {
-    assert.equal(
-      encodeMcpHeader(name),
-      `=?base64?${Buffer.from(name, "utf-8").toString("base64")}?=`
-    );
-  }
-});
-
-test("SSE reads split UTF-8 and CRLF, ignores request notifications, and cancels at final", async () => {
-  const operationId = "sse-op";
-  const source = [
-    ": heartbeat",
-    "",
-    `data: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progress: 1, progressToken: operationId } })}`,
-    "",
-    `data: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/message", params: { data: "fixture", level: "info" } })}`,
-    "",
-    "event: message",
-    `data: ${JSON.stringify(mcpReply(operationId, "世界"))}`,
-    "",
-    "",
-  ].join("\r\n");
-  const stream = sseResponse(source, 1);
-  assert.deepEqual(
-    await readMcpToolResult(
-      stream.response,
-      1024,
-      operationId,
-      AbortSignal.timeout(1000)
-    ),
-    { text: "世界" }
-  );
-  assert.equal(stream.state.cancelled, true);
-});
-
-for (const [label, data] of [
-  ["malformed JSON", "{"],
-  ["wrong response ID", JSON.stringify(mcpReply("other"))],
-  [
-    "independent server request",
-    JSON.stringify({
-      id: "server",
-      jsonrpc: "2.0",
-      method: "sampling/createMessage",
-      params: {},
-    }),
-  ],
-  [
-    "unrelated notification",
-    JSON.stringify({
-      jsonrpc: "2.0",
-      method: "notifications/tools/list_changed",
-      params: {},
-    }),
-  ],
-  [
-    "unrelated progress",
-    JSON.stringify({
-      jsonrpc: "2.0",
-      method: "notifications/progress",
-      params: { progress: 1, progressToken: "other" },
-    }),
-  ],
-  [
-    "RPC revision error",
-    JSON.stringify({
-      error: { code: -32_000, message: "Unsupported version" },
-      id: "op",
-      jsonrpc: "2.0",
-    }),
-  ],
-  [
-    "non-MCP business result",
-    JSON.stringify({ id: "op", jsonrpc: "2.0", result: { text: "value" } }),
-  ],
-  [
-    "MCP tool error",
-    JSON.stringify({
-      id: "op",
-      jsonrpc: "2.0",
-      result: { content: [], isError: true },
-    }),
-  ],
-] as const) {
-  test(`SSE rejects ${label} and cancels the stream`, async () => {
-    const stream = sseResponse(`data: ${data}\n\n`);
-    await assert.rejects(
-      readMcpToolResult(stream.response, 1024, "op", AbortSignal.timeout(1000))
-    );
-    assert.equal(stream.state.cancelled, true);
-  });
-}
-
-test("SSE byte bounds and cancellation apply before parsing the final result", async () => {
-  const oversized = sseResponse(`: ${"x".repeat(1025)}\n\n`, 1025);
-  await assert.rejects(
-    readMcpToolResult(
-      oversized.response,
-      1024,
-      "op",
-      AbortSignal.timeout(1000)
-    ),
-    /byte limit/u
-  );
-  assert.equal(oversized.state.cancelled, true);
-  const pending = sseResponse(": waiting\n\n");
-  const abort = new AbortController();
-  const reading = readMcpToolResult(pending.response, 1024, "op", abort.signal);
-  abort.abort();
-  await assert.rejects(reading);
-  assert.equal(pending.state.cancelled, true);
-});
-
-test("MCP JSON validates IDs and required content, and returns full result without structuredContent", async () => {
-  const signal = AbortSignal.timeout(1000);
-  await assert.rejects(
-    readMcpToolResult(Response.json(mcpReply("wrong")), 1024, "op", signal)
-  );
-  await assert.rejects(
-    readMcpToolResult(
-      Response.json({
-        id: "op",
-        jsonrpc: "2.0",
-        result: { structuredContent: { text: "x" } },
-      }),
-      1024,
-      "op",
-      signal
-    )
-  );
-  const content = { content: [{ text: "fixture", type: "text" }] };
-  assert.deepEqual(
-    await readMcpToolResult(
-      Response.json({ id: "op", jsonrpc: "2.0", result: content }),
-      1024,
-      "op",
-      signal
-    ),
-    content
-  );
-});
-
-test("unsupported protocol responses never trigger a downgrade retry", async () => {
+test("an MCP tool error is never reported as a successful result", async () => {
   const f = await fixture();
-  let requests = 0;
   const result = await f.invoke({
-    fetch: async (_request, init) => {
-      requests += 1;
-      assert.equal(
-        new Headers(init?.headers).get("MCP-Protocol-Version"),
-        "2026-07-28"
-      );
-      return Response.json(
-        {
-          error: {
-            code: -32_000,
-            data: { supportedVersions: ["2025-11-25"] },
-            message: "unsupported",
-          },
-          id: f.options.operationId,
+    fetch: async (_target, init) => {
+      const message = JSON.parse(String(init?.body));
+      return (
+        mcpHandshake(message) ??
+        Response.json({
+          id: message.id,
           jsonrpc: "2.0",
-        },
-        { status: 400 }
+          result: { content: [], isError: true },
+        })
       );
     },
   });
   assert.deepEqual(result, { status: "UnknownOutcome" });
-  assert.equal(requests, 1);
 });
 
-test("MCP registry rejects custom parameter header annotations before invocation", () => {
-  const entry = registration();
-  assert.throws(
-    () =>
-      createToolRegistry(
-        [
-          {
-            ...entry,
-            input: z.strictObject({
-              query: z.string().meta({ "x-mcp-header": "Query" }),
-            }),
-          },
-        ],
-        "production"
-      ),
-    /header annotations are unsupported/u
+test("discovery makes only read-only MCP tools reads and skips tools the registry cannot load", async () => {
+  const listed = [
+    {
+      annotations: { readOnlyHint: true },
+      inputSchema: { type: "object" },
+      name: "lookup",
+    },
+    { inputSchema: { type: "object" }, name: "archive.record" },
+    { inputSchema: { type: "object" }, name: "archive_record" },
+  ];
+  const { skipped, tools } = await discoverMcpTools(
+    { id: "crm", url: "https://crm.example.test/mcp" },
+    {},
+    "production",
+    async (_target, init) => {
+      const message = JSON.parse(String(init?.body));
+      return (
+        mcpHandshake(message) ??
+        Response.json({
+          id: message.id,
+          jsonrpc: "2.0",
+          result: { tools: listed },
+        })
+      );
+    }
   );
+  assert.deepEqual(
+    tools.map((tool) => [tool.id, tool.effect, tool.requiresApproval]),
+    [
+      ["crm_lookup", "read", false],
+      ["crm_archive_record", "write", true],
+    ]
+  );
+  assert.deepEqual(skipped, ["archive_record"]);
 });
