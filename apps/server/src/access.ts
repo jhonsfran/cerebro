@@ -16,7 +16,6 @@ import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import { createMemoryRepository } from "@cerebro/db/repositories/memory";
-import { auditEvent } from "@cerebro/db/schema/audit";
 import { memoryArtifact } from "@cerebro/db/schema/memory";
 import {
   createArtifactStore,
@@ -209,72 +208,6 @@ export const readSource = async (
     },
   };
 };
-export const readAudit = async (
-  _env: WorkerEnv,
-  database: Database,
-  context: ExecutionContext,
-  sessionId: string,
-  runId: string
-) => {
-  const authorized = await createAuthorizationPolicy(
-    createIdentityRepository(database)
-  ).evaluate(
-    context,
-    "read",
-    {
-      id: context.actor.organizationId,
-      kind: "audit",
-      organizationId: context.actor.organizationId,
-    },
-    { deadlineAt: Date.now() + 10_000 }
-  );
-  if (authorized.status !== "ok") {
-    return authorized;
-  }
-  if (authorized.value.decision !== "allow") {
-    return {
-      code: "unauthorized" as const,
-      reason: "Audit access is denied.",
-      status: "denied" as const,
-    };
-  }
-  const records = await database
-    .select()
-    .from(auditEvent)
-    .where(
-      and(
-        eq(auditEvent.organizationId, context.actor.organizationId),
-        eq(auditEvent.sessionId, sessionId),
-        eq(auditEvent.runId, runId)
-      )
-    )
-    .orderBy(asc(auditEvent.occurredAt));
-  const run = records.findLast((entry) => entry.name === "run");
-  const parsed = run?.payload;
-  const state =
-    parsed &&
-    typeof parsed === "object" &&
-    "run" in parsed &&
-    parsed.run &&
-    typeof parsed.run === "object" &&
-    "state" in parsed.run &&
-    typeof parsed.run.state === "string"
-      ? parsed.run.state
-      : "pending";
-  return {
-    status: "ok" as const,
-    value: {
-      entries: records.map((entry) => ({
-        at: entry.occurredAt.getTime(),
-        description: entry.name,
-        type: entry.kind,
-      })),
-      runId,
-      state,
-    },
-  };
-};
-
 export const createCurrentAuthority = (env: WorkerEnv) =>
   createAuthorizationService({
     readSnapshot: (organizationId, actorId, delegationId) =>

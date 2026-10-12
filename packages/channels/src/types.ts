@@ -1,13 +1,11 @@
 import type {
   AuthorizationPolicy,
-  ContentDependencies,
   ExecutionContext,
   PortResult,
 } from "@cerebro/contracts";
 import type { EventAddress } from "@cerebro/contracts/events";
-import type { SessionService } from "@cerebro/contracts/session-service";
+import type { ChatClient } from "@cerebro/contracts/session-service";
 import type { Database } from "@cerebro/db";
-import type { ChannelItemBody } from "@cerebro/db/schema/agents";
 
 export interface SlackConfiguration {
   readonly workspaceId: string;
@@ -38,15 +36,6 @@ export interface SourceView {
   readonly text: string;
   readonly title: string;
 }
-export interface AuditView {
-  readonly runId: string;
-  readonly state: string;
-  readonly entries: readonly {
-    readonly at: number;
-    readonly description: string;
-    readonly type: string;
-  }[];
-}
 export interface ChannelOptions {
   readonly mode: "local" | "production";
   readonly organizationId: string;
@@ -70,23 +59,8 @@ export interface ChannelOptions {
       readonly sourceId: string;
     }
   ) => Promise<PortResult<SourceView>>;
-  readonly readAudit?: (
-    database: Database,
-    context: ExecutionContext,
-    input: {
-      readonly conversationId: string;
-      readonly sessionId: string;
-      readonly runId: string;
-    }
-  ) => Promise<PortResult<AuditView>>;
-  readonly checkContentDependencies?: (
-    database: Database,
-    context: ExecutionContext,
-    dependencies: ContentDependencies
-  ) => Promise<PortResult<void>>;
-  readonly sessions: (database: Database) => SessionService;
+  readonly sessions: (database: Database) => ChatClient;
   readonly observationResponse?: (input: {
-    readonly accessGeneration: number;
     readonly address: EventAddress;
     readonly context: ExecutionContext;
     readonly signal: AbortSignal;
@@ -112,13 +86,6 @@ export class ChannelError extends Error {
   }
 }
 export type AccessAction = "read" | "execute" | "approve";
-export type ChannelPresentationItem = ChannelItemBody & {
-  readonly cursor: string;
-};
 export const INSTALLATION_AGENT_PREFIX = "installation:";
 export const EFFECT_DEADLINE_MS = 2200;
-// A call into a conversation's session must outlast celld's ownership recovery
-// after a restart (its node lease lasts 10 seconds). A call abandoned during
-// that recovery can leave the restored session unable to resume its work.
-export const SESSION_DEADLINE_MS = 15_000;
 export const DELIVERY_TIMEOUT_MS = 30_000;

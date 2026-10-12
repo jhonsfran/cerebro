@@ -6,94 +6,58 @@ import {
   NotFound,
   Unavailable,
   UnknownOutcome,
+  toContractFailure,
 } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
-import type { EffectOptions, ReadOptions } from "@cerebro/contracts/port";
-import { DomainSnapshot } from "@cerebro/contracts/session-service";
-import type { SessionService } from "@cerebro/contracts/session-service";
-import { digestToolArguments } from "@cerebro/contracts/tools";
-import { sessionName } from "@cerebro/runtime/event-handler";
 import {
-  attempt,
-  checkOptions,
-  waitForCaller,
-} from "@cerebro/runtime/runtime-ports";
-import { Effect, Schema, Stream } from "effect";
+  ChatDecisionReceipt,
+  ChatReceipt,
+  ChatSnapshot,
+} from "@cerebro/contracts/session-service";
+import type { ChatClient } from "@cerebro/contracts/session-service";
+import { Schema } from "effect";
 import { z } from "zod";
 
 import type { WorkerEnv } from "../bindings";
 import { runtimeConfiguration } from "../config";
-import { readObservationStream } from "./observation-stream";
 import { signSessionRequest } from "./proof";
 
-const identifier = z.string().trim().min(1).max(512);
-const receiptSchema = z.strictObject({
-  acceptedEventId: identifier.transform(id.event),
-  replayed: z.boolean(),
-  runId: identifier.transform(id.run),
-  sessionId: identifier.transform(id.session),
+type SessionPath = "/send" | "/read" | "/observe" | "/decide" | "/stop";
+const responseSchema = z.object({
+  status: z.literal("ok"),
+  value: z.unknown(),
 });
-const runSchema = z.union([
-  z.strictObject({
-    runId: identifier.transform(id.run),
-    state: z.enum(["queued", "running", "waiting-for-approval"]),
-  }),
-  z.strictObject({
-    completedAt: z.number(),
-    runId: identifier.transform(id.run),
-    state: z.literal("completed"),
-  }),
-  z.strictObject({
-    endedAt: z.number(),
-    runId: identifier.transform(id.run),
-    state: z.enum(["failed", "cancelled"]),
-  }),
-]);
-
-const readOptions = async (
-  address: EventAddress,
-  options: ReadOptions
-): Promise<EffectOptions> => ({
-  deadlineAt: options.deadlineAt,
-  operationId: id.operation(`read:${crypto.randomUUID()}`),
-  requestDigest: await digestToolArguments(address),
-});
+const stopSchema = z.strictObject({ stopped: z.boolean() });
+const failureSchema = z.object({ error: z.string(), message: z.string() });
 
 const responseFailure = (
   value: unknown,
-  options: ReadOptions
+  operationId?: string
 ): ContractFailure => {
-  const failure = z
-    .object({ error: z.string(), message: z.string() })
-    .safeParse(value);
+  const failure = failureSchema.safeParse(value);
   if (!failure.success) {
     return new Unavailable({ reason: "Invalid session failure response." });
   }
+  const reason = failure.data.message;
   switch (failure.data.error) {
     case "Denied": {
-      return new Denied({ code: "unauthorized", reason: failure.data.message });
+      return new Denied({ code: "unauthorized", reason });
     }
     case "InvalidInput": {
-      return new InvalidInput({ reason: failure.data.message });
+      return new InvalidInput({ reason });
     }
     case "Conflict": {
-      return new Conflict({
-        code: "digest-mismatch",
-        reason: failure.data.message,
-      });
+      return new Conflict({ code: "digest-mismatch", reason });
     }
     case "NotFound": {
-      return new NotFound({ resource: failure.data.message });
+      return new NotFound({ resource: reason });
     }
     case "UnknownOutcome": {
-      return "operationId" in options && typeof options.operationId === "string"
-        ? new UnknownOutcome({
-            operationId: id.operation(options.operationId),
-            reason: failure.data.message,
-          })
-        : new Unavailable({ reason: failure.data.message });
+      return operationId
+        ? new UnknownOutcome({ operationId: id.operation(operationId), reason })
+        : new Unavailable({ reason });
     }
     default: {
       return new Unavailable({ reason: "The session is unavailable." });
@@ -101,190 +65,95 @@ const responseFailure = (
   }
 };
 
-export const createSessionClient = (env: WorkerEnv) => {
-  const request = (
-    address: EventAddress,
-    context: ExecutionContext,
-    path: "/submit" | "/inspect" | "/stream" | "/approve" | "/cancel",
-    body: Readonly<Record<string, unknown>>,
-    options: ReadOptions
-  ) =>
-    waitForCaller(
-      Effect.gen(function* boundedRequest() {
-        yield* attempt(() => checkOptions(options));
-        return yield* Effect.tryPromise({
-          catch: () =>
-            new Unavailable({
-              reason: "The session transport is unavailable.",
-            }),
-          try: async (signal) => {
-            const text = JSON.stringify(body);
-            const proof = await signSessionRequest(
-              address,
-              context,
-              path,
-              text,
-              runtimeConfiguration(env).gatewaySigningKey
-            );
-            const stub = env.SESSION.get(
-              env.SESSION.idFromName(sessionName(address))
-            );
-            return await stub.fetch(
-              new Request(`https://session.internal${path}`, {
-                body: text,
-                headers: {
-                  "Content-Type": "application/json",
-                  "x-cerebro-session-proof": proof,
-                },
-                method: "POST",
-                signal: options.signal
-                  ? AbortSignal.any([signal, options.signal])
-                  : signal,
-              })
-            );
+export const createSessionClient = (env: WorkerEnv): ChatClient => {
+  const request = async (input: {
+    readonly address: EventAddress;
+    readonly context: ExecutionContext;
+    readonly path: SessionPath;
+    readonly body: Readonly<Record<string, unknown>>;
+    readonly signal?: AbortSignal;
+  }): Promise<Response> => {
+    try {
+      const text = JSON.stringify(input.body);
+      const proof = await signSessionRequest(
+        input.address,
+        input.context,
+        input.path,
+        text,
+        runtimeConfiguration(env).gatewaySigningKey
+      );
+      const { organizationId, agentId, conversationId } = input.address;
+      const name = JSON.stringify([organizationId, agentId, conversationId]);
+      const stub = env.SESSION.get(env.SESSION.idFromName(name));
+      return await stub.fetch(
+        new Request(`https://session.internal${input.path}`, {
+          body: text,
+          headers: {
+            "Content-Type": "application/json",
+            "x-cerebro-session-proof": proof,
           },
-        });
-      }),
-      options
-    );
-  const invoke = <A>(
-    address: EventAddress,
-    context: ExecutionContext,
-    path: "/submit" | "/inspect" | "/stream" | "/approve" | "/cancel",
-    body: Readonly<Record<string, unknown>>,
-    options: ReadOptions,
-    decode: (value: unknown) => A
-  ): Effect.Effect<A, ContractFailure> =>
-    waitForCaller(
-      Effect.gen(function* invokeSession() {
-        const response = yield* request(address, context, path, body, options);
-        const value = yield* Effect.tryPromise({
-          catch: () => new Unavailable({ reason: "Invalid session response." }),
-          try: () => response.json(),
-        });
-        if (!response.ok) {
-          return yield* Effect.fail(responseFailure(value, options));
-        }
-        return yield* Effect.try({
-          catch: () => new Unavailable({ reason: "Invalid session response." }),
-          try: () =>
-            decode(
-              z
-                .object({ status: z.literal("ok"), value: z.unknown() })
-                .parse(value).value
-            ),
-        });
-      }),
-      options
-    );
-  const service: SessionService = {
-    approve: (command, options) =>
-      invoke(
-        command.address,
-        command.context,
-        "/approve",
-        { command, options },
-        options,
-        (value) => runSchema.parse(value)
-      ),
-    cancel: (command, options) =>
-      invoke(
-        command.address,
-        command.context,
-        "/cancel",
-        { command, options },
-        options,
-        (value) => runSchema.parse(value)
-      ),
-    inspect: (address, context, options) =>
-      Effect.gen(function* inspect() {
-        const wireOptions = yield* Effect.promise(() =>
-          readOptions(address, options)
-        );
-        return yield* invoke(
-          address,
-          context,
-          "/inspect",
-          { options: wireOptions },
-          options,
-          Schema.decodeUnknownSync(DomainSnapshot)
-        );
-      }),
-    stream: (address, context, observation, options) =>
-      Stream.unwrap(
-        waitForCaller(
-          Effect.gen(function* observe() {
-            const wireOptions = yield* Effect.promise(() =>
-              readOptions(address, options)
-            );
-            const response = yield* request(
-              address,
-              context,
-              "/stream",
-              { ...observation, options: wireOptions },
-              options
-            );
-            if (!response.ok) {
-              const failure = yield* Effect.tryPromise({
-                catch: () =>
-                  new Unavailable({
-                    reason: "Invalid observation failure response.",
-                  }),
-                try: () => response.json(),
-              });
-              return yield* Effect.fail(responseFailure(failure, options));
-            }
-            if (!response.body) {
-              return yield* Effect.fail(
-                new Unavailable({ reason: "Observation response has no body." })
-              );
-            }
-            return readObservationStream(response.body);
-          }),
-          options
-        )
-      ),
-    submit: (command, options) =>
-      invoke(
-        command.event,
-        command.event.context,
-        "/submit",
-        { command, options },
-        options,
-        (value) => receiptSchema.parse(value)
-      ),
+          method: "POST",
+          signal: input.signal,
+        })
+      );
+    } catch (error) {
+      throw toContractFailure(error, "The session transport is unavailable.");
+    }
+  };
+  const invoke = async <Value>(
+    input: Parameters<typeof request>[0],
+    decode: (value: unknown) => Value,
+    operationId?: string
+  ): Promise<Value> => {
+    const response = await request(input);
+    let value: unknown;
+    try {
+      value = await response.json();
+    } catch {
+      throw new Unavailable({ reason: "Invalid session response." });
+    }
+    if (!response.ok) {
+      throw responseFailure(value, operationId);
+    }
+    try {
+      return decode(responseSchema.parse(value).value);
+    } catch {
+      throw new Unavailable({ reason: "Invalid session response." });
+    }
   };
   return {
-    ...service,
-    // The raw session response is forwarded to the browser without re-encoding.
-    observationResponse: (
-      address: EventAddress,
-      context: ExecutionContext,
-      accessGeneration: number,
-      options: ReadOptions
-    ): Effect.Effect<Response, ContractFailure> =>
-      Effect.gen(function* openObservation() {
-        const wireOptions = yield* Effect.promise(() =>
-          readOptions(address, options)
-        );
-        const response = yield* request(
-          address,
-          context,
-          "/stream",
-          { accessGeneration, options: wireOptions },
-          options
-        );
-        if (!response.ok) {
-          const failure = yield* Effect.tryPromise({
-            catch: () =>
-              new Unavailable({
-                reason: "Invalid observation failure response.",
-              }),
-            try: () => response.json(),
-          });
-          return yield* Effect.fail(responseFailure(failure, options));
+    decide: ({ approvalId, decision, ...input }) =>
+      invoke(
+        { ...input, body: { approvalId, decision }, path: "/decide" },
+        Schema.decodeUnknownSync(ChatDecisionReceipt)
+      ),
+    observe: async (input) => {
+      const response = await request({ ...input, body: {}, path: "/observe" });
+      if (!response.ok) {
+        let value: unknown;
+        try {
+          value = await response.json();
+        } catch {
+          throw new Unavailable({ reason: "Invalid session response." });
         }
-        return response;
-      }),
+        throw responseFailure(value);
+      }
+      return response;
+    },
+    read: (input) =>
+      invoke(
+        { ...input, body: {}, path: "/read" },
+        Schema.decodeUnknownSync(ChatSnapshot)
+      ),
+    send: ({ operationId, text, ...input }) =>
+      invoke(
+        { ...input, body: { operationId, text }, path: "/send" },
+        Schema.decodeUnknownSync(ChatReceipt),
+        operationId
+      ),
+    stop: (input) =>
+      invoke({ ...input, body: {}, path: "/stop" }, (value) =>
+        stopSchema.parse(value)
+      ),
   };
 };

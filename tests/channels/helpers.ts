@@ -2,23 +2,21 @@ import { Schema } from "effect";
 import { z } from "zod";
 
 import { createApiHandler } from "../../packages/api/src/handler";
-import { ChannelError } from "../../packages/channels/src/types";
 import type {
   ProductHandlerOptions,
   SlackConfiguration,
 } from "../../packages/channels/src/types";
 import type { EventAddress } from "../../packages/contracts/src/events";
-import { DomainSnapshot } from "../../packages/contracts/src/session-service";
+import { ChatSnapshot } from "../../packages/contracts/src/session-service";
 import { sql } from "../../packages/db/node_modules/drizzle-orm";
 import { withDatabase } from "../../packages/db/src/index";
 import { user } from "../../packages/db/src/schema/auth";
 import { identityGrant } from "../../packages/db/src/schema/identity";
 import {
-  createFixtureSessionService,
+  createFixtureChatClient,
   FIXTURE_MODEL_ID,
   FIXTURE_SOURCE_ID,
   FIXTURE_TOOL_ID,
-  fixtureRun,
   resetFixtureSessions,
 } from "./fixture-session";
 
@@ -49,8 +47,6 @@ export const createTestProduct = async (
         { id: FIXTURE_MODEL_ID, label: "Deterministic test model" },
       ],
     },
-    checkContentDependencies: () =>
-      Promise.resolve({ status: "ok", value: undefined }),
     fetch,
     getUser: (request) =>
       Promise.resolve(
@@ -59,38 +55,11 @@ export const createTestProduct = async (
           : null
       ),
     mode: "local",
+    observationResponse: (request) =>
+      options.withDatabase((db) =>
+        createFixtureChatClient(db, options).observe(request)
+      ),
     organizationId: "channel-test-company",
-    readAudit: (_database, _context, input) => {
-      const run = fixtureRun(input.conversationId, input.runId);
-      if (!run) {
-        throw new ChannelError(404, "not-found", "The run was not found.");
-      }
-      let endedAt = run.envelope.occurredAt;
-      if (run.state.state === "completed") {
-        endedAt = run.state.completedAt;
-      } else if ("endedAt" in run.state) {
-        ({ endedAt } = run.state);
-      }
-      return Promise.resolve({
-        status: "ok",
-        value: {
-          entries: [
-            {
-              at: run.envelope.occurredAt,
-              description: "The stable conversation event was accepted.",
-              type: "admission",
-            },
-            {
-              at: endedAt,
-              description: `The run state is ${run.state.state}.`,
-              type: "state",
-            },
-          ],
-          runId: input.runId,
-          state: run.state.state,
-        },
-      });
-    },
     readSource: (_database, _context, input) =>
       Promise.resolve(
         input.sourceId === FIXTURE_SOURCE_ID
@@ -105,7 +74,7 @@ export const createTestProduct = async (
             }
           : { resource: "source", status: "not-found" }
       ),
-    sessions: (db) => createFixtureSessionService(db, options),
+    sessions: (db) => createFixtureChatClient(db, options),
     slack,
     withDatabase: database,
   };
@@ -232,19 +201,15 @@ export const signSlack = (
   timestamp = String(Math.floor(Date.now() / 1000))
 ) => signSlackRaw(JSON.stringify(body), secret, timestamp);
 
-export const domainSnapshot = (
+export const chatSnapshot = (
   address: EventAddress,
   values: Record<string, unknown> = {}
-): DomainSnapshot =>
-  Schema.decodeUnknownSync(DomainSnapshot)({
+): ChatSnapshot =>
+  Schema.decodeUnknownSync(ChatSnapshot)({
     address,
     agentVersion: 1,
     approvals: [],
-    executions: [],
-    outputs: [],
-    revision: 0,
-    runs: [],
-    tools: [],
-    userMessages: [],
+    busy: false,
+    messages: [],
     ...values,
   });

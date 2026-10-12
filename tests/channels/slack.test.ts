@@ -21,10 +21,10 @@ import {
   channelConversation,
   channelLinkEvent,
 } from "../../packages/db/src/schema/agents";
-import { fixtureRunCount } from "./fixture-session";
+import { fixtureSubmissionCount } from "./fixture-session";
 import {
   createTestProduct,
-  domainSnapshot,
+  chatSnapshot,
   object,
   signSlack,
   signSlackRaw,
@@ -127,7 +127,7 @@ test("Slack linking, event replay, and thread sessions persist in PostgreSQL", a
     ).length,
     1
   );
-  assert.equal(fixtureRunCount(), 0);
+  assert.equal(fixtureSubmissionCount(), 0);
   const message = event("message-one", "Describe the pilot source.");
   const headers = await signSlack(message, configuration.signingSecret);
   const accepted = await Promise.all([
@@ -138,7 +138,7 @@ test("Slack linking, event replay, and thread sessions persist in PostgreSQL", a
     accepted.map((response) => response.status),
     [200, 200]
   );
-  assert.equal(fixtureRunCount(), 1);
+  assert.equal(fixtureSubmissionCount(), 1);
   const followup = event("message-two", "Continue in this thread.", "2.0");
   const continued = await send(followup);
   assert.equal(continued.status, 200);
@@ -147,7 +147,8 @@ test("Slack linking, event replay, and thread sessions persist in PostgreSQL", a
     assert.equal(conversations.length, 1);
   });
   const changed = await send(event("message-one", "Changed text"));
-  assert.equal(changed.status, 409);
+  assert.equal(changed.status, 200);
+  assert.equal(object(object(await changed.json()).receipt).accepted, false);
   const forged = await send(message, {
     ...headers,
     "x-slack-signature": `v0=${"0".repeat(64)}`,
@@ -248,7 +249,7 @@ test("Slack events are acknowledged before the work runs", async () => {
   assert.equal(response.status, 200);
   assert.deepEqual(object(await response.json()), { ok: true });
   await Promise.all(pending);
-  assert.equal(fixtureRunCount(), 1);
+  assert.equal(fixtureSubmissionCount(), 1);
   // A failure after the acknowledgement is reported in the thread.
   await app.options.withDatabase((db) =>
     createIdentityRepository(db).setManualGrant(
@@ -290,7 +291,7 @@ test("a Slack button decides an approval as the linked person", async () => {
   );
   const accepted = object(await requested.json());
   const conversationId = string(accepted.conversationId);
-  const runId = string(object(accepted.receipt).runId);
+  const operationId = string(object(accepted.receipt).operationId);
   const press = async (user: string, appId = "test-app") => {
     const payload = {
       actions: [
@@ -298,9 +299,8 @@ test("a Slack button decides an approval as the linked person", async () => {
           action_id: APPROVE_ACTION,
           action_ts: `${user}.1`,
           value: JSON.stringify({
-            approvalId: `approval:${runId}`,
+            approvalId: `approval:${operationId}`,
             conversationId,
-            runId,
           }),
         },
       ],
@@ -329,7 +329,7 @@ test("a Slack button decides an approval as the linked person", async () => {
   assert.equal(otherApp.status, 403);
   const approved = await press("slack-user");
   assert.equal(approved.status, 200);
-  assert.equal(object(object(await approved.json()).run).state, "completed");
+  assert.equal(object(object(await approved.json()).approval).state, "allowed");
 });
 
 const memoryStore = () => {
@@ -373,115 +373,97 @@ const thread = {
   conversationId: "conversation",
   threadTs: "1.0",
 };
-const runId = id.run("run-1");
-const output = (text: string) => ({
-  answerId: "answer-1",
-  citations: [
-    {
-      observedAt: 1,
-      sourceId: "policy",
-      sourceUri: "Refund policy",
-      sourceVersion: "1",
-    },
-  ],
-  dependencies: { sourceIds: ["policy"], toolIds: [] },
-  executionId: "execution-1",
-  runId,
-  runIds: [runId],
-  text,
-});
+const answerSnapshot = (text: string) =>
+  chatSnapshot(address, {
+    messages: [{ id: "answer-1", role: "assistant", state: "complete", text }],
+  });
 
-test("Slack delivery posts progress once and edits it into the answer", async () => {
+test("Slack delivery posts each complete native message once and omits partial text", async () => {
   const store = memoryStore();
   const slack = fakeSlack();
-  const deliver = (values: Record<string, unknown>, canShare = true) =>
+  const deliver = (snapshot: ReturnType<typeof chatSnapshot>) =>
     deliverSlackReplies({
-      canShare: () => Promise.resolve(canShare),
+      canShare: () => Promise.resolve(true),
       slack: slack.api,
-      snapshot: domainSnapshot(address, values),
+      snapshot,
       store,
       thread,
     });
-  const running = {
-    executions: [{ executionId: "execution-1", runIds: [runId] }],
-    runs: [{ runId, state: "running" }],
-  };
-  await deliver(running);
-  await deliver(running);
-  assert.deepEqual(slack.calls, [
-    { method: "postMessage", text: "Working on it…" },
-  ]);
-  await deliver({
-    ...running,
-    outputs: [output("**Refunds** take [five days](https://example.test).")],
-    revision: 1,
-    runs: [{ completedAt: 2, runId, state: "completed" }],
-  });
-  assert.deepEqual(slack.calls.at(-1), {
-    method: "update",
-    text: "*Refunds* take <https://example.test|five days>.\n\n_Sources: Refund policy_",
-    ts: "1.0",
-  });
-  assert.equal(slack.calls.length, 2);
-});
-
-test("Slack delivery withholds an answer the recipient may no longer read", async () => {
-  const slack = fakeSlack();
-  await deliverSlackReplies({
-    canShare: () => Promise.resolve(false),
-    slack: slack.api,
-    snapshot: domainSnapshot(address, {
-      executions: [{ executionId: "execution-1", runIds: [runId] }],
-      outputs: [output("Private answer")],
-      runs: [{ completedAt: 2, runId, state: "completed" }],
-    }),
-    store: memoryStore(),
-    thread,
-  });
+  await deliver(
+    chatSnapshot(address, {
+      busy: true,
+      messages: [
+        {
+          id: "partial-1",
+          role: "assistant",
+          state: "streaming",
+          text: "Incomplete",
+        },
+      ],
+    })
+  );
+  const final = answerSnapshot(
+    "**Refunds** take [five days](https://example.test)."
+  );
+  await deliver(final);
+  await deliver(final);
   assert.deepEqual(slack.calls, [
     {
       method: "postMessage",
-      text: "I can no longer share this answer because your access changed.",
+      text: "*Refunds* take <https://example.test|five days>.",
     },
   ]);
 });
 
-const approvalSnapshot = (state: string) =>
-  domainSnapshot(address, {
+test("Slack delivery replaces an answer when the recipient loses access", async () => {
+  const slack = fakeSlack();
+  const store = memoryStore();
+  const snapshot = answerSnapshot("Private answer");
+  await deliverSlackReplies({
+    canShare: () => Promise.resolve(true),
+    slack: slack.api,
+    snapshot,
+    store,
+    thread,
+  });
+  await deliverSlackReplies({
+    canShare: () => Promise.resolve(false),
+    slack: slack.api,
+    snapshot,
+    store,
+    thread,
+  });
+  assert.deepEqual(slack.calls, [
+    { method: "postMessage", text: "Private answer" },
+    {
+      method: "update",
+      text: "I can no longer share this answer because your access changed.",
+      ts: "1.0",
+    },
+  ]);
+});
+
+const approvalSnapshot = (state: "pending" | "allowed") =>
+  chatSnapshot(address, {
     approvals: [
       {
         approvalId: "approval-1",
+        arguments: { ticket: "T-1" },
+        callId: "call-1",
         expiresAt: 10,
         operationId: "operation-1",
-        runId,
         state,
-      },
-    ],
-    runs: [
-      {
-        runId,
-        state: state === "pending" ? "waiting-for-approval" : "running",
-      },
-    ],
-    tools: [
-      {
-        arguments: { ticket: "T-1" },
-        dependencies: { sourceIds: [], toolIds: [] },
-        effect: "write",
-        operationId: "operation-1",
-        output: null,
-        runId,
-        state: "waiting-for-approval",
+        taskId: "task-1",
         toolId: "create_ticket",
-        toolVersion: "1",
       },
     ],
+    busy: true,
   });
 
-test("Slack delivery shows approval buttons and then the decision", async () => {
+test("Slack delivery shows native approval buttons and edits them to the final decision", async () => {
   const store = memoryStore();
   const slack = fakeSlack();
-  const deliver = (state: string) =>
+  const deliver = (state: "pending" | "allowed") =>
     deliverSlackReplies({
       canShare: () => Promise.resolve(true),
       slack: slack.api,
@@ -490,57 +472,53 @@ test("Slack delivery shows approval buttons and then the decision", async () => 
       thread,
     });
   await deliver("pending");
-  assert.deepEqual(
-    slack.calls.map((call) => call.text),
-    ["Waiting for your approval…", "Approve `create_ticket`?"]
-  );
   await deliver("allowed");
-  assert.deepEqual(
-    slack.calls.slice(2).map((call) => [call.method, call.text]),
-    [
-      ["update", "Working on it…"],
-      ["update", "Approved: `create_ticket`"],
-    ]
-  );
+  assert.deepEqual(slack.calls, [
+    { method: "postMessage", text: "Approve `create_ticket`?" },
+    { method: "update", text: "Approved: `create_ticket`", ts: "1.0" },
+  ]);
 });
 
 test("Slack delivery never repeats an uncertain post and retries when rate limited", async () => {
   const store = memoryStore();
-  const running = domainSnapshot(address, {
-    runs: [{ runId, state: "running" }],
-  });
+  const snapshot = answerSnapshot("Complete answer.");
   const uncertain = fakeSlack([{ state: "unknown" }]);
   const deliver = (api: SlackApi) =>
     deliverSlackReplies({
       canShare: () => Promise.resolve(true),
       slack: api,
-      snapshot: running,
+      snapshot,
       store,
       thread,
     });
   await deliver(uncertain.api);
   await deliver(uncertain.api);
-  assert.equal(uncertain.calls.length, 1);
+  assert.deepEqual(uncertain.calls, [
+    { method: "postMessage", text: "Complete answer." },
+  ]);
   const limited = fakeSlack([{ state: "retry" }]);
   const fresh = memoryStore();
   await assert.rejects(
     deliverSlackReplies({
       canShare: () => Promise.resolve(true),
       slack: limited.api,
-      snapshot: running,
+      snapshot,
       store: fresh,
       thread,
     })
   );
-  assert.equal(fresh.values.size, 0);
   await deliverSlackReplies({
     canShare: () => Promise.resolve(true),
     slack: limited.api,
-    snapshot: running,
+    snapshot,
     store: fresh,
     thread,
   });
-  assert.equal(fresh.values.get(`run:${runId}`)?.state, "sent");
+  assert.equal(fresh.values.get("message:answer-1")?.state, "sent");
+  assert.deepEqual(
+    limited.calls.map((call) => call.text),
+    ["Complete answer.", "Complete answer."]
+  );
 });
 
 test("the Slack client classifies delivery results", async () => {

@@ -1,13 +1,11 @@
 import type { EventAddress } from "@cerebro/contracts/events";
 import { Denied } from "@cerebro/contracts/failures";
-import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import {
   canonicalToolArguments,
   digestToolArguments,
 } from "@cerebro/contracts/tools";
-import { Effect } from "effect";
 import { z } from "zod";
 
 const identifier = z.string().trim().min(1).max(512);
@@ -41,7 +39,7 @@ const proofSchema = z.strictObject({
   context: contextSchema,
   digest: z.string(),
   expiresAt: z.number().finite(),
-  path: z.enum(["/submit", "/inspect", "/stream", "/approve", "/cancel"]),
+  path: z.enum(["/send", "/read", "/observe", "/decide", "/stop"]),
 });
 const signedSchema = z.strictObject({
   proof: proofSchema,
@@ -67,47 +65,45 @@ const sign = async (secret: string, proof: z.infer<typeof proofSchema>) =>
     )
   );
 
-export const authenticateSessionRequest = (
+export const authenticateSessionRequest = async (
   request: Request,
   secret: string,
   address: EventAddress
-): Effect.Effect<ExecutionContext, ContractFailure> =>
-  Effect.tryPromise({
-    catch: () =>
-      new Denied({
-        code: "unauthorized",
-        reason: "The private session credential is invalid.",
-      }),
-    try: async () => {
-      const signed = signedSchema.parse(
-        JSON.parse(request.headers.get("x-cerebro-session-proof") ?? "null")
-      );
-      const { proof } = signed;
-      const signature = Uint8Array.from(
-        atob(signed.signature),
-        (value) => value.codePointAt(0) ?? 0
-      );
-      const valid = await crypto.subtle.verify(
-        "HMAC",
-        await key(secret),
-        signature,
-        new TextEncoder().encode(canonicalToolArguments(proof))
-      );
-      if (
-        !valid ||
-        proof.expiresAt <= Date.now() ||
-        proof.expiresAt > Date.now() + 60_000 ||
-        proof.path !== new URL(request.url).pathname ||
-        canonicalToolArguments(proof.address) !==
-          canonicalToolArguments(address) ||
-        proof.digest !==
-          (await digestToolArguments(await request.clone().text()))
-      ) {
-        throw new Error("Invalid private session credential");
-      }
-      return proof.context;
-    },
-  });
+): Promise<ExecutionContext> => {
+  try {
+    const signed = signedSchema.parse(
+      JSON.parse(request.headers.get("x-cerebro-session-proof") ?? "null")
+    );
+    const { proof } = signed;
+    const signature = Uint8Array.from(
+      atob(signed.signature),
+      (value) => value.codePointAt(0) ?? 0
+    );
+    const valid = await crypto.subtle.verify(
+      "HMAC",
+      await key(secret),
+      signature,
+      new TextEncoder().encode(canonicalToolArguments(proof))
+    );
+    if (
+      !valid ||
+      proof.expiresAt <= Date.now() ||
+      proof.expiresAt > Date.now() + 60_000 ||
+      proof.path !== new URL(request.url).pathname ||
+      canonicalToolArguments(proof.address) !==
+        canonicalToolArguments(address) ||
+      proof.digest !== (await digestToolArguments(await request.clone().text()))
+    ) {
+      throw new Error("Invalid private session credential");
+    }
+    return proof.context;
+  } catch {
+    throw new Denied({
+      code: "unauthorized",
+      reason: "The private session credential is invalid.",
+    });
+  }
+};
 
 export const signSessionRequest = async (
   address: EventAddress,

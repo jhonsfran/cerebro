@@ -1,89 +1,80 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Effect, Stream } from "effect";
+import { Schema } from "effect";
 
-import { readObservationStream } from "../../apps/server/src/session/observation-stream.ts";
 import { guardedObservation } from "../../packages/api/src/observation-delivery.ts";
+import { ChannelError } from "../../packages/channels/src/types.ts";
 import { Denied, Unavailable } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
-import type { Observation } from "../../packages/contracts/src/session-service.ts";
+import { ChatObservation } from "../../packages/contracts/src/session-service.ts";
 
-const address = {
-  agentId: id.agent("agent-1"),
-  conversationId: id.conversation("conversation-1"),
-  organizationId: id.organization("organization-1"),
-  sessionId: id.session("session-1"),
+const snapshot = {
+  address: {
+    agentId: id.agent("agent-1"),
+    conversationId: id.conversation("conversation-1"),
+    organizationId: id.organization("organization-1"),
+    sessionId: id.session("session-1"),
+  },
+  agentVersion: 1,
+  approvals: [],
+  busy: false,
+  messages: [
+    {
+      id: "entry-1",
+      role: "assistant",
+      state: "complete",
+      text: "Respuesta ñ",
+    },
+  ],
 };
-const frame: Observation = {
-  accessGeneration: 0,
-  address,
-  epoch: "epoch-ñ",
-  reason: "revoked",
-  schemaVersion: 1,
-  sequence: 0,
-  type: "access-denied",
+const frame = Schema.decodeUnknownSync(ChatObservation)({
+  snapshot,
+  type: "snapshot",
+});
+const encode = (value: unknown) =>
+  new TextEncoder().encode(`${JSON.stringify(value)}\n`);
+
+const readFrames = async (body: ReadableStream<Uint8Array>) => {
+  const text = await new Response(body).text();
+  return text
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => Schema.decodeUnknownSync(ChatObservation)(JSON.parse(line)));
 };
 
-test("revocation closes an idle upstream body while its next read is pending", async () => {
-  let cancelled = false;
-  let checks = 0;
-  const body = new ReadableStream<Uint8Array>({
-    cancel() {
-      cancelled = true;
-    },
-  });
-  const guarded = guardedObservation({
-    accessGeneration: 0,
-    address,
-    authorize: () => {
-      checks += 1;
-      return Promise.reject(
-        new Denied({ code: "revoked", reason: "Access revoked" })
-      );
-    },
-    body,
-    recheckMs: 10,
-  });
-  const values = await Effect.runPromise(
-    Stream.runCollect(readObservationStream(guarded)).pipe(Effect.timeout(1500))
-  );
-  assert.equal(values.length, 1);
-  assert.equal(values[0].type, "access-denied");
-  assert.equal(values[0].accessGeneration, 0);
-  assert.equal(cancelled, true);
-  assert.equal(checks, 1);
-});
+test(
+  "revocation closes an idle upstream body and emits one native denial",
+  { timeout: 2000 },
+  async () => {
+    let cancelled = false;
+    let checks = 0;
+    const body = new ReadableStream<Uint8Array>({
+      cancel: () => {
+        cancelled = true;
+      },
+    });
+    const values = await readFrames(
+      guardedObservation({
+        authorize: () => {
+          checks += 1;
+          return Promise.reject(
+            new Denied({ code: "revoked", reason: "Access revoked" })
+          );
+        },
+        body,
+        recheckMs: 10,
+      })
+    );
+    assert.deepEqual(values, [{ reason: "revoked", type: "access-denied" }]);
+    assert.equal(cancelled, true);
+    assert.equal(checks, 1);
+  }
+);
 
-test("forwarded bytes pass through unchanged until the next access read fails", async () => {
-  const encoder = new TextEncoder();
-  let checks = 0;
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(encoder.encode(`${JSON.stringify(frame)}\n`));
-    },
-  });
-  const guarded = guardedObservation({
-    accessGeneration: 0,
-    address,
-    authorize: () => {
-      checks += 1;
-      return checks < 3
-        ? Promise.resolve()
-        : Promise.reject(new Unavailable({ reason: "Authority unavailable" }));
-    },
-    body,
-    recheckMs: 10,
-  });
-  await assert.rejects(
-    Effect.runPromise(Stream.runCollect(readObservationStream(guarded))),
-    (error: unknown) => error instanceof Unavailable
-  );
-  assert.ok(checks >= 3);
-});
-
-test("observation decoding preserves fragmented UTF-8 and frozen fields", async () => {
-  const bytes = new TextEncoder().encode(`${JSON.stringify(frame)}\n`);
+test("native snapshots pass through with identical fragmented UTF-8 bytes", async () => {
+  const bytes = encode(frame);
   const unicodeAt = bytes.indexOf(0xc3);
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -92,65 +83,80 @@ test("observation decoding preserves fragmented UTF-8 and frozen fields", async 
       controller.close();
     },
   });
-  const values = await Effect.runPromise(
-    Stream.runCollect(readObservationStream(body))
-  );
-  assert.deepEqual(values, [frame]);
-});
-
-test("oversized fragmented frames fail before JSON decoding", async () => {
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode("x".repeat(1_048_576)));
-      controller.enqueue(new TextEncoder().encode("x"));
-      controller.close();
-    },
+  const guarded = guardedObservation({
+    authorize: () => Promise.resolve(),
+    body,
   });
-  await assert.rejects(
-    Effect.runPromise(Stream.runCollect(readObservationStream(body))),
-    (error: unknown) => {
-      assert.ok(error instanceof Unavailable);
-      assert.equal(error.reason, "Session observation frame is too large.");
-      return true;
-    }
+  assert.deepEqual(
+    new Uint8Array(await new Response(guarded).arrayBuffer()),
+    bytes
   );
 });
 
-test("the frame limit counts UTF-8 bytes across fragmented chunks", async () => {
-  const bytes = new TextEncoder().encode(
-    `${JSON.stringify({ ...frame, epoch: "ñ".repeat(600_000) })}\n`
-  );
-  assert.ok(bytes.length > 1_048_576);
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(bytes.slice(0, 700_001));
-      controller.enqueue(bytes.slice(700_001));
-      controller.close();
-    },
-  });
-  await assert.rejects(
-    Effect.runPromise(Stream.runCollect(readObservationStream(body))),
-    (error: unknown) => {
-      assert.ok(error instanceof Unavailable);
-      assert.equal(error.reason, "Session observation frame is too large.");
-      return true;
-    }
-  );
-});
+test(
+  "authority failure stops the stream without claiming access denial",
+  { timeout: 2000 },
+  async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel: () => {
+        cancelled = true;
+      },
+      start(controller) {
+        controller.enqueue(encode(frame));
+      },
+    });
+    const guarded = guardedObservation({
+      authorize: () =>
+        Promise.reject(new Unavailable({ reason: "Authority unavailable" })),
+      body,
+      recheckMs: 10,
+    });
+    const reader = guarded.getReader();
+    const first = await reader.read();
+    assert.equal(
+      new TextDecoder().decode(first.value),
+      new TextDecoder().decode(encode(frame))
+    );
+    await assert.rejects(
+      reader.read(),
+      /Current access could not be verified/u
+    );
+    assert.equal(cancelled, true);
+    reader.releaseLock();
+  }
+);
 
-test("EOF cannot complete a frame without its NDJSON newline", async () => {
+test(
+  "committed sign-out emits access-denied and closes the stream",
+  { timeout: 2000 },
+  async () => {
+    const body = new ReadableStream<Uint8Array>();
+    const values = await readFrames(
+      guardedObservation({
+        authorize: () =>
+          Promise.reject(
+            new ChannelError(401, "unauthorized", "Authentication was revoked.")
+          ),
+        body,
+        recheckMs: 10,
+      })
+    );
+    assert.deepEqual(values, [{ reason: "revoked", type: "access-denied" }]);
+  }
+);
+
+test("closing the caller cancels the native observation body", async () => {
+  let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(new TextEncoder().encode(JSON.stringify(frame)));
-      controller.close();
+    cancel: () => {
+      cancelled = true;
     },
   });
-  await assert.rejects(
-    Effect.runPromise(Stream.runCollect(readObservationStream(body))),
-    (error: unknown) => {
-      assert.ok(error instanceof Unavailable);
-      assert.equal(error.reason, "Session observation frame is incomplete.");
-      return true;
-    }
-  );
+  const guarded = guardedObservation({
+    authorize: () => Promise.resolve(),
+    body,
+  });
+  await guarded.cancel();
+  assert.equal(cancelled, true);
 });

@@ -1,39 +1,86 @@
 import { AuthorityService } from "@cerebro/contracts/authority-service";
 import type { EventAddress } from "@cerebro/contracts/events";
-import type { DurableHandoff } from "@cerebro/contracts/execution";
 import {
-  InvalidInput,
   Unavailable,
   fromPortResult,
   tryAdapter,
 } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
+import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { AgentDefinition } from "@cerebro/contracts/session";
-import { DomainSnapshot } from "@cerebro/contracts/session-service";
 import { withDatabase } from "@cerebro/db";
 import { Context, Effect, Layer, Schema } from "effect";
-import { z } from "zod";
 
 import { checkContentDependencies, createMemoryServices } from "../access";
 import type { WorkerEnv } from "../bindings";
-import { contextSchema } from "./proof";
 
-const preparedSchema = z.strictObject({
-  citations: z.array(
-    z.strictObject({
-      observedAt: z.number(),
-      sourceId: z.string().transform(id.source),
-      sourceUri: z.string(),
-      sourceVersion: z.string(),
-    })
-  ),
-  context: contextSchema,
-  dependencies: z.strictObject({
-    sourceIds: z.array(z.string().transform(id.source)),
-    toolIds: z.array(z.string()),
-  }),
-  text: z.string(),
+const dependenciesSchema = Schema.Struct({
+  sourceIds: Schema.Array(Schema.NonEmptyString),
 });
+const legacyContentSchema = Schema.Struct({ dependencies: dependenciesSchema });
+const legacySnapshotSchema = Schema.Struct({
+  snapshot: Schema.Struct({
+    agentVersion: Schema.Int.check(Schema.isGreaterThan(0)),
+    outputs: Schema.Array(legacyContentSchema),
+    tools: Schema.Array(legacyContentSchema),
+  }),
+});
+
+export const migrateLegacySessionMetadata = (
+  storage: DurableObjectStorage
+): number | undefined => {
+  storage.sql.exec(
+    "CREATE TABLE IF NOT EXISTS cerebro_content_source (source_id TEXT PRIMARY KEY)"
+  );
+  const tables = new Set(
+    storage.sql
+      .exec<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('cerebro_pi_session', 'cerebro_pi_content')"
+      )
+      .toArray()
+      .map((row) => row.name)
+  );
+  const sources = new Set<string>();
+  let agentVersion: number | undefined;
+  if (tables.has("cerebro_pi_session")) {
+    const [row] = storage.sql
+      .exec<{ state: string }>(
+        "SELECT state FROM cerebro_pi_session WHERE id=1"
+      )
+      .toArray();
+    if (row) {
+      const { snapshot } = Schema.decodeUnknownSync(legacySnapshotSchema)(
+        JSON.parse(row.state)
+      );
+      ({ agentVersion } = snapshot);
+      for (const item of [...snapshot.outputs, ...snapshot.tools]) {
+        for (const sourceId of item.dependencies.sourceIds) {
+          sources.add(sourceId);
+        }
+      }
+    }
+  }
+  if (tables.has("cerebro_pi_content")) {
+    const rows = storage.sql
+      .exec<{ payload: string }>("SELECT payload FROM cerebro_pi_content")
+      .toArray();
+    for (const row of rows) {
+      const content = Schema.decodeUnknownSync(legacyContentSchema)(
+        JSON.parse(row.payload)
+      );
+      for (const sourceId of content.dependencies.sourceIds) {
+        sources.add(sourceId);
+      }
+    }
+  }
+  for (const sourceId of sources) {
+    storage.sql.exec(
+      "INSERT OR IGNORE INTO cerebro_content_source VALUES (?)",
+      id.source(sourceId)
+    );
+  }
+  return agentVersion;
+};
 
 export const createRuntimeContent = (
   env: WorkerEnv,
@@ -43,144 +90,22 @@ export const createRuntimeContent = (
   authority: AuthorityService
 ) => {
   storage.sql.exec(
-    "CREATE TABLE IF NOT EXISTS cerebro_pi_content (run_id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+    "CREATE TABLE IF NOT EXISTS cerebro_content_source (source_id TEXT PRIMARY KEY)"
   );
-  const read = (runId: string) => {
-    const [row] = storage.sql
-      .exec<{ payload: string }>(
-        "SELECT payload FROM cerebro_pi_content WHERE run_id=?",
-        runId
+  const dependencies = () => ({
+    sourceIds: storage.sql
+      .exec<{ source_id: string }>(
+        "SELECT source_id FROM cerebro_content_source"
       )
-      .toArray();
-    return row ? preparedSchema.parse(JSON.parse(row.payload)) : undefined;
-  };
-  const toolDependencies = (runId?: string) => {
-    const [row] = storage.sql
-      .exec<{ state: string }>(
-        "SELECT state FROM cerebro_pi_session WHERE id=1"
-      )
-      .toArray();
-    const snapshot = row
-      ? Schema.decodeUnknownSync(DomainSnapshot)(JSON.parse(row.state).snapshot)
-      : undefined;
-    return (
-      snapshot?.tools
-        .filter((tool) => !runId || tool.runId === runId)
-        .flatMap((tool) => tool.dependencies.toolIds) ?? []
-    );
-  };
-  const withTools = (
-    prepared: z.infer<typeof preparedSchema>,
-    runId: string
-  ) => ({
-    ...prepared,
-    dependencies: {
-      ...prepared.dependencies,
-      toolIds: [
-        ...new Set([
-          ...prepared.dependencies.toolIds,
-          ...toolDependencies(runId),
-        ]),
-      ],
-    },
+      .toArray()
+      .map((row) => id.source(row.source_id)),
+    toolIds: [],
   });
-  const check = (prepared: z.infer<typeof preparedSchema>) =>
-    Effect.gen(function* checkPreparedContent() {
-      const options = { deadlineAt: Date.now() + 10_000 };
-      for (const sourceId of prepared.dependencies.sourceIds) {
-        yield* authority.require(
-          {
-            action: "read",
-            address,
-            context: prepared.context,
-            pinnedAgent: agent,
-            resource: {
-              id: sourceId,
-              kind: "memory",
-              organizationId: address.organizationId,
-            },
-          },
-          options
-        );
-      }
-      yield* tryAdapter(() =>
-        withDatabase(env, (database) =>
-          checkContentDependencies(
-            env,
-            database,
-            prepared.context,
-            prepared.dependencies,
-            options
-          )
-        )
-      ).pipe(Effect.flatMap(fromPortResult));
-    });
   return {
-    beforeFetch: () =>
-      Effect.gen(function* checkProviderContext() {
-        const rows = storage.sql
-          .exec<{ payload: string; run_id: string }>(
-            "SELECT run_id, payload FROM cerebro_pi_content"
-          )
-          .toArray();
-        for (const row of rows) {
-          yield* check(
-            withTools(preparedSchema.parse(JSON.parse(row.payload)), row.run_id)
-          );
-        }
-      }),
-    content: (handoff: DurableHandoff) =>
-      Effect.gen(function* outputContent() {
-        const stored = read(handoff.submission.runId);
-        if (!stored) {
-          return yield* Effect.fail(
-            new InvalidInput({
-              reason: "The accepted input content is unavailable.",
-            })
-          );
-        }
-        const prepared = withTools(stored, handoff.submission.runId);
-        yield* check(prepared);
-        return {
-          citations: prepared.citations,
-          dependencies: prepared.dependencies,
-        };
-      }),
-    dependencies: () => ({
-      sourceIds: [
-        ...new Set(
-          storage.sql
-            .exec<{ payload: string }>("SELECT payload FROM cerebro_pi_content")
-            .toArray()
-            .flatMap(
-              (row) =>
-                preparedSchema.parse(JSON.parse(row.payload)).dependencies
-                  .sourceIds
-            )
-        ),
-      ],
-      toolIds: [...new Set(toolDependencies())],
-    }),
-    prepareInput: (handoff: DurableHandoff) =>
-      Effect.gen(function* prepareInput() {
-        const prior = read(handoff.submission.runId);
-        if (prior) {
-          yield* check(prior);
-          return prior.text;
-        }
-        const { event } = handoff.submission.event;
-        if (event.type !== "user.message" && event.type !== "scheduled.run") {
-          return yield* Effect.fail(
-            new InvalidInput({
-              reason: "The event cannot prepare model input.",
-            })
-          );
-        }
-        const text =
-          event.type === "user.message"
-            ? event.payload.text
-            : event.payload.task;
-        const { context } = handoff.submission.event;
+    dependencies,
+    prepareInput: (text: string, context: ExecutionContext) =>
+      Effect.gen(function* prepareCurrentModelInput() {
+        const options = { deadlineAt: Date.now() + 10_000 };
         const hits = yield* tryAdapter(() =>
           withDatabase(env, (database) =>
             createMemoryServices(env, database).memory.retrieve(
@@ -190,7 +115,7 @@ export const createRuntimeContent = (
                 organizationId: address.organizationId,
                 text,
               },
-              { deadlineAt: Date.now() + 10_000 }
+              options
             )
           )
         ).pipe(Effect.flatMap(fromPortResult));
@@ -209,7 +134,7 @@ export const createRuntimeContent = (
                   organizationId: address.organizationId,
                 },
               },
-              { deadlineAt: Date.now() + 10_000 }
+              options
             )
           );
           if (result._tag === "Success") {
@@ -218,29 +143,25 @@ export const createRuntimeContent = (
             return yield* Effect.fail(result.failure);
           }
         }
-        const prepared = preparedSchema.parse({
-          citations: permitted.map((hit) => hit.citation),
-          context,
-          dependencies: {
-            sourceIds: permitted.map((hit) => hit.citation.sourceId),
-            toolIds: [],
-          },
-          text: permitted.length
-            ? `${text}\n\nAuthorized source excerpts:\n${permitted.map((hit) => `${hit.citation.sourceUri} (${hit.citation.sourceVersion}):\n${hit.record.text}`).join("\n\n")}`
-            : text,
-        });
-        yield* check(prepared);
-        storage.transactionSync(() =>
-          storage.sql
-            .exec(
-              "INSERT INTO cerebro_pi_content VALUES (?, ?)",
-              handoff.submission.runId,
-              JSON.stringify(prepared)
-            )
-            .toArray()
-        );
+        const requested = {
+          sourceIds: permitted.map((hit) => hit.citation.sourceId),
+          toolIds: [],
+        };
+        yield* tryAdapter(() =>
+          withDatabase(env, (database) =>
+            checkContentDependencies(env, database, context, requested, options)
+          )
+        ).pipe(Effect.flatMap(fromPortResult));
+        for (const sourceId of requested.sourceIds) {
+          storage.sql.exec(
+            "INSERT OR IGNORE INTO cerebro_content_source VALUES (?)",
+            sourceId
+          );
+        }
         yield* tryAdapter(() => storage.sync());
-        return prepared.text;
+        return permitted.length
+          ? `${text}\n\nAuthorized source excerpts:\n${permitted.map((hit) => `${hit.citation.sourceUri} (${hit.citation.sourceVersion}):\n${hit.record.text}`).join("\n\n")}`
+          : text;
       }),
   };
 };
@@ -256,11 +177,13 @@ export const sessionContentLayer = (
 ) =>
   Layer.effect(
     SessionContent,
-    Effect.gen(function* contentChecks() {
+    Effect.gen(function* currentContent() {
       const authority = yield* AuthorityService;
       return yield* Effect.try({
         catch: () =>
-          new Unavailable({ reason: "Durable source context is unavailable." }),
+          new Unavailable({
+            reason: "Source dependency metadata is unavailable.",
+          }),
         try: () =>
           createRuntimeContent(env, storage, address, agent, authority),
       });

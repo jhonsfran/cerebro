@@ -1,7 +1,6 @@
 import { agentAuthorityLayer } from "@cerebro/authorization/agent-authority";
 import { AuthorityService } from "@cerebro/contracts/authority-service";
 import type { EventAddress } from "@cerebro/contracts/events";
-import type { DurableHandoff } from "@cerebro/contracts/execution";
 import {
   Denied,
   InvalidInput,
@@ -17,12 +16,11 @@ import type {
   AgentDefinition,
   ContentDependencies,
 } from "@cerebro/contracts/session";
-import { DomainSnapshot } from "@cerebro/contracts/session-service";
-import type { BoundApproval } from "@cerebro/contracts/tool-service";
 import { ToolExecutor } from "@cerebro/contracts/tool-service";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { channelConversation } from "@cerebro/db/schema/agents";
+import { createApprovalStore } from "@cerebro/runtime/approval-store";
 import { SessionAgent as SessionHost } from "@cerebro/runtime/session-agent";
 import type { SessionHostConfiguration } from "@cerebro/runtime/session-agent";
 import { controlledToolLayer } from "@cerebro/tools/broker";
@@ -33,7 +31,7 @@ import type { Model } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { createProvider } from "@earendil-works/pi-ai/models";
 import { and, eq } from "drizzle-orm";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 
 import {
   checkContentDependencies,
@@ -48,12 +46,15 @@ import {
   runtimeConfiguration,
   runtimeRegistry,
 } from "../config";
-import { SessionContent, sessionContentLayer } from "./content";
+import {
+  SessionContent,
+  migrateLegacySessionMetadata,
+  sessionContentLayer,
+} from "./content";
 import { authenticateSessionRequest } from "./proof";
 import { createSlackNotifier } from "./slack";
 
 const readOptions = (): ReadOptions => ({ deadlineAt: Date.now() + 10_000 });
-const AUDIT_TIMEOUT_MS = 10_000;
 
 export const resolveSessionAddress = (
   env: WorkerEnv,
@@ -110,28 +111,51 @@ export const createRuntimeComposition = (
     const config = runtimeConfiguration(env);
     const slack = slackSettings(env);
     storage.sql.exec(
-      "CREATE TABLE IF NOT EXISTS cerebro_pi_session (id INTEGER PRIMARY KEY CHECK (id=1), state TEXT NOT NULL)"
+      "CREATE TABLE IF NOT EXISTS cerebro_session_metadata (id INTEGER PRIMARY KEY CHECK (id=1), agent_version INTEGER NOT NULL, owner_principal_id TEXT NOT NULL)"
     );
-    const [existing] = storage.sql
-      .exec<{ state: string }>(
-        "SELECT state FROM cerebro_pi_session WHERE id=1"
+    const [persisted] = storage.sql
+      .exec<{ agent_version: number; owner_principal_id: string }>(
+        "SELECT agent_version, owner_principal_id FROM cerebro_session_metadata WHERE id=1"
       )
       .toArray();
-    const persisted = existing
-      ? Schema.decodeUnknownSync(DomainSnapshot)(
-          JSON.parse(existing.state).snapshot
-        )
-      : undefined;
+    const legacyAgentVersion = persisted
+      ? undefined
+      : migrateLegacySessionMetadata(storage);
+    const ownerPrincipalId =
+      persisted?.owner_principal_id ?? conversation?.ownerPrincipalId;
+    if (!ownerPrincipalId) {
+      return yield* Effect.fail(
+        new InvalidInput({ reason: "The conversation owner is unavailable." })
+      );
+    }
     const agent: AgentDefinition = yield* tryAdapter(() =>
       withDatabase(env, (database) =>
         createAgentRepository(database).get(
           address.organizationId,
           address.agentId,
-          persisted?.agentVersion ?? "latest",
+          persisted?.agent_version ?? legacyAgentVersion ?? "latest",
           readOptions()
         )
       )
     ).pipe(Effect.flatMap(fromPortResult));
+    storage.sql.exec(
+      "INSERT OR IGNORE INTO cerebro_session_metadata VALUES (1, ?, ?)",
+      agent.version,
+      ownerPrincipalId
+    );
+    const ownerContext = () =>
+      tryAdapter(() =>
+        withDatabase(env, async (database) => {
+          const { contextByPrincipal } =
+            await import("@cerebro/channels/security");
+          return await contextByPrincipal(
+            database,
+            address.organizationId,
+            ownerPrincipalId
+          );
+        })
+      );
+    const approvals = createApprovalStore(storage);
     const modelConfig = config.models.find(
       (candidate) => candidate.id === agent.model
     );
@@ -230,23 +254,6 @@ export const createRuntimeComposition = (
           )
         )
       ).pipe(Effect.flatMap(fromPortResult));
-    const approvalFor = (operationId: string): BoundApproval | undefined => {
-      const [row] = storage.sql
-        .exec<{ state: string }>(
-          "SELECT state FROM cerebro_pi_session WHERE id=1"
-        )
-        .toArray();
-      if (!row) {
-        return undefined;
-      }
-      // The session store is the authority for bound approvals; only its trusted writer owns this JSON.
-      const state = JSON.parse(row.state) as {
-        handoffs: readonly DurableHandoff[];
-      };
-      return state.handoffs
-        .flatMap((handoff) => handoff.approvals)
-        .find((approval) => approval.operationId === operationId);
-    };
     const signer = yield* tryAdapter(() =>
       createCapabilitySigner(config.gatewaySigningKey)
     );
@@ -263,7 +270,7 @@ export const createRuntimeComposition = (
         controlledToolLayer({
           address,
           approval: (invocation) =>
-            Effect.succeed(approvalFor(invocation.operationId)),
+            Effect.succeed(approvals.permit(invocation.operationId)),
           authority,
           checkApprover: (approval, invocation, options) =>
             Effect.gen(function* currentApprover() {
@@ -339,7 +346,6 @@ export const createRuntimeComposition = (
         authenticateSessionRequest(request, config.gatewaySigningKey, address),
       authority,
       checkDependencies: dependencies,
-      content: content.content,
       executor,
       ...(slack?.botToken && conversation?.kind === "slack"
         ? {
@@ -347,7 +353,10 @@ export const createRuntimeComposition = (
               address,
               agent,
               authority,
-              checkDependencies: dependencies,
+              checkContent: (context) =>
+                Effect.runPromise(
+                  dependencies(context, content.dependencies(), readOptions())
+                ),
               conversation,
               env,
               slack,
@@ -355,35 +364,9 @@ export const createRuntimeComposition = (
             }),
           }
         : {}),
+      ownerContext,
       prepareInput: content.prepareInput,
-      projectAudit: (event) =>
-        tryAdapter(async () => {
-          const response = await env.AUDIT_SINK.fetch(
-            new Request("https://audit.internal/project", {
-              body: JSON.stringify(event),
-              headers: { "Content-Type": "application/json" },
-              method: "POST",
-              signal: AbortSignal.timeout(AUDIT_TIMEOUT_MS),
-            })
-          );
-          if (!response.ok) {
-            throw new Unavailable({
-              reason: "Audit sink did not acknowledge the event",
-            });
-          }
-        }).pipe(
-          // A sink call lost by the runtime may never settle, even when its
-          // signal aborts; the job must still return so it can retry.
-          Effect.timeoutOrElse({
-            duration: AUDIT_TIMEOUT_MS,
-            orElse: () =>
-              Effect.fail(
-                new Unavailable({ reason: "Audit sink did not answer in time" })
-              ),
-          })
-        ),
       provider: {
-        beforeFetch: () => content.beforeFetch(),
         deadlineMs: modelConfig.deadlineMs,
         maxInputBytes: modelConfig.maxInputBytes,
         model,
@@ -413,7 +396,6 @@ export const createRuntimeComposition = (
     };
   });
 
-// One Durable Object hosts one conversation; its name encodes the address.
 export class SessionAgent extends SessionHost<WorkerEnv> {
   protected override configure() {
     return Effect.flatMap(

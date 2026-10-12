@@ -3,13 +3,6 @@ import type { ContractFailure } from "@cerebro/contracts/failures";
 import type { ReadOptions } from "@cerebro/contracts/port";
 import { Effect } from "effect";
 
-export type HostCheckpoint = (
-  boundary:
-    | "before-engine-submission"
-    | `${"before" | "after"}-${"admission" | "approval" | "projection" | "result-persistence"}`,
-  operationId: string
-) => Effect.Effect<void, ContractFailure>;
-
 export const contractFailure = (cause: unknown): ContractFailure =>
   toContractFailure(cause, "Runtime adapter unavailable");
 

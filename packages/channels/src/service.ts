@@ -6,9 +6,8 @@ import type {
   AgentGrant,
   EventAddress,
   ExecutionContext,
-  SessionReceipt,
 } from "@cerebro/contracts";
-import type { SubmissionMode } from "@cerebro/contracts/session-service";
+import type { ChatReceipt } from "@cerebro/contracts/session-service";
 import type { Database } from "@cerebro/db";
 import {
   createAgentRepository,
@@ -20,7 +19,6 @@ import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import {
   channelConversation,
   channelEffect,
-  channelItem,
   installationSetup,
 } from "@cerebro/db/schema/agents";
 import { organization } from "@cerebro/db/schema/core";
@@ -29,33 +27,24 @@ import {
   identityPolicyRevision,
   identityPrincipal,
 } from "@cerebro/db/schema/identity";
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 
-import { snapshotItems } from "./projection";
 import {
   authorize,
-  authorizeContent,
   contextByPrincipal,
   digest,
   trustedSetupCredential,
   principalContext,
-  runEffect,
   unwrap,
 } from "./security";
 import {
   ChannelError,
   EFFECT_DEADLINE_MS,
   INSTALLATION_AGENT_PREFIX,
-  SESSION_DEADLINE_MS,
 } from "./types";
-import type {
-  AccessAction,
-  ChannelOptions,
-  ChannelPresentationItem,
-} from "./types";
+import type { AccessAction, ChannelOptions } from "./types";
 
 export type Conversation = typeof channelConversation.$inferSelect;
-const PAGE_SIZE = 200;
 export interface AgentInput {
   readonly operationId: string;
   readonly name: string;
@@ -94,7 +83,6 @@ export const createChannelService = (
 ) => {
   const now = options.now ?? Date.now;
   const readOptions = () => ({ deadlineAt: now() + EFFECT_DEADLINE_MS });
-  const sessionOptions = () => ({ deadlineAt: now() + SESSION_DEADLINE_MS });
   const current = (userId: string) =>
     principalContext(database, options.organizationId, userId);
   const requireConversation = async (
@@ -504,10 +492,7 @@ export const createChannelService = (
         .from(channelEffect)
         .where(eq(channelEffect.operationId, effectId));
       if (prior) {
-        if (
-          prior.digest !== requestDigest ||
-          !("principalId" in prior.result)
-        ) {
+        if (prior.digest !== requestDigest) {
           throw new ChannelError(
             409,
             "digest-mismatch",
@@ -608,11 +593,17 @@ export const createChannelService = (
   const admit = async (
     conversation: Conversation,
     context: ExecutionContext,
-    eventKey: string,
-    text: string,
-    mode: SubmissionMode = "follow-up"
-  ): Promise<SessionReceipt> => {
+    operationId: string,
+    text: string
+  ): Promise<ChatReceipt> => {
     requireActive(conversation);
+    if (!same(conversation, options, context)) {
+      throw new ChannelError(
+        404,
+        "not-found",
+        "The conversation was not found."
+      );
+    }
     await authorize(
       database,
       options,
@@ -621,190 +612,49 @@ export const createChannelService = (
       "agent",
       conversation.agentId
     );
-    const contentDigest = await digest({
+    return await options.sessions(database).send({
       address: conversationAddress(conversation),
-      mode,
-      principalId: context.actor.id,
+      context,
+      operationId,
       text,
     });
-    const eventId = id.event(`event:${await digest(eventKey)}`);
-    const event = {
-      ...conversationAddress(conversation),
-      context,
-      event: { payload: { text }, type: "user.message" as const },
-      eventId,
-      occurredAt: now(),
-      payloadDigest: id.digest(contentDigest),
-      schemaVersion: 1 as const,
-    };
-    // The session admits each event once; a retry with the same ID replays its receipt.
-    const receipt = await runEffect(
-      options.sessions(database).submit(
-        { event, mode, type: "submit" },
-        {
-          ...sessionOptions(),
-          operationId: id.operation(`submit:${eventId}`),
-          requestDigest: id.digest(contentDigest),
-        }
-      )
-    );
-    return receipt;
   };
   const submit = async (
     userId: string,
     conversationId: string,
-    eventId: string,
-    text: string,
-    mode: SubmissionMode = "follow-up"
+    operationId: string,
+    text: string
   ) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "execute");
-    const receipt = await admit(
-      row,
-      context,
-      `web:${options.organizationId}:${conversationId}:${context.actor.id}:${eventId}`,
-      text,
-      mode
-    );
-    return { cursor: "0", receipt };
+    return { receipt: await admit(row, context, operationId, text) };
   };
-  // Every item counts, not only one page: one check covers the union of the
-  // sources and tools behind the whole conversation.
-  const authorizeSnapshot = async (
-    context: ExecutionContext,
-    snapshot: Parameters<typeof snapshotItems>[0]
-  ) => {
-    const sourceIds = new Set<string>();
-    const toolIds = new Set<string>();
-    for (const { item } of snapshotItems(snapshot)) {
-      for (const sourceId of item.dependencies?.sourceIds ?? []) {
-        sourceIds.add(sourceId);
-      }
-      for (const toolId of item.dependencies?.toolIds ?? []) {
-        toolIds.add(toolId);
-      }
-    }
-    await authorizeContent(database, options, context, {
-      dependencies: {
-        sourceIds: [...sourceIds].map(id.source),
-        toolIds: [...toolIds],
-      },
-      type: "output",
-    });
-  };
-  // A live conversation is read from its session; only a retired one reads the
-  // history that the previous engine stored in channel_item.
-  const readConversation = async (
-    userId: string,
-    conversationId: string,
-    cursor?: string
-  ) => {
+  const readConversation = async (userId: string, conversationId: string) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "read");
-    const offset = cursor === undefined ? 0 : Number(cursor);
-    if (!Number.isSafeInteger(offset) || offset < 0) {
-      throw new ChannelError(
-        422,
-        "invalid-input",
-        "The stream cursor is invalid."
-      );
-    }
-    if (row.engine === "pi-v1" && !row.retiredAt) {
-      const snapshot = await runEffect(
-        options
-          .sessions(database)
-          .inspect(conversationAddress(row), context, sessionOptions())
-      );
-      await authorizeSnapshot(context, snapshot);
-      const items: ChannelPresentationItem[] = snapshotItems(snapshot)
-        .map((entry, index) => ({ ...entry.item, cursor: String(index + 1) }))
-        .slice(offset, offset + PAGE_SIZE);
-      return {
-        agentId: row.agentId,
-        conversationId,
-        cursor: items.at(-1)?.cursor ?? cursor ?? "0",
-        items,
-        mode: options.mode,
-        sessionId: row.sessionId,
-        snapshot,
-      };
-    }
-    const records = await database
-      .select()
-      .from(channelItem)
-      .where(
-        and(
-          eq(channelItem.organizationId, options.organizationId),
-          eq(channelItem.conversationId, conversationId),
-          gt(channelItem.cursor, offset)
-        )
-      )
-      .orderBy(asc(channelItem.cursor))
-      .limit(PAGE_SIZE);
-    const items: ChannelPresentationItem[] = [];
-    for (const record of records) {
-      await authorizeContent(database, options, context, record.item);
-      items.push({ ...record.item, cursor: String(record.cursor) });
-    }
-    const historicalRuns = await database
-      .select({ item: channelItem.item })
-      .from(channelItem)
-      .where(
-        and(
-          eq(channelItem.organizationId, options.organizationId),
-          eq(channelItem.conversationId, conversationId),
-          sql`${channelItem.item}->>'type' = 'run'`
-        )
-      )
-      .orderBy(asc(channelItem.cursor));
-    for (const record of historicalRuns) {
-      await authorizeContent(database, options, context, record.item);
-    }
+    requireActive(row);
+    const snapshot = await options.sessions(database).read({
+      address: conversationAddress(row),
+      context,
+    });
     return {
       agentId: row.agentId,
       conversationId,
-      cursor: items.at(-1)?.cursor ?? cursor ?? "0",
-      items,
-      mode: "retired" as const,
+      mode: options.mode,
       sessionId: row.sessionId,
-      snapshot: {
-        address: conversationAddress(row),
-        agentVersion: 1,
-        runs: [
-          ...new Map(
-            historicalRuns.flatMap((entry) =>
-              entry.item.type === "run"
-                ? [[entry.item.run.runId, entry.item.run] as const]
-                : []
-            )
-          ).values(),
-        ],
-      },
+      snapshot,
     };
   };
-  // Owner and agent access, from PostgreSQL only. An open observation repeats
-  // this check; the session stream rechecks content access on its own.
   const conversationAccess = async (userId: string, conversationId: string) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "read");
     requireActive(row);
     return { address: conversationAddress(row), context };
   };
-  // The session's inspect checks the agent and every source and tool result
-  // the conversation holds; the same union is checked here as well.
   const chatAccess = async (userId: string, conversationId: string) => {
-    const context = await current(userId);
-    const row = await requireConversation(conversationId, context, "read");
-    requireActive(row);
-    await authorizeSnapshot(
-      context,
-      await runEffect(
-        options
-          .sessions(database)
-          .inspect(conversationAddress(row), context, sessionOptions())
-      )
-    );
-    return { address: conversationAddress(row), context };
+    const access = await conversationAccess(userId, conversationId);
+    await options.sessions(database).read(access);
+    return access;
   };
   const listConversations = async (userId: string) => {
     const context = await current(userId);
@@ -842,85 +692,37 @@ export const createChannelService = (
     context: ExecutionContext,
     conversationId: string,
     approvalId: string,
-    operationId: string,
-    runId: string,
     decision: "allow" | "deny"
   ) => {
     const row = await requireConversation(conversationId, context, "approve");
     requireActive(row);
-    const command = {
-      address: conversationAddress(row),
-      approvalId,
-      context,
-      decision,
-      runId: id.run(runId),
-      type: "approve" as const,
-    };
     return {
-      run: await runEffect(
-        options.sessions(database).approve(command, {
-          ...sessionOptions(),
-          operationId: id.operation(
-            `approve:${context.actor.id}:${operationId}`
-          ),
-          requestDigest: id.digest(await digest(command)),
-        })
-      ),
+      approval: await options.sessions(database).decide({
+        address: conversationAddress(row),
+        approvalId,
+        context,
+        decision,
+      }),
     };
   };
   const approve = async (
     userId: string,
     conversationId: string,
     approvalId: string,
-    operationId: string,
-    runId: string,
     decision: "allow" | "deny"
-  ) =>
-    approveAs(
-      await current(userId),
-      conversationId,
-      approvalId,
-      operationId,
-      runId,
-      decision
-    );
-  const cancel = async (
-    userId: string,
-    conversationId: string,
-    runId: string,
-    operationId: string
-  ) => {
+  ) => approveAs(await current(userId), conversationId, approvalId, decision);
+  const stop = async (userId: string, conversationId: string) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "execute");
     requireActive(row);
-    const command = {
+    return await options.sessions(database).stop({
       address: conversationAddress(row),
       context,
-      runId: id.run(runId),
-      type: "cancel" as const,
-    };
-    return {
-      run: await runEffect(
-        options.sessions(database).cancel(command, {
-          ...sessionOptions(),
-          operationId: id.operation(
-            `cancel:${context.actor.id}:${operationId}`
-          ),
-          requestDigest: id.digest(await digest(command)),
-        })
-      ),
-    };
+    });
   };
   const history = async (userId: string, conversationId: string) => {
-    const view = await readConversation(userId, conversationId);
-    return {
-      projectionStatus: view.mode === "retired" ? "retired" : options.mode,
-      runs: view.snapshot.runs.map((run) => ({
-        auditHref: `/api/product/conversations/${conversationId}/audit/${run.runId}`,
-        runId: run.runId,
-        state: run.state,
-      })),
-    };
+    const { snapshot } = await readConversation(userId, conversationId);
+    return { messages: snapshot.messages };
   };
   const source = async (
     userId: string,
@@ -952,49 +754,10 @@ export const createChannelService = (
       "The source adapter is not configured."
     );
   };
-  const audit = async (
-    userId: string,
-    conversationId: string,
-    runId: string
-  ) => {
-    const context = await current(userId);
-    const conversation = await requireConversation(
-      conversationId,
-      context,
-      "read"
-    );
-    await authorize(
-      database,
-      options,
-      context,
-      "read",
-      "audit",
-      options.organizationId
-    );
-    if (options.readAudit) {
-      return {
-        ...unwrap(
-          await options.readAudit(database, context, {
-            conversationId,
-            runId,
-            sessionId: conversation.sessionId,
-          })
-        ),
-        mode: options.mode,
-      };
-    }
-    throw new ChannelError(
-      503,
-      "provider-unavailable",
-      "The audit adapter is not configured."
-    );
-  };
   return {
     admit,
     approve,
     approveAs,
-    audit,
-    cancel,
     catalog,
     chatAccess,
     conversationAccess,
@@ -1009,6 +772,7 @@ export const createChannelService = (
     setAccess,
     setup,
     source,
+    stop,
     submit,
   };
 };

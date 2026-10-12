@@ -8,6 +8,7 @@ import {
 import { createSlackApi } from "@cerebro/channels/slack-api";
 import { ChannelError } from "@cerebro/channels/types";
 import type { ProductHandlerOptions } from "@cerebro/channels/types";
+import { failureToHttp, isContractFailure } from "@cerebro/contracts/failures";
 import { OpenAPIHandler } from "@orpc/openapi/fetch";
 import { OpenAPIReferencePlugin } from "@orpc/openapi/plugins";
 import { RPCHandler } from "@orpc/server/fetch";
@@ -144,7 +145,6 @@ const receiveSlack = async (
   if (!background) {
     return json(await receive());
   }
-  // After the acknowledgement, a failure is reported in the thread instead.
   const work = async () => {
     try {
       await receive();
@@ -186,22 +186,17 @@ const receiveSlackAction = async (
   if (!background) {
     return json(await receive());
   }
-  // The session posts the decision back into the thread once it commits; a
-  // refused press changes nothing, so its error is not reported to Slack.
   const work = async () => {
     try {
       await receive();
     } catch {
-      // Nothing to undo.
+      // Slack has already received HTTP 200 for this interaction.
     }
   };
   background.waitUntil(work());
   return new Response(null, { status: 200 });
 };
 
-// One handler serves the whole API: typed RPC under /rpc, the same procedures
-// as REST under /api, and two raw routes that cannot be procedures: the Slack
-// webhook (its signature covers the raw body) and the NDJSON observation stream.
 export const createApiHandler = (
   options: ProductHandlerOptions,
   memory?: MemoryApiFactory
@@ -230,7 +225,6 @@ export const createApiHandler = (
           decodeURIComponent(observation[1])
         );
       }
-      // Product and Slack bodies are small; RPC carries large memory documents.
       const limited =
         url.pathname.startsWith("/api/product/") ||
         url.pathname.startsWith("/api/channels/slack/");
@@ -252,7 +246,6 @@ export const createApiHandler = (
           background
         );
       }
-      // The body was already read within its limit, so it is passed on as text.
       const bounded =
         raw === undefined
           ? request
@@ -291,6 +284,13 @@ export const createApiHandler = (
     } catch (error) {
       if (error instanceof ChannelError) {
         return json({ code: error.code, message: error.message }, error.status);
+      }
+      if (isContractFailure(error)) {
+        const response = failureToHttp(error);
+        return json(
+          { code: error._tag, message: response.body.message },
+          response.status
+        );
       }
       return json(
         { code: "unavailable", message: "The product service is unavailable." },

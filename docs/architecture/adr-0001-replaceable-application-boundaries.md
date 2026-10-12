@@ -1,62 +1,33 @@
-# ADR 0001 keeps application behavior independent of replaceable components
+# ADR 0001: Pi Durable owns agent execution
 
-Status is proposed. Revised on 2026-10-09. The [architecture overview](overview.md) describes the system that follows these rules.
+Status: accepted by the project owner on 2026-10-11. This replaces the proposed execution-replacement boundaries in the previous version.
 
 ## Context
 
-Cerebro needs company policy, durable work, controlled tools, and usable chat. The prototype couples those behaviors to celld, OpenCode, and Cloudflare chat libraries.
-
-Cerebro retains celld and replaced OpenCode and the AI SDK with Pi Durable. New Cerebro orchestration uses Effect 4. Future component changes must not require another company-policy implementation.
+Cerebro copied Pi submissions, execution membership, answers, and run status into another durable snapshot. This required handoffs, projection commits, repair jobs, and another browser protocol. The project owner chose Pi Durable as the harness and celld as its host. A generic replaceable execution engine is not a current requirement.
 
 ## Decision
 
-Organize code around company behavior and a few explicit integration boundaries. Add an interface where a component has an independent lifecycle or a high replacement cost.
+Pi Durable owns the transcript, inbox, generation, tool tasks, retries, Stop, and recovery. Use the official PiHarness for SQLite persistence and Lifecycle wake-up on celld.
 
-Reuse the meanings of `SessionService`, `AuthorizationPolicy`, and `ToolExecutor` through Effect service contracts. Keep contracts in Cerebro terms. Vendor configuration, SDK contexts, clients, connections, and storage handles stay in implementations.
+Cerebro owns agent configuration, current company authorization, credentials, controlled tools, approvals, and safe chat presentation. Small company documents or tables can exist beside Pi state. They must not become another execution store.
 
-Keep one application operation for each business action. HTTP, web chat, Slack, and agent tools call that operation. The application verifies current company access and coordinates approvals.
+Call native Pi operations directly. Derive messages, partial output, and busy status from Pi's current view. Use native request, entry, task, and call identities. Do not persist another transcript, answer history, execution membership, or run state.
 
-Pi owns its private session, durable inbox, steering, model and tool loop, submission deduplication, native Stop, tool crash recovery, and engine recovery. The official PiHarness supplies persistence and Lifecycle wake-up. The thin Effect adapter translates public vendor calls. The conversation coordinator owns trusted command intents, durable product state, and repair of its handoff and projection. It does not implement another execution queue or alarm scheduler. Cerebro owns action-approval decisions and operation identities. SDK permission prompts must not create another independent approval authority.
+The chat API supports Send, Stop, read, observe, and approval decisions. Reconnect reads a fresh native view. Pi's submission, queuing, deduplication, ordering, cancellation, and compaction semantics are the product contract.
 
-The Durable Object emits authorized observation frames. The HTTP route authenticates the viewer, checks access on attach and on an interval, and forwards the bytes. It does not own the Pi loop. The web app applies the frames to one projection and renders its transcript, approvals and citations from it. Reconnect reads a fresh snapshot, including current partial content, then observes live updates. Pi's in-memory event stream does not provide cursor replay; exact replay would require a separate durable chunk log.
-
-Each fact has one authority. Product history uses Cerebro tables in the session's SQLite store. Tool dispatch markers and outcomes are Pi task memos. PostgreSQL owns company records. Browser and channel history are projections. Pi checkpoints are private engine state. Cerebro does not meter usage or hold budgets.
-
-Preserve intent before external dispatch. Record confirmed results afterward. An uncertain non-idempotent effect is reported as an unknown outcome and never dispatched again. Neither actors nor database transactions guarantee exactly-once execution in a remote system.
-
-## Dependency rules
-
-| Area | Permitted dependencies |
-| --- | --- |
-| `packages/contracts` | Cerebro data, boundary schemas, Effect service types, and typed failures. No host, engine, UI protocol, authentication, or ORM SDK types. |
-| Company application behavior | Contracts, current policy, repositories, and explicit effect ports. No browser or actor context. |
-| celld and Pi adapters | Application behavior and contracts. Own engine setup, persistence integration, host lifecycle, and vendor event translation. |
-| Browser observation adapter | Authorized domain observations and command receipts. Owns the browser projection. No model or tool execution loop. |
-| Authentication and transport adapters | Verified credentials, boundary parsing, application calls, and presentation. No separate business rules. |
-| `apps/server` composition | Concrete implementations and configuration. Connects the selected components. |
-
-Existing `packages/channels` contains application behavior. Keep that behavior in one place during replacement. Move operations to a clearer application module when another caller needs them. A package rename alone does not improve the design.
-
-Direct Drizzle queries are acceptable in company repositories. Do not add a generic repository for every table. Do not create a universal engine checkpoint, plugin framework, or layer for every function.
-
-## Replacement rules
-
-Replace the implementation and migrate its callers in one change. Delete the old integration and implementation-specific tests. Preserve behavioral tests that still describe company requirements.
-
-A runtime replacement changes the session adapter, persistence integration, and deployment. An engine replacement changes private session handling and event translation. Neither should change company authorization or approval binding.
-
-Keep one supported implementation per boundary until a real requirement needs another. An alternative component does not need checkpoint compatibility with an old engine.
+Check current permissions before model requests and tool calls. Bind approvals to exact calls. Keep the restricted gateway and task memos for remote effects. Report an uncertain at-most-once effect without another dispatch.
 
 ## Consequences
 
-The benefit is a smaller change area when an expensive component changes. Humans and agents use the same company rules. New engineers can locate behavior without tracing through vendor adapters.
+There is one execution authority and fewer synchronization paths. Agent configuration composes instructions, model, tools, and grants without another orchestration framework.
 
-The cost is explicit ownership at the boundaries. The Cerebro-to-Pi handoff, approval wait, host wake-up, cancellation, and browser observation need runtime proof. Effect scopes do not provide durable execution by themselves.
+Cerebro is coupled to Pi's public APIs. Updates need tests of submission, observation, Stop, approvals, and recovery. A future engine replacement is a migration, not another implementation of a generic port.
 
-This proposal rejects a generic plugin framework, a broad rewrite of existing company services, and a second policy or approval engine. It uses Effect Layers for the selected adapters and preserves one company authority.
+The product no longer promises custom run-specific cancellation, changed-payload conflicts under a reused operation ID, immutable joined-answer grouping, or a separate permanent answer archive.
 
-## Acceptance and maintenance
+## Verification
 
-Accept this record after the implementation follows these rules and passes a credentialed live check against a real model and connector. The deterministic integration suite alone does not establish that verdict.
+Verify Send, retry, Stop, partial output, reconnect, and restart without an observer. Verify pending approvals after SIGKILL, denied and revoked authority, and one dispatch after an interrupted remote write.
 
-Write another ADR for a later major choice. Supersede accepted decisions explicitly. Keep one current [architecture overview](overview.md).
+Keep independent authorization and tool-boundary tests. Replace tests that only describe the removed execution store or projection protocol. See the [architecture overview](overview.md).

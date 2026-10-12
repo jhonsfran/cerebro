@@ -1,18 +1,15 @@
+/* oxlint-disable no-await-in-loop -- Approval waits read the durable company decision until the native task is interrupted. */
 import type { AuthorityService } from "@cerebro/contracts/authority-service";
-import type { DurableHandoff } from "@cerebro/contracts/execution";
-import { Conflict, Denied } from "@cerebro/contracts/failures";
+import type { EventAddress } from "@cerebro/contracts/events";
+import { Denied } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
-import type { RunId } from "@cerebro/contracts/identity";
+import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { ReadOptions } from "@cerebro/contracts/port";
 import type {
   AgentDefinition,
   ContentDependencies,
 } from "@cerebro/contracts/session";
-import type {
-  DomainUpdate,
-  ToolState,
-} from "@cerebro/contracts/session-service";
 import { boundApprovalMatches } from "@cerebro/contracts/tool-service";
 import type {
   BoundApproval,
@@ -30,6 +27,7 @@ import type { TSchema } from "@earendil-works/pi-ai";
 import type { ToolRegistration } from "@earendil-works/pi-durable";
 import { Effect } from "effect";
 
+import type { createApprovalStore } from "./approval-store.ts";
 import { vendorEffect, waitForCaller } from "./runtime-ports.ts";
 
 export interface PiRegisteredTool {
@@ -37,81 +35,47 @@ export interface PiRegisteredTool {
   readonly description: string;
   readonly parameters: TSchema;
   readonly prepare?: (
-    argumentsValue: unknown
+    value: unknown
   ) => Effect.Effect<unknown, ContractFailure>;
   readonly requiresApproval?: boolean;
-  // An idempotent tool may be dispatched again after an interrupted attempt.
   readonly idempotent?: boolean;
 }
 export interface PiToolConfiguration {
+  readonly address: EventAddress;
   readonly agent: AgentDefinition;
   readonly tools: readonly PiRegisteredTool[];
   readonly authority: AuthorityService;
   readonly executor: ToolExecutor;
-  readonly resolve: (
-    runId?: RunId
-  ) => Effect.Effect<DurableHandoff, ContractFailure>;
-  readonly publish: (
-    runId: RunId,
-    update: DomainUpdate
-  ) => Effect.Effect<void, ContractFailure>;
-  readonly approval: (
-    invocation: BoundInvocation,
-    permit: BoundApproval,
+  readonly ownerContext: () => Effect.Effect<ExecutionContext, ContractFailure>;
+  readonly approvals: ReturnType<typeof createApprovalStore>;
+  readonly checkDependencies: (
+    context: ExecutionContext,
+    dependencies: ContentDependencies,
     options: ReadOptions
-  ) => Effect.Effect<BoundApproval, ContractFailure>;
+  ) => Effect.Effect<void, ContractFailure>;
   readonly dependencies: (
     tool: RegisteredTool,
     args: unknown,
     execution?: ToolExecution
   ) => Effect.Effect<ContentDependencies, ContractFailure>;
-  // Makes committed Pi state durable on the host before an external effect.
   readonly persist: () => Effect.Effect<void, ContractFailure>;
   readonly deadlineMs: number;
 }
 
-// Pi commits each memo with the tool task, so a replay after a crash reads it.
-const RUN_MEMO = "cerebro-run";
 const DISPATCH_MEMO = "cerebro-dispatch";
 const OUTCOME_MEMO = "cerebro-outcome";
-// The output is stored in canonical JSON form, as the model receives it.
 type RecordedOutcome =
   | { readonly state: "succeeded"; readonly output: string }
   | { readonly state: "failed"; readonly reason: string };
 const failureReason = (failure: ContractFailure): string =>
   "reason" in failure ? failure.reason : `${failure.resource} was not found`;
-
-const UNKNOWN_OUTCOME_TEXT =
-  "The tool was dispatched but its outcome is unknown. It will not be retried. Tell the user to check the target system.";
-
-const prepareArguments = (registered: PiRegisteredTool, args: unknown) =>
-  registered.prepare?.(args) ?? Effect.succeed(args);
-
-interface PendingTool {
-  readonly toolState: Omit<ToolState, "state">;
-  dispatched: boolean;
-  settled: boolean;
-}
-
-const settle = (
-  configuration: PiToolConfiguration,
-  pending: PendingTool | undefined,
-  state: "failed" | "unknown-outcome"
-) =>
-  Effect.gen(function* settleTool() {
-    if (!pending || pending.settled) {
-      return;
-    }
-    yield* configuration.publish(pending.toolState.runId, {
-      ...pending.toolState,
-      state,
-      type: "tool",
-    });
-    pending.settled = true;
-  });
-
 const unknownResult = {
-  content: [{ text: UNKNOWN_OUTCOME_TEXT, type: "text" as const }],
+  content: [
+    {
+      text: "The tool was dispatched but its outcome is unknown. It will not be retried. Check the target system before another attempt.",
+      type: "text" as const,
+    },
+  ],
   isError: true,
 };
 
@@ -129,133 +93,59 @@ export const createPiTools = (
           deadlineAt: Date.now() + configuration.deadlineMs,
           signal: context.abortSignal,
         };
-        let pending: PendingTool | undefined;
-        const succeeded = (
-          toolState: Omit<ToolState, "state">,
-          tool: RegisteredTool,
-          execution: ToolExecution
-        ) =>
-          Effect.gen(function* publishSuccess() {
-            yield* configuration.publish(toolState.runId, {
-              ...toolState,
-              dependencies: yield* configuration.dependencies(
-                tool,
-                toolState.arguments,
-                execution
-              ),
-              output: execution.output,
-              state: "succeeded",
-              type: "tool",
-            });
-            if (pending) {
-              pending.settled = true;
-            }
-            return {
-              content: [
-                {
-                  text: canonicalToolArguments(execution.output),
-                  type: "text" as const,
-                },
-              ],
-            };
-          });
+        let dispatched = false;
+        let approvalId: string | undefined;
         const program = Effect.gen(function* executeControlledTool() {
-          const preparedArguments = yield* waitForCaller(
-            prepareArguments(registered, args),
+          const prepared = yield* waitForCaller(
+            registered.prepare?.(args) ?? Effect.succeed(args),
             options
           );
-          const requiresApproval =
-            registered.definition.effect === "write" ||
-            registered.requiresApproval;
-          let memo = yield* vendorEffect(options, () =>
-            api.memo(RUN_MEMO, context)
-          );
-          if (memo === undefined) {
-            const candidate = yield* configuration.resolve();
-            memo = yield* vendorEffect(options, () =>
-              api.memo(RUN_MEMO, candidate.submission.runId, context)
-            );
-          }
-          if (typeof memo !== "string") {
-            return yield* Effect.fail(
-              new Conflict({
-                code: "digest-mismatch",
-                reason: "Invalid persisted Pi tool binding",
-              })
-            );
-          }
-          const handoff = yield* configuration.resolve(id.run(memo));
-          const { runId } = handoff.submission;
+          const executionContext = yield* configuration.ownerContext();
           const tool = registered.definition;
+          const runId = id.run(String(api.taskId));
           const operationId = id.operation(
             JSON.stringify([
-              handoff.address.organizationId,
-              handoff.address.sessionId,
+              configuration.address.organizationId,
+              configuration.address.sessionId,
               api.taskId,
               api.callId,
             ])
           );
           const argumentDigest = yield* vendorEffect(options, () =>
-            digestToolArguments(preparedArguments)
+            digestToolArguments(prepared)
           );
           const effectOptions = {
             ...options,
             operationId,
             requestDigest: argumentDigest,
           };
-          const executionContext = handoff.submission.event.context;
           const request = {
             action: "execute" as const,
-            address: handoff.address,
+            address: configuration.address,
             context: executionContext,
             pinnedAgent: configuration.agent,
             resource: {
               id: tool.id,
               kind: "tool" as const,
-              organizationId: handoff.address.organizationId,
+              organizationId: configuration.address.organizationId,
             },
             tool,
           };
           let permit = yield* configuration.authority.require(request, options);
-          const invocation: BoundInvocation = {
-            agentId: configuration.agent.agentId,
-            argumentDigest,
-            arguments: preparedArguments,
-            context: executionContext,
-            operationId,
-            organizationId: handoff.address.organizationId,
-            runId,
-            state: "requested",
-            tool,
-          };
-          const toolState = {
-            arguments: preparedArguments,
-            dependencies: yield* configuration.dependencies(
-              tool,
-              preparedArguments
-            ),
-            effect: tool.effect,
-            operationId,
-            output: null,
-            runId,
-            toolId: tool.id,
-            toolVersion: tool.version,
-          };
-          pending = {
-            dispatched: false,
-            settled: false,
-            toolState,
-          };
+          yield* configuration.checkDependencies(
+            executionContext,
+            yield* configuration.dependencies(tool, prepared),
+            options
+          );
           const recorded = yield* vendorEffect(options, () =>
             api.memo<RecordedOutcome>(OUTCOME_MEMO, context)
           );
           if (recorded?.state === "succeeded") {
-            return yield* succeeded(toolState, tool, {
-              output: JSON.parse(recorded.output),
-            });
+            return {
+              content: [{ text: recorded.output, type: "text" as const }],
+            };
           }
           if (recorded?.state === "failed") {
-            yield* settle(configuration, pending, "failed");
             return {
               content: [{ text: recorded.reason, type: "text" as const }],
               isError: true,
@@ -265,16 +155,21 @@ export const createPiTools = (
             api.memo<string>(DISPATCH_MEMO, context)
           );
           if (interrupted !== undefined && !registered.idempotent) {
-            yield* settle(configuration, pending, "unknown-outcome");
             return unknownResult;
           }
-          yield* configuration.publish(runId, {
-            ...toolState,
-            state: requiresApproval ? "waiting-for-approval" : "requested",
-            type: "tool",
-          });
-          if (requiresApproval) {
-            const approval: BoundApproval = {
+          const invocation: BoundInvocation = {
+            agentId: configuration.agent.agentId,
+            argumentDigest,
+            arguments: prepared,
+            context: executionContext,
+            operationId,
+            organizationId: configuration.address.organizationId,
+            runId,
+            state: "requested",
+            tool,
+          };
+          if (tool.effect === "write" || registered.requiresApproval) {
+            const candidate: BoundApproval = {
               actorPrincipalId: executionContext.actor.id,
               agentId: configuration.agent.agentId,
               approverId: executionContext.actor.id,
@@ -288,7 +183,7 @@ export const createPiTools = (
               expiresAt: options.deadlineAt,
               id: `approval:${operationId}`,
               operationId,
-              organizationId: handoff.address.organizationId,
+              organizationId: configuration.address.organizationId,
               policyVersion: permit.policyVersion,
               principalId:
                 executionContext.represented?.id ?? executionContext.actor.id,
@@ -296,11 +191,44 @@ export const createPiTools = (
               toolId: tool.id,
               toolVersion: tool.version,
             };
-            const approved = yield* configuration.approval(
-              invocation,
-              approval,
-              options
+            const retained = yield* vendorEffect(options, () =>
+              api.commit(
+                () =>
+                  configuration.approvals.request(
+                    invocation,
+                    candidate,
+                    api.callId
+                  ),
+                context
+              )
             );
+            approvalId = retained.id;
+            yield* configuration.persist();
+            yield* vendorEffect(options, () =>
+              api.details(
+                {
+                  approvalId: retained.id,
+                  state: configuration.approvals.read(retained.id).state,
+                },
+                context
+              )
+            );
+            let approved = yield* vendorEffect(options, () =>
+              api.commit(
+                () => configuration.approvals.requireAllowed(retained.id),
+                context
+              )
+            );
+            while (!approved) {
+              yield* waitForCaller(Effect.sleep(250), options);
+              yield* configuration.authority.require(request, options);
+              approved = yield* vendorEffect(options, () =>
+                api.commit(
+                  () => configuration.approvals.requireAllowed(retained.id),
+                  context
+                )
+              );
+            }
             permit = yield* configuration.authority.require(request, options);
             const matches = yield* boundApprovalMatches(
               approved,
@@ -312,7 +240,7 @@ export const createPiTools = (
                 () =>
                   new Denied({
                     code: "unauthorized",
-                    reason: "Approval binding failed",
+                    reason: "Approval binding failed.",
                   })
               )
             );
@@ -320,10 +248,16 @@ export const createPiTools = (
               return yield* Effect.fail(
                 new Denied({
                   code: "revoked",
-                  reason: "Approval no longer matches the current intent",
+                  reason: "Approval no longer matches the current tool call.",
                 })
               );
             }
+            yield* vendorEffect(options, () =>
+              api.details(
+                { approvalId: retained.id, state: "allowed" },
+                context
+              )
+            );
           }
           permit = yield* configuration.authority.require(request, options);
           const capability: BoundCapability = {
@@ -338,7 +272,7 @@ export const createPiTools = (
             effect: tool.effect,
             expiresAt: options.deadlineAt,
             operationId,
-            organizationId: handoff.address.organizationId,
+            organizationId: configuration.address.organizationId,
             policyVersion: permit.policyVersion,
             principalId:
               executionContext.represented?.id ?? executionContext.actor.id,
@@ -346,33 +280,28 @@ export const createPiTools = (
             toolId: tool.id,
             toolVersion: tool.version,
           };
-          yield* configuration.publish(runId, {
-            ...toolState,
-            state: "running",
-            type: "tool",
-          });
-          // The dispatch memo is durable before the effect starts. A replay that
-          // finds it without an outcome never dispatches an at-most-once tool again.
+          yield* configuration.checkDependencies(
+            executionContext,
+            yield* configuration.dependencies(tool, prepared),
+            options
+          );
           yield* vendorEffect(options, () =>
             api.memo(DISPATCH_MEMO, operationId, context)
           );
           yield* configuration.persist();
-          pending.dispatched = true;
+          dispatched = true;
           const execution = yield* configuration.executor.execute(
             {
               agentId: configuration.agent.agentId,
-              arguments: preparedArguments,
+              arguments: prepared,
               context: executionContext,
-              organizationId: handoff.address.organizationId,
+              organizationId: configuration.address.organizationId,
               runId,
               tool,
             },
             capability,
             effectOptions
           );
-          // Recording the outcome is best effort: without it a replay reports an
-          // unknown outcome, which is safe. A failure here must not turn a
-          // confirmed success into a failed tool.
           yield* vendorEffect(options, () =>
             api.memo<RecordedOutcome>(
               OUTCOME_MEMO,
@@ -383,47 +312,46 @@ export const createPiTools = (
               context
             )
           ).pipe(Effect.andThen(configuration.persist()), Effect.ignore);
-          return yield* succeeded(toolState, tool, execution);
+          return {
+            content: [
+              {
+                text: canonicalToolArguments(execution.output),
+                type: "text" as const,
+              },
+            ],
+          };
         });
-        return await Effect.runPromise(
-          program.pipe(
-            Effect.catch((error) =>
-              Effect.uninterruptible(
-                Effect.gen(function* persistFailure() {
-                  if (error._tag === "UnknownOutcome") {
-                    yield* settle(configuration, pending, "unknown-outcome");
-                    return unknownResult;
-                  }
-                  if (pending?.dispatched) {
-                    // The executor reported a definite failure; a replay repeats it.
-                    yield* vendorEffect(
-                      { deadlineAt: Date.now() + 30_000 },
-                      () =>
-                        api.memo<RecordedOutcome>(
-                          OUTCOME_MEMO,
-                          { reason: failureReason(error), state: "failed" },
-                          context
-                        )
-                    ).pipe(Effect.ignore);
-                  }
-                  yield* settle(configuration, pending, "failed");
-                  return yield* Effect.fail(error);
-                })
-              )
+        try {
+          return await Effect.runPromise(
+            program.pipe(
+              Effect.catch((error) => {
+                if (error._tag === "UnknownOutcome") {
+                  return Effect.succeed(unknownResult);
+                }
+                if (!dispatched) {
+                  return Effect.fail(error);
+                }
+                return vendorEffect({ deadlineAt: Date.now() + 30_000 }, () =>
+                  api.memo<RecordedOutcome>(
+                    OUTCOME_MEMO,
+                    {
+                      reason: failureReason(error),
+                      state: "failed",
+                    },
+                    context
+                  )
+                ).pipe(Effect.ignore, Effect.andThen(Effect.fail(error)));
+              })
             ),
-            Effect.onInterrupt(() =>
-              settle(
-                configuration,
-                pending,
-                pending?.dispatched ? "unknown-outcome" : "failed"
-              ).pipe(Effect.ignore)
-            )
-          ),
-          { signal: context.abortSignal }
-        );
+            { signal: context.abortSignal }
+          );
+        } finally {
+          if (approvalId) {
+            configuration.approvals.cancel(approvalId);
+          }
+        }
       },
       name: registered.definition.id,
       parameters: registered.parameters,
-      // Replay re-enters the memo guard; an at-most-once tool never dispatches twice.
       replay: "safe" as const,
     }));

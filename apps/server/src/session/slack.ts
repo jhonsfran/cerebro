@@ -5,26 +5,27 @@ import type { SlackDelivery } from "@cerebro/channels/slack-replies";
 import type { SlackConfiguration } from "@cerebro/channels/types";
 import type { AuthorityService } from "@cerebro/contracts/authority-service";
 import type { EventAddress } from "@cerebro/contracts/events";
-import { tryAdapter } from "@cerebro/contracts/failures";
-import type { ContractFailure } from "@cerebro/contracts/failures";
+import { Denied } from "@cerebro/contracts/failures";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { ReadOptions } from "@cerebro/contracts/port";
-import type {
-  AgentDefinition,
-  ContentDependencies,
-} from "@cerebro/contracts/session";
-import type { DomainSnapshot } from "@cerebro/contracts/session-service";
+import type { AgentDefinition } from "@cerebro/contracts/session";
+import type { ChatSnapshot } from "@cerebro/contracts/session-service";
 import { withDatabase } from "@cerebro/db";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import type { channelConversation } from "@cerebro/db/schema/agents";
-import { Effect, Result } from "effect";
+import { Effect } from "effect";
+import { z } from "zod";
 
 import type { WorkerEnv } from "../bindings";
 
 type Conversation = typeof channelConversation.$inferSelect;
+const deliverySchema = z.object({
+  state: z.enum(["sent", "unknown", "failed"]),
+  text: z.string(),
+  ts: z.string().optional(),
+});
 const options = (): ReadOptions => ({ deadlineAt: Date.now() + 10_000 });
 
-// The Slack recipient must still be linked to the conversation owner.
 const currentRecipient = (env: WorkerEnv, conversation: Conversation) =>
   withDatabase(env, async (database) => {
     if (!conversation.workspaceId || !conversation.slackUserId) {
@@ -49,13 +50,11 @@ const currentRecipient = (env: WorkerEnv, conversation: Conversation) =>
         link.principalId
       );
     } catch {
-      // An inactive principal has no context, so nothing is posted.
+      return;
     }
     return context;
   });
 
-// Posts this conversation's progress, answers, and approvals into its Slack
-// thread. Delivery state lives in the session's own storage.
 export const createSlackNotifier = (input: {
   readonly env: WorkerEnv;
   readonly storage: DurableObjectStorage;
@@ -64,11 +63,7 @@ export const createSlackNotifier = (input: {
   readonly address: EventAddress;
   readonly agent: AgentDefinition;
   readonly authority: AuthorityService;
-  readonly checkDependencies: (
-    context: ExecutionContext,
-    dependencies: ContentDependencies,
-    options: ReadOptions
-  ) => Effect.Effect<void, ContractFailure>;
+  readonly checkContent: (context: ExecutionContext) => Promise<void>;
 }) => {
   const { conversation, storage } = input;
   storage.sql.exec(
@@ -82,7 +77,7 @@ export const createSlackNotifier = (input: {
           key
         )
         .toArray();
-      return row ? (JSON.parse(row.delivery) as SlackDelivery) : undefined;
+      return row ? deliverySchema.parse(JSON.parse(row.delivery)) : undefined;
     },
     set: (key: string, delivery: SlackDelivery) => {
       storage.sql.exec(
@@ -93,63 +88,53 @@ export const createSlackNotifier = (input: {
     },
   };
   const slack = createSlackApi(input.slack);
-  // An answer is shared only while the recipient may still read the agent and
-  // every source and tool result behind it.
   const canShare =
-    (context: ExecutionContext) =>
-    async (output: { readonly dependencies: ContentDependencies }) => {
-      const allowed = await Effect.runPromise(
-        Effect.result(
-          Effect.gen(function* checkAnswer() {
-            yield* input.authority.require(
-              {
-                action: "read",
-                address: input.address,
-                context,
-                pinnedAgent: input.agent,
-                resource: {
-                  id: input.address.agentId,
-                  kind: "agent",
-                  organizationId: input.address.organizationId,
-                },
-              },
-              options()
-            );
-            yield* input.checkDependencies(
+    (context: ExecutionContext) => async (): Promise<boolean> => {
+      try {
+        await Effect.runPromise(
+          input.authority.require(
+            {
+              action: "read",
+              address: input.address,
               context,
-              output.dependencies,
-              options()
-            );
-          })
-        )
-      );
-      if (Result.isSuccess(allowed)) {
+              pinnedAgent: input.agent,
+              resource: {
+                id: input.address.agentId,
+                kind: "agent",
+                organizationId: input.address.organizationId,
+              },
+            },
+            options()
+          )
+        );
+        await input.checkContent(context);
         return true;
+      } catch (error) {
+        const cause = error instanceof Error ? (error.cause ?? error) : error;
+        if (cause instanceof Denied) {
+          return false;
+        }
+        throw error;
       }
-      if (allowed.failure._tag === "Denied") {
-        return false;
-      }
-      throw allowed.failure;
     };
-  return (snapshot: DomainSnapshot) =>
-    tryAdapter(async () => {
-      if (!conversation.channelId || !conversation.rootTimestamp) {
-        return;
-      }
-      const context = await currentRecipient(input.env, conversation);
-      if (!context) {
-        return;
-      }
-      await deliverSlackReplies({
-        canShare: canShare(context),
-        slack,
-        snapshot,
-        store,
-        thread: {
-          channelId: conversation.channelId,
-          conversationId: conversation.conversationId,
-          threadTs: conversation.rootTimestamp,
-        },
-      });
-    }, "Slack delivery is unavailable.");
+  return async (snapshot: ChatSnapshot): Promise<void> => {
+    if (!conversation.channelId || !conversation.rootTimestamp) {
+      return;
+    }
+    const context = await currentRecipient(input.env, conversation);
+    if (!context) {
+      return;
+    }
+    await deliverSlackReplies({
+      canShare: canShare(context),
+      slack,
+      snapshot,
+      store,
+      thread: {
+        channelId: conversation.channelId,
+        conversationId: conversation.conversationId,
+        threadTs: conversation.rootTimestamp,
+      },
+    });
+  };
 };

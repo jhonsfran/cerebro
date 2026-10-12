@@ -1,3 +1,9 @@
+import {
+  ChatDecisionReceipt,
+  ChatReceipt,
+  ChatSnapshot,
+} from "@cerebro/contracts/session-service";
+import { Schema } from "effect";
 import { z } from "zod";
 
 export const catalogSchema = z.object({
@@ -71,102 +77,15 @@ export const agentDetailSchema = z.object({
     .array(z.object({ id: z.string(), label: z.string() }))
     .default([]),
 });
-const runSchema = z.object({
-  runId: z.string(),
-  state: z.enum([
-    "queued",
-    "running",
-    "waiting-for-approval",
-    "completed",
-    "failed",
-    "cancelled",
-  ]),
-});
-export const conversationItemSchema = z.discriminatedUnion("type", [
-  z.object({
-    cursor: z.string(),
-    eventId: z.string().optional(),
-    mode: z.enum(["follow-up", "steer", "replace"]).optional(),
-    text: z.string(),
-    type: z.literal("user"),
-  }),
-  z.object({
-    answerId: z.string().optional(),
-    cursor: z.string(),
-    executionId: z.string().optional(),
-    runId: z.string(),
-    runIds: z.array(z.string()).optional(),
-    text: z.string(),
-    type: z.literal("output"),
-  }),
-  z.object({
-    cursor: z.string(),
-    href: z.string(),
-    runId: z.string(),
-    sourceId: z.string(),
-    sourceVersion: z.union([z.string(), z.number()]).transform(String),
-    title: z.string(),
-    type: z.literal("citation"),
-  }),
-  z.object({
-    arguments: z.unknown().optional(),
-    cursor: z.string(),
-    name: z.string(),
-    operationId: z.string().optional(),
-    output: z.unknown().optional(),
-    runId: z.string(),
-    state: z.string(),
-    toolId: z.string(),
-    type: z.literal("tool"),
-  }),
-  z.object({
-    approvalId: z.string(),
-    cursor: z.string(),
-    expiresAt: z.number().optional(),
-    operationId: z.string().optional(),
-    runId: z.string(),
-    state: z.string().optional(),
-    type: z.literal("approval"),
-  }),
-  z.object({ cursor: z.string(), run: runSchema, type: z.literal("run") }),
-]);
+const chatSnapshotSchema = z
+  .unknown()
+  .transform((input) => Schema.decodeUnknownSync(ChatSnapshot)(input));
 export const conversationSchema = z.object({
   agentId: z.string(),
   conversationId: z.string(),
-  cursor: z.string(),
-  items: z.array(conversationItemSchema),
   mode: z.string(),
   sessionId: z.string(),
-  snapshot: z.object({ runs: z.array(runSchema) }),
-});
-export const pendingSchema = z.object({
-  eventId: z.string(),
-  text: z.string(),
-});
-export const historySchema = z.object({
-  projectionStatus: z.string(),
-  runs: z.array(
-    z.object({ auditHref: z.string(), runId: z.string(), state: z.string() })
-  ),
-});
-export const sourceSchema = z.object({
-  mode: z.string(),
-  sourceId: z.string(),
-  sourceVersion: z.union([z.string(), z.number()]).transform(String),
-  text: z.string(),
-  title: z.string(),
-});
-export const auditSchema = z.object({
-  entries: z.array(
-    z.object({
-      at: z.union([z.number(), z.string()]),
-      description: z.string(),
-      type: z.string(),
-    })
-  ),
-  mode: z.string(),
-  runId: z.string(),
-  state: z.string(),
+  snapshot: chatSnapshotSchema,
 });
 export const savedAgentSchema = z.object({
   agentId: z.string(),
@@ -176,15 +95,16 @@ export const createdConversationSchema = z.object({
   conversationId: z.string(),
 });
 export const messageReceiptSchema = z.object({
-  cursor: z.string(),
-  receipt: z.object({
-    acceptedEventId: z.string(),
-    replayed: z.boolean(),
-    runId: z.string(),
-    sessionId: z.string(),
-  }),
+  receipt: z
+    .unknown()
+    .transform((input) => Schema.decodeUnknownSync(ChatReceipt)(input)),
 });
-export const stateMutationSchema = z.object({ run: runSchema });
+export const stopReceiptSchema = z.object({ stopped: z.boolean() });
+export const approvalReceiptSchema = z.object({
+  approval: z
+    .unknown()
+    .transform((input) => Schema.decodeUnknownSync(ChatDecisionReceipt)(input)),
+});
 export const slackLinkSchema = z.object({
   code: z.string(),
   expiresAt: z.string(),
@@ -195,12 +115,7 @@ export type Setup = z.infer<typeof setupSchema>;
 export type AgentSummary = z.infer<typeof agentSummarySchema>;
 export type Grant = z.infer<typeof grantSchema>;
 export type AgentDetail = z.infer<typeof agentDetailSchema>;
-export type ConversationItem = z.infer<typeof conversationItemSchema>;
 export type Conversation = z.infer<typeof conversationSchema>;
-export type PendingMessage = z.infer<typeof pendingSchema>;
-export type History = z.infer<typeof historySchema>;
-export type Source = z.infer<typeof sourceSchema>;
-export type Audit = z.infer<typeof auditSchema>;
 
 export const conversationReferenceSchema = conversationSchema.pick({
   agentId: true,

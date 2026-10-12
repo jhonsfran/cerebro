@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { classifyEventDelivery } from "../../packages/contracts/src/events.ts";
 import {
   id,
   isExecutionContextActiveAt,
@@ -23,14 +22,12 @@ import {
   allowedContext,
   allowedUser,
   deniedContext,
-  duplicateEvent,
   expiredDelegationContext,
   fixtureAgentId,
   fixtureOrganizationId,
   serviceActor,
   unknownOutcomeCapability,
   unknownOutcomeInvocation,
-  userEvent,
 } from "../support/fixtures.ts";
 
 test("a disabled principal and an expired delegation cannot enter a session", () => {
@@ -65,55 +62,6 @@ test("a disabled principal and an expired delegation cannot enter a session", ()
       1_800_000_000_000
     ),
     false
-  );
-});
-
-test("admission detects duplicate delivery and rejects changed payloads", () => {
-  assert.equal(classifyEventDelivery(userEvent, duplicateEvent), "duplicate");
-  assert.equal(
-    classifyEventDelivery(userEvent, {
-      ...duplicateEvent,
-      occurredAt: duplicateEvent.occurredAt + 1,
-    }),
-    "duplicate"
-  );
-  assert.equal(
-    classifyEventDelivery(userEvent, {
-      ...duplicateEvent,
-      payloadDigest: id.digest("sha256:changed-message"),
-    }),
-    "conflict"
-  );
-  assert.equal(
-    classifyEventDelivery(userEvent, {
-      ...duplicateEvent,
-      organizationId: id.organization("another-organization"),
-    }),
-    "conflict"
-  );
-  assert.equal(
-    classifyEventDelivery(userEvent, {
-      ...duplicateEvent,
-      context: activeDeniedContext,
-    }),
-    "conflict"
-  );
-  assert.equal(
-    classifyEventDelivery(userEvent, {
-      ...duplicateEvent,
-      event: {
-        payload: { task: "Summarize the support issue." },
-        type: "scheduled.run",
-      },
-    }),
-    "conflict"
-  );
-  assert.equal(
-    classifyEventDelivery(userEvent, {
-      ...duplicateEvent,
-      eventId: id.event("event-2"),
-    }),
-    "new"
   );
 });
 

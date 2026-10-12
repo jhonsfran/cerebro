@@ -1,69 +1,12 @@
-import type {
-  AgentDefinition,
-  ContentDependencies,
-  RunState,
-} from "@cerebro/contracts";
-import type {
-  ApprovalState,
-  SubmissionMode,
-  ToolState,
-} from "@cerebro/contracts/session-service";
+import type { AgentDefinition } from "@cerebro/contracts";
 import {
   integer,
   jsonb,
   pgTable,
   primaryKey,
-  serial,
   text,
   timestamp,
 } from "drizzle-orm/pg-core";
-
-export type ChannelItemBody = {
-  readonly dependencies?: ContentDependencies;
-} & (
-  | {
-      readonly type: "user";
-      readonly eventId: string;
-      readonly runId: string;
-      readonly text: string;
-      readonly mode?: SubmissionMode;
-    }
-  | {
-      readonly type: "output";
-      readonly runId: string;
-      readonly text: string;
-      readonly answerId?: string;
-      readonly executionId?: string;
-      readonly runIds?: readonly string[];
-    }
-  | {
-      readonly type: "citation";
-      readonly runId: string;
-      readonly sourceId: string;
-      readonly sourceVersion: string;
-      readonly title: string;
-      readonly href: string;
-    }
-  | {
-      readonly type: "tool";
-      readonly runId: string;
-      readonly toolId: string;
-      readonly operationId?: string;
-      readonly output?: unknown;
-      readonly arguments?: unknown;
-      readonly name: string;
-      readonly state: ToolState["state"];
-    }
-  | {
-      readonly type: "approval";
-      readonly runId: string;
-      readonly approvalId: string;
-      readonly operationId?: string;
-      readonly state?: ApprovalState["state"];
-      readonly expiresAt?: number;
-    }
-  | { readonly type: "run"; readonly runId: string; readonly run: RunState }
-);
 
 export interface AccessChangeReceipt {
   readonly principalId: string;
@@ -107,7 +50,6 @@ export const agentPublishOperation = pgTable(
   (t) => [primaryKey({ columns: [t.organizationId, t.operationId] })]
 );
 export const channelConversation = pgTable("channel_conversation", {
-  activityVersion: integer("activity_version").notNull().default(0),
   agentId: text("agent_id").notNull(),
   bindingKey: text("binding_key").notNull().unique(),
   channelId: text("channel_id"),
@@ -117,50 +59,18 @@ export const channelConversation = pgTable("channel_conversation", {
     .notNull()
     .default("legacy-v1"),
   kind: text("kind", { enum: ["web", "slack"] }).notNull(),
-  lastProjectedAt: timestamp("last_projected_at").defaultNow().notNull(),
   organizationId: text("organization_id").notNull(),
   ownerPrincipalId: text("owner_principal_id").notNull(),
-  projectionState: text("projection_state", { enum: ["active", "idle"] })
-    .notNull()
-    .default("idle"),
   retiredAt: timestamp("retired_at"),
   rootTimestamp: text("root_timestamp"),
   sessionId: text("session_id").notNull(),
   slackUserId: text("slack_user_id"),
-  streamCursor: text("stream_cursor"),
   workspaceId: text("workspace_id"),
-});
-export const channelItem = pgTable("channel_item", {
-  conversationId: text("conversation_id").notNull(),
-  cursor: serial("cursor").primaryKey(),
-  item: jsonb("item").$type<ChannelItemBody>().notNull(),
-  itemKey: text("item_key").notNull().unique(),
-  organizationId: text("organization_id").notNull(),
 });
 export const channelEffect = pgTable("channel_effect", {
   digest: text("digest").notNull(),
   operationId: text("operation_id").primaryKey(),
-  result: jsonb("result").$type<RunState | AccessChangeReceipt>().notNull(),
-});
-export const channelReply = pgTable("channel_reply", {
-  attemptId: text("attempt_id"),
-  conversationId: text("conversation_id").notNull(),
-  organizationId: text("organization_id").notNull(),
-  providerReceipt: jsonb("provider_receipt").$type<Record<string, unknown>>(),
-  replyId: text("reply_id").primaryKey(),
-  runId: text("run_id").notNull().unique(),
-  startedAt: timestamp("started_at"),
-  state: text("state", {
-    enum: [
-      "ready",
-      "sending",
-      "sent",
-      "unknown-outcome",
-      "failed",
-      "quarantined",
-    ],
-  }).notNull(),
-  text: text("text").notNull(),
+  result: jsonb("result").$type<AccessChangeReceipt>().notNull(),
 });
 export const channelLinkEvent = pgTable("channel_link_event", {
   digest: text("digest").notNull(),
@@ -173,8 +83,6 @@ export const agentSchema = {
   agentVersion,
   channelConversation,
   channelEffect,
-  channelItem,
   channelLinkEvent,
-  channelReply,
   installationSetup,
 };

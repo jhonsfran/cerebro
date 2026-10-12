@@ -1,6 +1,6 @@
 import type {
-  CanonicalOutput,
-  DomainSnapshot,
+  ChatApproval,
+  ChatSnapshot,
 } from "@cerebro/contracts/session-service";
 /* oxlint-disable no-await-in-loop -- Slack messages are posted in thread order, and each result is recorded before the next call. */
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
@@ -35,43 +35,23 @@ interface DesiredMessage {
 }
 
 const ARGUMENT_PREVIEW_LIMIT = 1500;
-const runText: Record<string, string> = {
-  cancelled: "Cancelled.",
-  failed: "Sorry, I could not finish this request. Please try again.",
-  queued: "Working on it…",
-  running: "Working on it…",
-  "waiting-for-approval": "Waiting for your approval…",
-};
-
-const answerText = (output: CanonicalOutput): string => {
-  const sources = output.citations.map((citation) => citation.sourceUri);
-  const text = toSlackText(output.text.trim() || "Done.");
-  return sources.length > 0
-    ? `${text}\n\n_Sources: ${[...new Set(sources)].join(", ")}_`
-    : text;
-};
-
 const approvalMessage = (
-  snapshot: DomainSnapshot,
-  approval: DomainSnapshot["approvals"][number],
+  approval: ChatApproval,
   thread: SlackThread
 ): DesiredMessage => {
   const key = `approval:${approval.approvalId}`;
-  const tool = snapshot.tools.find(
-    (entry) => entry.operationId === approval.operationId
-  );
-  const name = tool?.toolId ?? "a tool";
+  const name = approval.toolId;
   if (approval.state !== "pending") {
     const outcome = approval.state === "allowed" ? "Approved" : "Not approved";
     return { key, text: `${outcome}: \`${name}\`` };
   }
-  const preview = tool
-    ? canonicalToolArguments(tool.arguments).slice(0, ARGUMENT_PREVIEW_LIMIT)
-    : "";
+  const preview = canonicalToolArguments(approval.arguments).slice(
+    0,
+    ARGUMENT_PREVIEW_LIMIT
+  );
   const value = JSON.stringify({
     approvalId: approval.approvalId,
     conversationId: thread.conversationId,
-    runId: approval.runId,
   });
   const text = `Approve \`${name}\`?`;
   return {
@@ -108,58 +88,54 @@ const approvalMessage = (
   };
 };
 
-// One message per run shows its progress and becomes the answer; one message
-// per approval carries the buttons and then the decision.
 export const desiredSlackMessages = async (
-  snapshot: DomainSnapshot,
+  snapshot: ChatSnapshot,
   thread: SlackThread,
-  canShare: (output: CanonicalOutput) => Promise<boolean>
+  canShare: () => Promise<boolean>
 ): Promise<readonly DesiredMessage[]> => {
   const messages: DesiredMessage[] = [];
-  for (const run of snapshot.runs) {
-    let text = runText[run.state] ?? "Done.";
-    if (run.state === "completed") {
-      const output = snapshot.outputs.find(
-        (entry) => entry.runId === run.runId
-      );
-      const joined = snapshot.outputs.some(
-        (entry) => entry.runId !== run.runId && entry.runIds.includes(run.runId)
-      );
-      if (output) {
-        text = (await canShare(output))
-          ? answerText(output)
-          : "I can no longer share this answer because your access changed.";
-      } else if (joined) {
-        text = "Answered together with your other message.";
-      }
+  const allowed = await canShare();
+  for (const message of snapshot.messages) {
+    if (
+      message.role !== "assistant" ||
+      message.state !== "complete" ||
+      !message.text.trim()
+    ) {
+      continue;
     }
-    messages.push({ key: `run:${run.runId}`, text });
-    for (const approval of snapshot.approvals) {
-      if (approval.runId === run.runId) {
-        messages.push(approvalMessage(snapshot, approval, thread));
-      }
-    }
+    messages.push({
+      key: `message:${message.id}`,
+      text: allowed
+        ? toSlackText(message.text.trim())
+        : "I can no longer share this answer because your access changed.",
+    });
+  }
+  for (const approval of snapshot.approvals) {
+    messages.push(
+      allowed
+        ? approvalMessage(approval, thread)
+        : {
+            key: `approval:${approval.approvalId}`,
+            text: "Your access changed. This approval is no longer available.",
+          }
+    );
   }
   return messages;
 };
 
 export const deliverSlackReplies = async (input: {
-  readonly snapshot: DomainSnapshot;
+  readonly snapshot: ChatSnapshot;
   readonly thread: SlackThread;
   readonly store: SlackDeliveryStore;
   readonly slack: SlackApi;
-  readonly canShare: (output: CanonicalOutput) => Promise<boolean>;
+  readonly canShare: () => Promise<boolean>;
 }): Promise<void> => {
   const { store, slack, thread } = input;
   let retry = false;
-  // An answer already posted with this text needs no new access check.
-  const canShare = async (output: CanonicalOutput) =>
-    store.get(`run:${output.runId}`)?.text === answerText(output) ||
-    (await input.canShare(output));
   for (const message of await desiredSlackMessages(
     input.snapshot,
     thread,
-    canShare
+    input.canShare
   )) {
     const prior = store.get(message.key);
     if (prior?.text === message.text) {

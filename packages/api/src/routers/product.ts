@@ -1,6 +1,7 @@
 import { createChannelService } from "@cerebro/channels/service";
 import { ChannelError } from "@cerebro/channels/types";
 import { id } from "@cerebro/contracts";
+import { failureToHttp, isContractFailure } from "@cerebro/contracts/failures";
 import { ORPCError } from "@orpc/server";
 import { z } from "zod";
 
@@ -46,8 +47,6 @@ const agentInput = z.object({
 });
 const conversation = z.object({ conversationId: z.string().min(1) });
 
-// Product calls keep their channel error codes and HTTP statuses, and invalid
-// input stays a 422, so REST callers see the same responses as before.
 const product = o
   .use(async ({ next }) => {
     try {
@@ -57,6 +56,13 @@ const product = o
         throw new ORPCError(error.code, {
           message: error.message,
           status: error.status,
+        });
+      }
+      if (isContractFailure(error)) {
+        const response = failureToHttp(error);
+        throw new ORPCError(error._tag, {
+          message: response.body.message,
+          status: response.status,
         });
       }
       if (error instanceof ORPCError && error.code === "BAD_REQUEST") {
@@ -100,14 +106,11 @@ export const productRouter = {
       method: "POST",
       path: "/product/conversations/{conversationId}/approvals/{approvalId}",
     })
-    // An approval names exactly one decision; any extra field is refused.
     .input(
       z.strictObject({
         approvalId: z.string().min(1),
         conversationId: z.string().min(1),
         decision: z.enum(["allow", "deny"]),
-        operationId: z.string().min(1).max(256),
-        runId: z.string().min(1).max(256),
       })
     )
     .handler(({ context, input }) =>
@@ -115,38 +118,7 @@ export const productRouter = {
         context.userId,
         input.conversationId,
         input.approvalId,
-        input.operationId,
-        input.runId,
         input.decision
-      )
-    ),
-  audit: product
-    .route({
-      method: "GET",
-      path: "/product/conversations/{conversationId}/audit/{runId}",
-    })
-    .input(conversation.extend({ runId: z.string().min(1) }))
-    .handler(({ context, input }) =>
-      context.service.audit(context.userId, input.conversationId, input.runId)
-    ),
-  cancel: product
-    .route({
-      method: "POST",
-      path: "/product/conversations/{conversationId}/runs/{runId}/cancel",
-    })
-    .input(
-      z.strictObject({
-        conversationId: z.string().min(1),
-        operationId: z.string().min(1).max(256),
-        runId: z.string().min(1),
-      })
-    )
-    .handler(({ context, input }) =>
-      context.service.cancel(
-        context.userId,
-        input.conversationId,
-        input.runId,
-        input.operationId
       )
     ),
   catalog: product
@@ -181,13 +153,9 @@ export const productRouter = {
     ),
   getConversation: product
     .route({ method: "GET", path: "/product/conversations/{conversationId}" })
-    .input(conversation.extend({ cursor: z.string().optional() }))
+    .input(conversation)
     .handler(({ context, input }) =>
-      context.service.readConversation(
-        context.userId,
-        input.conversationId,
-        input.cursor
-      )
+      context.service.readConversation(context.userId, input.conversationId)
     ),
   history: product
     .route({
@@ -253,6 +221,19 @@ export const productRouter = {
         input.sourceId
       )
     ),
+  stop: product
+    .route({
+      method: "POST",
+      path: "/product/conversations/{conversationId}/stop",
+    })
+    .input(
+      z.strictObject({
+        conversationId: z.string().min(1),
+      })
+    )
+    .handler(({ context, input }) =>
+      context.service.stop(context.userId, input.conversationId)
+    ),
   submit: product
     .route({
       method: "POST",
@@ -260,8 +241,7 @@ export const productRouter = {
     })
     .input(
       conversation.extend({
-        eventId: z.string().min(1).max(256),
-        mode: z.enum(["follow-up", "steer", "replace"]).default("follow-up"),
+        operationId: z.string().min(1).max(256),
         text: z.string().trim().min(1).max(16_000),
       })
     )
@@ -269,9 +249,8 @@ export const productRouter = {
       context.service.submit(
         context.userId,
         input.conversationId,
-        input.eventId,
-        input.text,
-        input.mode
+        input.operationId,
+        input.text
       )
     ),
   updateAgent: product

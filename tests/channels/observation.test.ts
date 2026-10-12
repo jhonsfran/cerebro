@@ -9,17 +9,9 @@ import {
   createObservationClient,
   decodeObservation,
 } from "../../apps/web/src/features/product/observation";
-import {
-  projectObservation,
-  projectionMessages,
-} from "../../apps/web/src/features/product/projection";
-import {
-  CanonicalOutput,
-  DomainSnapshot,
-} from "../../packages/contracts/src/session-service.ts";
-import type { Observation } from "../../packages/contracts/src/session-service.ts";
+import { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
 
-const snapshot = Schema.decodeUnknownSync(DomainSnapshot)({
+const snapshot = Schema.decodeUnknownSync(ChatSnapshot)({
   address: {
     agentId: "agent-1",
     conversationId: "conversation-1",
@@ -28,76 +20,20 @@ const snapshot = Schema.decodeUnknownSync(DomainSnapshot)({
   },
   agentVersion: 1,
   approvals: [],
-  executions: [{ executionId: "execution-1", runIds: ["run-1"] }],
-  outputs: [],
-  revision: 0,
-  runs: [{ runId: "run-1", state: "running" }],
-  tools: [],
-  userMessages: [
+  busy: true,
+  messages: [
+    { id: "native-entry-1", role: "user", state: "complete", text: "Question" },
     {
-      eventId: "event-1",
-      mode: "follow-up",
-      occurredAt: 1,
-      runId: "run-1",
-      text: "Question",
+      id: "partial:native-task-1",
+      role: "assistant",
+      state: "streaming",
+      text: "Answer so far",
+      thinking: "Thinking so far",
     },
   ],
 });
-const frame = (
-  epoch = "epoch-1",
-  generation = 0,
-  state = snapshot,
-  partial?: readonly {
-    executionId: string;
-    runId: string;
-    text: string;
-    thinking: string;
-  }[]
-): Observation =>
-  decodeObservation({
-    accessGeneration: generation,
-    address: snapshot.address,
-    epoch,
-    partial,
-    reason: "attach",
-    schemaVersion: 1,
-    sequence: 0,
-    snapshot: state,
-    type: "snapshot",
-  });
-const update = (
-  sequence: number,
-  revision: number,
-  value: unknown,
-  epoch = "epoch-1",
-  generation = 0
-): Observation =>
-  decodeObservation({
-    accessGeneration: generation,
-    address: snapshot.address,
-    epoch,
-    revision,
-    schemaVersion: 1,
-    sequence,
-    type: "update",
-    update: value,
-  });
-const output = Schema.decodeUnknownSync(CanonicalOutput)({
-  answerId: "answer-1",
-  citations: [
-    {
-      observedAt: 1,
-      sourceId: "source-1",
-      sourceUri: "https://fixture.invalid/source",
-      sourceVersion: "1",
-    },
-  ],
-  dependencies: { sourceIds: ["source-1"], toolIds: [] },
-  executionId: "execution-1",
-  runId: "run-1",
-  runIds: ["run-1"],
-  text: "Canonical answer",
-});
+const frame = (value = snapshot) =>
+  decodeObservation({ snapshot: value, type: "snapshot" });
 const waitFor = async (predicate: () => boolean) => {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) {
@@ -109,181 +45,120 @@ const waitFor = async (predicate: () => boolean) => {
 };
 const openUntilAbort = (signal: AbortSignal) => {
   const end = Promise.withResolvers<null>();
-  signal.addEventListener("abort", () => end.resolve(null), { once: true });
+  if (signal.aborted) {
+    end.resolve(null);
+  } else {
+    signal.addEventListener("abort", () => end.resolve(null), { once: true });
+  }
   return end.promise;
 };
 
-test("canonical output replaces provisional text and clears execution citations", () => {
-  let projection = projectObservation(null, frame());
-  projection = projectObservation(
-    projection,
-    update(1, 0, {
-      executionId: "execution-1",
-      runId: "run-1",
-      text: "Partial",
-      type: "provisional-text",
-    })
-  );
-  projection = projectObservation(
-    projection,
-    update(2, 0, {
-      citation: output.citations[0],
-      dependencies: output.dependencies,
-      executionId: "execution-1",
-      runId: "run-1",
-      text: "Partial",
-      type: "citation",
-    })
-  );
-  assert.equal(projection?.provisional["execution-1"], "Partial");
-  assert.equal(projection?.citations.length, 1);
-  projection = projectObservation(
-    projection,
-    update(3, 1, { output, type: "canonical-output" })
-  );
-  assert.deepEqual(projection?.provisional, {});
-  assert.deepEqual(projection?.citations, []);
-  assert.deepEqual(
-    projectionMessages(projection).map((message) => [
-      message.id,
-      message.parts.map((part) => part.type),
-    ]),
-    [
-      ["event-1", ["text"]],
-      ["assistant:answer-1", ["text"]],
-    ]
-  );
-});
-
-test("a partial snapshot restores text and thinking for the active execution", () => {
-  const projection = projectObservation(
-    null,
-    frame("epoch-1", 0, snapshot, [
-      {
-        executionId: "execution-1",
-        runId: "run-1",
-        text: "Answer so far",
-        thinking: "Thinking so far",
-      },
-    ])
-  );
-  const [, answer] = projectionMessages(projection);
-  assert.deepEqual(answer?.parts, [
-    {
-      content: "Thinking so far",
-      stepId: "assistant:execution-1",
-      type: "thinking",
-    },
-    { content: "Answer so far", type: "text" },
-  ]);
-});
-
-test("joined steering inputs project one answer under the shared execution", () => {
-  const joined = Schema.decodeUnknownSync(DomainSnapshot)({
+test("each native snapshot replaces the full view and keeps native message order", async () => {
+  const restored = Schema.decodeUnknownSync(ChatSnapshot)({
     ...snapshot,
-    executions: [{ executionId: "execution-1", runIds: ["run-1", "run-2"] }],
-    outputs: [{ ...output, runIds: ["run-1", "run-2"] }],
-    runs: [
-      { completedAt: 3, runId: "run-1", state: "completed" },
-      { completedAt: 3, runId: "run-2", state: "completed" },
-    ],
-    userMessages: [
-      ...snapshot.userMessages,
+    busy: false,
+    messages: [
       {
-        eventId: "event-2",
-        mode: "steer",
-        occurredAt: 2,
-        runId: "run-2",
-        text: "Steering input",
+        id: "native-entry-2",
+        role: "assistant",
+        state: "complete",
+        text: "Completed answer",
+      },
+      {
+        id: "native-entry-1",
+        role: "user",
+        state: "complete",
+        text: "Question",
       },
     ],
   });
-  const messages = projectionMessages(
-    projectObservation(null, frame("epoch-1", 0, joined))
-  );
-  assert.deepEqual(
-    messages.map((message) => message.id),
-    ["event-1", "event-2", "assistant:answer-1"]
-  );
+  const views: string[][] = [];
+  const observer = createObservationClient({
+    address: snapshot.address,
+    generation: () => 0,
+    onDenied: () => assert.fail("Unexpected denial"),
+    onSnapshot: (value) =>
+      views.push(value?.messages.map((message) => message.id) ?? []),
+    open: (_generation, signal) =>
+      (async function* observe() {
+        yield frame();
+        yield frame(restored);
+        yield frame({ ...snapshot, busy: false, messages: [] });
+        await openUntilAbort(signal);
+      })(),
+  });
+  try {
+    observer.attach();
+    await waitFor(() => views.length === 3);
+    assert.deepEqual(views, [
+      ["native-entry-1", "partial:native-task-1"],
+      ["native-entry-2", "native-entry-1"],
+      [],
+    ]);
+    assert.deepEqual(observer.getSnapshot()?.messages, []);
+  } finally {
+    observer.dispose();
+  }
 });
 
-test("tools and approvals upsert by their operation identity", () => {
-  const tool = {
-    arguments: { ticket: "ticket-1" },
-    dependencies: { sourceIds: [], toolIds: ["tool-1"] },
-    effect: "write",
-    operationId: "operation-1",
-    output: null,
-    runId: "run-1",
-    state: "waiting-for-approval",
-    toolId: "tool-1",
-    toolVersion: "1",
-  };
-  const approval = {
-    approvalId: "approval-1",
-    expiresAt: 60_000,
-    operationId: "operation-1",
-    runId: "run-1",
-    state: "pending",
-  };
-  let projection = projectObservation(null, frame());
-  projection = projectObservation(
-    projection,
-    update(1, 1, { ...tool, type: "tool" })
-  );
-  projection = projectObservation(
-    projection,
-    update(2, 2, { ...approval, type: "approval" })
-  );
-  projection = projectObservation(
-    projection,
-    update(3, 3, { ...approval, state: "allowed", type: "approval" })
-  );
-  projection = projectObservation(
-    projection,
-    update(4, 4, {
-      ...tool,
-      output: { ok: true },
-      state: "succeeded",
-      type: "tool",
-    })
-  );
-  assert.equal(projection?.snapshot.tools.length, 1);
-  assert.equal(projection?.snapshot.tools[0]?.state, "succeeded");
-  assert.equal(projection?.snapshot.approvals.length, 1);
-  assert.equal(projection?.snapshot.approvals[0]?.state, "allowed");
-  const [, answer] = projectionMessages(projection);
-  assert.deepEqual(
-    answer?.parts.map((part) => part.type),
-    ["tool-call", "tool-result"]
-  );
+test("a full snapshot restores native thinking, tool output, and pending approval", async () => {
+  const restored = Schema.decodeUnknownSync(ChatSnapshot)({
+    ...snapshot,
+    approvals: [
+      {
+        approvalId: "approval-1",
+        arguments: { ticket: "ticket-1" },
+        callId: "native-call-1",
+        expiresAt: 60_000,
+        operationId: "operation-1",
+        state: "pending",
+        taskId: "native-task-1",
+        toolId: "write-ticket",
+      },
+    ],
+    messages: [
+      ...snapshot.messages,
+      {
+        id: "native-entry-3",
+        role: "tool",
+        state: "complete",
+        text: "Tool output",
+        toolName: "read-policy",
+      },
+    ],
+  });
+  const observer = createObservationClient({
+    address: snapshot.address,
+    generation: () => 0,
+    onDenied: () => assert.fail("Unexpected denial"),
+    onSnapshot: () => {},
+    open: (_generation, signal) =>
+      (async function* observe() {
+        yield frame(restored);
+        await openUntilAbort(signal);
+      })(),
+  });
+  try {
+    observer.attach();
+    await waitFor(() => observer.getSnapshot() !== null);
+    assert.deepEqual(observer.getSnapshot(), restored);
+  } finally {
+    observer.dispose();
+  }
 });
 
-test("denial clears protected state, ignores later frames and stops reconnect", async () => {
+test("denial clears protected state, ignores later frames, and stops reconnect", async () => {
   let generation = 0;
   let denials = 0;
   let opens = 0;
   let closes = 0;
+  const views: (ChatSnapshot | null)[] = [];
   const source = async function* source() {
     opens += 1;
     try {
       yield frame();
-      yield update(1, 0, {
-        executionId: "execution-1",
-        runId: "run-1",
-        text: "Private",
-        type: "provisional-text",
-      });
-      yield decodeObservation({
-        accessGeneration: 0,
-        address: snapshot.address,
-        epoch: "epoch-1",
-        reason: "revoked",
-        schemaVersion: 1,
-        sequence: 2,
-        type: "access-denied",
-      });
-      yield update(3, 1, { output, type: "canonical-output" });
+      yield decodeObservation({ reason: "revoked", type: "access-denied" });
+      yield frame({ ...snapshot, messages: [] });
     } finally {
       closes += 1;
     }
@@ -295,27 +170,28 @@ test("denial clears protected state, ignores later frames and stops reconnect", 
       denials += 1;
       generation += 1;
     },
-    onProjection: () => {},
-    open: () => source(),
+    onSnapshot: (value) => views.push(value),
+    open: source,
     retryDelayMs: 1,
   });
   observer.attach();
   await waitFor(() => denials === 1 && closes === 1);
   await delay(25);
-  assert.equal(observer.getProjection(), null);
+  assert.equal(observer.getSnapshot(), null);
+  assert.deepEqual(views, [snapshot, null]);
   assert.equal(opens, 1);
   observer.dispose();
 });
 
-test("frames from another generation or conversation never reach the projection", async () => {
+test("a snapshot for another conversation never replaces the protected view", async () => {
   const errors: string[] = [];
-  const projections: number[] = [];
   const source = async function* source() {
-    yield frame("stale", 1);
-    yield frame();
     yield decodeObservation({
-      ...frame("other"),
-      address: { ...snapshot.address, conversationId: "conversation-2" },
+      snapshot: {
+        ...snapshot,
+        address: { ...snapshot.address, conversationId: "conversation-2" },
+      },
+      type: "snapshot",
     });
   };
   const observer = createObservationClient({
@@ -323,52 +199,36 @@ test("frames from another generation or conversation never reach the projection"
     generation: () => 0,
     onDenied: () => assert.fail("Unexpected denial"),
     onError: (error) => errors.push(error.message),
-    onProjection: (projection) => {
-      projections.push(projection?.snapshot.revision ?? -1);
-    },
-    open: () => source(),
+    onSnapshot: () => assert.fail("Unexpected snapshot"),
+    open: source,
     retryDelayMs: 1,
   });
   try {
     observer.attach();
-    await waitFor(() => errors.length >= 1);
+    await waitFor(() => errors.length > 0);
     assert.match(errors[0] ?? "", /different conversation/u);
-    assert.ok(projections.length >= 1);
-    assert.ok(projections.every((revision) => revision === 0));
+    assert.equal(observer.getSnapshot(), null);
   } finally {
     observer.dispose();
   }
 });
 
-test("EOF and sequence gaps reconnect from a fresh snapshot", async () => {
+test("EOF reconnects from a fresh full snapshot without submitting work", async () => {
   let opens = 0;
+  const fresh = { ...snapshot, busy: false, messages: [] };
   const observer = createObservationClient({
     address: snapshot.address,
     generation: () => 0,
     onDenied: () => assert.fail("Unexpected denial"),
-    onError: () => {},
-    onProjection: () => {},
+    onSnapshot: () => {},
     open: (_generation, signal) =>
       (async function* observe() {
         opens += 1;
         if (opens === 1) {
-          yield frame("eof");
+          yield frame();
           return;
         }
-        if (opens === 2) {
-          yield frame("gap");
-          yield update(2, 1, { output, type: "canonical-output" }, "gap");
-          return;
-        }
-        yield frame(
-          "repaired",
-          0,
-          Schema.decodeUnknownSync(DomainSnapshot)({
-            ...snapshot,
-            outputs: [output],
-            revision: 1,
-          })
-        );
+        yield frame(fresh);
         await openUntilAbort(signal);
       })(),
     retryDelayMs: 1,
@@ -376,21 +236,15 @@ test("EOF and sequence gaps reconnect from a fresh snapshot", async () => {
   try {
     observer.attach();
     await waitFor(
-      () =>
-        opens === 3 && observer.getProjection()?.snapshot.outputs.length === 1
+      () => opens === 2 && observer.getSnapshot()?.messages.length === 0
     );
-    assert.equal(
-      projectionMessages(observer.getProjection()).filter(
-        (message) => message.role === "assistant"
-      ).length,
-      1
-    );
+    assert.deepEqual(observer.getSnapshot(), fresh);
   } finally {
     observer.dispose();
   }
 });
 
-test("detaching releases the open attachment and a reattach starts over", async () => {
+test("detaching releases the attachment and reattach requests a fresh snapshot", async () => {
   let opens = 0;
   let closes = 0;
   const statuses: string[] = [];
@@ -398,26 +252,25 @@ test("detaching releases the open attachment and a reattach starts over", async 
     address: snapshot.address,
     generation: () => 0,
     onDenied: () => assert.fail("Unexpected denial"),
-    onProjection: () => {},
+    onSnapshot: () => {},
     onStatus: (status) => statuses.push(status),
     open: (_generation, signal) =>
       (async function* observe() {
         opens += 1;
         try {
-          yield frame(`epoch-${opens}`);
+          yield frame();
           await openUntilAbort(signal);
         } finally {
           closes += 1;
         }
       })(),
-    retryDelayMs: 1,
   });
   observer.attach();
   await waitFor(() => statuses.includes("connected"));
   observer.detach();
   await waitFor(() => closes === 1);
   observer.attach();
-  await waitFor(() => opens === 2 && closes === 1);
+  await waitFor(() => opens === 2);
   observer.dispose();
   await waitFor(() => closes === 2);
   assert.deepEqual(statuses.slice(0, 3), [

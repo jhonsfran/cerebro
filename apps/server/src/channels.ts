@@ -1,18 +1,12 @@
 import { createAuth } from "@cerebro/auth";
-import type { ProductHandlerOptions } from "@cerebro/channels/types";
-import type { ExecutionContext, ContentDependencies } from "@cerebro/contracts";
+import type { ExecutionContext } from "@cerebro/contracts";
+import type { ChatClient } from "@cerebro/contracts/session-service";
 import type { Database } from "@cerebro/db";
 import { withDatabase } from "@cerebro/db";
 import { accessView } from "@cerebro/memory/access";
-import { Effect } from "effect";
 import { z } from "zod";
 
-import {
-  memoryDependencies,
-  checkContentDependencies,
-  readAudit,
-  readSource,
-} from "./access";
+import { memoryDependencies, readSource } from "./access";
 import type { WorkerEnv } from "./bindings";
 import { runtimeConfiguration } from "./config";
 import { createSessionClient } from "./session/client";
@@ -82,14 +76,6 @@ export const createChannelOptions = (env: WorkerEnv) => {
         },
       };
     },
-    checkContentDependencies: (
-      database: Database,
-      context: ExecutionContext,
-      dependencies: ContentDependencies
-    ) =>
-      checkContentDependencies(env, database, context, dependencies, {
-        deadlineAt: Date.now() + 10_000,
-      }),
     getUser: async (request: Request, database: Database) => {
       const session = await createAuth(env, database).api.getSession({
         headers: request.headers,
@@ -97,25 +83,9 @@ export const createChannelOptions = (env: WorkerEnv) => {
       return session?.user ?? null;
     },
     mode: env.DEPLOY_MODE,
-    observationResponse: (
-      input: Parameters<
-        NonNullable<ProductHandlerOptions["observationResponse"]>
-      >[0]
-    ) =>
-      Effect.runPromise(
-        createSessionClient(env).observationResponse(
-          input.address,
-          input.context,
-          input.accessGeneration,
-          { deadlineAt: Number.MAX_SAFE_INTEGER, signal: input.signal }
-        )
-      ),
+    observationResponse: (input: Parameters<ChatClient["observe"]>[0]) =>
+      createSessionClient(env).observe(input),
     organizationId: env.CHANNEL_ORGANIZATION_ID ?? "local-company",
-    readAudit: (
-      database: Database,
-      context: ExecutionContext,
-      input: { sessionId: string; runId: string }
-    ) => readAudit(env, database, context, input.sessionId, input.runId),
     readSource: (
       database: Database,
       context: ExecutionContext,

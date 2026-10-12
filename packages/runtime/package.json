@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/session-service.ts",
+    ".": "./src/session-agent.ts",
     "./*": "./src/*.ts"
   },
   "scripts": {

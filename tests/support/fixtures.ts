@@ -1,4 +1,4 @@
-import type { EventEnvelope } from "../../packages/contracts/src/events.ts";
+import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type {
   ExecutionContext,
@@ -64,25 +64,14 @@ export const expiredDelegationContext: ExecutionContext = {
   represented: allowedUser,
 };
 
-export const userEvent: EventEnvelope = {
-  agentId: fixtureAgentId,
-  context: allowedContext,
-  conversationId: fixtureConversationId,
-  event: {
-    payload: { text: "Summarize the support issue." },
-    type: "user.message",
-  },
-  eventId: id.event("event-1"),
-  occurredAt: 1_800_000_000_000,
-  organizationId: fixtureOrganizationId,
-  payloadDigest: id.digest("sha256:user-message"),
-  schemaVersion: 1,
-  sessionId: fixtureSessionId,
-};
-
-export const duplicateEvent: EventEnvelope = {
-  ...userEvent,
-};
+export const userEvent: EventAddress & { readonly context: ExecutionContext } =
+  {
+    agentId: fixtureAgentId,
+    context: allowedContext,
+    conversationId: fixtureConversationId,
+    organizationId: fixtureOrganizationId,
+    sessionId: fixtureSessionId,
+  };
 
 export const unknownOutcomeInvocation: ToolInvocation = {
   agentId: fixtureAgentId,

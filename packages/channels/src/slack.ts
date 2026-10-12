@@ -98,7 +98,6 @@ export const verifySlackRequest = async (
   }
 };
 
-// Consumes a one-time link code exactly once per Slack event.
 const consumeLinkCode = async (
   database: Database,
   options: ChannelOptions,
@@ -173,7 +172,6 @@ interface DirectMessage {
   readonly user: string;
 }
 
-// Only a person's message in a direct-message channel starts work.
 const directMessage = (event: SlackEvent): DirectMessage | undefined => {
   const { channel, text, ts, user } = event;
   if (
@@ -189,7 +187,6 @@ const directMessage = (event: SlackEvent): DirectMessage | undefined => {
   return { channel, text, threadTs: event.thread_ts, ts, user };
 };
 
-// One thread is one conversation; its first message names the thread.
 const bindConversation = async (
   database: Database,
   options: ChannelOptions,
@@ -255,7 +252,6 @@ export const receiveSlackEvent = async (
     return { ignored: true };
   }
   if (event.type === "app_mention") {
-    // Answers can carry company content, so they never go to a shared channel.
     if (!retry && event.channel && event.user) {
       await slack.sendEphemeral({
         channel: event.channel,
@@ -343,11 +339,8 @@ const interactionSchema = z.object({
 const approvalValue = z.strictObject({
   approvalId: z.string().min(1).max(512),
   conversationId: z.string().min(1).max(512),
-  runId: z.string().min(1).max(512),
 });
 
-// An Approve or Deny button press decides the approval as the linked person,
-// with the same permission checks as the web app.
 export const receiveSlackInteraction = async (
   database: Database,
   options: ChannelOptions,
@@ -406,8 +399,6 @@ export const receiveSlackInteraction = async (
     context,
     value.conversationId,
     value.approvalId,
-    `slack:${configuration.workspaceId}:${action.action_ts}`,
-    value.runId,
     action.action_id === APPROVE_ACTION ? "allow" : "deny"
   );
 };
