@@ -19,6 +19,7 @@ import type {
 import { withDatabase } from "@cerebro/db";
 import { findSealedAccount } from "@cerebro/db/repositories/accounts";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
+import { listSkills } from "@cerebro/db/repositories/skills";
 import { channelConversation } from "@cerebro/db/schema/agents";
 import { SessionAgent as SessionHost } from "@cerebro/runtime/session-agent";
 import type { SessionHostConfiguration } from "@cerebro/runtime/session-agent";
@@ -163,6 +164,11 @@ export const createRuntimeComposition = (
       )
     );
     const registry = createCatalogRegistry(catalog, config.mode);
+    const companySkills = yield* tryAdapter(() =>
+      withDatabase(env, (database) =>
+        listSkills(database, address.organizationId)
+      )
+    );
     const registered = yield* Effect.forEach(registry.list(), (entry) =>
       bindRegisteredTool(entry)
     );
@@ -325,6 +331,7 @@ export const createRuntimeComposition = (
         model,
         provider,
       },
+      skills: companySkills,
       toolDependencies: (tool) =>
         Effect.succeed({ sourceIds: [], toolIds: [tool.id] }),
       tools: registry.list().map((entry, index) => ({

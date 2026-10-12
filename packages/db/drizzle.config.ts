@@ -12,5 +12,6 @@ export default defineConfig({
     "./src/schema/connectors.ts",
     "./src/schema/audit.ts",
     "./src/schema/accounts.ts",
+    "./src/schema/skills.ts",
   ],
 });

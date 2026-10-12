@@ -47,6 +47,11 @@ const agentInput = z.object({
 });
 const conversation = z.object({ conversationId: z.string().min(1) });
 const connectorId = z.object({ connectorId: identifier });
+// The Agent Skills name rule: lowercase words joined by single hyphens.
+const skillName = z
+  .string()
+  .max(64)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u);
 const connectorInput = z.object({
   headers: z
     .record(z.string().min(1).max(128), z.string().min(1).max(4096))
@@ -160,6 +165,12 @@ export const productRouter = {
         input.operationId
       )
     ),
+  deleteSkill: product
+    .route({ method: "DELETE", path: "/product/skills/{name}" })
+    .input(z.object({ name: skillName }))
+    .handler(({ context, input }) =>
+      context.service.deleteSkill(context.userId, input.name)
+    ),
   getAgent: product
     .route({ method: "GET", path: "/product/agents/{agentId}" })
     .input(z.object({ agentId: z.string().min(1) }))
@@ -201,6 +212,21 @@ export const productRouter = {
     .route({ method: "GET", path: "/product/conversations" })
     .handler(({ context }) =>
       context.service.listConversations(context.userId)
+    ),
+  listSkills: product
+    .route({ method: "GET", path: "/product/skills" })
+    .handler(({ context }) => context.service.listSkills(context.userId)),
+  putSkill: product
+    .route({ method: "PUT", path: "/product/skills/{name}" })
+    .input(
+      z.object({
+        body: z.string().trim().min(1).max(32_000),
+        description: z.string().trim().min(1).max(1024),
+        name: skillName,
+      })
+    )
+    .handler(({ context, input }) =>
+      context.service.putSkill(context.userId, input)
     ),
   refreshConnector: product
     .route({

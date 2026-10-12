@@ -21,7 +21,7 @@ export const catalogSchema = z.object({
 });
 export const setupSchema = z.object({
   bootstrapTokenRequired: z.boolean().default(false),
-  canManageConnectors: z.boolean().default(false),
+  canAdminister: z.boolean().default(false),
   mode: z.enum(["local", "production"]),
   organizationId: z.string(),
   owner: z.boolean(),
@@ -144,5 +144,20 @@ export const connectorChangeSchema = z.object({
 });
 export const connectorRemovedSchema = z.object({
   id: z.string(),
+  removed: z.literal(true),
+});
+
+export const skillListSchema = z.object({
+  skills: z.array(
+    z.object({ body: z.string(), description: z.string(), name: z.string() })
+  ),
+});
+export type SkillView = z.infer<typeof skillListSchema>["skills"][number];
+export const skillSavedSchema = z.object({
+  name: z.string(),
+  saved: z.literal(true),
+});
+export const skillRemovedSchema = z.object({
+  name: z.string(),
   removed: z.literal(true),
 });

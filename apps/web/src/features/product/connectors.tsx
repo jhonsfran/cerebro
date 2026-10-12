@@ -135,7 +135,7 @@ export const ConnectorsPanel = () => {
             <span>{connector.toolCount}</span>
             <span>{connector.source === "admin" ? "Added here" : "File"}</span>
             {connector.source === "admin" ? (
-              <span>
+              <span className="row-actions">
                 <button
                   className="text-button"
                   type="button"
@@ -201,25 +201,3 @@ export const ConnectorsPanel = () => {
     </section>
   );
 };
-
-export const ConnectorsNavItem = ({
-  visible,
-  active,
-  open,
-}: {
-  visible: boolean;
-  active: boolean;
-  open: () => void;
-}) =>
-  visible ? (
-    <nav className="agent-list" aria-label="Administration">
-      <button
-        className={`agent-list-item ${active ? "selected" : ""}`}
-        type="button"
-        onClick={open}
-      >
-        <span className="agent-avatar">⚙</span>
-        <span>Connectors</span>
-      </button>
-    </nav>
-  ) : null;

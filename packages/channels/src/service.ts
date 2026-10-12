@@ -17,6 +17,12 @@ import {
 } from "@cerebro/db/repositories/agents";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import {
+  deleteSkill as deleteSkillRecord,
+  listSkills as listSkillRecords,
+  putSkill as putSkillRecord,
+} from "@cerebro/db/repositories/skills";
+import type { SkillRecord } from "@cerebro/db/repositories/skills";
+import {
   channelConversation,
   channelEffect,
   installationSetup,
@@ -105,16 +111,9 @@ export const createChannelService = (
     return row;
   };
 
-  // Connector management needs the installation-wide manage grant, the same
+  // Connectors and skills need the installation-wide manage grant, the same
   // grant that creates agents.
-  const connectorAdmin = async (userId: string) => {
-    if (!options.connectors) {
-      throw new ChannelError(
-        503,
-        "provider-unavailable",
-        "Connectors are not configured."
-      );
-    }
+  const installationAdmin = async (userId: string): Promise<string> => {
     const context = await current(userId);
     await authorize(
       database,
@@ -124,11 +123,24 @@ export const createChannelService = (
       "agent",
       `${INSTALLATION_AGENT_PREFIX}${options.organizationId}`
     );
-    return { admin: options.connectors, principalId: context.actor.id };
+    return context.actor.id;
   };
-  const canManageConnectors = async (userId: string): Promise<boolean> => {
+  const connectorAdmin = async (userId: string) => {
+    if (!options.connectors) {
+      throw new ChannelError(
+        503,
+        "provider-unavailable",
+        "Connectors are not configured."
+      );
+    }
+    return {
+      admin: options.connectors,
+      principalId: await installationAdmin(userId),
+    };
+  };
+  const canAdminister = async (userId: string): Promise<boolean> => {
     try {
-      await connectorAdmin(userId);
+      await installationAdmin(userId);
       return true;
     } catch (error) {
       if (error instanceof ChannelError) {
@@ -164,6 +176,26 @@ export const createChannelService = (
     await admin.remove(database, options.organizationId, connectorId);
     return { id: connectorId, removed: true };
   };
+  const listSkills = async (userId: string) => {
+    await installationAdmin(userId);
+    return { skills: await listSkillRecords(database, options.organizationId) };
+  };
+  const putSkill = async (userId: string, input: SkillRecord) => {
+    const principalId = await installationAdmin(userId);
+    await putSkillRecord(database, {
+      ...input,
+      organizationId: options.organizationId,
+      principalId,
+    });
+    return { name: input.name, saved: true };
+  };
+  const deleteSkill = async (userId: string, name: string) => {
+    await installationAdmin(userId);
+    if (!(await deleteSkillRecord(database, options.organizationId, name))) {
+      throw new ChannelError(404, "not-found", "The skill was not found.");
+    }
+    return { name, removed: true };
+  };
   const setup = async (userId: string) => {
     const [record] = await database
       .select()
@@ -174,7 +206,7 @@ export const createChannelService = (
     ).findPrincipalByUser(options.organizationId, userId);
     return {
       bootstrapTokenRequired: Boolean(options.bootstrapToken),
-      canManageConnectors: await canManageConnectors(userId),
+      canAdminister: await canAdminister(userId),
       mode: options.mode,
       organizationId: options.organizationId,
       owner: record?.ownerUserId === userId,
@@ -823,13 +855,16 @@ export const createChannelService = (
     chatAccess,
     conversationAccess,
     createConversation,
+    deleteSkill,
     getAgent,
     history,
     install,
     listAgents,
     listConnectors,
     listConversations,
+    listSkills,
     publishAgent,
+    putSkill,
     readConversation,
     refreshConnector,
     removeConnector,
