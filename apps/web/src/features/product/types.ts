@@ -21,6 +21,7 @@ export const catalogSchema = z.object({
 });
 export const setupSchema = z.object({
   bootstrapTokenRequired: z.boolean().default(false),
+  canManageConnectors: z.boolean().default(false),
   mode: z.enum(["local", "production"]),
   organizationId: z.string(),
   owner: z.boolean(),
@@ -122,3 +123,26 @@ export const conversationReferenceSchema = conversationSchema.pick({
   conversationId: true,
 });
 export type ConversationReference = z.infer<typeof conversationReferenceSchema>;
+
+export const connectorListSchema = z.object({
+  connectors: z.array(
+    z.object({
+      id: z.string(),
+      source: z.enum(["admin", "runtime.json"]),
+      toolCount: z.number(),
+      url: z.string().nullable(),
+    })
+  ),
+});
+export type ConnectorView = z.infer<
+  typeof connectorListSchema
+>["connectors"][number];
+export const connectorChangeSchema = z.object({
+  id: z.string(),
+  skipped: z.array(z.string()),
+  toolCount: z.number(),
+});
+export const connectorRemovedSchema = z.object({
+  id: z.string(),
+  removed: z.literal(true),
+});

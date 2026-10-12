@@ -36,6 +36,47 @@ export interface SourceView {
   readonly text: string;
   readonly title: string;
 }
+export interface ConnectorView {
+  readonly id: string;
+  readonly source: "admin" | "runtime.json";
+  readonly toolCount: number;
+  readonly url: string | null;
+}
+export interface ConnectorInput {
+  readonly id: string;
+  readonly url: string;
+  readonly headers: Readonly<Record<string, string>>;
+}
+export interface ConnectorChange {
+  readonly id: string;
+  readonly toolCount: number;
+  readonly skipped: readonly string[];
+}
+// MCP connectors that administrators manage at runtime. The service authorizes;
+// the host discovers tools, seals credentials, and writes the catalog.
+export interface ConnectorAdmin {
+  readonly list: (
+    database: Database,
+    organizationId: string
+  ) => Promise<readonly ConnectorView[]>;
+  readonly add: (
+    database: Database,
+    organizationId: string,
+    principalId: string,
+    input: ConnectorInput
+  ) => Promise<ConnectorChange>;
+  readonly refresh: (
+    database: Database,
+    organizationId: string,
+    principalId: string,
+    connectorId: string
+  ) => Promise<ConnectorChange>;
+  readonly remove: (
+    database: Database,
+    organizationId: string,
+    connectorId: string
+  ) => Promise<void>;
+}
 export interface ChannelOptions {
   readonly mode: "local" | "production";
   readonly organizationId: string;
@@ -46,6 +87,7 @@ export interface ChannelOptions {
   readonly bootstrapToken?: string;
   readonly trustedOwnerUserId?: string;
   readonly catalog?: ChannelCatalog;
+  readonly connectors?: ConnectorAdmin;
   readonly catalogFor?: (
     database: Database,
     context: ExecutionContext

@@ -1,6 +1,4 @@
-import { sql } from "drizzle-orm";
 import {
-  check,
   jsonb,
   pgTable,
   primaryKey,
@@ -10,23 +8,20 @@ import {
 
 import { organization } from "./core.ts";
 
+// An MCP server an administrator added at runtime. Its tools live in
+// connector_tool with source `admin:<id>`, its credentials in connector_account.
 export const connector = pgTable(
   "connector",
   {
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdBy: text("created_by").notNull(),
     id: text("id").notNull(),
-    kind: text("kind").notNull().$type<"mcp-read" | "http-write">(),
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id),
-    secretReference: text("secret_reference").notNull(),
-    state: text("state").notNull().$type<"active" | "disabled">(),
-    targetUrl: text("target_url").notNull(),
+    url: text("url").notNull(),
   },
-  (table) => [
-    primaryKey({ columns: [table.organizationId, table.id] }),
-    check("connector_kind", sql`${table.kind} IN ('mcp-read', 'http-write')`),
-    check("connector_state", sql`${table.state} IN ('active', 'disabled')`),
-  ]
+  (table) => [primaryKey({ columns: [table.organizationId, table.id] })]
 );
 // One tool an agent can enable. `definition` is the validated tool document;
 // `source` names who replaces the row, so each source owns only its own tools.
@@ -39,7 +34,9 @@ export const connectorTool = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id),
-    source: text("source").notNull().$type<"runtime.json" | `mcp:${string}`>(),
+    source: text("source")
+      .notNull()
+      .$type<"runtime.json" | `mcp:${string}` | `admin:${string}`>(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.organizationId, table.id] })]
