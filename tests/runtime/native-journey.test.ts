@@ -1,7 +1,9 @@
 /* oxlint-disable unicorn/no-await-expression-member, no-await-in-loop -- Each native observation and crash boundary depends on the preceding result. */
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
+import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import type { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
 import {
   addressFor,
@@ -41,6 +43,17 @@ const writeCount = async (operationId: string): Promise<number> =>
   (await provider(stack)).tools.filter(
     (tool) => tool.operationId === operationId && tool.write
   ).length;
+const authorityCalls = async (
+  address: EventAddress,
+  failNextToolCheck?: boolean
+): Promise<number> => {
+  const value = await request(stack, "/runtime/fixture/authority", {
+    address,
+    failNextToolCheck,
+  });
+  assert.ok(value && typeof value === "object" && "calls" in value);
+  return Number(value.calls);
+};
 const restart = (): void => {
   compose(stack, ["kill", "-s", "SIGKILL", "celld"]);
   compose(stack, ["up", "-d", "--wait", "celld"]);
@@ -518,6 +531,57 @@ journey(
       provider: await provider(stack),
       recovered,
     });
+  }
+);
+
+journey(
+  "a waiting approval makes no authority calls until Allow wakes it",
+  async () => {
+    const address = addressFor("company-journey", "approval-wake");
+    await send(stack, address, "wake-input", "Apply fixture_effect once.");
+    const approval = await pending(stack, address);
+    const callsBefore = await authorityCalls(address);
+    await delay(2000);
+    assert.equal(await authorityCalls(address), callsBefore);
+    const decidedAt = Date.now();
+    await decide(stack, address, approval);
+    await waitFor(
+      () => writeCount(approval.operationId),
+      (count) => count === 1,
+      5000
+    );
+    assert.ok(Date.now() - decidedAt < 5000);
+    await evidence(stack, "approval-wake", {
+      approval,
+      authorityCallsWhileWaiting: 0,
+    });
+  }
+);
+
+journey(
+  "a transient authority failure keeps the approval pending",
+  async () => {
+    const address = addressFor("company-journey", "approval-transient");
+    await send(stack, address, "transient-input", "Apply fixture_effect once.");
+    const approval = await pending(stack, address);
+    await authorityCalls(address, true);
+    const outsider = await rawRequest(
+      stack,
+      "/runtime/read",
+      { address },
+      "user:company-other"
+    );
+    assert.equal(outsider.status, 403);
+    await delay(500);
+    assert.equal(
+      (await pending(stack, address)).approvalId,
+      approval.approvalId
+    );
+    await decide(stack, address, approval);
+    await waitFor(
+      () => writeCount(approval.operationId),
+      (count) => count === 1
+    );
   }
 );
 

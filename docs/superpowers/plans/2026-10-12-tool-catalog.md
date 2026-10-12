@@ -1,6 +1,6 @@
 # Tool catalog plan
 
-Agents in Cerebro get tools from a catalog in PostgreSQL instead of the static `tools` list in `runtime.json`. Credentials move into encrypted accounts. Approvals go through one Effect `ApprovalGate` that wakes on the decision, with no polling and its own expiry. The tool call path loses the broker, the loader isolate, and the HMAC capability, because all three run inside the same Worker today. Stale decision records go first.
+Agents in Cerebro get tools from a catalog in PostgreSQL instead of the static `tools` list in `runtime.json`. Credentials move into encrypted accounts. Approval waits wake on the decision through an Effect `Deferred`, with no polling and their own expiry. The tool call path loses the broker, the loader isolate, and the HMAC capability, because all three run inside the same Worker today. Stale decision records go first.
 
 The rule the program enforces is one call path. A tool call goes from `createPiTools` to the connector client to the upstream server, with one authority check before approval and one after it.
 
@@ -119,29 +119,23 @@ Each live lane runs in its own git worktree at the PR head with its own Compose 
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends PR-0 to the stack and the operator lands it.
 
-## Route approvals through one ApprovalGate (PR-1)
+## Wake approvals on the decision (PR-1)
 
 **Depends on.** PR-0.
 
 **Files.**
 
-- [ ] Create `packages/contracts/src/approval-gate.ts`.
 - [ ] Edit `packages/runtime/src/approval-store.ts`.
 - [ ] Edit `packages/runtime/src/pi-tools.ts`.
 - [ ] Edit `packages/runtime/src/session-agent.ts`.
-- [ ] Edit `apps/server/src/session/agent.ts`.
-- [ ] Edit `tests/runtime/native-journey.test.ts`.
+- [ ] Edit `tests/runtime/fixture-session.ts` and `tests/runtime/native-journey.test.ts`.
 
 **Build.**
 
-- [ ] `ApprovalGate` in `packages/contracts/src/approval-gate.ts` has `approve(request, options)`, `decide(approvalId, decision, decidedBy)`, `list`, and `revalidate`. It has no Pi, MCP, or HTTP types, so a future MCP `execute` and `resume` call the same service.
-  - [ ] `approve` inserts the row with `INSERT OR IGNORE`, calls `options.announce`, registers a `Deferred<Settled>` waiter, reads the row, and waits on `Deferred.await` raced with a timeout at `expiresAt` and the abort signal. It returns the permit only when the row is `allowed`.
-  - [ ] `decide` writes the row, syncs storage, then completes the waiter. A repeated decision returns the same receipt. A different final decision is `Conflict`.
-  - [ ] `revalidate` runs each waiter's `options.recheck` at most once per second. Only `Denied` cancels a pending row. `Unavailable` leaves it pending.
-- [ ] `approval-store.ts` implements the gate over the existing `cerebro_approval` table, with the waiter map inside it. Delete `requireAllowed`.
-- [ ] Replace the 250 ms `while (!approved)` loop and the `finally` cancel in `createPiTools` with one `gate.approve` call. The authority check after Allow and `boundApprovalMatches` stay.
-- [ ] `session-agent.ts` calls `gate.revalidate` when `onRequest` or the observer's 1 s access check sees `Denied`.
-- [ ] Approvals expire after `APPROVAL_TTL_MS`, 30 minutes, instead of the model `deadlineMs`.
+- [ ] The approval store stays the one approval module and has no Pi types, so a future MCP host can reuse it. It gains `nextChange(approvalId)`, which registers an Effect `Deferred` before the caller reads the row, and `revalidate()`. `decide` completes the waiter after it writes the row. A separate `ApprovalGate` contract waits until a second host exists.
+- [ ] `awaitDecision` in `pi-tools.ts` replaces the 250 ms loop. It reads the row, then waits for a decision or a revalidate hint. On a hint it rechecks authority once. Only `Denied` ends the wait.
+- [ ] `session-agent.ts` calls `approvals.revalidate()` when the observer's 1 s access check or any request sees `Denied`.
+- [ ] Approvals expire after `APPROVAL_TTL_MS`, 30 minutes. The dispatch deadline restarts after the decision, so a late Allow still dispatches.
 
 **You see.**
 

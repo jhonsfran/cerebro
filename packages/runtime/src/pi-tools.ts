@@ -62,6 +62,8 @@ export interface PiToolConfiguration {
   readonly deadlineMs: number;
 }
 
+// The person deciding gets this long, independent of the model request deadline.
+const APPROVAL_TTL_MS = 30 * 60 * 1000;
 const DISPATCH_MEMO = "cerebro-dispatch";
 const OUTCOME_MEMO = "cerebro-outcome";
 type RecordedOutcome =
@@ -79,6 +81,33 @@ const unknownResult = {
   isError: true,
 };
 
+// Wakes on a decision or a revalidate hint instead of polling. Only a denial ends the wait;
+// a transient failure while rechecking keeps the approval pending.
+const awaitDecision = (
+  approvals: ReturnType<typeof createApprovalStore>,
+  approvalId: string,
+  readDecision: Effect.Effect<BoundApproval | undefined, ContractFailure>,
+  recheck: Effect.Effect<unknown, ContractFailure>,
+  waiting: ReadOptions
+) =>
+  Effect.gen(function* waitForDecision() {
+    for (;;) {
+      const change = approvals.nextChange(approvalId);
+      const approved = yield* readDecision;
+      if (approved) {
+        return approved;
+      }
+      if ((yield* waitForCaller(change, waiting)) === "revalidate") {
+        yield* recheck.pipe(
+          Effect.catchIf(
+            (failure) => failure._tag !== "Denied",
+            () => Effect.void
+          )
+        );
+      }
+    }
+  });
+
 export const createPiTools = (
   configuration: PiToolConfiguration
 ): readonly ToolRegistration[] =>
@@ -89,10 +118,11 @@ export const createPiTools = (
     .map((registered) => ({
       description: registered.description,
       execute: async (args, api, context) => {
-        const options = {
+        const window = () => ({
           deadlineAt: Date.now() + configuration.deadlineMs,
           signal: context.abortSignal,
-        };
+        });
+        let options = window();
         let dispatched = false;
         let approvalId: string | undefined;
         const program = Effect.gen(function* executeControlledTool() {
@@ -114,11 +144,6 @@ export const createPiTools = (
           const argumentDigest = yield* vendorEffect(options, () =>
             digestToolArguments(prepared)
           );
-          const effectOptions = {
-            ...options,
-            operationId,
-            requestDigest: argumentDigest,
-          };
           const request = {
             action: "execute" as const,
             address: configuration.address,
@@ -180,7 +205,7 @@ export const createPiTools = (
                 ? { delegationId: executionContext.delegation.id }
                 : {}),
               effect: tool.effect,
-              expiresAt: options.deadlineAt,
+              expiresAt: Date.now() + APPROVAL_TTL_MS,
               id: `approval:${operationId}`,
               operationId,
               organizationId: configuration.address.organizationId,
@@ -213,22 +238,25 @@ export const createPiTools = (
                 context
               )
             );
-            let approved = yield* vendorEffect(options, () =>
-              api.commit(
-                () => configuration.approvals.requireAllowed(retained.id),
-                context
-              )
-            );
-            while (!approved) {
-              yield* waitForCaller(Effect.sleep(250), options);
-              yield* configuration.authority.require(request, options);
-              approved = yield* vendorEffect(options, () =>
+            const waiting = {
+              deadlineAt: retained.expiresAt,
+              signal: context.abortSignal,
+            };
+            const approved = yield* awaitDecision(
+              configuration.approvals,
+              retained.id,
+              vendorEffect(waiting, () =>
                 api.commit(
                   () => configuration.approvals.requireAllowed(retained.id),
                   context
                 )
-              );
-            }
+              ),
+              Effect.suspend(() =>
+                configuration.authority.require(request, window())
+              ),
+              waiting
+            );
+            options = window();
             permit = yield* configuration.authority.require(request, options);
             const matches = yield* boundApprovalMatches(
               approved,
@@ -300,7 +328,7 @@ export const createPiTools = (
               tool,
             },
             capability,
-            effectOptions
+            { ...options, operationId, requestDigest: argumentDigest }
           );
           yield* vendorEffect(options, () =>
             api.memo<RecordedOutcome>(
