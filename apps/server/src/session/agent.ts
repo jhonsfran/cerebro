@@ -16,16 +16,12 @@ import type {
   AgentDefinition,
   ContentDependencies,
 } from "@cerebro/contracts/session";
-import { ToolExecutor } from "@cerebro/contracts/tool-service";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { channelConversation } from "@cerebro/db/schema/agents";
-import { createApprovalStore } from "@cerebro/runtime/approval-store";
 import { SessionAgent as SessionHost } from "@cerebro/runtime/session-agent";
 import type { SessionHostConfiguration } from "@cerebro/runtime/session-agent";
-import { controlledToolLayer } from "@cerebro/tools/broker";
-import { createCapabilitySigner } from "@cerebro/tools/capability";
-import { createDynamicToolExecutorService } from "@cerebro/tools/dynamic-worker";
+import { createConnectorExecutor } from "@cerebro/tools/connector";
 import { bindRegisteredTool } from "@cerebro/tools/registry";
 import type { Model } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
@@ -36,13 +32,12 @@ import { Effect } from "effect";
 import {
   checkContentDependencies,
   createCurrentAuthority,
-  createCurrentAuthorization,
   createCurrentEntitlements,
 } from "../access";
 import type { WorkerEnv } from "../bindings";
 import { slackSettings } from "../channels";
 import {
-  GATEWAY_AUDIENCE,
+  connectorCredentials,
   runtimeConfiguration,
   runtimeRegistry,
 } from "../config";
@@ -155,7 +150,6 @@ export const createRuntimeComposition = (
           );
         })
       );
-    const approvals = createApprovalStore(storage);
     const modelConfig = config.models.find(
       (candidate) => candidate.id === agent.model
     );
@@ -254,66 +248,13 @@ export const createRuntimeComposition = (
           )
         )
       ).pipe(Effect.flatMap(fromPortResult));
-    const signer = yield* tryAdapter(() =>
-      createCapabilitySigner(config.gatewaySigningKey)
-    );
-    const driver = createDynamicToolExecutorService({
-      audience: GATEWAY_AUDIENCE,
-      authorizationPolicy: createCurrentAuthorization(env),
-      gateway: env.TOOL_GATEWAY,
-      loader: env.LOADER,
+    const executor = createConnectorExecutor({
+      credentials: connectorCredentials(
+        config,
+        env.CHANNEL_ORGANIZATION_ID ?? "local-company"
+      ),
       registry,
-      signer,
     });
-    const executor = yield* ToolExecutor.pipe(
-      Effect.provide(
-        controlledToolLayer({
-          address,
-          approval: (invocation) =>
-            Effect.succeed(approvals.permit(invocation.operationId)),
-          authority,
-          checkApprover: (approval, invocation, options) =>
-            Effect.gen(function* currentApprover() {
-              const context = yield* tryAdapter(() =>
-                withDatabase(env, async (database) => {
-                  const { contextByPrincipal } =
-                    await import("@cerebro/channels/security");
-                  return await contextByPrincipal(
-                    database,
-                    address.organizationId,
-                    approval.approverId
-                  );
-                })
-              );
-              yield* current.require(
-                {
-                  action: "approve",
-                  address,
-                  context,
-                  pinnedAgent: agent,
-                  resource: {
-                    id: agent.agentId,
-                    kind: "agent",
-                    organizationId: address.organizationId,
-                  },
-                },
-                options
-              );
-              if (approval.operationId !== invocation.operationId) {
-                return yield* Effect.fail(
-                  new Denied({
-                    code: "approval-required",
-                    reason: "Approval identity changed.",
-                  })
-                );
-              }
-            }),
-          driver,
-          pinnedAgent: agent,
-          registry,
-        })
-      )
-    );
     const model: Model<"openai-completions"> = {
       api: "openai-completions",
       baseUrl: modelConfig.baseUrl,

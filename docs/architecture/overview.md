@@ -11,8 +11,8 @@ flowchart TD
     Config[Model, instructions, tools, and grants] --> Host
     Host <--> Pi[Pi transcript, inbox, tasks, and recovery]
     Pi <--> Tools[Cerebro tools and approvals]
-    Tools --> Gateway[Signed gateway]
-    Gateway --> Connectors[MCP and HTTP connectors]
+    Tools --> Connector[Connector executor]
+    Connector --> Connectors[MCP and HTTP connectors]
 ```
 
 Each conversation has one SessionAgent Durable Object and one native Pi conversation. The official PiHarness connects Pi to SQLite and Lifecycle wake-up jobs. Pi controls inputs, busy-input queuing, generation, tool tasks, Stop, retries, and crash recovery. Cerebro composes the model, instructions, enabled tools, and grants. Current company authorization controls admission, model requests, tool calls, approval decisions, and reads.
@@ -52,7 +52,7 @@ Observation sends complete authorized snapshots of the native conversation view.
 
 The model can request tools enabled for the agent. Each tool checks current authority and content access. A write waits for approval bound to its native task and call, arguments, tool and connector versions, actor, policy, and expiry.
 
-An authorized person records allow or deny. A decision receipt contains only its approval ID and state. The waiting tool reads the durable decision. After allow, it rechecks authority, validates the binding, and rechecks source access before dispatch. Cerebro signs a short-lived capability. The isolated loader reaches the connector through the gateway, which validates current policy, supplies credentials, and removes secrets from the result.
+An authorized person records allow or deny. A decision receipt contains only its approval ID and state. The waiting tool wakes when the decision is stored and rechecks authority only when the session sees a denial. After allow, it rechecks authority, validates the binding, and rechecks source access before dispatch. The connector executor supplies credentials, sends the request, and removes secrets from the result. Authority is checked once more after the call. A revocation during the call withholds a read's output and reports a write as an unknown outcome.
 
 Source access controls transcript reads, new input, model requests, and allowed tool calls. Stop and Deny require current session ownership and agent authority. They remain available after source access is revoked.
 

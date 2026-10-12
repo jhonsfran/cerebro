@@ -1,5 +1,3 @@
-import type { WorkerLoader } from "@cerebro/tools/dynamic-worker";
-
 import type { SessionAgent } from "./session/agent";
 
 export interface WorkerEnv {
@@ -13,8 +11,6 @@ export interface WorkerEnv {
   CHANNEL_ORGANIZATION_ID?: string;
   SLACK_CHANNEL_JSON?: string;
   SESSION: DurableObjectNamespace<SessionAgent>;
-  TOOL_GATEWAY: Fetcher;
-  LOADER: WorkerLoader;
   AUDIT_SINK: Fetcher;
   RUNTIME_CONFIG_JSON: string;
 }

@@ -9,7 +9,6 @@ import type {
   PrincipalId,
   ToolId,
 } from "./identity.ts";
-import type { EffectOptions, PortResult } from "./port.ts";
 
 export interface ToolDefinition {
   readonly id: ToolId;
@@ -24,21 +23,6 @@ export interface ToolCall {
   readonly tool: ToolDefinition;
   readonly arguments: unknown;
   readonly context: ExecutionContext;
-}
-
-export interface ToolCapability {
-  readonly organizationId: OrganizationId;
-  readonly toolId: ToolId;
-  readonly toolVersion: string;
-  readonly connectorId: string;
-  readonly effect: "read" | "write";
-  readonly agentId: AgentId;
-  readonly principalId: PrincipalId;
-  readonly actorPrincipalId: PrincipalId;
-  readonly delegationId?: DelegationId;
-  readonly operationId: OperationId;
-  readonly argumentDigest: Digest;
-  readonly expiresAt: number;
 }
 
 // Tool arguments are JSON values. Arrays must be dense. Objects must be plain
@@ -136,42 +120,6 @@ export const digestToolArguments = async (
 const isUnexpiredAt = (expiresAt: number, now: number): boolean =>
   Number.isFinite(now) && Number.isFinite(expiresAt) && expiresAt > now;
 
-export const toolCapabilityMatches = async (
-  capability: ToolCapability,
-  call: ToolCall,
-  options: EffectOptions,
-  now: number
-): Promise<boolean> => {
-  if (
-    !isUnexpiredAt(capability.expiresAt, now) ||
-    !isExecutionContextActiveAt(call.context, call.organizationId, now) ||
-    capability.organizationId !== call.organizationId ||
-    capability.toolId !== call.tool.id ||
-    capability.toolVersion !== call.tool.version ||
-    capability.connectorId !== call.tool.connectorId ||
-    capability.effect !== call.tool.effect ||
-    capability.agentId !== call.agentId ||
-    capability.principalId !==
-      (call.context.represented?.id ?? call.context.actor.id) ||
-    capability.actorPrincipalId !== call.context.actor.id ||
-    capability.delegationId !== call.context.delegation?.id ||
-    capability.operationId !== options.operationId ||
-    capability.argumentDigest !== options.requestDigest
-  ) {
-    return false;
-  }
-  try {
-    return (
-      (await digestToolArguments(call.arguments)) === capability.argumentDigest
-    );
-  } catch (error) {
-    if (error instanceof TypeError) {
-      return false;
-    }
-    throw error;
-  }
-};
-
 export type ToolInvocation = ToolCall & {
   readonly operationId: OperationId;
   readonly argumentDigest: Digest;
@@ -250,13 +198,4 @@ export const approvalMatches = async (
 export interface ToolExecution {
   readonly output: unknown;
   readonly providerReceipt?: string;
-}
-
-export interface ToolExecutor {
-  // For this port, requestDigest is digestToolArguments(call.arguments).
-  readonly execute: (
-    call: ToolCall,
-    capability: ToolCapability,
-    options: EffectOptions
-  ) => Promise<PortResult<ToolExecution>>;
 }

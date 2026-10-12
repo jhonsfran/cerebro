@@ -29,15 +29,11 @@ import type {
   BoundApproval,
   BoundInvocation,
 } from "../../packages/contracts/src/tool-service.ts";
-import {
-  createAuthorityFake,
-  createToolFake,
-} from "../support/effect-fakes.ts";
+import { createAuthorityFake } from "../support/effect-fakes.ts";
 import {
   allowedContext,
   allowedUser,
   unknownOutcomeInvocation,
-  unknownOutcomeCapability,
   userEvent,
 } from "../support/fixtures.ts";
 
@@ -201,34 +197,6 @@ test("approvals bind run, registration version and destination, arguments, ident
       })
     )
   );
-});
-test("a denied capability causes zero fake dispatches", async () => {
-  const fake = createToolFake(() => now);
-  const capability = {
-    ...unknownOutcomeCapability,
-    connectorFingerprint: invocation.tool.connectorFingerprint,
-    expiresAt: now + 1000,
-    policyVersion: "fixture-v1",
-    runId: invocation.runId,
-  };
-  fake.setAllowed(false);
-  assert.ok(
-    (await failureTag(
-      fake.service.execute(invocation, capability, options)
-    )) instanceof Denied
-  );
-  assert.equal(fake.counts.dispatch, 0);
-  fake.setAllowed(true);
-  assert.deepEqual(
-    await Effect.runPromise(
-      fake.service.execute(invocation, capability, options)
-    ),
-    {
-      output: "fixture result",
-      providerReceipt: "fixture receipt",
-    }
-  );
-  assert.equal(fake.counts.dispatch, 1);
 });
 test("native chat snapshots retain message and approval binding across JSON transport", () => {
   const snapshot = {

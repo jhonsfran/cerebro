@@ -21,11 +21,10 @@ import {
   isExecutionContextActiveAt,
 } from "../../packages/contracts/src/identity.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/identity.ts";
-import type { ToolExecutor } from "../../packages/contracts/src/tool-service.ts";
 import { createApprovalStore } from "../../packages/runtime/src/approval-store.ts";
 import { SessionAgent as NativeSessionAgent } from "../../packages/runtime/src/session-agent.ts";
 import type { SessionHostConfiguration } from "../../packages/runtime/src/session-agent.ts";
-import { createControlledToolExecutor } from "../../packages/tools/src/broker.ts";
+import { createConnectorExecutor } from "../../packages/tools/src/connector.ts";
 import {
   bindRegisteredTool,
   createToolRegistry,
@@ -231,57 +230,21 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
       }
       const definition = yield* bindRegisteredTool(entry);
       const approvals = createApprovalStore(this.ctx.storage);
-      const driver: ToolExecutor = {
-        execute: (call, _capability, options) =>
-          Effect.tryPromise({
-            catch: () =>
-              new Unavailable({
-                reason: "Fixture gateway response unavailable.",
-              }),
-            try: async (signal) => {
-              const response = await this.env.TOOL_GATEWAY.fetch(
-                new Request("https://gateway.internal/effect", {
-                  body: JSON.stringify({
-                    arguments: call.arguments,
-                    operationId: options.operationId,
-                  }),
-                  headers: { "Content-Type": "application/json" },
-                  method: "POST",
-                  signal,
-                })
-              );
-              if (!response.ok) {
-                throw new Error("Fixture gateway did not confirm the write.");
-              }
-              const output = receiptOutput.parse(await response.json());
-              return { output, providerReceipt: output.receipt };
-            },
+      // The real connector executor; FAIL_FIRST_EFFECT loses the response after the write.
+      const executor = createConnectorExecutor({
+        credentials: () =>
+          Promise.resolve({
+            headers: { Authorization: "Bearer fixture-connector-key" },
+            secrets: [],
           }),
-      };
-      const executor = createControlledToolExecutor({
-        address,
-        approval: (invocation) =>
-          Effect.succeed(approvals.permit(invocation.operationId)),
-        authority,
-        checkApprover: (permit, invocation, options) =>
-          Effect.asVoid(
-            authority.require(
-              {
-                action: "approve",
-                address,
-                context: { actor: { ...context.actor, id: permit.approverId } },
-                pinnedAgent: agent,
-                resource: {
-                  id: invocation.tool.id,
-                  kind: "tool",
-                  organizationId: address.organizationId,
-                },
-              },
-              options
-            )
-          ),
-        driver,
-        pinnedAgent: agent,
+        fetch: async (input, init) => {
+          const response = await fetch(input, init);
+          if (this.env.FAIL_FIRST_EFFECT === "1" && response.ok) {
+            await response.text();
+            throw new Error("Injected lost write response");
+          }
+          return response;
+        },
         registry,
       });
       const model: Model<"openai-completions"> = {

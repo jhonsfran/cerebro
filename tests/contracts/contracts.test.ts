@@ -13,7 +13,6 @@ import {
   approvalMatches,
   canonicalToolArguments,
   digestToolArguments,
-  toolCapabilityMatches,
 } from "../../packages/contracts/src/tools.ts";
 import type { Approval } from "../../packages/contracts/src/tools.ts";
 import { createFixtureAdapters } from "../support/adapters.ts";
@@ -26,7 +25,6 @@ import {
   fixtureAgentId,
   fixtureOrganizationId,
   serviceActor,
-  unknownOutcomeCapability,
   unknownOutcomeInvocation,
 } from "../support/fixtures.ts";
 
@@ -349,69 +347,6 @@ test("approval binds the delegated actor and delegation ID", async () => {
   );
 });
 
-test("a capability cannot authorize a different tool invocation", async () => {
-  assert.equal(
-    await toolCapabilityMatches(
-      { ...unknownOutcomeCapability, expiresAt: Number.NaN },
-      unknownOutcomeInvocation,
-      {
-        deadlineAt: 1_900_000_000_000,
-        operationId: unknownOutcomeInvocation.operationId,
-        requestDigest: unknownOutcomeInvocation.argumentDigest,
-      },
-      1_800_000_000_000
-    ),
-    false
-  );
-  const effect = {
-    deadlineAt: 1_900_000_000_000,
-    operationId: unknownOutcomeInvocation.operationId,
-    requestDigest: unknownOutcomeInvocation.argumentDigest,
-  };
-  assert.equal(
-    await toolCapabilityMatches(
-      unknownOutcomeCapability,
-      unknownOutcomeInvocation,
-      effect,
-      1_800_000_000_000
-    ),
-    true
-  );
-  assert.equal(
-    await toolCapabilityMatches(
-      { ...unknownOutcomeCapability, toolVersion: "2" },
-      unknownOutcomeInvocation,
-      effect,
-      1_800_000_000_000
-    ),
-    false
-  );
-  assert.equal(
-    await toolCapabilityMatches(
-      {
-        ...unknownOutcomeCapability,
-        operationId: id.operation("another-effect"),
-      },
-      unknownOutcomeInvocation,
-      effect,
-      1_800_000_000_000
-    ),
-    false
-  );
-  assert.equal(
-    await toolCapabilityMatches(
-      {
-        ...unknownOutcomeCapability,
-        principalId: id.principal("another-user"),
-      },
-      unknownOutcomeInvocation,
-      effect,
-      1_800_000_000_000
-    ),
-    false
-  );
-});
-
 test("fixture policy denies an active principal without a grant", async () => {
   const ports = createFixtureAdapters({ mode: "fixture" });
   const resource = {
@@ -444,34 +379,6 @@ test("fixture policy denies an active principal without a grant", async () => {
       readOptions
     ),
     { status: "ok", value: { decision: "allow", policyVersion: "fixture-v1" } }
-  );
-});
-
-test("fixture tool reports an unknown outcome without a second effect", async () => {
-  const ports = createFixtureAdapters({ mode: "fixture" });
-  const effect = {
-    deadlineAt: 1_900_000_000_000,
-    operationId: unknownOutcomeInvocation.operationId,
-    requestDigest: unknownOutcomeInvocation.argumentDigest,
-  };
-  const first = await ports.toolExecutor.execute(
-    unknownOutcomeInvocation,
-    unknownOutcomeCapability,
-    effect
-  );
-  assert.deepEqual(first, {
-    operationId: unknownOutcomeInvocation.operationId,
-    reason:
-      "The provider may have completed the effect before the connection failed.",
-    status: "unknown-outcome",
-  });
-  assert.deepEqual(
-    await ports.toolExecutor.execute(
-      unknownOutcomeInvocation,
-      unknownOutcomeCapability,
-      effect
-    ),
-    first
   );
 });
 
@@ -535,85 +442,6 @@ test("agent repository reads a pinned version after a new version is published",
       readOptions
     ),
     { resource: "agent version", status: "not-found" }
-  );
-});
-
-test("fixture tool rejects changed arguments even when the caller reuses a digest", async () => {
-  const { toolExecutor } = createFixtureAdapters({ mode: "fixture" });
-  const effect = {
-    deadlineAt: 1_900_000_000_000,
-    operationId: unknownOutcomeInvocation.operationId,
-    requestDigest: unknownOutcomeInvocation.argumentDigest,
-  };
-  const changedCall = {
-    ...unknownOutcomeInvocation,
-    arguments: { ticket: "support-2" },
-  };
-  assert.deepEqual(
-    await toolExecutor.execute(changedCall, unknownOutcomeCapability, effect),
-    {
-      code: "unauthorized",
-      reason: "The tool capability does not authorize this call.",
-      status: "denied",
-    }
-  );
-});
-
-test("a delegated capability binds the actor as well as the represented user", async () => {
-  const delegationId = id.delegation("delegation-active");
-  const delegatedCall = {
-    ...unknownOutcomeInvocation,
-    context: {
-      actor: serviceActor,
-      delegation: {
-        actorId: serviceActor.id,
-        expiresAt: 1_900_000_000_000,
-        id: delegationId,
-        organizationId: fixtureOrganizationId,
-        representedId: allowedUser.id,
-      },
-      represented: allowedUser,
-    },
-  };
-  const capability = {
-    ...unknownOutcomeCapability,
-    actorPrincipalId: serviceActor.id,
-    delegationId,
-  };
-  const effect = {
-    deadlineAt: 1_900_000_000_000,
-    operationId: unknownOutcomeInvocation.operationId,
-    requestDigest: unknownOutcomeInvocation.argumentDigest,
-  };
-  assert.equal(
-    await toolCapabilityMatches(
-      capability,
-      delegatedCall,
-      effect,
-      1_800_000_000_000
-    ),
-    true
-  );
-  const otherActor = { ...serviceActor, id: id.principal("service-other") };
-  const changedActorCall = {
-    ...delegatedCall,
-    context: {
-      ...delegatedCall.context,
-      actor: otherActor,
-      delegation: {
-        ...delegatedCall.context.delegation,
-        actorId: otherActor.id,
-      },
-    },
-  };
-  assert.equal(
-    await toolCapabilityMatches(
-      capability,
-      changedActorCall,
-      effect,
-      1_800_000_000_000
-    ),
-    false
   );
 });
 
@@ -912,33 +740,6 @@ test("artifact delete replay binds artifact and actor", async () => {
   );
 });
 
-test("tool fixture replay checks the authorized call identity", async () => {
-  const { toolExecutor } = createFixtureAdapters({ mode: "fixture" });
-  const operationId = id.operation("tool-bound");
-  const call = { ...unknownOutcomeInvocation, operationId };
-  const capability = { ...unknownOutcomeCapability, operationId };
-  const effect = {
-    deadlineAt: 1_900_000_000_000,
-    operationId,
-    requestDigest: unknownOutcomeInvocation.argumentDigest,
-  };
-  assert.equal(
-    (await toolExecutor.execute(call, capability, effect)).status,
-    "ok"
-  );
-  const otherToolId = id.tool("tool-2");
-  assert.equal(
-    (
-      await toolExecutor.execute(
-        { ...call, tool: { ...call.tool, id: otherToolId } },
-        { ...capability, toolId: otherToolId },
-        effect
-      )
-    ).status,
-    "conflict"
-  );
-});
-
 test("agent definitions cannot change through input or read aliases", async () => {
   const { agentRepository } = createFixtureAdapters({ mode: "fixture" });
   const current = await agentRepository.get(
@@ -1059,45 +860,3 @@ test("memory and artifact visibility ignore caller mutation", async () => {
 });
 
 // oxlint-enable unicorn/no-await-expression-member
-
-test("tool output and replay ignore returned object mutation", async () => {
-  const { toolExecutor } = createFixtureAdapters({
-    mode: "fixture",
-  });
-  const argumentsValue = { ticket: "support-1" };
-  const operationId = id.operation("tool-output-alias");
-  const call = {
-    ...unknownOutcomeInvocation,
-    arguments: argumentsValue,
-    operationId,
-  };
-  const capability = { ...unknownOutcomeCapability, operationId };
-  const effect = {
-    ...fixtureEffect("tool-output-alias"),
-    requestDigest: unknownOutcomeInvocation.argumentDigest,
-  };
-  const executed = await toolExecutor.execute(call, capability, effect);
-  assert.equal(executed.status, "ok");
-  argumentsValue.ticket = "changed-input";
-  if (
-    executed.status === "ok" &&
-    typeof executed.value.output === "object" &&
-    executed.value.output !== null
-  ) {
-    const outputArguments = Reflect.get(executed.value.output, "arguments");
-    if (typeof outputArguments === "object" && outputArguments !== null) {
-      Reflect.set(outputArguments, "ticket", "changed-output");
-    }
-  }
-  const replayed = await toolExecutor.execute(
-    { ...call, arguments: { ticket: "support-1" } },
-    capability,
-    effect
-  );
-  assert.deepEqual(replayed, {
-    status: "ok",
-    value: {
-      output: { arguments: { ticket: "support-1" }, toolId: call.tool.id },
-    },
-  });
-});

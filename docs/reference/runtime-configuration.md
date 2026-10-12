@@ -14,7 +14,7 @@ Unknown fields are rejected.
 | `models` | array of [models](#models) | yes | At least one. Model IDs are unique. |
 | `tools` | array of [tools](#tools) | yes | An empty array enables no tools. |
 | `artifacts` | object | yes | `endpoint`, `bucket`, `accessKeyId`, `secretAccessKey`, and `region` of the artifact MinIO or S3 store. |
-| `gatewaySigningKey` | string | yes | At least 32 characters. Signs tool capabilities. |
+| `gatewaySigningKey` | string | yes | At least 32 characters. Signs requests from the API to session objects. |
 | `retrievalMode` | `"full-text"` | yes | The only supported value. |
 | `bootstrapToken` | string | one of two | At least 32 characters. Lets the first user who presents it become the installation owner. |
 | `trustedOwnerUserId` | string | one of two | A Better Auth user ID that may become the owner without a token. |
@@ -48,7 +48,7 @@ Integer limits are positive and at most 1,048,576.
 | `description` | string | Shown to the model and in the agent editor. |
 | `effect` | `"read"` or `"write"` |  |
 | `connectorId` | string | Tools with the same connector share one origin and one set of credential headers. |
-| `version` | string | Part of the signed tool identity. |
+| `version` | string | Part of the tool identity an approval binds to. |
 | `inputSchema` | JSON Schema | Arguments are validated against it before dispatch. |
 | `outputSchema` | JSON Schema | Results are validated against it. |
 | `maxInputBytes` | integer | At most 1 MiB. |

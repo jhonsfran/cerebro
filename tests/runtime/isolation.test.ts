@@ -121,21 +121,6 @@ hostTest(
 );
 
 hostTest(
-  "the tool loader has no ambient outbound network and reaches only its gateway",
-  async () => {
-    const response = await fetch(
-      `http://127.0.0.1:${stack.apiPort}/isolation`,
-      { method: "POST" }
-    );
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-      deniedAmbientEgress: true,
-      gatewayReachable: true,
-    });
-  }
-);
-
-hostTest(
   "the independent PostgreSQL audit sink stores a repeated event once",
   async () => {
     const response = await fetch(

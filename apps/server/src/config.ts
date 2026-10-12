@@ -2,9 +2,6 @@ import { id } from "@cerebro/contracts";
 import { createToolRegistry } from "@cerebro/tools/registry";
 import { z } from "zod";
 
-// The tool gateway accepts only capabilities signed for this audience.
-export const GATEWAY_AUDIENCE = "cerebro-trusted-tool-gateway-v1";
-
 const positive = z.number().int().positive().max(1_048_576);
 const modelSchema = z.strictObject({
   apiKey: z.string().min(1),
@@ -200,6 +197,26 @@ const registries = new WeakMap<
   RuntimeConfiguration,
   ReturnType<typeof createRuntimeRegistry>
 >();
+// Credentials belong to one organization until accounts replace this file.
+export const connectorCredentials =
+  (config: RuntimeConfiguration, organizationId: string) =>
+  (requested: string, connectorId: string) => {
+    const tools = config.tools.filter(
+      (entry) => entry.connectorId === connectorId
+    );
+    const [first] = tools;
+    return Promise.resolve(
+      first && requested === organizationId
+        ? {
+            headers: first.credentials.headers,
+            secrets: [
+              ...new Set(tools.flatMap((tool) => tool.credentials.secrets)),
+            ],
+          }
+        : undefined
+    );
+  };
+
 export const runtimeRegistry = (config: RuntimeConfiguration) => {
   let registry = registries.get(config);
   if (!registry) {
