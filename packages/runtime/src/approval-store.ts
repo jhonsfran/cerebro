@@ -6,7 +6,7 @@ import type {
   BoundInvocation,
 } from "@cerebro/contracts/tool-service";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
-import { Schema } from "effect";
+import { Deferred, Effect, Schema } from "effect";
 
 const permitSchema = Schema.Struct({
   actorPrincipalId: Schema.NonEmptyString,
@@ -72,7 +72,16 @@ const publicValue = (row: ApprovalRow): ChatApproval => {
     toolId: permit.toolId,
   });
 };
+export type ApprovalChange = "decided" | "revalidate";
+
 export const createApprovalStore = (storage: DurableObjectStorage) => {
+  const waiters = new Map<string, Deferred.Deferred<ApprovalChange>>();
+  const notify = (approvalId: string, change: ApprovalChange) => {
+    const waiter = waiters.get(approvalId);
+    if (waiter) {
+      Deferred.doneUnsafe(waiter, Effect.succeed(change));
+    }
+  };
   storage.sql.exec(
     "CREATE TABLE IF NOT EXISTS cerebro_approval (approval_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, call_id TEXT NOT NULL, arguments TEXT NOT NULL, permit TEXT NOT NULL, state TEXT NOT NULL)"
   );
@@ -96,6 +105,7 @@ export const createApprovalStore = (storage: DurableObjectStorage) => {
         .toArray()
         .map(publicValue),
     cancel: (approvalId: string) => {
+      waiters.delete(approvalId);
       storage.sql.exec(
         "UPDATE cerebro_approval SET state='cancelled' WHERE approval_id=? AND state='pending'",
         approvalId
@@ -118,7 +128,14 @@ export const createApprovalStore = (storage: DurableObjectStorage) => {
         state,
         approvalId
       );
+      notify(approvalId, "decided");
       return read(approvalId);
+    },
+    // Registers before the caller reads the row, so a decision between the read and the wait still wakes it.
+    nextChange: (approvalId: string): Effect.Effect<ApprovalChange> => {
+      const waiter = Deferred.makeUnsafe<ApprovalChange>();
+      waiters.set(approvalId, waiter);
+      return Deferred.await(waiter);
     },
     permit: (operationId: string): BoundApproval | undefined => {
       const [row] = storage.sql
@@ -183,6 +200,11 @@ export const createApprovalStore = (storage: DurableObjectStorage) => {
         });
       }
       return undefined;
+    },
+    revalidate: () => {
+      for (const approvalId of waiters.keys()) {
+        notify(approvalId, "revalidate");
+      }
     },
   };
 };

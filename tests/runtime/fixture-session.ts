@@ -49,6 +49,8 @@ const addressTuple = z.tuple([z.string(), z.string(), z.string(), z.string()]);
 
 export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
   private configuration: SessionHostConfiguration | undefined;
+  private authorityCalls = 0;
+  private failNextToolCheck = false;
 
   private nativeStorage() {
     const tables = this.ctx.storage.sql
@@ -167,8 +169,15 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
         version: 1,
       };
       const authority: AuthorityService = {
-        evaluate: (request) =>
-          Effect.sync(() =>
+        evaluate: (request) => {
+          this.authorityCalls += 1;
+          if (this.failNextToolCheck && request.resource.kind === "tool") {
+            this.failNextToolCheck = false;
+            return Effect.fail(
+              new Unavailable({ reason: "Fixture authority is unavailable." })
+            );
+          }
+          return Effect.sync(() =>
             this.enabled() &&
             request.context.actor.id === context.actor.id &&
             isExecutionContextActiveAt(
@@ -182,7 +191,8 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
                   policyVersion: "fixture-v1",
                   reason: "Current fixture access denied.",
                 }
-          ),
+          );
+        },
         require: (request, options) =>
           Effect.flatMap(authority.evaluate(request, options), (decision) =>
             enforceDecision(request, Date.now(), decision)
@@ -477,6 +487,17 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
             released: gate?.released === 1,
             waiting: gate?.waiting === 1,
           },
+        });
+      }
+      if (path === "/fixture/authority") {
+        const input = z
+          .object({ failNextToolCheck: z.boolean().optional() })
+          .parse(await request.json());
+        this.failNextToolCheck =
+          input.failNextToolCheck ?? this.failNextToolCheck;
+        return Response.json({
+          status: "ok",
+          value: { calls: this.authorityCalls },
         });
       }
       if (path === "/fixture/native-storage") {

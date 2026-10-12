@@ -421,6 +421,7 @@ export class SessionAgent<
             return;
           }
           if (error instanceof Denied) {
+            runtime.approvals.revalidate();
             emit({
               reason:
                 error.code === "unauthorized" ? "unauthorized" : "revoked",
@@ -563,6 +564,11 @@ export class SessionAgent<
       }
       throw new NotFound({ resource: "Chat route" });
     } catch (error) {
+      if (error instanceof Denied) {
+        // A denial may mean access was revoked; waiting approvals recheck once instead of polling.
+        const runtime = await this.initialized?.catch(() => null);
+        runtime?.approvals.revalidate();
+      }
       const response = failureToHttp(
         toContractFailure(error, "The native chat request is unavailable.")
       );
