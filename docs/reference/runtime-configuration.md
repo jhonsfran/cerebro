@@ -1,6 +1,6 @@
 # Runtime configuration
 
-`runtime.json` configures the models, tools, and storage that one installation uses. `deploy/bootstrap.mjs` reads it from the secrets directory, validates it with `parseRuntimeConfiguration` in `apps/server/src/config.ts`, and publishes it to the Worker as `RUNTIME_CONFIG_JSON`. The Worker parses it once per isolate. A change takes effect the next time bootstrap runs. Bootstrap removes connector `credentials` before it publishes the file.
+`runtime.json` configures the models, tools, and storage that one installation uses. `deploy/bootstrap.mjs` reads it from the secrets directory, validates it with `parseRuntimeConfiguration` in `apps/server/src/config.ts`, and publishes it to the Worker as `RUNTIME_CONFIG_JSON`. The Worker parses it once per isolate. A change takes effect the next time bootstrap runs. Bootstrap writes `tools` to the tool catalog in PostgreSQL and seals their `credentials` into connector accounts. The Worker receives the file without tools and reads them from the catalog.
 
 In local mode, `pnpm start` writes this file from the model settings in `.env` (`deploy/local-runtime.mjs`). In production you supply it. The file contains credentials. Do not commit it.
 
@@ -12,7 +12,7 @@ Unknown fields are rejected.
 | --- | --- | --- | --- |
 | `mode` | `"local"` or `"production"` | yes | Must match `DEPLOY_MODE`. |
 | `models` | array of [models](#models) | yes | At least one. Model IDs are unique. |
-| `tools` | array of [tools](#tools) | yes | An empty array enables no tools. |
+| `tools` | array of [tools](#tools) | yes | The catalog tools this file owns. Each start replaces them, so removing a tool here removes it from the catalog. Conversations started after the change see it. An empty array removes them all. |
 | `artifacts` | object | yes | `endpoint`, `bucket`, `accessKeyId`, `secretAccessKey`, and `region` of the artifact MinIO or S3 store. |
 | `gatewaySigningKey` | string | yes | At least 32 characters. Signs requests from the API to session objects. |
 | `retrievalMode` | `"full-text"` | yes | The only supported value. |

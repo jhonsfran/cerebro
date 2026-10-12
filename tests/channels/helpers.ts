@@ -81,7 +81,7 @@ export const createTestProduct = async (
   resetFixtureSessions();
   await options.withDatabase(async (db) => {
     await db.execute(
-      sql`truncate installation_setup, agent, agent_version, agent_publish_operation, channel_conversation, channel_item, channel_effect, channel_reply, channel_link_event, identity_principal, identity_grant, identity_policy_revision, identity_slack_link, identity_slack_link_challenge restart identity cascade`
+      sql`truncate installation_setup, agent, agent_version, agent_publish_operation, channel_conversation, channel_effect, channel_link_event, identity_principal, identity_grant, identity_policy_revision, identity_slack_link, identity_slack_link_challenge restart identity cascade`
     );
     await db
       .insert(user)

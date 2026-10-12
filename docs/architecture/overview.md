@@ -19,7 +19,7 @@ Each conversation has one SessionAgent Durable Object and one native Pi conversa
 
 ## Tools and the external door
 
-Tools come from connectors. Today `runtime.json` lists them. The [tool catalog plan](../superpowers/plans/2026-10-12-tool-catalog.md) moves connectors, their tools, and their credentials into PostgreSQL, so an agent can use a new tool without a deploy.
+Tools come from connectors and live in the `connector_tool` catalog in PostgreSQL. Each row names its source; bootstrap replaces the rows `runtime.json` owns on every start. A session reads the catalog when its host starts, so new conversations see catalog changes without a redeploy. See the [tool catalog plan](../superpowers/plans/2026-10-12-tool-catalog.md).
 
 Pi is the authority for conversations it runs, not for tools. A later MCP endpoint for external agents will read the same catalog, accounts, and approvals without a Pi conversation. Keep tool, account, and approval code free of Pi types so that door stays open.
 
@@ -29,6 +29,7 @@ Pi is the authority for conversations it runs, not for tools. A later MCP endpoi
 | --- | --- | --- |
 | Identities, memberships, grants, agent definitions, connectors, searchable memory, and audit | Company services | PostgreSQL |
 | Connector credentials | Connector accounts, sealed with `account-key` | PostgreSQL |
+| Tools agents can enable | Tool catalog (`connector_tool`) | PostgreSQL |
 | Transcript, inbox, generation, tool tasks, and recovery | Pi Durable | Conversation SQLite through PiHarness |
 | External dispatch markers and outcomes | Pi task memos | Conversation SQLite |
 | Owner, agent version, content access dependencies, and approvals | Cerebro | Company metadata beside Pi state |

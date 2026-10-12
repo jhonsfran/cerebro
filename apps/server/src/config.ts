@@ -71,9 +71,19 @@ const schema = z.strictObject({
 });
 export type RuntimeConfiguration = z.infer<typeof schema>;
 
-export const createRuntimeRegistry = (config: RuntimeConfiguration) =>
+// A catalog tool is the tool document without credentials, as stored in
+// connector_tool and read by the Worker.
+const catalogToolSchema = toolSchema.omit({ credentials: true });
+export type CatalogTool = z.infer<typeof catalogToolSchema>;
+export const parseCatalogTool = (definition: unknown): CatalogTool =>
+  catalogToolSchema.parse(definition);
+
+export const createCatalogRegistry = (
+  tools: readonly CatalogTool[],
+  mode: "local" | "production"
+) =>
   createToolRegistry(
-    config.tools.map((tool) => ({
+    tools.map((tool) => ({
       definition: {
         connectorId: tool.connectorId,
         effect: tool.effect,
@@ -89,7 +99,7 @@ export const createRuntimeRegistry = (config: RuntimeConfiguration) =>
       retryMode: tool.retryMode,
       target: tool.target,
     })),
-    config.mode
+    mode
   );
 
 const loopbackHost = (value: string): boolean =>
@@ -174,7 +184,7 @@ export const parseRuntimeConfiguration = (
           : tool
       ),
     };
-    createRuntimeRegistry(normalized);
+    createCatalogRegistry(normalized.tools, mode);
     return normalized;
   } catch {
     throw new Error(
@@ -205,10 +215,6 @@ export const runtimeConfiguration = (env: {
   return parsed.config;
 };
 
-const registries = new WeakMap<
-  RuntimeConfiguration,
-  ReturnType<typeof createRuntimeRegistry>
->();
 // The credentials bootstrap seals into connector accounts, one per connector.
 export const connectorCredentialImports = (config: RuntimeConfiguration) =>
   [...Map.groupBy(config.tools, (tool) => tool.connectorId)].flatMap(
@@ -233,19 +239,14 @@ export const connectorCredentialImports = (config: RuntimeConfiguration) =>
     }
   );
 
-// The configuration the Worker receives never contains connector credentials.
-export const withoutCredentials = (
+// The tools bootstrap writes to the catalog. runtime.json owns these rows and
+// replaces them on every start.
+export const catalogImports = (
   config: RuntimeConfiguration
-): RuntimeConfiguration => ({
-  ...config,
-  tools: config.tools.map(({ credentials: _credentials, ...tool }) => tool),
-});
+): readonly CatalogTool[] =>
+  config.tools.map(({ credentials: _credentials, ...tool }) => tool);
 
-export const runtimeRegistry = (config: RuntimeConfiguration) => {
-  let registry = registries.get(config);
-  if (!registry) {
-    registry = createRuntimeRegistry(config);
-    registries.set(config, registry);
-  }
-  return registry;
-};
+// The Worker reads tools from the catalog, so its configuration has none.
+export const workerConfiguration = (
+  config: RuntimeConfiguration
+): RuntimeConfiguration => ({ ...config, tools: [] });
