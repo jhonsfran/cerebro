@@ -14,7 +14,6 @@ import {
   productPath,
   request,
 } from "./api";
-import { pendingChatSchema } from "./chat";
 import type { PendingChatMessage } from "./chat";
 import {
   decideApproval,
@@ -22,6 +21,11 @@ import {
   submitMessage,
   useConversationConnection,
 } from "./chat-connection";
+import {
+  readPendingChat,
+  storePendingChat,
+  usePendingChat,
+} from "./pending-chat";
 import { conversationSchema } from "./types";
 import type { Conversation } from "./types";
 
@@ -277,16 +281,7 @@ const ConversationSession = ({
   const transcript = useRef<HTMLDivElement>(null);
   const path = productPath(`conversations/${encoded(conversationId)}`);
   const pendingKey = cacheKey(userId, conversationId, "pending");
-  const [pending, setPending] = useState<PendingChatMessage | null>(() => {
-    try {
-      const raw = sessionStorage.getItem(pendingKey);
-      return raw ? pendingChatSchema.parse(JSON.parse(raw)) : null;
-    } catch {
-      sessionStorage.removeItem(pendingKey);
-      return null;
-    }
-  });
-  const pendingRef = useRef(pending);
+  const pending = usePendingChat(pendingKey);
   const {
     connection,
     error: chatError,
@@ -300,8 +295,6 @@ const ConversationSession = ({
     const clear = () => {
       setAccessValid(false);
       setConversation(null);
-      pendingRef.current = null;
-      setPending(null);
       setText("");
       setConnected(false);
     };
@@ -351,26 +344,22 @@ const ConversationSession = ({
   }, [snapshot]);
 
   const send = async (message: PendingChatMessage) => {
+    const currentPending = readPendingChat(pendingKey);
     if (
       !online ||
-      (pendingRef.current &&
-        pendingRef.current.operationId !== message.operationId)
+      (currentPending && currentPending.operationId !== message.operationId)
     ) {
       return;
     }
     setSending(true);
     setErrorMessage("");
-    sessionStorage.setItem(pendingKey, JSON.stringify(message));
-    pendingRef.current = message;
-    setPending(message);
+    storePendingChat(pendingKey, message);
     const generation = currentAccessGeneration();
     try {
       const result = await submitMessage(path, message);
       assertCurrentAccess(generation);
       if (result.receipt.operationId === message.operationId) {
-        sessionStorage.removeItem(pendingKey);
-        pendingRef.current = null;
-        setPending(null);
+        storePendingChat(pendingKey, null);
         setText("");
       } else {
         setErrorMessage("The message receipt belongs to another operation.");

@@ -12,18 +12,22 @@ import { createAxiomDrain } from "evlog/axiom";
 import { createFsDrain } from "evlog/fs";
 
 const main = createAxiomDrain({ dataset: "logs" });
-const auditSink = auditOnly(signed(createFsDrain({ dir: ".audit/" }), { strategy: "hash-chain" }), {
-  await: true,
-});
+const auditSink = auditOnly(
+  signed(createFsDrain({ dir: ".audit/" }), { strategy: "hash-chain" }),
+  {
+    await: true,
+  }
+);
 
 const app = new Hono<EvlogVariables>();
 app.use(
   evlog({
-    enrich: (ctx) => auditEnricher({ tenantId: (c) => c.headers?.["x-tenant-id"] })(ctx),
+    enrich: (ctx) =>
+      auditEnricher({ tenantId: (c) => c.headers?.["x-tenant-id"] })(ctx),
     drain: async (ctx) => {
       await Promise.all([main(ctx), auditSink(ctx)]);
     },
-  }),
+  })
 );
 ```
 
@@ -37,9 +41,12 @@ import { createAxiomDrain } from "evlog/axiom";
 import { createFsDrain } from "evlog/fs";
 
 const main = createAxiomDrain({ dataset: "logs" });
-const auditSink = auditOnly(signed(createFsDrain({ dir: ".audit/" }), { strategy: "hash-chain" }), {
-  await: true,
-});
+const auditSink = auditOnly(
+  signed(createFsDrain({ dir: ".audit/" }), { strategy: "hash-chain" }),
+  {
+    await: true,
+  }
+);
 
 const app = express();
 app.use(
@@ -48,7 +55,7 @@ app.use(
     drain: async (ctx) => {
       await Promise.all([main(ctx), auditSink(ctx)]);
     },
-  }),
+  })
 );
 ```
 
@@ -62,9 +69,12 @@ import { createAxiomDrain } from "evlog/axiom";
 import { createFsDrain } from "evlog/fs";
 
 const main = createAxiomDrain({ dataset: "logs" });
-const auditSink = auditOnly(signed(createFsDrain({ dir: ".audit/" }), { strategy: "hash-chain" }), {
-  await: true,
-});
+const auditSink = auditOnly(
+  signed(createFsDrain({ dir: ".audit/" }), { strategy: "hash-chain" }),
+  {
+    await: true,
+  }
+);
 
 export const { withEvlog, useLogger } = createEvlog({
   service: "my-app",

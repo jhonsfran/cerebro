@@ -5,6 +5,7 @@ import { Schema } from "effect";
 
 import { JSDOM } from "../../apps/web/node_modules/jsdom";
 import { createElement } from "../../apps/web/node_modules/react";
+import { renderToString } from "../../apps/web/node_modules/react-dom/server";
 import { decodeObservation } from "../../apps/web/src/features/product/observation";
 import { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
 
@@ -104,6 +105,40 @@ const renderConversation = () =>
       userId: "user",
     })
   );
+
+test("saved pending messages do not change the server and initial browser markup", () => {
+  sessionStorage.setItem(
+    cacheKey("user", "conversation", "pending"),
+    JSON.stringify({ operationId: "saved-operation", text: "Saved message" })
+  );
+  const element = createElement(ConversationPanel, {
+    agentId: "agent",
+    agentName: "Agent",
+    conversationId: "conversation",
+    userId: "user",
+  });
+  const browserMarkup = renderToString(element);
+  const windowDescriptor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "window"
+  );
+  const storageDescriptor = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "sessionStorage"
+  );
+  assert.ok(windowDescriptor && storageDescriptor);
+  Reflect.deleteProperty(globalThis, "window");
+  Reflect.deleteProperty(globalThis, "sessionStorage");
+  let serverMarkup;
+  try {
+    serverMarkup = renderToString(element);
+  } finally {
+    Object.defineProperty(globalThis, "window", windowDescriptor);
+    Object.defineProperty(globalThis, "sessionStorage", storageDescriptor);
+  }
+  assert.equal(browserMarkup, serverMarkup);
+  assert.ok(!serverMarkup.includes("Retry message"));
+});
 const installConversation = (
   initial: ChatSnapshot,
   mutate?: (url: string, body: unknown) => Response | Promise<Response>

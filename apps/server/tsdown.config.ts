@@ -6,7 +6,7 @@ export default defineConfig({
   outDir: "./dist",
   clean: true,
   deps: {
-    alwaysBundle: [/@cerebro\/.*/],
+    alwaysBundle: [/@cerebro\/.*/u],
     neverBundle: ["cloudflare:workers"],
   },
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { client } from "../../utils/orpc";
 import { AdminNav, AdminPanel } from "./admin";
@@ -69,6 +69,8 @@ const AgentEditor = ({
   const [model, setModel] = useState(initial.model);
   const [connectors, setConnectors] = useState(initial.toolIds);
   const [sources, setSources] = useState(initial.sourceIds);
+  const selectedToolIds = useMemo(() => new Set(connectors), [connectors]);
+  const selectedSourceIds = useMemo(() => new Set(sources), [sources]);
   const [errorMessage, setErrorMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [catalog, setCatalog] = useState(initial.catalog);
@@ -220,7 +222,7 @@ const AgentEditor = ({
             <label className="checkbox-row" key={choice.id}>
               <input
                 type="checkbox"
-                checked={connectors.includes(choice.id)}
+                checked={selectedToolIds.has(choice.id)}
                 onChange={(event) =>
                   setConnectors((current) =>
                     event.target.checked
@@ -242,7 +244,7 @@ const AgentEditor = ({
             <label className="checkbox-row" key={choice.id}>
               <input
                 type="checkbox"
-                checked={sources.includes(choice.id)}
+                checked={selectedSourceIds.has(choice.id)}
                 onChange={(event) =>
                   setSources((current) =>
                     event.target.checked

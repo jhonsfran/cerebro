@@ -21,17 +21,17 @@ Review and improve logging patterns in TypeScript/JavaScript codebases. Transfor
 
 ## Quick Reference
 
-| Working on...             | Resource                                                                                                        |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Setup (CLI)               | [`evlog init`](https://www.evlog.dev/cli/init): wire evlog into the project                                     |
-| Project conventions (CLI) | [`evlog agents`](https://www.evlog.dev/cli/agents): write the evlog block into the project's AGENTS.md          |
-| Coverage map (CLI)        | [`evlog map`](https://www.evlog.dev/cli/map): score dark entry points                                           |
-| CI gating (CLI)           | [`evlog map --min-score / --baseline`](https://www.evlog.dev/cli/ci): gate regressions                          |
-| Wide events patterns      | [references/wide-events.md](references/wide-events.md)                                                          |
-| Error handling            | [references/structured-errors.md](references/structured-errors.md)                                              |
-| Code review checklist     | [references/code-review.md](references/code-review.md)                                                          |
-| Drain pipeline            | [references/drain-pipeline.md](references/drain-pipeline.md)                                                    |
-| Audit logs                | [build-audit-logs](../build-audit-logs/SKILL.md) skill + [docs](https://www.evlog.dev/use-cases/audit/overview) |
+| Working on... | Resource |
+| --- | --- |
+| Setup (CLI) | [`evlog init`](https://www.evlog.dev/cli/init): wire evlog into the project |
+| Project conventions (CLI) | [`evlog agents`](https://www.evlog.dev/cli/agents): write the evlog block into the project's AGENTS.md |
+| Coverage map (CLI) | [`evlog map`](https://www.evlog.dev/cli/map): score dark entry points |
+| CI gating (CLI) | [`evlog map --min-score / --baseline`](https://www.evlog.dev/cli/ci): gate regressions |
+| Wide events patterns | [references/wide-events.md](references/wide-events.md) |
+| Error handling | [references/structured-errors.md](references/structured-errors.md) |
+| Code review checklist | [references/code-review.md](references/code-review.md) |
+| Drain pipeline | [references/drain-pipeline.md](references/drain-pipeline.md) |
+| Audit logs | [build-audit-logs](../build-audit-logs/SKILL.md) skill + [docs](https://www.evlog.dev/use-cases/audit/overview) |
 
 ## Audit logs
 
@@ -166,12 +166,19 @@ Client-side: `log`, `setIdentity`, `clearIdentity` are auto-imported in componen
 // lib/evlog.ts
 import type { DrainContext } from "evlog";
 import { createEvlog } from "evlog/next";
-import { createUserAgentEnricher, createRequestSizeEnricher } from "evlog/enrichers";
+import {
+  createUserAgentEnricher,
+  createRequestSizeEnricher,
+} from "evlog/enrichers";
 import { createDrainPipeline } from "evlog/pipeline";
 
 const enrichers = [createUserAgentEnricher(), createRequestSizeEnricher()];
-const pipeline = createDrainPipeline<DrainContext>({ batch: { size: 50, intervalMs: 5000 } });
-const drain = pipeline(createAxiomDrain({ dataset: "logs", apiKey: process.env.AXIOM_API_KEY! }));
+const pipeline = createDrainPipeline<DrainContext>({
+  batch: { size: 50, intervalMs: 5000 },
+});
+const drain = pipeline(
+  createAxiomDrain({ dataset: "logs", apiKey: process.env.AXIOM_API_KEY! })
+);
 
 export const { withEvlog, useLogger, log, createError } = createEvlog({
   service: "my-app",
@@ -289,7 +296,7 @@ export async function POST(request: NextRequest) {
   const { service: _, ...sanitized } = body;
   console.log(
     "[CLIENT LOG]",
-    JSON.stringify({ ...sanitized, service: "my-app", source: "client" }),
+    JSON.stringify({ ...sanitized, service: "my-app", source: "client" })
   );
   return new Response(null, { status: 204 });
 }
@@ -520,7 +527,7 @@ app.use(
     keep: (ctx) => {
       if (ctx.duration && ctx.duration > 2000) ctx.shouldKeep = true;
     },
-  }),
+  })
 );
 ```
 
@@ -566,8 +573,13 @@ app.onError((error, c) => {
   c.get("log").error(error);
   const parsed = parseError(error);
   return c.json(
-    { message: parsed.message, why: parsed.why, fix: parsed.fix, link: parsed.link },
-    parsed.status as ContentfulStatusCode,
+    {
+      message: parsed.message,
+      why: parsed.why,
+      fix: parsed.fix,
+      link: parsed.link,
+    },
+    parsed.status as ContentfulStatusCode
   );
 });
 ```
@@ -587,7 +599,7 @@ app.use(
     keep: (ctx) => {
       if (ctx.duration && ctx.duration > 2000) ctx.shouldKeep = true;
     },
-  }),
+  })
 );
 ```
 
@@ -683,7 +695,7 @@ app.use(
     keep: (ctx) => {
       if (ctx.duration && ctx.duration > 2000) ctx.shouldKeep = true;
     },
-  }),
+  })
 );
 ```
 
@@ -775,7 +787,9 @@ const router = {
 const handler = withEvlog(new RPCHandler(router));
 
 export default async function fetch(request: Request) {
-  const { matched, response } = await handler.handle(request, { prefix: "/rpc" });
+  const { matched, response } = await handler.handle(request, {
+    prefix: "/rpc",
+  });
   return matched ? response : new Response("Not Found", { status: 404 });
 }
 ```
@@ -861,7 +875,10 @@ initLogger({ env: { service: "my-astro-app" } });
 
 export const onRequest = defineMiddleware(async ({ request, locals }, next) => {
   const url = new URL(request.url);
-  const log = createRequestLogger({ method: request.method, path: url.pathname });
+  const log = createRequestLogger({
+    method: request.method,
+    path: url.pathname,
+  });
   locals.log = log;
 
   try {
@@ -922,51 +939,51 @@ log.emit(); // Manual emit required in standalone
 
 All options work in Nuxt (`evlog` key), Nitro (passed to `evlog()`), Next.js (`createEvlog()`), and standalone (`initLogger()`).
 
-| Option                    | Type                                     | Default              | Description                                                                                                                                   |
-| ------------------------- | ---------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `env.service` / `service` | `string`                                 | `'app'`              | Service name in logs                                                                                                                          |
-| `enabled`                 | `boolean`                                | `true`               | Global toggle (no-ops when false)                                                                                                             |
-| `pretty`                  | `boolean`                                | `true` in dev        | Pretty tree format vs JSON                                                                                                                    |
-| `silent`                  | `boolean`                                | `false`              | Suppress console output. Events still go to drains                                                                                            |
-| `include`                 | `string[]`                               | All routes           | Route glob patterns to log                                                                                                                    |
-| `exclude`                 | `string[]`                               | None                 | Route patterns to exclude (takes precedence)                                                                                                  |
-| `routes`                  | `Record<string, { service }>`            | --                   | Route-specific service names                                                                                                                  |
-| `minLevel`                | `'debug' \| 'info' \| 'warn' \| 'error'` | `'debug'`            | Hard threshold for the global `log` API and client `log` (not request wide events). Use `sampling.rates` for probabilistic volume on requests |
-| `sampling.rates`          | `object`                                 | --                   | Head sampling: `{ info: 10, warn: 50 }` (0-100%)                                                                                              |
-| `sampling.keep`           | `array`                                  | --                   | Tail sampling: `[{ status: 400 }, { duration: 1000 }]`                                                                                        |
-| `drain`                   | `(ctx) => void`                          | --                   | Drain callback (Next.js, standalone)                                                                                                          |
-| `enrich`                  | `(ctx) => void`                          | --                   | Enrich callback (Next.js)                                                                                                                     |
-| `keep`                    | `(ctx) => void`                          | --                   | Custom tail sampling callback (Next.js)                                                                                                       |
-| `redact`                  | `boolean \| RedactConfig`                | `true` in production | Enabled by default in production. `false` to disable. Object for fine-grained control                                                         |
+| Option | Type | Default | Description |
+| --- | --- | --- | --- |
+| `env.service` / `service` | `string` | `'app'` | Service name in logs |
+| `enabled` | `boolean` | `true` | Global toggle (no-ops when false) |
+| `pretty` | `boolean` | `true` in dev | Pretty tree format vs JSON |
+| `silent` | `boolean` | `false` | Suppress console output. Events still go to drains |
+| `include` | `string[]` | All routes | Route glob patterns to log |
+| `exclude` | `string[]` | None | Route patterns to exclude (takes precedence) |
+| `routes` | `Record<string, { service }>` | -- | Route-specific service names |
+| `minLevel` | `'debug' \| 'info' \| 'warn' \| 'error'` | `'debug'` | Hard threshold for the global `log` API and client `log` (not request wide events). Use `sampling.rates` for probabilistic volume on requests |
+| `sampling.rates` | `object` | -- | Head sampling: `{ info: 10, warn: 50 }` (0-100%) |
+| `sampling.keep` | `array` | -- | Tail sampling: `[{ status: 400 }, { duration: 1000 }]` |
+| `drain` | `(ctx) => void` | -- | Drain callback (Next.js, standalone) |
+| `enrich` | `(ctx) => void` | -- | Enrich callback (Next.js) |
+| `keep` | `(ctx) => void` | -- | Custom tail sampling callback (Next.js) |
+| `redact` | `boolean \| RedactConfig` | `true` in production | Enabled by default in production. `false` to disable. Object for fine-grained control |
 
 ### Nitro Hooks (Nuxt, Nitro v2/v3)
 
-| Hook              | When                     | Use                              |
-| ----------------- | ------------------------ | -------------------------------- |
-| `evlog:drain`     | After enrichment         | Send events to external services |
-| `evlog:enrich`    | After emit, before drain | Add derived context              |
-| `evlog:emit:keep` | During emit              | Custom tail sampling logic       |
-| `close`           | Server shutdown          | Flush drain pipeline buffers     |
+| Hook | When | Use |
+| --- | --- | --- |
+| `evlog:drain` | After enrichment | Send events to external services |
+| `evlog:enrich` | After emit, before drain | Add derived context |
+| `evlog:emit:keep` | During emit | Custom tail sampling logic |
+| `close` | Server shutdown | Flush drain pipeline buffers |
 
 ---
 
 ## Drain Adapters
 
-| Adapter               | Import                                           | Env Vars                                                                                                                                                                      |
-| --------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Axiom                 | `evlog/axiom`                                    | `AXIOM_API_KEY`, `AXIOM_DATASET`                                                                                                                                              |
-| OTLP                  | `evlog/otlp`                                     | `OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_ENDPOINT`)                                                                                                                            |
-| HyperDX               | `evlog/hyperdx`                                  | `HYPERDX_API_KEY` (optional `HYPERDX_OTLP_ENDPOINT`; defaults to `https://in-otel.hyperdx.io`)                                                                                |
-| PostHog               | `evlog/posthog`                                  | `POSTHOG_API_KEY`, `POSTHOG_HOST`                                                                                                                                             |
-| Sentry                | `evlog/sentry`                                   | `SENTRY_DSN`                                                                                                                                                                  |
-| Better Stack          | `evlog/better-stack`                             | `BETTER_STACK_API_KEY`                                                                                                                                                        |
-| Datadog               | `evlog/datadog`                                  | `DD_API_KEY` or `DATADOG_API_KEY`, optional `DD_SITE` / `DATADOG_LOGS_URL`                                                                                                    |
-| Grafana Loki          | `evlog/loki`                                     | `LOKI_ENDPOINT`, optional `LOKI_API_KEY` + `LOKI_USER` (Grafana Cloud) or `LOKI_TENANT_ID` (multi-tenant)                                                                     |
-| ClickHouse            | `evlog/clickhouse`                               | `CLICKHOUSE_ENDPOINT`, optional `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` / `CLICKHOUSE_DATABASE` / `CLICKHOUSE_TABLE`                                                        |
-| File System           | `evlog/fs`                                       | None (local file system)                                                                                                                                                      |
-| Memory                | `evlog/memory`                                   | None (in-process ring buffer; optional `EVLOG_MEMORY_STORE`, `EVLOG_MEMORY_MAX_EVENTS`). Read back with `readMemoryLogs()`, ideal for dev-only log endpoints agents can query |
-| NuxtHub               | `@evlog/nuxthub` (separate package, Nuxt module) | None: stores wide events in the NuxtHub database with retention-based cleanup (set `evlog.retention: '7d'` in the module options; accepts `d`/`h`/`m`)                        |
-| HTTP (browser ingest) | `evlog/http`                                     | None (configure `endpoint` in code). `evlog/browser` is deprecated; same API, removed next major                                                                              |
+| Adapter | Import | Env Vars |
+| --- | --- | --- |
+| Axiom | `evlog/axiom` | `AXIOM_API_KEY`, `AXIOM_DATASET` |
+| OTLP | `evlog/otlp` | `OTLP_ENDPOINT` (or `OTEL_EXPORTER_OTLP_ENDPOINT`) |
+| HyperDX | `evlog/hyperdx` | `HYPERDX_API_KEY` (optional `HYPERDX_OTLP_ENDPOINT`; defaults to `https://in-otel.hyperdx.io`) |
+| PostHog | `evlog/posthog` | `POSTHOG_API_KEY`, `POSTHOG_HOST` |
+| Sentry | `evlog/sentry` | `SENTRY_DSN` |
+| Better Stack | `evlog/better-stack` | `BETTER_STACK_API_KEY` |
+| Datadog | `evlog/datadog` | `DD_API_KEY` or `DATADOG_API_KEY`, optional `DD_SITE` / `DATADOG_LOGS_URL` |
+| Grafana Loki | `evlog/loki` | `LOKI_ENDPOINT`, optional `LOKI_API_KEY` + `LOKI_USER` (Grafana Cloud) or `LOKI_TENANT_ID` (multi-tenant) |
+| ClickHouse | `evlog/clickhouse` | `CLICKHOUSE_ENDPOINT`, optional `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` / `CLICKHOUSE_DATABASE` / `CLICKHOUSE_TABLE` |
+| File System | `evlog/fs` | None (local file system) |
+| Memory | `evlog/memory` | None (in-process ring buffer; optional `EVLOG_MEMORY_STORE`, `EVLOG_MEMORY_MAX_EVENTS`). Read back with `readMemoryLogs()`, ideal for dev-only log endpoints agents can query |
+| NuxtHub | `@evlog/nuxthub` (separate package, Nuxt module) | None: stores wide events in the NuxtHub database with retention-based cleanup (set `evlog.retention: '7d'` in the module options; accepts `d`/`h`/`m`) |
+| HTTP (browser ingest) | `evlog/http` | None (configure `endpoint` in code). `evlog/browser` is deprecated; same API, removed next major |
 
 Use canonical env var names (e.g. `AXIOM_API_KEY`, `BETTER_STACK_API_KEY`), and the same names work in every framework.
 
@@ -1128,14 +1145,21 @@ This adds `ai.tools` (per-tool `{ name, durationMs, success, error? }`) and `ai.
 ### Embeddings
 
 ```typescript
-const { embedding, usage } = await embed({ model: embeddingModel, value: query });
+const { embedding, usage } = await embed({
+  model: embeddingModel,
+  value: query,
+});
 ai.captureEmbed({ usage, model: "text-embedding-3-small", dimensions: 1536 });
 ```
 
 For `embedMany`, pass the batch count:
 
 ```typescript
-ai.captureEmbed({ usage, model: "text-embedding-3-small", count: documents.length });
+ai.captureEmbed({
+  usage,
+  model: "text-embedding-3-small",
+  count: documents.length,
+});
 ```
 
 ### Cost estimation
@@ -1157,13 +1181,13 @@ Includes: `calls`, `model`, `provider`, `inputTokens`, `outputTokens`, `totalTok
 
 Anti-patterns to detect:
 
-| Anti-Pattern                           | Fix                                                          |
-| -------------------------------------- | ------------------------------------------------------------ |
-| Manual token tracking in `onFinish`    | `ai.wrap()`: middleware captures automatically               |
-| `console.log('tokens:', result.usage)` | `ai.wrap()`: structured `ai.*` fields in wide event          |
-| No AI observability                    | Add `createAILogger(log)` + `ai.wrap()`                      |
-| No tool execution timing               | Add `createEvlogIntegration(ai)` to `telemetry.integrations` |
-| Manual cost calculation                | Use `cost` option in `createAILogger()`                      |
+| Anti-Pattern | Fix |
+| --- | --- |
+| Manual token tracking in `onFinish` | `ai.wrap()`: middleware captures automatically |
+| `console.log('tokens:', result.usage)` | `ai.wrap()`: structured `ai.*` fields in wide event |
+| No AI observability | Add `createAILogger(log)` + `ai.wrap()` |
+| No tool execution timing | Add `createEvlogIntegration(ai)` to `telemetry.integrations` |
+| Manual cost calculation | Use `cost` option in `createAILogger()` |
 
 ---
 
@@ -1171,13 +1195,13 @@ Anti-patterns to detect:
 
 Recommend these when the review surfaces the matching need. Each has full docs on evlog.dev:
 
-| Need spotted                                                              | evlog answer                                                                          | Docs                                                                            |
-| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Auth'd user identity missing from events (Better Auth apps)               | `evlog/better-auth`: `identifyUser()`, `createAuthMiddleware()`, client identity sync | https://www.evlog.dev/use-cases/better-auth/overview                            |
-| Ad-hoc field names drifting across the codebase                           | Typed fields + error/audit catalogs (`evlog/catalog`)                                 | https://www.evlog.dev/learn/typed-fields · https://www.evlog.dev/learn/catalogs |
-| Cross-cutting hooks (request start/finish, client logs, logger extension) | Plugins: `definePlugin`                                                               | https://www.evlog.dev/extend/plugins                                            |
-| Tail logs live during dev / build a log viewer                            | `createStreamDrain` (`evlog/stream`, SSE) + `readFsLogs` / `tailFsLogs` (`evlog/fs`)  | https://www.evlog.dev/extend/stream                                             |
-| Agents need to query logs over HTTP in dev                                | Memory adapter + `readMemoryLogs()` behind a dev-only endpoint                        | https://www.evlog.dev/integrate/adapters/self-hosted/memory                     |
+| Need spotted | evlog answer | Docs |
+| --- | --- | --- |
+| Auth'd user identity missing from events (Better Auth apps) | `evlog/better-auth`: `identifyUser()`, `createAuthMiddleware()`, client identity sync | https://www.evlog.dev/use-cases/better-auth/overview |
+| Ad-hoc field names drifting across the codebase | Typed fields + error/audit catalogs (`evlog/catalog`) | https://www.evlog.dev/learn/typed-fields · https://www.evlog.dev/learn/catalogs |
+| Cross-cutting hooks (request start/finish, client logs, logger extension) | Plugins: `definePlugin` | https://www.evlog.dev/extend/plugins |
+| Tail logs live during dev / build a log viewer | `createStreamDrain` (`evlog/stream`, SSE) + `readFsLogs` / `tailFsLogs` (`evlog/fs`) | https://www.evlog.dev/extend/stream |
+| Agents need to query logs over HTTP in dev | Memory adapter + `readMemoryLogs()` behind a dev-only endpoint | https://www.evlog.dev/integrate/adapters/self-hosted/memory |
 
 ---
 
@@ -1190,7 +1214,11 @@ import { createError } from "evlog"; // required in Nuxt too: a bare createError
 throw createError({ message: "Database connection failed", status: 500 });
 
 // Standard
-throw createError({ message: "Payment failed", status: 402, why: "Card declined by issuer" });
+throw createError({
+  message: "Payment failed",
+  status: 402,
+  why: "Card declined by issuer",
+});
 
 // Complete
 throw createError({
@@ -1226,15 +1254,15 @@ See [references/structured-errors.md](references/structured-errors.md) for commo
 
 ## Anti-Patterns to Detect
 
-| Anti-Pattern                                     | Fix                                                                                   |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------- |
-| Multiple `console.log` in one function           | Single wide event with `log.set()`                                                    |
-| `throw new Error('...')`                         | `throw createError({ message, status, why, fix })`                                    |
-| `console.error(e); throw e`                      | `log.error(e); throw createError(...)`                                                |
-| No logging in request handlers                   | Add `useLogger(event)` / `useLogger()` / `createRequestLogger()`                      |
-| Flat log data `{ uid, n, t }`                    | Grouped objects: `{ user: {...}, cart: {...} }`                                       |
+| Anti-Pattern | Fix |
+| --- | --- |
+| Multiple `console.log` in one function | Single wide event with `log.set()` |
+| `throw new Error('...')` | `throw createError({ message, status, why, fix })` |
+| `console.error(e); throw e` | `log.error(e); throw createError(...)` |
+| No logging in request handlers | Add `useLogger(event)` / `useLogger()` / `createRequestLogger()` |
+| Flat log data `{ uid, n, t }` | Grouped objects: `{ user: {...}, cart: {...} }` |
 | Logging sensitive data `log.set({ user: body })` | Explicit fields: `{ user: { id: body.id, plan: body.plan } }` + enable `redact: true` |
-| Putting support-only IDs in `why` / `message`    | Use `createError({ ..., internal: { ... } })` for non-user-facing diagnostics         |
+| Putting support-only IDs in `why` / `message` | Use `createError({ ..., internal: { ... } })` for non-user-facing diagnostics |
 
 See [references/code-review.md](references/code-review.md) for the full checklist.
 

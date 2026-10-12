@@ -10,12 +10,13 @@ export const agentExecutionGrants = (
     readonly connectorId?: string;
   }[] = []
 ): Grant[] => {
+  const selectedToolIds = new Set(toolIds);
   const connectorIds = [
     ...new Set(
       toolChoices.flatMap((choice) =>
-        toolIds.includes(choice.id) &&
+        selectedToolIds.has(choice.id) &&
         choice.connectorId &&
-        !toolIds.includes(choice.connectorId)
+        !selectedToolIds.has(choice.connectorId)
           ? [choice.connectorId]
           : []
       )

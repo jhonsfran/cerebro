@@ -1,16 +1,15 @@
 import { Button } from "@cerebro/ui/components/button";
-import { Input } from "@cerebro/ui/components/input";
-import { Label } from "@cerebro/ui/components/label";
 import { useForm } from "@tanstack/react-form";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import z from "zod";
+import { z } from "zod";
 
 import { authClient } from "@/lib/auth-client";
 
+import { AuthFormField } from "./auth-form-field";
 import Loader from "./loader";
 
-export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () => void }) {
+const SignInForm = ({ onSwitchToSignUp }: { onSwitchToSignUp: () => void }) => {
   const navigate = useNavigate({
     from: "/",
   });
@@ -37,7 +36,7 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
           onError: (error) => {
             toast.error(error.error.message || error.error.statusText);
           },
-        },
+        }
       );
     },
     validators: {
@@ -53,7 +52,7 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
   }
 
   return (
-    <div className="mx-auto w-full mt-10 max-w-md p-6">
+    <div className="mx-auto mt-10 w-full max-w-md p-6">
       <h1 className="mb-6 text-center text-3xl font-bold">Welcome Back</h1>
 
       <form
@@ -67,22 +66,15 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
         <div>
           <form.Field name="email">
             {(field) => (
-              <div className="space-y-2">
-                <Label htmlFor={field.name}>Email</Label>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  type="email"
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(e) => field.handleChange(e.target.value)}
-                />
-                {field.state.meta.errors.map((error) => (
-                  <p key={error?.message} className="text-red-500">
-                    {error?.message}
-                  </p>
-                ))}
-              </div>
+              <AuthFormField
+                name={field.name}
+                label="Email"
+                type="email"
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={field.handleChange}
+                errors={field.state.meta.errors}
+              />
             )}
           </form.Field>
         </div>
@@ -90,31 +82,31 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
         <div>
           <form.Field name="password">
             {(field) => (
-              <div className="space-y-2">
-                <Label htmlFor={field.name}>Password</Label>
-                <Input
-                  id={field.name}
-                  name={field.name}
-                  type="password"
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(e) => field.handleChange(e.target.value)}
-                />
-                {field.state.meta.errors.map((error) => (
-                  <p key={error?.message} className="text-red-500">
-                    {error?.message}
-                  </p>
-                ))}
-              </div>
+              <AuthFormField
+                name={field.name}
+                label="Password"
+                type="password"
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={field.handleChange}
+                errors={field.state.meta.errors}
+              />
             )}
           </form.Field>
         </div>
 
         <form.Subscribe
-          selector={(state) => ({ canSubmit: state.canSubmit, isSubmitting: state.isSubmitting })}
+          selector={(state) => ({
+            canSubmit: state.canSubmit,
+            isSubmitting: state.isSubmitting,
+          })}
         >
           {({ canSubmit, isSubmitting }) => (
-            <Button type="submit" className="w-full" disabled={!canSubmit || isSubmitting}>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={!canSubmit || isSubmitting}
+            >
               {isSubmitting ? "Submitting..." : "Sign In"}
             </Button>
           )}
@@ -132,4 +124,6 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
       </div>
     </div>
   );
-}
+};
+
+export default SignInForm;

@@ -7,9 +7,7 @@ tags: composition, state, context, providers
 
 ## Lift State into Provider Components
 
-Move state management into dedicated provider components. This allows sibling
-components outside the main UI to access and modify state without prop drilling
-or awkward refs.
+Move state management into dedicated provider components. This allows sibling components outside the main UI to access and modify state without prop drilling or awkward refs.
 
 **Incorrect (state trapped inside component):**
 
@@ -100,10 +98,12 @@ function ForwardMessageDialog() {
     <ForwardMessageProvider>
       <Dialog>
         <ForwardMessageComposer />
-        <MessagePreview /> {/* Custom components can access state and actions */}
+        <MessagePreview />{" "}
+        {/* Custom components can access state and actions */}
         <DialogActions>
           <CancelButton />
-          <ForwardButton /> {/* Custom components can access state and actions */}
+          <ForwardButton />{" "}
+          {/* Custom components can access state and actions */}
         </DialogActions>
       </Dialog>
     </ForwardMessageProvider>
@@ -116,10 +116,6 @@ function ForwardButton() {
 }
 ```
 
-The ForwardButton lives outside the Composer.Frame but still has access to the
-submit action because it's within the provider. Even though it's a one-off
-component, it can still access the composer's state and actions from outside the
-UI itself.
+The ForwardButton lives outside the Composer.Frame but still has access to the submit action because it's within the provider. Even though it's a one-off component, it can still access the composer's state and actions from outside the UI itself.
 
-**Key insight:** Components that need shared state don't have to be visually
-nested inside each other—they just need to be within the same provider.
+**Key insight:** Components that need shared state don't have to be visually nested inside each other—they just need to be within the same provider.

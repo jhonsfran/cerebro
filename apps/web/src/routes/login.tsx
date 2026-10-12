@@ -4,11 +4,7 @@ import { useState } from "react";
 import SignInForm from "@/components/sign-in-form";
 import SignUpForm from "@/components/sign-up-form";
 
-export const Route = createFileRoute("/login")({
-  component: RouteComponent,
-});
-
-function RouteComponent() {
+const RouteComponent = () => {
   const [showSignIn, setShowSignIn] = useState(false);
 
   return showSignIn ? (
@@ -16,4 +12,8 @@ function RouteComponent() {
   ) : (
     <SignUpForm onSwitchToSignIn={() => setShowSignIn(true)} />
   );
-}
+};
+
+export const Route = createFileRoute("/login")({
+  component: RouteComponent,
+});

@@ -54,12 +54,14 @@ The web app is on port `3001` and the API on port `18765`. To use other ports, s
 
 ## Run the checks
 
-Install dependencies once with `pnpm install --frozen-lockfile`. Every check except `check-types`, `check`, `build`, `test:contracts`, and `test:identity` needs Docker.
+Install dependencies once with `pnpm install --frozen-lockfile`. Every check except `check-types`, `check`, `check:react`, `verify:commit`, `build`, `test:contracts`, and `test:identity` needs Docker.
 
 | Command | Covers |
 | --- | --- |
 | `pnpm check-types` | TypeScript across the workspace |
 | `pnpm check` | Lint and formatting |
+| `pnpm check:react` | React Doctor for the web app and shared UI |
+| `pnpm verify:commit` | Ultracite and React Doctor, as run by the commit hook |
 | `pnpm build` | Production build of every package |
 | `pnpm test:contracts` | Shared contracts and session schemas |
 | `pnpm test:identity` | Identity, OIDC, and SCIM |
@@ -71,6 +73,8 @@ Install dependencies once with `pnpm install --frozen-lockfile`. Every check exc
 | `pnpm test:integration` | Full stacks: boot, the pilot acceptance gates, and backup restore |
 
 Integration tests start isolated stacks with `tests/slice-1/compose.test.yaml`, which adds the fake model and connectors. `pnpm test:pi:live` runs one check against a real model and connector; [its README](tests/live/README.md) lists what it needs.
+
+After `pnpm install`, Husky runs both checks before each local commit. Ultracite checks the workspace; React Doctor checks the web app and shared UI. The checks read working files, including unstaged changes. Errors block the commit; React Doctor warnings do not. The hook does not change or stage files. Fix reported errors, stage your changes, then retry the commit. React Doctor runs without network checks or score uploads. Run `pnpm verify:commit` to use the same checks manually. Git's `--no-verify` option can bypass this local hook.
 
 ## Learn more
 

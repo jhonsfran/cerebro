@@ -7,13 +7,9 @@ tags: composition, context, state, typescript, dependency-injection
 
 ## Define Generic Context Interfaces for Dependency Injection
 
-Define a **generic interface** for your component context with three parts:
-`state`, `actions`, and `meta`. This interface is a contract that any provider
-can implement—enabling the same UI components to work with completely different
-state implementations.
+Define a **generic interface** for your component context with three parts: `state`, `actions`, and `meta`. This interface is a contract that any provider can implement—enabling the same UI components to work with completely different state implementations.
 
-**Core principle:** Lift state, compose internals, make state
-dependency-injectable.
+**Core principle:** Lift state, compose internals, make state dependency-injectable.
 
 **Incorrect (UI coupled to specific state implementation):**
 
@@ -137,9 +133,7 @@ function ChannelProvider({ channelId, children }: Props) {
 
 **Custom UI outside the component can access state and actions:**
 
-The provider boundary is what matters—not the visual nesting. Components that
-need shared state don't have to be inside the `Composer.Frame`. They just need
-to be within the provider.
+The provider boundary is what matters—not the visual nesting. Components that need shared state don't have to be inside the `Composer.Frame`. They just need to be within the provider.
 
 ```tsx
 function ForwardMessageDialog() {
@@ -183,9 +177,6 @@ function MessagePreview() {
 }
 ```
 
-The `ForwardButton` and `MessagePreview` are not visually inside the composer
-box, but they can still access its state and actions. This is the power of
-lifting state into providers.
+The `ForwardButton` and `MessagePreview` are not visually inside the composer box, but they can still access its state and actions. This is the power of lifting state into providers.
 
-The UI is reusable bits you compose together. The state is dependency-injected
-by the provider. Swap the provider, keep the UI.
+The UI is reusable bits you compose together. The state is dependency-injected by the provider. Swap the provider, keep the UI.

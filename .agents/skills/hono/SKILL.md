@@ -401,7 +401,7 @@ app.get("/", (c) => {
   return c.html(
     <Layout>
       <UserCard name="Alice" />
-    </Layout>,
+    </Layout>
   );
 });
 ```
@@ -502,7 +502,11 @@ formData.append("name", "Alice");
 const res = await app.request("/users", { method: "POST", body: formData });
 
 // With mock env (Cloudflare Workers bindings)
-const res = await app.request("/api/data", {}, { KV: mockKV, DATABASE: mockDB });
+const res = await app.request(
+  "/api/data",
+  {},
+  { KV: mockKV, DATABASE: mockDB }
+);
 
 // Using Request object
 const req = new Request("http://localhost/api", { method: "DELETE" });
@@ -585,7 +589,9 @@ const mw = factory.createMiddleware(async (c, next) => {
 });
 
 // Create handlers separately (preserves type inference)
-const handlers = factory.createHandlers(logger(), (c) => c.json({ message: "Hello" }));
+const handlers = factory.createHandlers(logger(), (c) =>
+  c.json({ message: "Hello" })
+);
 app.get("/api", ...handlers);
 ```
 

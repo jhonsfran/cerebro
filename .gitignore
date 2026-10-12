@@ -51,6 +51,7 @@ lerna-debug.log*
 # Testing
 coverage
 .nyc_output
+/artifacts/
 
 # Misc
 *.tgz
