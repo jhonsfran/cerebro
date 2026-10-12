@@ -3,17 +3,13 @@ import { id } from "@cerebro/contracts";
 import type {
   Action,
   ExecutionContext,
-  ContentDependencies,
   PortResult,
   Resource,
 } from "@cerebro/contracts";
-import { failureToHttp } from "@cerebro/contracts/failures";
-import type { ContractFailure } from "@cerebro/contracts/failures";
 import type { Database } from "@cerebro/db";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import { identityPrincipal } from "@cerebro/db/schema/identity";
 import { and, eq } from "drizzle-orm";
-import { Effect } from "effect";
 
 import { ChannelError, EFFECT_DEADLINE_MS } from "./types";
 import type { ChannelOptions } from "./types";
@@ -56,25 +52,6 @@ export const unwrap = <T>(result: PortResult<T>): T => {
     statuses[result.status],
     "code" in result ? result.code : result.status,
     "reason" in result ? result.reason : "The resource was not found."
-  );
-};
-export const runEffect = async <Value>(
-  effect: Effect.Effect<Value, ContractFailure>
-): Promise<Value> => {
-  const result = await Effect.runPromise(
-    Effect.match(effect, {
-      onFailure: (failure) => ({ failure, ok: false as const }),
-      onSuccess: (value) => ({ ok: true as const, value }),
-    })
-  );
-  if (result.ok) {
-    return result.value;
-  }
-  const response = failureToHttp(result.failure);
-  throw new ChannelError(
-    response.status,
-    "code" in result.failure ? result.failure.code : result.failure._tag,
-    response.body.message
   );
 };
 export const principalContext = async (
@@ -159,50 +136,6 @@ export const authorize = async (
   const result = unwrap(evaluated);
   if (result.decision !== "allow") {
     throw new ChannelError(403, "forbidden", result.reason);
-  }
-};
-
-export const authorizeContent = async (
-  database: Database,
-  options: ChannelOptions,
-  context: ExecutionContext,
-  item: { readonly type: string; readonly dependencies?: ContentDependencies }
-): Promise<void> => {
-  if (!["output", "citation", "tool", "user"].includes(item.type)) {
-    return;
-  }
-  if (!item.dependencies) {
-    if (item.type !== "user") {
-      throw new ChannelError(
-        403,
-        "unauthorized",
-        "Content dependencies are not available."
-      );
-    }
-    return;
-  }
-  await Promise.all([
-    ...item.dependencies.sourceIds.map((sourceId) =>
-      authorize(database, options, context, "read", "memory", sourceId)
-    ),
-    ...item.dependencies.toolIds.map((toolId) =>
-      authorize(database, options, context, "read", "tool", toolId)
-    ),
-  ]);
-  if (options.checkContentDependencies) {
-    unwrap(
-      await options.checkContentDependencies(
-        database,
-        context,
-        item.dependencies
-      )
-    );
-  } else if (item.dependencies.sourceIds.length > 0) {
-    throw new ChannelError(
-      503,
-      "provider-unavailable",
-      "Current source access is not configured."
-    );
   }
 };
 

@@ -347,8 +347,22 @@ export const createMcpGateway = (
           status: "unknown-outcome",
         };
       }
+      // A revocation during dispatch withholds the output. A write may already
+      // have happened, so it is an unknown outcome, never a definite failure.
       const current = await permitted(call, afterDispatch(options));
-      return Response.json(current.status === "ok" ? result : current);
+      if (current.status === "ok" || result.status !== "ok") {
+        return Response.json(result);
+      }
+      return Response.json(
+        call.tool.effect === "write"
+          ? {
+              operationId: options.operationId,
+              reason:
+                "Access changed while the connector call ran. Its outcome is unknown.",
+              status: "unknown-outcome",
+            }
+          : current
+      );
     },
   };
 };

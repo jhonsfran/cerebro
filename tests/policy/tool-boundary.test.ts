@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { Effect } from "effect";
 import { z } from "zod";
 
+import { createAgentAuthority } from "../../packages/authorization/src/agent-authority.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type {
   AuthorizationPolicy,
@@ -17,14 +18,6 @@ import type {
   EffectOptions,
   PortResult,
 } from "../../packages/contracts/src/port.ts";
-import { createAuthorityFake } from "../../packages/contracts/src/testing/effect-fakes.ts";
-import {
-  allowedContext,
-  fixtureAgentId,
-  fixtureOrganizationId,
-  fixtureRunId,
-  userEvent,
-} from "../../packages/contracts/src/testing/fixtures.ts";
 import type {
   BoundApproval,
   BoundCapability,
@@ -37,7 +30,6 @@ import type {
   ToolCapability,
   ToolExecution,
 } from "../../packages/contracts/src/tools.ts";
-import { createAgentAuthority } from "../../packages/policy/src/agent-authority.ts";
 import { readBoundedJson } from "../../packages/tools/src/bounded-json.ts";
 import { createControlledToolExecutor } from "../../packages/tools/src/broker.ts";
 import {
@@ -59,6 +51,14 @@ import {
   bindRegisteredTool,
 } from "../../packages/tools/src/registry.ts";
 import type { ToolRegistration } from "../../packages/tools/src/registry.ts";
+import { createAuthorityFake } from "../support/effect-fakes.ts";
+import {
+  allowedContext,
+  fixtureAgentId,
+  fixtureOrganizationId,
+  fixtureRunId,
+  userEvent,
+} from "../support/fixtures.ts";
 
 const secret = "fixture-secret-for-redaction";
 const inputSchema = z.strictObject({ query: z.string() });
@@ -106,6 +106,7 @@ const fixture = async (write = false) => {
     posts: 0,
     reads: 0,
     requests,
+    revokeOnDispatch: false,
     timeout: false,
   };
   const registered = registration(write);
@@ -166,6 +167,9 @@ const fixture = async (write = false) => {
       typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
     state.requests.push(body);
     state.effects += 1;
+    if (state.revokeOnDispatch) {
+      state.denied = true;
+    }
     if (state.timeout) {
       throw new Error("Fixture dropped the provider reply.");
     }
@@ -511,6 +515,48 @@ test("Effect gateway uncertainty reports an unknown outcome after one dispatch",
     assert.equal(f.state.reads, 0);
   } finally {
     f.close();
+  }
+});
+
+test("a revocation during dispatch withholds output and never reports a write as failed", async () => {
+  const write = await controlledFixture(true);
+  try {
+    write.state.revokeOnDispatch = true;
+    const result = await Effect.runPromise(
+      Effect.result(
+        write.executor.execute(
+          write.boundCall,
+          write.boundCapability,
+          write.options
+        )
+      )
+    );
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.equal(result.failure._tag, "UnknownOutcome");
+    }
+    assert.equal(write.state.effects, 1);
+  } finally {
+    write.close();
+  }
+  const read = await controlledFixture();
+  try {
+    read.state.revokeOnDispatch = true;
+    const result = await Effect.runPromise(
+      Effect.result(
+        read.executor.execute(
+          read.boundCall,
+          read.boundCapability,
+          read.options
+        )
+      )
+    );
+    assert.equal(result._tag, "Failure");
+    if (result._tag === "Failure") {
+      assert.equal(result.failure._tag, "Denied");
+    }
+  } finally {
+    read.close();
   }
 });
 

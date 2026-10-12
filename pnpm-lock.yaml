@@ -144,9 +144,6 @@ importers:
       '@cerebro/memory':
         specifier: workspace:*
         version: link:../../packages/memory
-      '@cerebro/policy':
-        specifier: workspace:*
-        version: link:../../packages/policy
       '@cerebro/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
@@ -484,25 +481,6 @@ importers:
       aws4fetch:
         specifier: 1.0.20
         version: 1.0.20
-    devDependencies:
-      '@cerebro/config':
-        specifier: workspace:*
-        version: link:../config
-      typescript:
-        specifier: 'catalog:'
-        version: 7.0.2
-
-  packages/policy:
-    dependencies:
-      '@cerebro/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@cerebro/db':
-        specifier: workspace:*
-        version: link:../db
-      effect:
-        specifier: 4.0.1
-        version: 4.0.1
     devDependencies:
       '@cerebro/config':
         specifier: workspace:*

@@ -345,10 +345,9 @@ if (values["self-test"]) {
   });
   test("frozen Effect authority fake seeds foreign-company denial and revocation", async () => {
     const { Effect } = await import("effect");
-    const { createAuthorityFake } =
-      await import("../../packages/contracts/src/testing/effect-fakes.ts");
+    const { createAuthorityFake } = await import("../support/effect-fakes.ts");
     const { allowedContext, userEvent } =
-      await import("../../packages/contracts/src/testing/fixtures.ts");
+      await import("../support/fixtures.ts");
     const { id } = await import("../../packages/contracts/src/identity.ts");
     const now = Date.now();
     const fake = createAuthorityFake(() => now);

@@ -33,7 +33,6 @@ COPY packages/config/package.json ./packages/config/package.json
 COPY packages/contracts/package.json ./packages/contracts/package.json
 COPY packages/db/package.json ./packages/db/package.json
 COPY packages/memory/package.json ./packages/memory/package.json
-COPY packages/policy/package.json ./packages/policy/package.json
 COPY packages/runtime/package.json ./packages/runtime/package.json
 COPY packages/tools/package.json ./packages/tools/package.json
 COPY packages/ui/package.json ./packages/ui/package.json

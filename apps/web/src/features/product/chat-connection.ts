@@ -1,5 +1,6 @@
 /* oxlint-disable no-await-in-loop -- A response reader delivers frames in wire order. */
-import { useEffect, useMemo, useState } from "react";
+import type { ChatSnapshot } from "@cerebro/contracts/session-service";
+import { useEffect, useState } from "react";
 
 import {
   apiUrl,
@@ -16,9 +17,11 @@ import {
   OBSERVATION_CONTENT_TYPE,
 } from "./observation";
 import type { ObservationConnectionStatus } from "./observation";
-import { projectionMessages } from "./projection";
-import type { ConversationProjection } from "./projection";
-import { messageReceiptSchema, stateMutationSchema } from "./types";
+import {
+  approvalReceiptSchema,
+  messageReceiptSchema,
+  stopReceiptSchema,
+} from "./types";
 import type { Conversation } from "./types";
 
 export const readObservations = async function* readObservations(
@@ -26,16 +29,18 @@ export const readObservations = async function* readObservations(
   generation: number,
   signal: AbortSignal
 ): AsyncIterable<unknown> {
-  const response = await fetch(
-    apiUrl(`${path}/observations?accessGeneration=${generation}`),
-    {
-      credentials: "include",
-      headers: { Accept: OBSERVATION_CONTENT_TYPE },
-      signal,
-    }
-  );
-  assertCurrentAccess(generation);
+  const response = await fetch(apiUrl(`${path}/observations`), {
+    credentials: "include",
+    headers: { Accept: OBSERVATION_CONTENT_TYPE },
+    signal,
+  });
+  if (generation !== currentAccessGeneration() || signal.aborted) {
+    await response.body?.cancel();
+    assertCurrentAccess(generation);
+    signal.throwIfAborted();
+  }
   if (!response.ok) {
+    await response.body?.cancel();
     throw new ProductError(
       response.status,
       "Conversation observation is unavailable."
@@ -87,27 +92,28 @@ export const readObservations = async function* readObservations(
 };
 
 export const submitMessage = (path: string, message: PendingChatMessage) =>
-  mutate(
-    `${path}/messages`,
-    { ...message, operationId: message.eventId },
-    messageReceiptSchema
-  );
+  mutate(`${path}/messages`, message, messageReceiptSchema);
 
-export const sendRunCommand = (
+export const stopConversation = (path: string) =>
+  mutate(`${path}/stop`, {}, stopReceiptSchema);
+
+export const decideApproval = (
   path: string,
-  suffix: string,
-  operationId: string,
-  body?: { runId: string; decision: "allow" | "deny" }
-) => mutate(`${path}/${suffix}`, { ...body, operationId }, stateMutationSchema);
+  approvalId: string,
+  decision: "allow" | "deny"
+) =>
+  mutate(
+    `${path}/approvals/${encodeURIComponent(approvalId)}`,
+    { decision },
+    approvalReceiptSchema
+  );
 
 export const useConversationConnection = (
   conversation: Conversation | null,
   path: string,
   connected: boolean
 ) => {
-  const [projection, setProjection] = useState<ConversationProjection | null>(
-    null
-  );
+  const [snapshot, setSnapshot] = useState<ChatSnapshot | null>(null);
   const [connection, setConnection] =
     useState<ObservationConnectionStatus>("disconnected");
   const [error, setError] = useState("");
@@ -123,28 +129,28 @@ export const useConversationConnection = (
       generation: currentAccessGeneration,
       onDenied: clearProductCache,
       onError: (failure) => setError(failure.message),
-      onProjection: setProjection,
+      onSnapshot: (value) => {
+        setSnapshot(value);
+        setError("");
+      },
       onStatus: setConnection,
       open: (generation, signal) => readObservations(path, generation, signal),
     });
     const clear = () => {
       observer.detach();
-      setProjection(null);
+      setSnapshot(null);
       setConnection("denied");
     };
     window.addEventListener("cerebro:access-cleared", clear);
     observer.attach();
     return () => {
       window.removeEventListener("cerebro:access-cleared", clear);
-      observer.detach();
       observer.dispose();
     };
   }, [agentId, conversationId, sessionId, connected, path]);
-  const messages = useMemo(() => projectionMessages(projection), [projection]);
   return {
     connection: connected ? connection : ("disconnected" as const),
     error,
-    messages,
-    projection,
+    snapshot,
   };
 };

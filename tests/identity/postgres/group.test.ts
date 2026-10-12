@@ -2,19 +2,15 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 
+import { createAuth } from "@cerebro/auth";
+import { createAuthorizationPolicy } from "@cerebro/authorization";
+import { id } from "@cerebro/contracts/identity";
+import { withDatabase } from "@cerebro/db";
+import { createIdentityRepository } from "@cerebro/db/repositories/identity";
+import { scimProjectionGrant, scimUser } from "@cerebro/db/schema/auth";
+import { organization } from "@cerebro/db/schema/core";
+import { identityPrincipal } from "@cerebro/db/schema/identity";
 import { and, eq } from "drizzle-orm";
-
-import { createAuth } from "../../../packages/auth/src/index.ts";
-import { createAuthorizationPolicy } from "../../../packages/authorization/src/index.ts";
-import { id } from "../../../packages/contracts/src/index.ts";
-import { withDatabase } from "../../../packages/db/src/index.ts";
-import { createIdentityRepository } from "../../../packages/db/src/repositories/identity.ts";
-import {
-  scimProjectionGrant,
-  scimUser,
-} from "../../../packages/db/src/schema/auth.ts";
-import { organization } from "../../../packages/db/src/schema/core.ts";
-import { identityPrincipal } from "../../../packages/db/src/schema/identity.ts";
 
 const databaseUrl = process.env.IDENTITY_TEST_DATABASE_URL;
 if (!databaseUrl) {

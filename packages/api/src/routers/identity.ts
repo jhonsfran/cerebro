@@ -4,7 +4,6 @@ import type { Database } from "@cerebro/db";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import type { IdentityRepository } from "@cerebro/db/repositories/identity";
 import { auditEvent } from "@cerebro/db/schema/audit";
-import { usageReservation } from "@cerebro/db/schema/usage";
 import { ORPCError } from "@orpc/server";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { z } from "zod";
@@ -68,13 +67,12 @@ const requireSessionUserId = (
 
 const exportInput = organizationInput.extend({
   cursor: z.string().min(1).max(1024).optional(),
-  kind: z.enum(["audit", "usage"]),
+  kind: z.literal("audit").default("audit"),
   limit: z.number().int().min(1).max(200).default(100),
 });
 const requireExport = async (
   repository: IdentityApiRepository,
   organizationId: string,
-  kind: "audit" | "usage",
   userId: string,
   now: () => number
 ) => {
@@ -95,7 +93,7 @@ const requireExport = async (
     "export",
     {
       id: organizationId,
-      kind: kind === "audit" ? "audit" : "budget",
+      kind: "audit",
       organizationId: id.organization(organizationId),
     },
     { deadlineAt: now() + AUTHORIZATION_DEADLINE_MS }
@@ -123,7 +121,7 @@ export const createIdentityRouter = (
   authorizeExport: protectedProcedure
     .input(
       organizationInput.extend({
-        kind: z.enum(["audit", "usage"]),
+        kind: z.literal("audit").default("audit"),
       })
     )
     .handler(async ({ context, input }) => {
@@ -131,7 +129,6 @@ export const createIdentityRouter = (
       const policyVersion = await requireExport(
         repository,
         input.organizationId,
-        input.kind,
         requireSessionUserId(context.session),
         now
       );
@@ -182,46 +179,24 @@ export const createIdentityRouter = (
       const policyVersion = await requireExport(
         repository,
         input.organizationId,
-        input.kind,
         requireSessionUserId(context.session),
         now
       );
-      if (input.kind === "audit") {
-        const rows = await context.db
-          .select()
-          .from(auditEvent)
-          .where(
-            and(
-              eq(auditEvent.organizationId, input.organizationId),
-              input.cursor ? gt(auditEvent.eventId, input.cursor) : undefined
-            )
-          )
-          .orderBy(asc(auditEvent.eventId))
-          .limit(input.limit + 1);
-        const records = rows.slice(0, input.limit);
-        return {
-          kind: "audit" as const,
-          nextCursor:
-            rows.length > input.limit ? records.at(-1)?.eventId : null,
-          policyVersion,
-          records,
-        };
-      }
       const rows = await context.db
         .select()
-        .from(usageReservation)
+        .from(auditEvent)
         .where(
           and(
-            eq(usageReservation.organizationId, input.organizationId),
-            input.cursor ? gt(usageReservation.id, input.cursor) : undefined
+            eq(auditEvent.organizationId, input.organizationId),
+            input.cursor ? gt(auditEvent.eventId, input.cursor) : undefined
           )
         )
-        .orderBy(asc(usageReservation.id))
+        .orderBy(asc(auditEvent.eventId))
         .limit(input.limit + 1);
       const records = rows.slice(0, input.limit);
       return {
-        kind: "usage" as const,
-        nextCursor: rows.length > input.limit ? records.at(-1)?.id : null,
+        kind: "audit" as const,
+        nextCursor: rows.length > input.limit ? records.at(-1)?.eventId : null,
         policyVersion,
         records,
       };

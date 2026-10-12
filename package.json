@@ -18,7 +18,7 @@
     "test:contracts": "node --test tests/contracts/*.test.ts",
     "test:chat": "node --test tests/live/chat-stream.test.ts",
     "test:boot": "node --test tests/integration/boot.test.ts",
-    "test:runtime": "node --test --test-concurrency=1 tests/runtime/*.test.ts",
+    "test:runtime": "node --test --test-concurrency=1 tests/runtime/*.test.ts && bun test tests/runtime/content-migration.test.mjs",
     "test:identity": "bun test tests/identity/*.test.ts",
     "test:identity:postgres": "bun test tests/identity/postgres/*.test.ts",
     "test:policy": "node tests/policy/run.mjs",

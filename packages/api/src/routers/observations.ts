@@ -36,15 +36,6 @@ export const observeConversation = async (
   options: ProductHandlerOptions,
   conversationId: string
 ): Promise<Response> => {
-  const raw = new URL(request.url).searchParams.get("accessGeneration");
-  const generation = Number(raw);
-  if (raw === null || !Number.isSafeInteger(generation) || generation < 0) {
-    throw new ChannelError(
-      422,
-      "invalid-input",
-      "The access generation is invalid."
-    );
-  }
   const attachment = await options.withDatabase(async (database) => {
     const user = await options.getUser(request, database);
     if (!user) {
@@ -66,14 +57,13 @@ export const observeConversation = async (
           "Authentication was revoked."
         );
       }
-      await createChannelService(database, options).chatAccess(
+      await createChannelService(database, options).conversationAccess(
         current.id,
         conversationId
       );
     });
   };
   const session = await openSession(options, {
-    accessGeneration: generation,
     address: attachment.address,
     context: attachment.context,
     signal: request.signal,
@@ -87,8 +77,6 @@ export const observeConversation = async (
   }
   return new Response(
     guardedObservation({
-      accessGeneration: generation,
-      address: attachment.address,
       authorize,
       body: session.body,
     }),

@@ -24,7 +24,7 @@ const {
   mutate,
   request,
 } = await import("../../apps/web/src/features/product/api");
-const { conversationItems, messageText, pendingChatSchema } =
+const { pendingChatSchema } =
   await import("../../apps/web/src/features/product/chat");
 
 class MemoryStorage {
@@ -205,28 +205,15 @@ test("unauthenticated requests clear private state", async () => {
   assert.equal(storage.getItem(pendingKey), null);
 });
 
-const { readObservations, submitMessage, sendRunCommand } =
+const { readObservations, submitMessage, stopConversation, decideApproval } =
   await import("../../apps/web/src/features/product/chat-connection");
 const {
   MAX_OBSERVATION_FRAME_BYTES,
   OBSERVATION_CONTENT_TYPE,
   decodeObservation,
 } = await import("../../apps/web/src/features/product/observation");
-const { projectObservation, projectionMessages } =
-  await import("../../apps/web/src/features/product/projection");
 const emptyObservation = () =>
   decodeObservation({
-    accessGeneration: currentAccessGeneration(),
-    address: {
-      agentId: "agent",
-      conversationId: "conversation",
-      organizationId: "company",
-      sessionId: "session",
-    },
-    epoch: "epoch",
-    reason: "attach",
-    schemaVersion: 1,
-    sequence: 0,
     snapshot: {
       address: {
         agentId: "agent",
@@ -236,12 +223,8 @@ const emptyObservation = () =>
       },
       agentVersion: 1,
       approvals: [],
-      executions: [],
-      outputs: [],
-      revision: 0,
-      runs: [],
-      tools: [],
-      userMessages: [],
+      busy: false,
+      messages: [],
     },
     type: "snapshot",
   });
@@ -260,8 +243,12 @@ const waitForObservation = async (predicate: () => boolean) => {
   assert.fail("Browser observation did not settle.");
 };
 
-test("a new authorized observation replaces the view with an empty transcript", async () => {
-  installFetch(() => ndjson([emptyObservation()]));
+test("an authorized observation reads the full native snapshot without protocol cursors", async () => {
+  const paths: string[] = [];
+  installFetch((input) => {
+    paths.push(String(input));
+    return ndjson([emptyObservation()]);
+  });
   const values = await Array.fromAsync(
     readObservations(
       "/conversation",
@@ -269,158 +256,43 @@ test("a new authorized observation replaces the view with an empty transcript", 
       new AbortController().signal
     )
   );
-  assert.equal(values.length, 1);
-  const projection = projectObservation(null, decodeObservation(values[0]));
-  assert.deepEqual(projectionMessages(projection), []);
-  assert.deepEqual(conversationItems(projection, "/conversation"), []);
+  assert.deepEqual(values, [emptyObservation()]);
+  assert.deepEqual(paths, ["http://fixture.invalid/conversation/observations"]);
 });
 
-const joinedBrowserObservation = () => {
-  const initial = emptyObservation();
-  if (initial.type !== "snapshot") {
-    throw new Error("Expected the empty observation snapshot.");
-  }
-  return decodeObservation({
-    ...initial,
-    snapshot: {
-      ...initial.snapshot,
-      executions: [{ executionId: "execution", runIds: ["first", "steered"] }],
-      outputs: [
-        {
-          answerId: "answer",
-          citations: [
-            {
-              observedAt: 1,
-              sourceId: "source",
-              sourceUri: "https://fixture.invalid/source",
-              sourceVersion: "1",
-            },
-          ],
-          dependencies: { sourceIds: ["source"], toolIds: [] },
-          executionId: "execution",
-          runId: "first",
-          runIds: ["first", "steered"],
-          text: "One joined answer",
+for (const role of ["assistant", "tool"] as const) {
+  test(`a snapshot near the frame byte limit preserves ${role} text`, async () => {
+    const initial = emptyObservation();
+    assert.equal(initial.type, "snapshot");
+    if (initial.type !== "snapshot") {
+      assert.fail("Expected snapshot");
+    }
+    const build = (text: string) =>
+      decodeObservation({
+        ...initial,
+        snapshot: {
+          ...initial.snapshot,
+          messages: [{ id: "native-entry", role, state: "complete", text }],
         },
-      ],
-      runs: [
-        { completedAt: 1, runId: "first", state: "completed" },
-        { completedAt: 1, runId: "steered", state: "completed" },
-      ],
-      userMessages: [
-        {
-          eventId: "first-input",
-          mode: "follow-up",
-          occurredAt: 1,
-          runId: "first",
-          text: "Question",
-        },
-        {
-          eventId: "steered-input",
-          mode: "steer",
-          occurredAt: 2,
-          runId: "steered",
-          text: "Steering",
-        },
-      ],
-    },
-  });
-};
-
-const largeHistoryFrame = (kind: "text" | "tool") => {
-  const initial = joinedBrowserObservation();
-  if (initial.type !== "snapshot") {
-    throw new Error("Expected a history snapshot.");
-  }
-  const build = (text: string) =>
-    decodeObservation({
-      ...initial,
-      snapshot: {
-        ...initial.snapshot,
-        outputs: initial.snapshot.outputs.map((output) => ({
-          ...output,
-          text: kind === "text" ? text : output.text,
-        })),
-        tools:
-          kind === "tool"
-            ? [
-                {
-                  arguments: { text },
-                  dependencies: { sourceIds: [], toolIds: ["tool"] },
-                  effect: "read",
-                  operationId: "operation",
-                  output: { text },
-                  runId: "first",
-                  state: "succeeded",
-                  toolId: "tool",
-                  toolVersion: "1",
-                },
-              ]
-            : [],
-      },
-    });
-  const overhead = new TextEncoder().encode(JSON.stringify(build(""))).length;
-  const characterBytes = kind === "tool" ? 4 : 1;
-  const text = (kind === "tool" ? '"' : "A").repeat(
-    Math.floor((MAX_OBSERVATION_FRAME_BYTES - overhead - 16) / characterBytes)
-  );
-  return { observation: build(text), text };
-};
-
-for (const kind of ["text", "tool"] as const) {
-  test(`a snapshot near the frame byte limit reaches the projection once with ${kind} content`, async () => {
-    const { observation, text } = largeHistoryFrame(kind);
-    const sourceBytes = new TextEncoder().encode(
-      JSON.stringify(observation)
-    ).length;
-    assert.ok(sourceBytes < MAX_OBSERVATION_FRAME_BYTES);
-    assert.ok(sourceBytes > MAX_OBSERVATION_FRAME_BYTES - 32);
-    let attachments = 0;
-    installFetch(() => {
-      attachments += 1;
-      const stream = new TransformStream<Uint8Array>();
-      const writer = stream.writable.getWriter();
-      void writer.write(
-        new TextEncoder().encode(`${JSON.stringify(observation)}\n`)
-      );
-      return new Response(stream.readable, {
-        headers: { "Content-Type": OBSERVATION_CONTENT_TYPE },
       });
-    });
-    const observer = createObservationClient({
-      address: observation.address,
-      generation: currentAccessGeneration,
-      onDenied: () => assert.fail("Unexpected access denial."),
-      onError: (error) => assert.fail(error.message),
-      onProjection: () => {},
-      open: (generation, signal) =>
-        readObservations("/conversation", generation, signal),
-      retryDelayMs: 1,
-    });
-    try {
-      observer.attach();
-      await waitForObservation(
-        () => projectionMessages(observer.getProjection()).length === 3
-      );
-      const answers = projectionMessages(observer.getProjection()).filter(
-        (message) => message.role === "assistant"
-      );
-      assert.equal(answers.length, 1);
-      const [answer] = answers;
-      assert.ok(answer);
-      if (kind === "text") {
-        assert.equal(messageText(answer), text);
-      } else {
-        const call = answer.parts.find((part) => part.type === "tool-call");
-        const result = answer.parts.find((part) => part.type === "tool-result");
-        assert.ok(call && result);
-        assert.deepEqual(JSON.parse(call.arguments), { text });
-        assert.deepEqual(JSON.parse(result.content), { text });
-      }
-      await delay(20);
-      assert.equal(attachments, 1);
-    } finally {
-      observer.dispose();
+    const overhead = new TextEncoder().encode(JSON.stringify(build(""))).length;
+    const text = "A".repeat(MAX_OBSERVATION_FRAME_BYTES - overhead - 16);
+    const observation = build(text);
+    const bytes = new TextEncoder().encode(JSON.stringify(observation)).length;
+    assert.ok(bytes < MAX_OBSERVATION_FRAME_BYTES);
+    assert.ok(bytes > MAX_OBSERVATION_FRAME_BYTES - 32);
+    installFetch(() => ndjson([observation]));
+    const values = await Array.fromAsync(
+      readObservations(
+        "/conversation",
+        currentAccessGeneration(),
+        new AbortController().signal
+      )
+    );
+    const received = decodeObservation(values[0]);
+    assert.equal(received.type, "snapshot");
+    if (received.type === "snapshot") {
+      assert.equal(received.snapshot.messages[0]?.text, text);
     }
   });
 }
@@ -448,91 +320,6 @@ test("the browser rejects frames by UTF-8 byte size", async () => {
   );
 });
 
-test("browser transcript and evidence use one answer for distinct joined inputs", () => {
-  const projection = projectObservation(null, joinedBrowserObservation());
-  const messages = projectionMessages(projection);
-  assert.deepEqual(
-    messages.map((message) => message.id),
-    ["first-input", "steered-input", "assistant:answer"]
-  );
-  assert.deepEqual(
-    messages.map((message) => messageText(message)),
-    ["Question", "Steering", "One joined answer"]
-  );
-  const items = conversationItems(projection, "/conversation");
-  assert.deepEqual(
-    items.filter((item) => item.type === "output").map((item) => item.cursor),
-    ["output:answer"]
-  );
-  assert.deepEqual(
-    items.filter((item) => item.type === "citation").map((item) => item.cursor),
-    ["citation:execution:source:1"]
-  );
-  assert.equal(items.filter((item) => item.type === "user").length, 2);
-  assert.equal(items.filter((item) => item.type === "run").length, 2);
-});
-
-test("browser canonical citations replace provisional execution citations and empty snapshots clear evidence", () => {
-  const final = joinedBrowserObservation();
-  assert.equal(final.type, "snapshot");
-  if (final.type !== "snapshot") {
-    assert.fail("Expected snapshot");
-  }
-  let projection = projectObservation(
-    null,
-    decodeObservation({
-      ...final,
-      snapshot: {
-        ...final.snapshot,
-        outputs: [],
-        runs: final.snapshot.runs.map((run) => ({ ...run, state: "running" })),
-      },
-    })
-  );
-  projection = projectObservation(
-    projection,
-    decodeObservation({
-      accessGeneration: final.accessGeneration,
-      address: final.address,
-      epoch: final.epoch,
-      revision: 0,
-      schemaVersion: 1,
-      sequence: 1,
-      type: "update",
-      update: {
-        citation: {
-          observedAt: 1,
-          sourceId: "source",
-          sourceUri: "https://fixture.invalid/source",
-          sourceVersion: "1",
-        },
-        dependencies: { sourceIds: ["source"], toolIds: [] },
-        executionId: "execution",
-        runId: "first",
-        text: "Draft",
-        type: "citation",
-      },
-    })
-  );
-  assert.equal(
-    conversationItems(projection, "/conversation").filter(
-      (item) => item.type === "citation"
-    ).length,
-    1
-  );
-  projection = projectObservation(projection, final);
-  assert.deepEqual(projection?.citations, []);
-  assert.equal(
-    conversationItems(projection, "/conversation").filter(
-      (item) => item.type === "citation"
-    ).length,
-    1
-  );
-  projection = projectObservation(projection, emptyObservation());
-  assert.deepEqual(conversationItems(projection, "/conversation"), []);
-  assert.deepEqual(projectionMessages(projection), []);
-});
-
 test("observation rejects stale access while response headers are pending", async () => {
   const response = Promise.withResolvers<Response>();
   installFetch(() => response.promise);
@@ -547,33 +334,25 @@ test("observation rejects stale access while response headers are pending", asyn
   await next;
 });
 
-test("observation distinguishes HTTP denial from normal EOF and clears private cache", async () => {
+test("HTTP observation denial clears private cache and protected snapshots", async () => {
   storage.setItem(pendingKey, "private pending message");
   installFetch(() => forbidden());
-  await assert.rejects(
-    Array.fromAsync(
-      readObservations(
-        "/conversation",
-        currentAccessGeneration(),
-        new AbortController().signal
-      )
-    ),
-    { status: 403 }
-  );
-  assert.equal(storage.getItem(pendingKey), "private pending message");
+  const initial = emptyObservation();
+  if (initial.type !== "snapshot") {
+    assert.fail("Expected snapshot");
+  }
   const observer = createObservationClient({
-    address: emptyObservation().address,
+    address: initial.snapshot.address,
     generation: currentAccessGeneration,
     onDenied: clearProductCache,
-    onProjection: () => {},
+    onSnapshot: () => {},
     open: (generation, signal) =>
       readObservations("/conversation", generation, signal),
   });
   try {
     observer.attach();
     await waitForObservation(() => storage.getItem(pendingKey) === null);
-    assert.equal(storage.getItem(pendingKey), null);
-    assert.equal(observer.getProjection(), null);
+    assert.equal(observer.getSnapshot(), null);
   } finally {
     observer.dispose();
   }
@@ -589,21 +368,25 @@ const checkRetiredHttpObservation = async (
     fetches += 1;
     return fetches === 1 ? response.promise : ndjson([emptyObservation()]);
   });
+  const initial = emptyObservation();
+  if (initial.type !== "snapshot") {
+    assert.fail("Expected snapshot");
+  }
   const observer = createObservationClient({
-    address: emptyObservation().address,
+    address: initial.snapshot.address,
     generation: currentAccessGeneration,
     onDenied: () => {
       denials += 1;
       clearProductCache();
     },
-    onProjection: () => {},
+    onSnapshot: () => {},
     open: (generation, signal) =>
       readObservations("/conversation", generation, signal),
+    retryDelayMs: 1000,
   });
   try {
     observer.attach();
-    await waitForObservation(() => fetches === 1);
-    assert.equal(fetches, 1);
+    await delay(0);
     if (retirement === "generation") {
       clearProductCache();
     } else if (retirement === "dispose") {
@@ -621,7 +404,7 @@ const checkRetiredHttpObservation = async (
     assert.equal(storage.getItem(pendingKey), "current private message");
     if (retirement === "reattach") {
       assert.equal(fetches, 2);
-      assert.ok(observer.getProjection());
+      assert.ok(observer.getSnapshot());
     }
   } finally {
     response.resolve(forbidden());
@@ -629,11 +412,11 @@ const checkRetiredHttpObservation = async (
   }
 };
 for (const retirement of ["reattach", "dispose", "generation"] as const) {
-  test(`retired HTTP observation after ${retirement} cannot clear current browser caches`, () =>
+  test(`a detached HTTP observation after ${retirement} cannot clear current browser caches`, () =>
     checkRetiredHttpObservation(retirement));
 }
 
-test("the observation reader rejects truncated JSON and releases its reader", async () => {
+test("the observation reader rejects a truncated frame and releases the stream", async () => {
   installFetch(
     () =>
       new Response('{"unfinished":', {
@@ -652,70 +435,67 @@ test("the observation reader rejects truncated JSON and releases its reader", as
   );
 });
 
-test("text parts display the canonical answer", () => {
-  assert.equal(
-    messageText({
-      id: "assistant:run",
-      parts: [{ content: "Canonical answer", type: "text" }],
-      role: "assistant",
-    }),
-    "Canonical answer"
-  );
-  assert.deepEqual(
-    pendingChatSchema.parse({ eventId: "event", text: "Draft" }),
-    { eventId: "event", mode: "follow-up", text: "Draft" }
-  );
-});
-
-test("browser mutations use Cerebro commands and preserve stable operation IDs and modes", async () => {
+test("native send retries retain the operation ID and Stop and approval use their native commands", async () => {
   const requests: { url: string; body: unknown }[] = [];
   Object.defineProperty(globalThis, "fetch", {
     configurable: true,
     value: (input: RequestInfo | URL, init: RequestInit) => {
-      requests.push({
-        body: JSON.parse(String(init.body)),
-        url: String(input),
-      });
+      const url = String(input);
+      requests.push({ body: JSON.parse(String(init.body)), url });
+      if (url.endsWith("/messages")) {
+        return Promise.resolve(
+          Response.json({
+            receipt: {
+              accepted: true,
+              operationId: "operation",
+              session: "session",
+            },
+          })
+        );
+      }
+      if (url.endsWith("/stop")) {
+        return Promise.resolve(Response.json({ stopped: true }));
+      }
       return Promise.resolve(
-        String(input).endsWith("/messages")
-          ? Response.json({
-              cursor: "1",
-              receipt: {
-                acceptedEventId: "event",
-                replayed: false,
-                runId: "run",
-                sessionId: "session",
-              },
-            })
-          : Response.json({ run: { runId: "run", state: "running" } })
+        Response.json({
+          approval: {
+            approvalId: "approval",
+            arguments: {},
+            callId: "native-call",
+            expiresAt: 60_000,
+            operationId: "tool-operation",
+            state: "allowed",
+            taskId: "native-task",
+            toolId: "write-ticket",
+          },
+        })
       );
     },
     writable: true,
   });
   const message = pendingChatSchema.parse({
-    eventId: "event",
-    mode: "steer",
+    operationId: "operation",
     text: "Draft",
   });
   await submitMessage("/conversation", message);
   await submitMessage("/conversation", message);
-  await sendRunCommand(
-    "/conversation",
-    "approvals/approval",
-    "approval-operation",
-    { decision: "allow", runId: "run" }
-  );
-  await sendRunCommand("/conversation", "runs/run/cancel", "stop-operation");
-  assert.deepEqual(requests[0], requests[1]);
-  assert.deepEqual(
-    requests.map((value) => value.body),
-    [
-      { eventId: "event", mode: "steer", operationId: "event", text: "Draft" },
-      { eventId: "event", mode: "steer", operationId: "event", text: "Draft" },
-      { decision: "allow", operationId: "approval-operation", runId: "run" },
-      { operationId: "stop-operation" },
-    ]
-  );
+  await decideApproval("/conversation", "approval", "allow");
+  await stopConversation("/conversation");
+  assert.deepEqual(requests, [
+    {
+      body: { operationId: "operation", text: "Draft" },
+      url: "http://fixture.invalid/conversation/messages",
+    },
+    {
+      body: { operationId: "operation", text: "Draft" },
+      url: "http://fixture.invalid/conversation/messages",
+    },
+    {
+      body: { decision: "allow" },
+      url: "http://fixture.invalid/conversation/approvals/approval",
+    },
+    { body: {}, url: "http://fixture.invalid/conversation/stop" },
+  ]);
 });
 
 /* eslint-disable sort-keys -- These inputs deliberately change key order to test canonical retries. */

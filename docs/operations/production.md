@@ -14,7 +14,7 @@ Create a private directory outside the repository and put these files in it:
 | `postgres-password` | The PostgreSQL password, at least 32 characters |
 | `minio-password` | The MinIO password, at least 32 characters |
 | `runtime.json` | Models, tools, and storage. See the [runtime configuration reference](../reference/runtime-configuration.md). |
-| `channels.json` | Optional. `{ "organizationId": "...", "slack": { ... } }` to enable Slack direct messages |
+| `channels.json` | Optional. Enables Slack direct messages. See [How to connect Slack](slack.md). |
 | `enterprise-identity.json` | Optional. Entra single sign-on and SCIM, parsed by `parseEnterpriseIdentityJSON` in `packages/auth/src/enterprise.ts` |
 
 Set `bootstrapToken` or `trustedOwnerUserId` in `runtime.json` before the first start. Public signup never makes someone the owner.
@@ -48,7 +48,7 @@ INSERT INTO identity_grant (organization_id, principal_id, action, resource_kind
 VALUES ('<ORGANIZATION_ID>', '<PRINCIPAL_ID>', 'execute', 'tool', 'search-tickets', 'manual');
 ```
 
-A person needs `read` and `execute` on a tool, and `execute` on its `connectorId`, before an agent can use the tool for them. A write tool also needs `write` and `approve`. Grant `export` on the `audit` and `budget` resources only to people who need exports.
+A person needs `read` and `execute` on a tool, and `execute` on its `connectorId`, before an agent can use the tool for them. A write tool also needs `write` and `approve`. Grant `export` on the `audit` resource only to people who need audit exports.
 
 ## Back up and upgrade
 

@@ -3,9 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/session-service.ts",
-    "./session-agent": "./src/session-agent.ts",
-    "./runtime-ports": "./src/runtime-ports.ts"
+    ".": "./src/session-agent.ts",
+    "./*": "./src/*.ts"
   },
   "scripts": {
     "check-types": "tsc --noEmit -p tsconfig.json"

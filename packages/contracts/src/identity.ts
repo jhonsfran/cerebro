@@ -16,7 +16,6 @@ export type DelegationId = BrandedId<"DelegationId">;
 export type ToolId = BrandedId<"ToolId">;
 export type SourceId = BrandedId<"SourceId">;
 export type ArtifactId = BrandedId<"ArtifactId">;
-export type ReservationId = BrandedId<"ReservationId">;
 export type Digest = BrandedId<"Digest">;
 
 const parseId = <Name extends string>(value: string): BrandedId<Name> => {
@@ -42,8 +41,6 @@ export const id = {
   organization: (value: string): OrganizationId =>
     parseId<"OrganizationId">(value),
   principal: (value: string): PrincipalId => parseId<"PrincipalId">(value),
-  reservation: (value: string): ReservationId =>
-    parseId<"ReservationId">(value),
   run: (value: string): RunId => parseId<"RunId">(value),
   session: (value: string): SessionId => parseId<"SessionId">(value),
   source: (value: string): SourceId => parseId<"SourceId">(value),

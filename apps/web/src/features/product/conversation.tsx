@@ -1,238 +1,67 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  ChatApproval,
+  ChatMessage,
+  ChatSnapshot,
+} from "@cerebro/contracts/session-service";
+import { useEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
 
 import {
-  cacheKey,
   assertCurrentAccess,
+  cacheKey,
   currentAccessGeneration,
   encoded,
   productPath,
   request,
 } from "./api";
-import { conversationItems, messageText, pendingChatSchema } from "./chat";
-import type {
-  ConversationMessage,
-  ConversationViewItem,
-  PendingChatMessage,
-} from "./chat";
+import { pendingChatSchema } from "./chat";
+import type { PendingChatMessage } from "./chat";
 import {
-  sendRunCommand,
+  decideApproval,
+  stopConversation,
   submitMessage,
   useConversationConnection,
 } from "./chat-connection";
-import type { Audit, Conversation, History, Source } from "./types";
-import {
-  auditSchema,
-  conversationSchema,
-  historySchema,
-  sourceSchema,
-} from "./types";
+import { conversationSchema } from "./types";
+import type { Conversation } from "./types";
 
-type Connection = "connecting" | "connected" | "disconnected" | "denied";
-const visibleConnection = (
-  connected: boolean,
-  retired: boolean,
-  connection: Connection
-): Connection => (retired || !connected ? "disconnected" : connection);
-type Detail =
-  | { type: "source"; value: Source }
-  | { type: "audit"; value: Audit };
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : "The request failed.";
+
+const messageLabel = (message: ChatMessage, agentName: string): string => {
+  if (message.role === "user") {
+    return "You";
+  }
+  return message.role === "tool"
+    ? `Tool: ${message.toolName ?? "Result"}`
+    : agentName;
+};
 
 const TranscriptMessage = ({
   message,
   agentName,
 }: {
-  message: ConversationMessage;
+  message: ChatMessage;
   agentName: string;
-}) => {
-  const text = messageText(message);
-  return message.parts.length ? (
-    <article
-      className={`chat-message ${message.role === "user" ? "user-message" : "answer-message"}`}
-    >
-      <p className="message-label">
-        {message.role === "user" ? "You" : agentName}
-      </p>
-      {message.parts
-        .filter((part) => part.type === "thinking")
-        .map((part) =>
-          part.content ? (
-            <details key={part.stepId}>
-              <summary>Thinking</summary>
-              <p>{part.content}</p>
-            </details>
-          ) : null
-        )}
-      {message.parts
-        .filter((part) => part.type === "tool-call")
-        .map((part) => (
-          <details key={part.id}>
-            <summary>Tool: {part.name}</summary>
-            <pre>{part.arguments}</pre>
-          </details>
-        ))}
-      {message.parts
-        .filter((part) => part.type === "tool-result")
-        .map((part) => (
-          <details key={`result:${part.toolCallId}`}>
-            <summary>Tool result</summary>
-            <pre>{part.content}</pre>
-          </details>
-        ))}
-      {text ? <p>{text}</p> : null}
-    </article>
-  ) : null;
-};
-
-const historicalMessages = (
-  conversation: Conversation | null
-): ConversationMessage[] =>
-  (conversation?.items ?? []).flatMap<ConversationMessage>((item) => {
-    if (item.type === "user") {
-      return [
-        {
-          id: item.eventId ?? `user:${item.cursor}`,
-          parts: [{ content: item.text, type: "text" as const }],
-          role: "user" as const,
-        },
-      ];
-    }
-    if (item.type === "output") {
-      return [
-        {
-          id: `assistant:${item.answerId ?? item.cursor}`,
-          parts: [{ content: item.text, type: "text" as const }],
-          role: "assistant" as const,
-        },
-      ];
-    }
-    return [];
-  });
-const historicalItems = (
-  conversation: Conversation | null
-): ConversationViewItem[] =>
-  (conversation?.items ?? []).map((item) =>
-    item.type === "approval" ? { ...item, approvalState: item.state } : item
-  );
-const loadConversation = async (
-  path: string,
-  signal: AbortSignal,
-  generation: number
-): Promise<Conversation> => {
-  const firstPage = await request(path, conversationSchema, { signal });
-  const items = [...firstPage.items];
-  let page = firstPage;
-  while (
-    firstPage.mode === "retired" &&
-    page.items.length === 200 &&
-    !signal.aborted
-  ) {
-    // Cursor pages depend on the previous response.
-    // oxlint-disable-next-line no-await-in-loop
-    page = await request(
-      `${path}?cursor=${encoded(page.cursor)}`,
-      conversationSchema,
-      { signal }
-    );
-    assertCurrentAccess(generation);
-    items.push(...page.items);
-  }
-  return { ...firstPage, cursor: page.cursor, items };
-};
-
-const EvidenceDialog = ({
-  detail,
-  onClose,
-}: {
-  detail: Detail;
-  onClose: () => void;
-}) => {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    dialog.current?.showModal();
-  }, []);
-  return (
-    <dialog
-      ref={dialog}
-      className="detail-dialog"
-      aria-labelledby="detail-title"
-      onCancel={onClose}
-    >
-      <div className="panel-heading">
-        <h2 id="detail-title">
-          {detail.type === "source" ? detail.value.title : "Execution audit"}
-        </h2>
-        <button className="quiet-button" type="button" onClick={onClose}>
-          Close
-        </button>
-      </div>
-      <p className="context-note">Company evidence</p>
-      {detail.type === "source" ? (
-        <>
-          <p className="muted-text">Version {detail.value.sourceVersion}</p>
-          <p className="source-text">{detail.value.text}</p>
-        </>
-      ) : (
-        <>
-          <p className="muted-text">
-            Run {detail.value.runId} · {detail.value.state}
-          </p>
-          <ol className="audit-list">
-            {detail.value.entries.map((entry, index) => (
-              <li key={`${entry.type}-${entry.at}-${index}`}>
-                <strong>{entry.type}</strong>
-                <p>{entry.description}</p>
-                <small>{new Date(entry.at).toLocaleString()}</small>
-              </li>
-            ))}
-          </ol>
-        </>
-      )}
-    </dialog>
-  );
-};
-
-const ConversationHeader = ({
-  agentName,
-  sessionId,
-  connected,
-  connection,
-  toggle,
-  retired,
-}: {
-  agentName: string;
-  sessionId: string | undefined;
-  connected: boolean;
-  connection: Connection;
-  toggle: () => void;
-  retired: boolean;
 }) => (
-  <>
-    <div className="panel-heading">
-      <div>
-        <p className="eyebrow">Conversation</p>
-        <h2>{agentName}</h2>
-      </div>
-      <button
-        className="quiet-button"
-        type="button"
-        disabled={retired}
-        onClick={toggle}
-      >
-        {connected ? "Disconnect" : "Reconnect"}
-      </button>
-    </div>
-    <div className="session-line">
-      <span
-        className={`connection-dot ${connection === "disconnected" ? "offline" : ""}`}
-      />
-      <span>{connection}</span>
-      <span title={sessionId}>
-        Session {sessionId?.slice(0, 12) ?? "loading"}
-      </span>
-    </div>
-  </>
+  <article
+    className={`chat-message ${message.role === "user" ? "user-message" : "answer-message"}`}
+  >
+    <p className="message-label">{messageLabel(message, agentName)}</p>
+    {message.thinking ? (
+      <details>
+        <summary>Thinking</summary>
+        <p>{message.thinking}</p>
+      </details>
+    ) : null}
+    {message.role === "tool" ? (
+      <details>
+        <summary>Tool result</summary>
+        <pre>{message.text}</pre>
+      </details>
+    ) : null}
+    {message.role !== "tool" && message.text ? <p>{message.text}</p> : null}
+  </article>
 );
 
 const ConversationComposer = ({
@@ -242,8 +71,6 @@ const ConversationComposer = ({
   connected,
   pending,
   send,
-  mode,
-  setMode,
 }: {
   text: string;
   setText: (value: string) => void;
@@ -251,15 +78,13 @@ const ConversationComposer = ({
   connected: boolean;
   pending: PendingChatMessage | null;
   send: (message: PendingChatMessage) => Promise<void>;
-  mode: PendingChatMessage["mode"];
-  setMode: (mode: PendingChatMessage["mode"]) => void;
 }) => (
   <form
     className="message-composer"
     onSubmit={(event) => {
       event.preventDefault();
-      if (text.trim() && !pending) {
-        void send({ eventId: crypto.randomUUID(), mode, text: text.trim() });
+      if (text.trim() && !pending && !sending && connected) {
+        void send({ operationId: crypto.randomUUID(), text: text.trim() });
       }
     }}
   >
@@ -274,20 +99,6 @@ const ConversationComposer = ({
       rows={2}
       disabled={sending || !connected || Boolean(pending)}
     />
-    <label>
-      Send as
-      <select
-        value={mode}
-        disabled={sending || !connected || Boolean(pending)}
-        onChange={(event) =>
-          setMode(pendingChatSchema.shape.mode.parse(event.target.value))
-        }
-      >
-        <option value="follow-up">Follow-up</option>
-        <option value="steer">Steer current work</option>
-        <option value="replace">Stop and replace</option>
-      </select>
-    </label>
     <div className="composer-footer">
       <span>Your conversation is private.</span>
       <button
@@ -295,56 +106,153 @@ const ConversationComposer = ({
         type="submit"
         disabled={sending || !connected || !text.trim() || Boolean(pending)}
       >
-        {sending ? "Responding..." : "Send message"}
+        {sending ? "Sending..." : "Send message"}
       </button>
     </div>
   </form>
 );
 
-const ConversationNotice = ({
-  retired,
-  message,
-  onStartConversation,
+const ApprovalRequest = ({
+  approval,
+  disabled,
+  decide,
 }: {
-  retired: boolean;
-  message: string;
-  onStartConversation?: () => void;
+  approval: ChatApproval;
+  disabled: boolean;
+  decide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+}) => (
+  <section className="approval-card" aria-label="Approval required">
+    <p className="eyebrow">Approval required</p>
+    <h3>{approval.toolId}</h3>
+    <pre>{JSON.stringify(approval.arguments, null, 2)}</pre>
+    <div className="button-row">
+      <button
+        className="primary-button"
+        disabled={disabled}
+        type="button"
+        onClick={() => decide(approval.approvalId, "allow")}
+      >
+        Approve request
+      </button>
+      <button
+        className="quiet-button"
+        disabled={disabled}
+        type="button"
+        onClick={() => decide(approval.approvalId, "deny")}
+      >
+        Deny request
+      </button>
+    </div>
+  </section>
+);
+
+const ConversationHeader = ({
+  agentName,
+  sessionId,
+  connection,
+  connected,
+  busy,
+  disabled,
+  toggle,
+  stop,
+}: {
+  agentName: string;
+  sessionId: string | undefined;
+  connection: string;
+  connected: boolean;
+  busy: boolean;
+  disabled: boolean;
+  toggle: () => void;
+  stop: () => Promise<void>;
 }) => (
   <>
-    {retired ? (
-      <p className="error-banner">
-        This conversation is retired. Start a new conversation from the agent
-        list.
-        {onStartConversation ? (
+    <div className="panel-heading">
+      <div>
+        <p className="eyebrow">Conversation</p>
+        <h2>{agentName}</h2>
+      </div>
+      <div className="button-row">
+        {busy ? (
           <button
-            type="button"
             className="quiet-button"
-            onClick={onStartConversation}
+            type="button"
+            disabled={disabled}
+            onClick={stop}
           >
-            Start new conversation
+            Stop
           </button>
         ) : null}
-      </p>
-    ) : null}
-    {message ? (
-      <p className="error-banner" role="alert">
-        {message}
-      </p>
-    ) : null}
+        <button className="quiet-button" type="button" onClick={toggle}>
+          {connected ? "Disconnect" : "Reconnect"}
+        </button>
+      </div>
+    </div>
+    <div className="session-line">
+      <span
+        className={`connection-dot ${connection === "disconnected" ? "offline" : ""}`}
+      />
+      <span>{connection}</span>
+      <span title={sessionId}>
+        Session {sessionId?.slice(0, 12) ?? "loading"}
+      </span>
+    </div>
   </>
 );
-const ConversationProgress = ({
-  recovering,
-  busy,
+
+const ConversationTranscript = ({
+  snapshot,
+  agentName,
+  connecting,
+  disabled,
+  decide,
+  transcript,
 }: {
-  recovering: boolean;
-  busy: boolean;
-}) =>
-  recovering || busy ? (
-    <output className="tool-status">
-      {recovering ? "Recovering response..." : "Preparing response..."}
-    </output>
-  ) : null;
+  snapshot: Pick<ChatSnapshot, "messages" | "approvals">;
+  agentName: string;
+  connecting: boolean;
+  disabled: boolean;
+  decide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  transcript: RefObject<HTMLDivElement | null>;
+}) => (
+  <div
+    className="transcript"
+    ref={transcript}
+    aria-live="polite"
+    aria-relevant="additions text"
+  >
+    {snapshot.messages.length === 0 ? (
+      <div className="conversation-empty">
+        <span className="empty-mark">c</span>
+        <h3>Start with a question.</h3>
+        <p>Send a message to your company assistant.</p>
+      </div>
+    ) : null}
+    {snapshot.messages.map((message) => (
+      <TranscriptMessage
+        agentName={agentName}
+        key={message.id}
+        message={message}
+      />
+    ))}
+    {connecting ? <output className="tool-status">Connecting...</output> : null}
+    {snapshot.approvals
+      .filter((approval) => approval.state === "pending")
+      .map((approval) => (
+        <ApprovalRequest
+          key={approval.approvalId}
+          approval={approval}
+          disabled={disabled}
+          decide={decide}
+        />
+      ))}
+  </div>
+);
+
+const EMPTY_CHAT: Pick<ChatSnapshot, "messages" | "approvals" | "busy"> = {
+  approvals: [],
+  busy: false,
+  messages: [],
+};
 
 const ConversationSession = ({
   conversationId,
@@ -360,20 +268,12 @@ const ConversationSession = ({
   onStartConversation?: () => void;
 }) => {
   const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [history, setHistory] = useState<History | null>(null);
-  const [detail, setDetail] = useState<Detail | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [text, setText] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [acting, setActing] = useState(false);
   const [connected, setConnected] = useState(true);
   const [accessValid, setAccessValid] = useState(true);
-  const [mode, setMode] = useState<PendingChatMessage["mode"]>("follow-up");
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  const commandIds = useRef(new Map<string, string>());
   const transcript = useRef<HTMLDivElement>(null);
   const path = productPath(`conversations/${encoded(conversationId)}`);
   const pendingKey = cacheKey(userId, conversationId, "pending");
@@ -382,87 +282,24 @@ const ConversationSession = ({
       const raw = sessionStorage.getItem(pendingKey);
       return raw ? pendingChatSchema.parse(JSON.parse(raw)) : null;
     } catch {
+      sessionStorage.removeItem(pendingKey);
       return null;
     }
   });
   const pendingRef = useRef(pending);
-  const retired = conversation?.mode === "retired";
   const {
     connection,
     error: chatError,
-    messages: observedMessages,
-    projection,
-  } = useConversationConnection(
-    conversation,
-    path,
-    connected && accessValid && !retired
-  );
-  const messages = retired
-    ? historicalMessages(conversation)
-    : observedMessages;
-  const items = useMemo(
-    () =>
-      retired
-        ? historicalItems(conversation)
-        : conversationItems(projection, path),
-    [conversation, retired, projection, path]
-  );
-  const runs = useMemo(
-    () =>
-      new Map<string, { runId: string; state: string }>(
-        (projection?.snapshot.runs ?? []).map((run) => [run.runId, run])
-      ),
-    [projection]
-  );
-  const acknowledge = (eventId: string) => {
-    if (eventId === pendingRef.current?.eventId) {
-      sessionStorage.removeItem(pendingKey);
-      pendingRef.current = null;
-      setPending(null);
-      setText("");
-    }
-  };
-  useEffect(() => {
-    if (
-      projection?.snapshot.userMessages.some(
-        (message) => message.eventId === pendingRef.current?.eventId
-      )
-    ) {
-      sessionStorage.removeItem(pendingKey);
-      pendingRef.current = null;
-      setPending(null);
-      setText("");
-    }
-  }, [projection, pendingKey]);
-  const historyRuns = useMemo(() => {
-    if (retired) {
-      return history?.runs ?? [];
-    }
-    const result = new Map<
-      string,
-      { auditHref: string; runId: string; state: string }
-    >();
-    for (const run of runs.values()) {
-      result.set(run.runId, {
-        auditHref: `${path}/audit/${encoded(run.runId)}`,
-        runId: run.runId,
-        state: run.state,
-      });
-    }
-    return [...result.values()];
-  }, [path, runs, history, retired]);
-  const sending = busy;
-  const disabled = busy || retired || connection !== "connected";
+    snapshot: observedSnapshot,
+  } = useConversationConnection(conversation, path, connected && accessValid);
+  const snapshot = observedSnapshot ?? conversation?.snapshot ?? EMPTY_CHAT;
+  const online = connected && connection === "connected" && accessValid;
   const displayedError = errorMessage || chatError;
-  const online = connected && connection === "connected" && !retired;
-  const displayedConnection = visibleConnection(connected, retired, connection);
-  const isRecovering = displayedConnection === "connecting";
+
   useEffect(() => {
     const clear = () => {
       setAccessValid(false);
       setConversation(null);
-      setHistory(null);
-      setDetail(null);
       pendingRef.current = null;
       setPending(null);
       setText("");
@@ -473,30 +310,27 @@ const ConversationSession = ({
   }, []);
 
   useEffect(() => {
-    const generation = currentAccessGeneration();
     const controller = new AbortController();
     const load = async () => {
       try {
-        const [value, executionHistory] = await Promise.all([
-          loadConversation(path, controller.signal, generation),
-          request(`${path}/history`, historySchema, {
-            signal: controller.signal,
-          }),
-        ]);
+        const value = await request(path, conversationSchema, {
+          signal: controller.signal,
+        });
         if (controller.signal.aborted) {
           return;
         }
-        assertCurrentAccess(generation);
         if (
           value.conversationId !== conversationId ||
-          value.agentId !== agentId
+          value.agentId !== agentId ||
+          value.snapshot.address.conversationId !== conversationId ||
+          value.snapshot.address.agentId !== agentId ||
+          value.snapshot.address.sessionId !== value.sessionId
         ) {
           setErrorMessage("The conversation does not belong to this agent.");
           setConnected(false);
           return;
         }
         setConversation(value);
-        setHistory(executionHistory);
       } catch (error) {
         if (!controller.signal.aborted) {
           setErrorMessage(messageOf(error));
@@ -508,19 +342,23 @@ const ConversationSession = ({
   }, [agentId, conversationId, path]);
 
   useEffect(() => {
-    if (items.length || messages.length) {
+    if (snapshot.messages.length || snapshot.approvals.length) {
       transcript.current?.scrollTo({
         behavior: "smooth",
         top: transcript.current.scrollHeight,
       });
     }
-  }, [items, messages]);
+  }, [snapshot]);
 
   const send = async (message: PendingChatMessage) => {
-    if (retired || !accessValid || connection !== "connected") {
+    if (
+      !online ||
+      (pendingRef.current &&
+        pendingRef.current.operationId !== message.operationId)
+    ) {
       return;
     }
-    setBusy(true);
+    setSending(true);
     setErrorMessage("");
     sessionStorage.setItem(pendingKey, JSON.stringify(message));
     pendingRef.current = message;
@@ -529,76 +367,31 @@ const ConversationSession = ({
     try {
       const result = await submitMessage(path, message);
       assertCurrentAccess(generation);
-      if (result.receipt.sessionId === conversation?.sessionId) {
-        acknowledge(message.eventId);
+      if (result.receipt.operationId === message.operationId) {
+        sessionStorage.removeItem(pendingKey);
+        pendingRef.current = null;
+        setPending(null);
+        setText("");
       } else {
-        setErrorMessage("The accepted message belongs to another session.");
+        setErrorMessage("The message receipt belongs to another operation.");
       }
     } catch (error) {
       setErrorMessage(messageOf(error));
     }
-    setBusy(false);
+    setSending(false);
   };
-  const act = async (
-    suffix: string,
-    runId: string,
-    decision?: "allow" | "deny"
-  ) => {
-    if (retired || !accessValid || connection !== "connected") {
+  const act = async (command: () => Promise<unknown>) => {
+    if (!online || acting) {
       return;
     }
-    const intent = `${suffix}:${runId}:${decision ?? "stop"}`;
-    const commandKey = cacheKey(userId, conversationId, `command:${intent}`);
-    const operationId =
-      commandIds.current.get(intent) ??
-      sessionStorage.getItem(commandKey) ??
-      crypto.randomUUID();
-    commandIds.current.set(intent, operationId);
-    sessionStorage.setItem(commandKey, operationId);
-    setBusy(true);
+    setActing(true);
     setErrorMessage("");
     try {
-      await sendRunCommand(
-        path,
-        suffix,
-        operationId,
-        decision ? { decision, runId } : undefined
-      );
+      await command();
     } catch (error) {
       setErrorMessage(messageOf(error));
     }
-    setBusy(false);
-  };
-  const openSource = async (sourceId: string, sourceVersion: string) => {
-    const generation = currentAccessGeneration();
-    setDetail(null);
-    try {
-      const value = await request(
-        `${path}/sources/${encoded(sourceId)}`,
-        sourceSchema
-      );
-      assertCurrentAccess(generation);
-      if (value.sourceVersion !== sourceVersion) {
-        setErrorMessage("The cited source version is no longer available.");
-        return;
-      }
-      setDetail({ type: "source", value });
-    } catch (error) {
-      setErrorMessage(messageOf(error));
-    }
-  };
-  const openAudit = async (runId: string) => {
-    const generation = currentAccessGeneration();
-    try {
-      const value = await request(
-        `${path}/audit/${encoded(runId)}`,
-        auditSchema
-      );
-      assertCurrentAccess(generation);
-      setDetail({ type: "audit", value });
-    } catch (error) {
-      setErrorMessage(messageOf(error));
-    }
+    setActing(false);
   };
 
   if (!accessValid) {
@@ -614,158 +407,45 @@ const ConversationSession = ({
       <ConversationHeader
         agentName={agentName}
         sessionId={conversation?.sessionId}
+        connection={connection}
         connected={connected}
-        connection={displayedConnection}
+        busy={snapshot.busy}
+        disabled={!online || acting}
         toggle={() => setConnected((value) => !value)}
-        retired={retired}
+        stop={() => act(() => stopConversation(path))}
       />
-      <ConversationNotice
-        retired={retired}
-        message={displayedError}
-        onStartConversation={onStartConversation}
+      {displayedError ? (
+        <p className="error-banner" role="alert">
+          {displayedError}
+        </p>
+      ) : null}
+      {!conversation && displayedError && onStartConversation ? (
+        <button
+          className="quiet-button"
+          type="button"
+          onClick={onStartConversation}
+        >
+          Start new conversation
+        </button>
+      ) : null}
+      <ConversationTranscript
+        snapshot={snapshot}
+        agentName={agentName}
+        connecting={connected && connection === "connecting"}
+        disabled={!online || acting}
+        decide={(approvalId, decision) =>
+          act(() => decideApproval(path, approvalId, decision))
+        }
+        transcript={transcript}
       />
-      <div
-        className="transcript"
-        ref={transcript}
-        aria-live="polite"
-        aria-relevant="additions"
-      >
-        {messages.length === 0 ? (
-          <div className="conversation-empty">
-            <span className="empty-mark">c</span>
-            <h3>Start with a question.</h3>
-            <p>Responses include their sources and execution status.</p>
-          </div>
-        ) : null}
-        {messages.map((message) => (
-          <TranscriptMessage
-            agentName={agentName}
-            key={message.id}
-            message={message}
-          />
-        ))}
-        <ConversationProgress recovering={isRecovering} busy={busy} />
-        {items.map((item) => {
-          switch (item.type) {
-            case "citation": {
-              return (
-                <button
-                  className="citation-button"
-                  key={item.cursor}
-                  type="button"
-                  onClick={() => openSource(item.sourceId, item.sourceVersion)}
-                >
-                  <span aria-hidden="true">↗</span> {item.title}
-                  <small>Source version {item.sourceVersion}</small>
-                </button>
-              );
-            }
-            case "tool": {
-              return (
-                <div className="tool-status" key={item.cursor}>
-                  <span aria-hidden="true">◇</span> {item.name}
-                  <span className="status-pill">{item.state}</span>
-                  {item.state === "unknown-outcome" ? (
-                    <small>
-                      Interrupted after dispatch. Check the target system;
-                      Cerebro will not retry it.
-                    </small>
-                  ) : null}
-                  <details>
-                    <summary>Tool details</summary>
-                    <pre>
-                      {JSON.stringify(
-                        { arguments: item.arguments, output: item.output },
-                        null,
-                        2
-                      )}
-                    </pre>
-                  </details>
-                </div>
-              );
-            }
-            case "approval": {
-              return item.approvalState === "pending" &&
-                (item.expiresAt ?? 0) > now ? (
-                <section
-                  className="approval-card"
-                  key={item.cursor}
-                  aria-label="Approval required"
-                >
-                  <p className="eyebrow">Approval required</p>
-                  <h3>Review before execution.</h3>
-                  <p>Approve this request to continue the run.</p>
-                  <div className="button-row">
-                    <button
-                      className="primary-button"
-                      disabled={disabled}
-                      type="button"
-                      onClick={() =>
-                        act(
-                          `approvals/${encoded(item.approvalId)}`,
-                          item.runId,
-                          "allow"
-                        )
-                      }
-                    >
-                      Approve request
-                    </button>
-                    <button
-                      className="quiet-button"
-                      disabled={disabled}
-                      type="button"
-                      onClick={() =>
-                        act(
-                          `approvals/${encoded(item.approvalId)}`,
-                          item.runId,
-                          "deny"
-                        )
-                      }
-                    >
-                      Deny request
-                    </button>
-                  </div>
-                </section>
-              ) : null;
-            }
-            case "run": {
-              return (
-                <div className="run-status" key={item.cursor}>
-                  <span className="status-pill">
-                    {item.run.state.replaceAll("-", " ")}
-                  </span>
-                  {["queued", "running", "waiting-for-approval"].includes(
-                    item.run.state
-                  ) && runs.get(item.run.runId)?.state === item.run.state ? (
-                    <button
-                      className="text-button"
-                      type="button"
-                      disabled={disabled}
-                      onClick={() =>
-                        act(
-                          `runs/${encoded(item.run.runId)}/cancel`,
-                          item.run.runId
-                        )
-                      }
-                    >
-                      Stop
-                    </button>
-                  ) : null}
-                </div>
-              );
-            }
-            default: {
-              return null;
-            }
-          }
-        })}
-      </div>
       {pending ? (
         <div className="pending-message">
-          <p>A message awaits confirmation. Retry with the same event ID.</p>
+          <p>
+            A message awaits confirmation. Retry with the same operation ID.
+          </p>
           <button
             className="quiet-button"
-            disabled={disabled}
+            disabled={!online || sending}
             type="button"
             onClick={() => send(pending)}
           >
@@ -780,35 +460,7 @@ const ConversationSession = ({
         connected={online}
         pending={pending}
         send={send}
-        mode={mode}
-        setMode={setMode}
       />
-      <details className="execution-history">
-        <summary>
-          Execution history <span>{historyRuns.length} runs</span>
-        </summary>
-        {historyRuns.map((run) => (
-          <div className="history-row" key={run.runId}>
-            <span>{run.runId.slice(0, 18)}</span>
-            <span className="status-pill">
-              {run.state.replaceAll("-", " ")}
-            </span>
-            <button
-              className="text-button"
-              type="button"
-              onClick={() => openAudit(run.runId)}
-            >
-              View audit
-            </button>
-          </div>
-        ))}
-        <p className="muted-text">
-          The audit projection can update after execution.
-        </p>
-      </details>
-      {detail ? (
-        <EvidenceDialog detail={detail} onClose={() => setDetail(null)} />
-      ) : null}
     </section>
   );
 };

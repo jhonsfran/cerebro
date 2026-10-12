@@ -1,15 +1,14 @@
 import { ChannelError } from "@cerebro/channels/types";
-import type { EventAddress } from "@cerebro/contracts/events";
 import { Denied } from "@cerebro/contracts/failures";
-import type { Observation } from "@cerebro/contracts/session-service";
 
 export const OBSERVATION_CONTENT_TYPE = "application/x-ndjson";
 export const ACCESS_RECHECK_MS = 2000;
 const ACCESS_CHECK_TIMEOUT_MS = 1000;
+const ACCESS_DENIED = new TextEncoder().encode(
+  `${JSON.stringify({ reason: "revoked", type: "access-denied" })}\n`
+);
 
 export interface GuardedObservation {
-  readonly accessGeneration: number;
-  readonly address: EventAddress;
   readonly authorize: () => Promise<void>;
   readonly body: ReadableStream<Uint8Array>;
   readonly recheckMs?: number;
@@ -38,25 +37,12 @@ const withTimeout = async (
   }
 };
 
-// Session frames pass through as bytes. Access is rechecked on an interval:
-// a denial appends one access-denied frame and closes, any other failure
-// ends the stream so the browser reconnects with a fresh check.
 export const guardedObservation = (
   input: GuardedObservation
 ): ReadableStream<Uint8Array> => {
   const reader = input.body.getReader();
-  const encoder = new TextEncoder();
   let settled = false;
   let timer: ReturnType<typeof setInterval> | undefined;
-  const denial = (): Observation => ({
-    accessGeneration: input.accessGeneration,
-    address: input.address,
-    epoch: `access:${crypto.randomUUID()}`,
-    reason: "revoked",
-    schemaVersion: 1,
-    sequence: 0,
-    type: "access-denied",
-  });
   const release = async () => {
     settled = true;
     clearInterval(timer);
@@ -75,7 +61,7 @@ export const guardedObservation = (
     }
     await release();
     if (outcome === "denied") {
-      controller.enqueue(encoder.encode(`${JSON.stringify(denial())}\n`));
+      controller.enqueue(ACCESS_DENIED);
       controller.close();
     } else if (outcome === "end") {
       controller.close();

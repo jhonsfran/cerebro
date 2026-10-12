@@ -11,18 +11,16 @@ import { promisify } from "node:util";
 
 import { Schema } from "effect";
 
-import type {
-  EventAddress,
-  EventEnvelope,
-} from "../../packages/contracts/src/events.ts";
+import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/identity.ts";
+import type { ChatApproval } from "../../packages/contracts/src/session-service.ts";
 import {
-  DomainSnapshot,
-  Observation,
+  ChatDecisionReceipt,
+  ChatObservation,
+  ChatReceipt,
+  ChatSnapshot,
 } from "../../packages/contracts/src/session-service.ts";
-import type { ApprovalState } from "../../packages/contracts/src/session-service.ts";
-import type { SessionReceipt } from "../../packages/contracts/src/session.ts";
 
 export interface Stack {
   readonly project: string;
@@ -191,12 +189,12 @@ export const rawRequest = async (
   }
   throw new Error("Fixture transport retries exhausted");
 };
-export const request = async <Value>(
+export const request = async (
   stack: Stack,
   path: string,
   body: unknown,
   principal?: string
-): Promise<Value> => {
+): Promise<unknown> => {
   const response = await rawRequest(stack, path, body, principal);
   assert.equal(
     response.status,
@@ -211,13 +209,13 @@ export const request = async <Value>(
       result.status === "ok" &&
       "value" in result
   );
-  return result.value as Value;
+  return result.value;
 };
 // Docker Desktop can refuse a published port for a moment after a container signal.
-export const getFixture = async <Value>(
+export const getFixture = async (
   stack: Stack,
   path = "/observations"
-): Promise<Value> => {
+): Promise<unknown> => {
   for (let attempt = 0; ; attempt += 1) {
     try {
       const response = await fetch(
@@ -225,7 +223,7 @@ export const getFixture = async <Value>(
         { signal: AbortSignal.timeout(10_000) }
       );
       assert.equal(response.status, 200);
-      return (await response.json()) as Value;
+      return await response.json();
     } catch (error) {
       if (!(error instanceof TypeError) || attempt === 4) {
         throw error;
@@ -234,40 +232,62 @@ export const getFixture = async <Value>(
     }
   }
 };
-export interface ProviderEvidence {
-  readonly fixtureId: string;
-  readonly sha: string;
-  readonly revision: number;
-  readonly held: number;
-  readonly tools: readonly {
-    readonly operationId: string;
-    readonly receipt: string;
-    readonly write: boolean;
-    readonly completedAt?: number;
-  }[];
-  readonly model: readonly {
-    readonly operationId: string;
-    readonly status?: number;
-  }[];
-  readonly checkpoints: readonly {
-    readonly boundary: string;
-    readonly operationId: string;
-    readonly armed?: boolean;
-  }[];
-}
+const providerSchema = Schema.Struct({
+  checkpoints: Schema.Array(
+    Schema.Struct({
+      armed: Schema.optional(Schema.Boolean),
+      boundary: Schema.String,
+      operationId: Schema.String,
+    })
+  ),
+  fixtureId: Schema.String,
+  held: Schema.Number,
+  model: Schema.Array(
+    Schema.Struct({
+      completedAt: Schema.optional(Schema.Number),
+      operationId: Schema.String,
+      startedAt: Schema.Number,
+      status: Schema.optional(Schema.Number),
+    })
+  ),
+  revision: Schema.Number,
+  sha: Schema.String,
+  tools: Schema.Array(
+    Schema.Struct({
+      completedAt: Schema.optional(Schema.Number),
+      operationId: Schema.String,
+      receipt: Schema.String,
+      write: Schema.Boolean,
+    })
+  ),
+});
+export type ProviderEvidence = typeof providerSchema.Type;
+export const provider = async (stack: Stack): Promise<ProviderEvidence> =>
+  Schema.decodeUnknownSync(providerSchema)(await getFixture(stack));
 export const control = async (stack: Stack, input: unknown): Promise<void> => {
-  const response = await fetch(
-    `http://127.0.0.1:${stack.fixturePort}/control`,
-    {
-      body: JSON.stringify(input),
-      headers: {
-        "Content-Type": "application/json",
-        "x-fixture-control": "slice-1-control",
-      },
-      method: "POST",
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${stack.fixturePort}/control`,
+        {
+          body: JSON.stringify(input),
+          headers: {
+            "Content-Type": "application/json",
+            "x-fixture-control": "slice-1-control",
+          },
+          method: "POST",
+          signal: AbortSignal.timeout(10_000),
+        }
+      );
+      assert.equal(response.status, 200);
+      return;
+    } catch (error) {
+      if (!(error instanceof TypeError) || attempt === 4) {
+        throw error;
+      }
+      await delay(500);
     }
-  );
-  assert.equal(response.status, 200);
+  }
 };
 export const waitFor = async <Value>(
   read: () => Promise<Value> | Value,
@@ -309,59 +329,33 @@ export const addressFor = (
   organizationId: id.organization(organizationId),
   sessionId: id.session(`session:${organizationId}:${conversationId}`),
 });
-export const messageEvent = (
-  address: EventAddress,
-  eventId: string
-): EventEnvelope => ({
-  ...address,
-  context: fixtureContext(address.organizationId),
-  event: {
-    payload: { text: "Apply fixture_effect once." },
-    type: "user.message",
-  },
-  eventId: id.event(eventId),
-  occurredAt: Date.now(),
-  payloadDigest: id.digest(`sha256:${eventId}`),
-  schemaVersion: 1,
-});
-export const effectOptions = (
-  operationId: string,
-  digest = `sha256:${operationId}`
-) => ({
-  deadlineAt: Date.now() + 600_000,
-  operationId: id.operation(operationId),
-  requestDigest: id.digest(digest),
-});
-export const submit = async (
+export const send = async (
   stack: Stack,
-  event: EventEnvelope,
-  operationId: string = event.eventId,
-  mode: "follow-up" | "steer" | "replace" = "follow-up"
-): Promise<SessionReceipt> =>
-  await request(stack, "/runtime/submit", {
-    address: event,
-    command: { event, mode, type: "submit" },
-    options: effectOptions(operationId),
-  });
-export const inspect = async (
+  address: EventAddress,
+  operationId: string,
+  text: string
+): Promise<ChatReceipt> =>
+  Schema.decodeUnknownSync(ChatReceipt)(
+    await request(stack, "/runtime/send", { address, operationId, text })
+  );
+export const read = async (
   stack: Stack,
   address: EventAddress,
   principal?: string
-): Promise<DomainSnapshot> =>
-  Schema.decodeUnknownSync(DomainSnapshot)(
-    await request(
-      stack,
-      "/runtime/inspect",
-      { address, options: effectOptions(`inspect:${randomUUID()}`) },
-      principal
-    )
+): Promise<ChatSnapshot> =>
+  Schema.decodeUnknownSync(ChatSnapshot)(
+    await request(stack, "/runtime/read", { address }, principal)
+  );
+export const stop = async (stack: Stack, address: EventAddress) =>
+  Schema.decodeUnknownSync(Schema.Struct({ stopped: Schema.Boolean }))(
+    await request(stack, "/runtime/stop", { address })
   );
 export const pending = async (
   stack: Stack,
   address: EventAddress
-): Promise<ApprovalState> => {
+): Promise<ChatApproval> => {
   const snapshot = await waitFor(
-    () => inspect(stack, address),
+    () => read(stack, address),
     (value) => value.approvals.some((approval) => approval.state === "pending")
   );
   const approval = snapshot.approvals.find(
@@ -370,33 +364,25 @@ export const pending = async (
   assert.ok(approval);
   return approval;
 };
-export const approve = async (
+export const decide = async (
   stack: Stack,
   address: EventAddress,
-  approval: ApprovalState,
+  approval: ChatApproval,
   decision: "allow" | "deny" = "allow"
-) =>
-  await request(stack, "/runtime/approve", {
-    address,
-    command: {
+): Promise<ChatDecisionReceipt> =>
+  Schema.decodeUnknownSync(ChatDecisionReceipt)(
+    await request(stack, "/runtime/decide", {
       address,
       approvalId: approval.approvalId,
-      context: fixtureContext(address.organizationId),
       decision,
-      runId: approval.runId,
-      type: "approve",
-    },
-    options: effectOptions(`approval:${approval.approvalId}:${decision}`),
-  });
+    })
+  );
 export const observe = async (stack: Stack, address: EventAddress) => {
   const abort = new AbortController();
   const response = await fetch(
-    `http://127.0.0.1:${stack.apiPort}/runtime/stream`,
+    `http://127.0.0.1:${stack.apiPort}/runtime/observe`,
     {
-      body: JSON.stringify({
-        address,
-        options: effectOptions(`observe:${randomUUID()}`),
-      }),
+      body: JSON.stringify({ address }),
       headers: { "Content-Type": "application/json" },
       method: "POST",
       signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60_000)]),
@@ -412,7 +398,7 @@ export const observe = async (stack: Stack, address: EventAddress) => {
       await reader.cancel();
       abort.abort();
     },
-    next: async (): Promise<Observation> => {
+    next: async (): Promise<ChatObservation> => {
       while (!buffered.includes("\n")) {
         const result = await reader.read();
         assert.equal(
@@ -425,10 +411,56 @@ export const observe = async (stack: Stack, address: EventAddress) => {
       const index = buffered.indexOf("\n");
       const line = buffered.slice(0, index);
       buffered = buffered.slice(index + 1);
-      return Schema.decodeUnknownSync(Observation)(JSON.parse(line));
+      return Schema.decodeUnknownSync(ChatObservation)(JSON.parse(line));
     },
   };
 };
+export const nativeStorage = async (stack: Stack, address: EventAddress) =>
+  Schema.decodeUnknownSync(
+    Schema.Struct({
+      submissions: Schema.Array(
+        Schema.Struct({
+          conversation_id: Schema.Number,
+          id: Schema.Number,
+          request_id: Schema.NullOr(Schema.String),
+          status: Schema.String,
+        })
+      ),
+      tables: Schema.Array(Schema.String),
+      tasks: Schema.Array(
+        Schema.Struct({
+          abort_requested: Schema.Number,
+          conversation_id: Schema.Number,
+          id: Schema.Number,
+          kind: Schema.String,
+          memos: Schema.NullOr(Schema.String),
+          state: Schema.String,
+          status: Schema.String,
+        })
+      ),
+    })
+  )(await request(stack, "/runtime/fixture/native-storage", { address }));
+export const lifecycle = async (stack: Stack, address: EventAddress) =>
+  Schema.decodeUnknownSync(
+    Schema.Struct({ jobs: Schema.Array(Schema.Struct({ fn: Schema.String })) })
+  )(await request(stack, "/runtime/fixture/lifecycle", { address }));
+export const dependencyCheckpoint = async (
+  stack: Stack,
+  address: EventAddress,
+  state: { readonly armed?: boolean; readonly released?: boolean } = {}
+) =>
+  Schema.decodeUnknownSync(
+    Schema.Struct({
+      armed: Schema.Boolean,
+      released: Schema.Boolean,
+      waiting: Schema.Boolean,
+    })
+  )(
+    await request(stack, "/runtime/fixture/dependency-checkpoint", {
+      address,
+      ...state,
+    })
+  );
 export const evidence = async (
   stack: Stack,
   name: string,

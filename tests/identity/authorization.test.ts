@@ -12,12 +12,12 @@ import { AuthorityService } from "../../packages/contracts/src/authority-service
 import { id } from "../../packages/contracts/src/index.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/index.ts";
 import type { Action, Resource } from "../../packages/contracts/src/policy.ts";
-import { userEvent } from "../../packages/contracts/src/testing/fixtures.ts";
 import type {
   AuthorizationSnapshot,
   IdentityGrant,
   IdentityPrincipal,
 } from "../../packages/db/src/repositories/identity.ts";
+import { userEvent } from "../support/fixtures.ts";
 
 const organizationId = id.organization("company-a");
 const otherOrganizationId = id.organization("company-b");
@@ -234,22 +234,13 @@ test("SCIM group removal and directory deactivation revoke a grant", async () =>
   );
 });
 
-test("audit and usage export grants stay in one company and one resource kind", async () => {
+test("audit export grants stay in one company", async () => {
   const audit: Resource = { id: organizationId, kind: "audit", organizationId };
-  const usage: Resource = {
-    id: organizationId,
-    kind: "budget",
-    organizationId,
-  };
   const snapshot = {
     ...baseSnapshot(),
-    actorGrants: [
-      grant(actorId, "export", "audit", organizationId),
-      grant(actorId, "export", "budget", organizationId),
-    ],
+    actorGrants: [grant(actorId, "export", "audit", organizationId)],
   };
   await expectDecision(snapshot, context, "export", audit, "allow");
-  await expectDecision(snapshot, context, "export", usage, "allow");
   await expectDecision(
     snapshot,
     context,
@@ -261,31 +252,14 @@ test("audit and usage export grants stay in one company and one resource kind", 
     snapshot,
     context,
     "export",
-    { ...usage, id: otherOrganizationId },
-    "deny"
-  );
-  await expectDecision(
-    snapshot,
-    context,
-    "export",
     { ...audit, organizationId: otherOrganizationId },
     "deny"
   );
   await expectDecision(
-    snapshot,
+    { ...snapshot, actorGrants: [] },
     context,
     "export",
-    { ...usage, organizationId: otherOrganizationId },
-    "deny"
-  );
-  await expectDecision(
-    {
-      ...snapshot,
-      actorGrants: [grant(actorId, "export", "audit", organizationId)],
-    },
-    context,
-    "export",
-    usage,
+    audit,
     "deny"
   );
 });

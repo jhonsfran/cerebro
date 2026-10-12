@@ -7,8 +7,8 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
-import { assertWorkerEnv } from "../../apps/server/src/env.server.ts";
-import type { WorkerEnv } from "../../apps/server/src/env.server.ts";
+import { assertWorkerEnv } from "../../apps/server/src/bindings.ts";
+import type { WorkerEnv } from "../../apps/server/src/bindings.ts";
 
 const exec = promisify(execFile);
 const project = `cerebro-boot-${randomBytes(4).toString("hex")}`;

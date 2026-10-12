@@ -1,52 +1,30 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Assertions inspect the preceding native response. */
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
-import { Effect } from "effect";
-
-import { requireChatSession } from "../../apps/server/src/chat-session";
-import { createProductHandler } from "../../packages/api/src/routers/conversations";
+import { createApiHandler } from "../../packages/api/src/handler";
 import { createIdentityRouter } from "../../packages/api/src/routers/identity";
-import { drainChannelWork } from "../../packages/channels/src/drain";
 import { unwrap } from "../../packages/channels/src/security";
 import { createChannelService } from "../../packages/channels/src/service";
 import type { ProductHandlerOptions } from "../../packages/channels/src/types";
-import { Unavailable } from "../../packages/contracts/src/failures";
-import { id } from "../../packages/contracts/src/index";
 import { eq } from "../../packages/db/node_modules/drizzle-orm";
 import {
   AuditProjectionConflictError,
   projectAuditEvent,
 } from "../../packages/db/src/repositories/audit";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
-import {
-  channelConversation,
-  channelItem,
-  channelReply,
-} from "../../packages/db/src/schema/agents";
 import { auditEvent } from "../../packages/db/src/schema/audit";
-import { session as authSession } from "../../packages/db/src/schema/auth";
 import { organization } from "../../packages/db/src/schema/core";
-import {
-  identityPrincipal,
-  identitySlackLink,
-} from "../../packages/db/src/schema/identity";
-import { usageReservation } from "../../packages/db/src/schema/usage";
-import { createFixtureSessionService } from "./fixture-session";
-import {
-  array,
-  createTestProduct,
-  domainSnapshot,
-  object,
-  string,
-} from "./helpers";
+import { identityPrincipal } from "../../packages/db/src/schema/identity";
+import { createTestProduct, object, string } from "./helpers";
 
 const requireFromApi = createRequire(
   new URL("../../packages/api/package.json", import.meta.url)
 );
 const { call } = requireFromApi("@orpc/server");
 const configuredRequest = (options: ProductHandlerOptions) => {
-  const handler = createProductHandler(options);
+  const handler = createApiHandler(options);
   return (
     path: string,
     method = "GET",
@@ -61,45 +39,6 @@ const configuredRequest = (options: ProductHandlerOptions) => {
       })
     );
 };
-test("chat connections reject foreign, expired and deleted Better Auth sessions", async () => {
-  const app = await createTestProduct();
-  const identity = { authSessionId: crypto.randomUUID(), userId: "test-owner" };
-  await app.options.withDatabase(async (database) => {
-    await database.insert(authSession).values({
-      expiresAt: new Date(Date.now() + 60_000),
-      id: identity.authSessionId,
-      token: crypto.randomUUID(),
-      updatedAt: new Date(),
-      userId: identity.userId,
-    });
-    await requireChatSession(database, identity);
-    await assert.rejects(
-      requireChatSession(database, { ...identity, userId: "test-other" }),
-      { code: "unauthorized", status: 401 }
-    );
-    await database
-      .update(authSession)
-      .set({ expiresAt: new Date(Date.now() - 1000) })
-      .where(eq(authSession.id, identity.authSessionId));
-    await assert.rejects(requireChatSession(database, identity), {
-      code: "unauthorized",
-      status: 401,
-    });
-    await database
-      .update(authSession)
-      .set({ expiresAt: new Date(Date.now() + 60_000) })
-      .where(eq(authSession.id, identity.authSessionId));
-    await requireChatSession(database, identity);
-    await database
-      .delete(authSession)
-      .where(eq(authSession.id, identity.authSessionId));
-    await assert.rejects(requireChatSession(database, identity), {
-      code: "unauthorized",
-      status: 401,
-    });
-  });
-});
-
 test("chat access checks the conversation owner and current agent read access", async () => {
   const app = await createTestProduct();
   const setup = await app.install();
@@ -141,59 +80,6 @@ test("chat access checks the conversation owner and current agent read access", 
   });
 });
 
-test("chat access denies revoked content beyond the first transcript page", async () => {
-  const app = await createTestProduct();
-  const setup = await app.install();
-  const principalId = string(setup.principalId);
-  const agent = await app.createAgent();
-  const response = await app.request("/api/product/conversations", "POST", {
-    agentId: string(agent.agentId),
-    operationId: "chat-history-access",
-  });
-  const created = object(await response.json());
-  const conversationId = string(created.conversationId);
-  const sourceId = id.source("chat-private-source");
-  await app.options.withDatabase(async (db) => {
-    const identity = createIdentityRepository(db);
-    await identity.setManualGrant(
-      app.options.organizationId,
-      principalId,
-      { action: "read", resourceId: sourceId, resourceKind: "memory" },
-      true
-    );
-    await db.insert(channelItem).values(
-      Array.from({ length: 201 }, (_, index) => ({
-        conversationId,
-        item: {
-          dependencies: {
-            sourceIds: index === 200 ? [sourceId] : [],
-            toolIds: [],
-          },
-          runId: `chat-run-${index}`,
-          text: index === 200 ? "Private company content" : "Public content",
-          type: "output" as const,
-        },
-        itemKey: `chat-history-${index}`,
-        organizationId: app.options.organizationId,
-      }))
-    );
-    const service = createChannelService(db, app.options);
-    await service.chatAccess("test-owner", conversationId);
-    await identity.setManualGrant(
-      app.options.organizationId,
-      principalId,
-      { action: "read", resourceId: sourceId, resourceKind: "memory" },
-      false
-    );
-    await assert.rejects(
-      service.readConversation("test-owner", conversationId),
-      { status: 403 }
-    );
-    await assert.rejects(service.chatAccess("test-owner", conversationId), {
-      status: 403,
-    });
-  });
-});
 test("production setup requires trusted credentials and preserves the exact local owner", async () => {
   const app = await createTestProduct();
   const request = configuredRequest({
@@ -262,61 +148,29 @@ test("production setup does not convert a directory-managed human into local own
   });
   assert.equal(managedOwnerResponse.status, 403);
 });
-test("configured catalog, source and audit readers replace fixture views and deny revoked content", async () => {
+
+test("configured catalog and source readers enforce current company grants", async () => {
   const app = await createTestProduct();
-  const setupResult = await app.install();
-  const principalId = string(setupResult.principalId);
-  const agentResult = await app.createAgent();
-  const agentId = string(agentResult.agentId);
-  const conversationResponse = await app.request(
-    "/api/product/conversations",
-    "POST",
-    {
-      agentId,
-      operationId: "real-content",
-    }
-  );
-  const created = object(await conversationResponse.json());
-  const conversationId = string(created.conversationId);
-  const sourceId = id.source("company-source");
-  const runId = id.run("real-run");
-  await app.options.withDatabase(async (db) => {
-    await createIdentityRepository(db).setManualGrant(
+  const setup = await app.install();
+  const principalId = string(setup.principalId);
+  const agent = await app.createAgent();
+  const created = await app.request("/api/product/conversations", "POST", {
+    agentId: string(agent.agentId),
+    operationId: "configured-source",
+  });
+  const conversationId = string(object(await created.json()).conversationId);
+  await app.options.withDatabase((db) =>
+    createIdentityRepository(db).setManualGrant(
       app.options.organizationId,
       principalId,
-      { action: "read", resourceId: sourceId, resourceKind: "memory" },
+      { action: "read", resourceId: "company-source", resourceKind: "memory" },
       true
-    );
-    await db
-      .update(channelConversation)
-      .set({
-        channelId: "channel",
-        kind: "slack",
-        projectionState: "active",
-        rootTimestamp: "123",
-        slackUserId: "slack-user",
-        workspaceId: "workspace",
-      })
-      .where(eq(channelConversation.conversationId, conversationId));
-    await db.insert(identitySlackLink).values({
-      id: "content-link",
-      organizationId: app.options.organizationId,
-      principalId,
-      slackUserId: "slack-user",
-      workspaceId: "workspace",
-    });
-  });
-  const dependencies = { sourceIds: [sourceId], toolIds: ["fixture-read"] };
+    )
+  );
   let sourceCalls = 0;
-  let auditCalls = 0;
-  let deliveries = 0;
-  const options: ProductHandlerOptions = {
+  const request = configuredRequest({
     ...app.options,
-    catalog: {
-      connectorChoices: [{ id: "fixture-read", label: "Configured read tool" }],
-      modelChoices: [{ id: "configured/model", label: "Configured model" }],
-    },
-    catalogFor: (_db, context) => {
+    catalogFor: (_database, context) => {
       assert.equal(context.actor.id, principalId);
       return Promise.resolve({
         status: "ok",
@@ -329,26 +183,9 @@ test("configured catalog, source and audit readers replace fixture views and den
         },
       });
     },
-    checkContentDependencies: () =>
-      Promise.resolve({ status: "ok", value: undefined }),
-    readAudit: (_db, _context, input) => {
-      auditCalls += 1;
-      assert.equal(input.sessionId, created.sessionId);
-      return Promise.resolve({
-        status: "ok",
-        value: {
-          entries: [
-            { at: 42, description: "Provider usage settled.", type: "usage" },
-          ],
-          runId: input.runId,
-          state: "completed",
-        },
-      });
-    },
-    readSource: (_db, context, input) => {
+    readSource: (_database, context, input) => {
       sourceCalls += 1;
       assert.equal(context.actor.id, principalId);
-      assert.equal(input.sessionId, created.sessionId);
       return Promise.resolve({
         status: "ok",
         value: {
@@ -359,239 +196,82 @@ test("configured catalog, source and audit readers replace fixture views and den
         },
       });
     },
-    sessions: (db) => ({
-      ...createFixtureSessionService(db, app.options),
-      inspect: (address) =>
-        Effect.succeed(
-          domainSnapshot(address, {
-            executions: [{ executionId: "travel-execution", runIds: [runId] }],
-            outputs: [
-              {
-                answerId: "travel-answer",
-                citations: [
-                  {
-                    observedAt: 42,
-                    sourceId,
-                    sourceUri: "company://travel",
-                    sourceVersion: "v3",
-                  },
-                ],
-                dependencies,
-                executionId: "travel-execution",
-                runId,
-                runIds: [runId],
-                text: "Rail is permitted.",
-              },
-            ],
-            revision: 4,
-            runs: [{ completedAt: 42, runId, state: "completed" }],
-            tools: [
-              {
-                arguments: {},
-                dependencies,
-                effect: "read",
-                operationId: "read-travel",
-                output: { found: true },
-                runId,
-                state: "succeeded",
-                toolId: "fixture-read",
-                toolVersion: "1",
-              },
-            ],
-          })
-        ),
-    }),
-  };
-  const request = configuredRequest(options);
-  const catalogResponse = await request("catalog");
-  assert.deepEqual(object(await catalogResponse.json()).modelChoices, [
+  });
+  const catalog = object(await (await request("catalog")).json());
+  assert.deepEqual(catalog.modelChoices, [
     { id: "configured/model", label: "Configured model" },
   ]);
-  const unknownModelResponse = await request("agents", "POST", {
-    ...app.agentBody,
-    model: "unknown",
-    operationId: "unknown",
-  });
-  assert.equal(unknownModelResponse.status, 422);
-  const selectedGrants = [
+  assert.equal(
+    (
+      await request("agents", "POST", {
+        ...app.agentBody,
+        model: "unknown",
+        operationId: "unknown-model",
+      })
+    ).status,
+    422
+  );
+  const grants = [
     {
       action: "read",
       resource: {
-        id: "fixture-read",
-        kind: "tool",
-        organizationId: app.options.organizationId,
-      },
-    },
-    {
-      action: "execute",
-      resource: {
-        id: "fixture-read",
-        kind: "tool",
-        organizationId: app.options.organizationId,
-      },
-    },
-    {
-      action: "read",
-      resource: {
-        id: sourceId,
+        id: "company-source",
         kind: "memory",
         organizationId: app.options.organizationId,
       },
     },
   ];
-  const configuredAgentBody = {
+  const body = {
     ...app.agentBody,
-    grants: selectedGrants,
+    grants,
     model: "configured/model",
-    operationId: "configured",
+    operationId: "configured-agent",
   };
-  const publishedAgentResponse = await request(
-    "agents",
-    "POST",
-    configuredAgentBody
+  const published = await request("agents", "POST", body);
+  assert.equal(published.status, 200);
+  const publishedAgent = object(await published.json());
+  const definition = object(
+    await (await request(`agents/${string(publishedAgent.agentId)}`)).json()
   );
-  assert.equal(publishedAgentResponse.status, 200);
-  const published = object(await publishedAgentResponse.json());
-  const configuredAgentResponse = await request(
-    `agents/${string(published.agentId)}`
-  );
-  const configuredAgent = object(await configuredAgentResponse.json());
-  assert.deepEqual(object(configuredAgent.definition).grants, selectedGrants);
-  assert.deepEqual(configuredAgent.sourceChoices, [
-    { id: "company-source", label: "Company policy" },
-  ]);
-  await drainChannelWork(options);
-  const transcriptResponse = await request(`conversations/${conversationId}`);
-  const view = object(await transcriptResponse.json());
-  assert.deepEqual(
-    array(view.items).map((entry) => object(entry).type),
-    ["tool", "output", "citation", "run"]
-  );
+  assert.deepEqual(object(definition.definition).grants, grants);
+  const route = `conversations/${conversationId}/sources/company-source`;
   assert.equal(
-    object(array(view.items).find((entry) => object(entry).type === "output"))
-      .text,
-    "Rail is permitted."
-  );
-  const sourceResponse = await request(
-    `conversations/${conversationId}/sources/${sourceId}`
-  );
-  assert.equal(
-    object(await sourceResponse.json()).text,
+    object(await (await request(route)).json()).text,
     "Company travel policy permits rail."
   );
-  const auditResponse = await request(
-    `conversations/${conversationId}/audit/${runId}`
-  );
-  assert.deepEqual(object(await auditResponse.json()).entries, [
-    { at: 42, description: "Provider usage settled.", type: "usage" },
-  ]);
-  assert.equal(sourceCalls, 1);
-  assert.equal(auditCalls, 1);
   await app.options.withDatabase((db) =>
     createIdentityRepository(db).setManualGrant(
       app.options.organizationId,
       principalId,
-      { action: "read", resourceId: sourceId, resourceKind: "memory" },
+      { action: "read", resourceId: "company-source", resourceKind: "memory" },
       false
     )
   );
-  const revokedTranscriptResponse = await request(
-    `conversations/${conversationId}`
-  );
-  assert.equal(revokedTranscriptResponse.status, 403);
-  const revokedSourceResponse = await request(
-    `conversations/${conversationId}/sources/${sourceId}`
-  );
-  assert.equal(revokedSourceResponse.status, 403);
+  assert.equal((await request(route)).status, 403);
+  assert.equal((await request("agents", "POST", body)).status, 403);
   assert.equal(sourceCalls, 1);
-  const revokedPublication = await request(
-    "agents",
-    "POST",
-    configuredAgentBody
-  );
-  assert.equal(revokedPublication.status, 403);
-  await drainChannelWork({
-    ...options,
-    fetch: () => {
-      deliveries += 1;
-      return Promise.resolve(
-        Response.json({ channel: "channel", ok: true, ts: "124" })
-      );
-    },
-    slack: {
-      agentId,
-      appId: "app",
-      botToken: "test",
-      signingSecret: "test",
-      workspaceId: "workspace",
-    },
-  });
-  assert.equal(deliveries, 0);
-  await app.options.withDatabase(async (db) => {
-    const queuedReplies = await db.select().from(channelReply);
-    assert.equal(queuedReplies[0]?.state, "failed");
-  });
 });
-test("production with missing adapters never returns fixture source, audit, budget or untracked output", async () => {
+
+test("production requires configured catalog and source adapters", async () => {
   const app = await createTestProduct();
   await app.install();
-  const agentResult = await app.createAgent();
-  const agentId = string(agentResult.agentId);
-  const conversationResponse = await app.request(
-    "/api/product/conversations",
-    "POST",
-    {
-      agentId,
-      operationId: "missing-adapters",
-    }
-  );
-  const conversationId = string(
-    object(await conversationResponse.json()).conversationId
-  );
+  const agent = await app.createAgent();
+  const created = await app.request("/api/product/conversations", "POST", {
+    agentId: string(agent.agentId),
+    operationId: "missing-adapters",
+  });
+  const conversationId = string(object(await created.json()).conversationId);
   const request = configuredRequest({
     ...app.options,
     catalog: undefined,
     mode: "production",
-    readAudit: undefined,
     readSource: undefined,
-    sessions: (db) => createFixtureSessionService(db, app.options),
   });
-  const missingCatalogResponse = await request("catalog");
-  assert.equal(missingCatalogResponse.status, 503);
-  const missingBudgetResponse = await request("budget");
-  assert.equal(missingBudgetResponse.status, 404);
-  const missingSourceResponse = await request(
-    `conversations/${conversationId}/sources/pilot-source`
-  );
-  assert.equal(missingSourceResponse.status, 503);
-  const missingAuditResponse = await request(
-    `conversations/${conversationId}/audit/missing-run`
-  );
-  assert.equal(missingAuditResponse.status, 503);
-  await app.options.withDatabase((db) =>
-    db.insert(channelItem).values({
-      conversationId,
-      item: {
-        runId: "untracked-run",
-        text: "Private generated answer",
-        type: "output",
-      },
-      itemKey: "untracked",
-      organizationId: app.options.organizationId,
-    })
-  );
-  const untrackedOutputResponse = await request(
-    `conversations/${conversationId}`
-  );
-  assert.equal(untrackedOutputResponse.status, 403);
-  assert.throws(
-    () =>
-      unwrap({
-        code: "budget-exhausted",
-        reason: "No budget remains.",
-        status: "denied",
-      }),
-    { code: "budget-exhausted", status: 403 }
+  assert.equal((await request("catalog")).status, 503);
+  assert.equal(
+    (await request(`conversations/${conversationId}/sources/pilot-source`))
+      .status,
+    503
   );
   assert.throws(
     () =>
@@ -603,7 +283,8 @@ test("production with missing adapters never returns fixture source, audit, budg
     { code: "provider-unavailable", status: 503 }
   );
 });
-test("audit and usage exports require current export grants and return bounded company rows", async () => {
+
+test("audit export requires a current export grant and returns bounded company rows", async () => {
   const app = await createTestProduct();
   const setupResult = await app.install();
   const principalId = string(setupResult.principalId);
@@ -612,9 +293,6 @@ test("audit and usage exports require current export grants and return bounded c
     await db
       .delete(auditEvent)
       .where(eq(auditEvent.organizationId, app.options.organizationId));
-    await db
-      .delete(usageReservation)
-      .where(eq(usageReservation.organizationId, app.options.organizationId));
     await db
       .insert(organization)
       .values({ id: otherCompanyId, name: "Other" })
@@ -633,20 +311,6 @@ test("audit and usage exports require current export grants and return bounded c
         sessionId: "session",
       }))
     );
-    await db.insert(usageReservation).values(
-      ["usage-a", "usage-b", "usage-other"].map((reservationId) => ({
-        id: reservationId,
-        incurred: 3,
-        maximum: 5,
-        operationId: reservationId,
-        organizationId:
-          reservationId === "usage-other"
-            ? otherCompanyId
-            : app.options.organizationId,
-        state: "settled" as const,
-        unit: "credits",
-      }))
-    );
     const context = { db, session: { user: { id: "test-owner" } } };
     const router = createIdentityRouter();
     await assert.rejects(
@@ -658,19 +322,15 @@ test("audit and usage exports require current export grants and return bounded c
       { code: "FORBIDDEN" }
     );
     const identity = createIdentityRepository(db);
-    await Promise.all(
-      (["audit", "budget"] as const).map((resourceKind) =>
-        identity.setManualGrant(
-          app.options.organizationId,
-          principalId,
-          {
-            action: "export",
-            resourceId: app.options.organizationId,
-            resourceKind,
-          },
-          true
-        )
-      )
+    await identity.setManualGrant(
+      app.options.organizationId,
+      principalId,
+      {
+        action: "export",
+        resourceId: app.options.organizationId,
+        resourceKind: "audit",
+      },
+      true
     );
     const first = await call(
       router.exportData,
@@ -697,21 +357,6 @@ test("audit and usage exports require current export grants and return bounded c
       ["b"]
     );
     assert.equal(second.nextCursor, null);
-    const usage = await call(
-      router.exportData,
-      { kind: "usage", limit: 200, organizationId: app.options.organizationId },
-      { context }
-    );
-    assert.deepEqual(
-      usage.records.map((row: { id: string; incurred: number }) => [
-        row.id,
-        row.incurred,
-      ]),
-      [
-        ["usage-a", 3],
-        ["usage-b", 3],
-      ]
-    );
     await identity.setManualGrant(
       app.options.organizationId,
       principalId,
@@ -733,214 +378,11 @@ test("audit and usage exports require current export grants and return bounded c
     await assert.rejects(
       call(
         router.exportData,
-        { kind: "usage", organizationId: otherCompanyId },
+        { kind: "audit", organizationId: otherCompanyId },
         { context }
       ),
       { code: "FORBIDDEN" }
     );
-  });
-});
-
-test("an uncertain tool settles channel projection and stays visible", async () => {
-  const app = await createTestProduct();
-  await app.install();
-  const agent = await app.createAgent();
-  const agentId = string(agent.agentId);
-  const response = await app.request("/api/product/conversations", "POST", {
-    agentId,
-    operationId: "unknown-projection",
-  });
-  const conversation = object(await response.json());
-  const conversationId = string(conversation.conversationId);
-  const runId = id.run("unknown-run");
-  const dependencies = { sourceIds: [], toolIds: ["fixture-read"] };
-  await app.options.withDatabase((db) =>
-    db
-      .update(channelConversation)
-      .set({ projectionState: "active" })
-      .where(eq(channelConversation.conversationId, conversationId))
-  );
-  await drainChannelWork({
-    ...app.options,
-    sessions: (db) => ({
-      ...createFixtureSessionService(db, app.options),
-      inspect: (address) =>
-        Effect.succeed(
-          domainSnapshot(address, {
-            executions: [{ executionId: "unknown-execution", runIds: [runId] }],
-            outputs: [
-              {
-                answerId: "unknown-answer",
-                citations: [],
-                dependencies,
-                executionId: "unknown-execution",
-                runId,
-                runIds: [runId],
-                text: "Check the target system.",
-              },
-            ],
-            revision: 1,
-            runs: [{ completedAt: 42, runId, state: "completed" }],
-            tools: [
-              {
-                arguments: {},
-                dependencies,
-                effect: "write",
-                operationId: "unknown-tool",
-                output: null,
-                runId,
-                state: "unknown-outcome",
-                toolId: "fixture-read",
-                toolVersion: "1",
-              },
-            ],
-          })
-        ),
-    }),
-  });
-  await app.options.withDatabase(async (db) => {
-    const [projection] = await db
-      .select()
-      .from(channelConversation)
-      .where(eq(channelConversation.conversationId, conversationId));
-    assert.equal(projection?.projectionState, "idle");
-    const items = await db
-      .select()
-      .from(channelItem)
-      .where(eq(channelItem.conversationId, conversationId));
-    const tool = items.find((entry) => entry.item.type === "tool")?.item;
-    assert.equal(
-      tool?.type === "tool" ? tool.state : undefined,
-      "unknown-outcome"
-    );
-  });
-});
-
-test("empty runtime sessions become idle and only an admitted message reactivates projection", async () => {
-  const app = await createTestProduct();
-  await app.install();
-  const agent = await app.createAgent();
-  const response = await app.request("/api/product/conversations", "POST", {
-    agentId: string(agent.agentId),
-    operationId: "empty-projection",
-  });
-  const conversation = object(await response.json());
-  const conversationId = string(conversation.conversationId);
-  let available = false;
-  const options: ProductHandlerOptions = {
-    ...app.options,
-    sessions: (db) => {
-      const fixture = createFixtureSessionService(db, app.options);
-      return {
-        ...fixture,
-        inspect: (address) => Effect.succeed(domainSnapshot(address)),
-        submit: (command, effect) =>
-          available
-            ? fixture.submit(command, effect)
-            : Effect.fail(new Unavailable({ reason: "Admission delayed." })),
-      };
-    },
-  };
-  const projectionState = () =>
-    app.options.withDatabase(async (db) => {
-      const [row] = await db
-        .select()
-        .from(channelConversation)
-        .where(eq(channelConversation.conversationId, conversationId));
-      return row?.projectionState;
-    });
-  await drainChannelWork(options);
-  assert.equal(await projectionState(), "idle");
-  await app.options.withDatabase(async (db) => {
-    const items = await db
-      .select()
-      .from(channelItem)
-      .where(eq(channelItem.conversationId, conversationId));
-    assert.deepEqual(items, []);
-  });
-  const request = configuredRequest(options);
-  const message = {
-    eventId: "delayed-empty-admission",
-    text: "Wait for admission.",
-  };
-  const path = `conversations/${encodeURIComponent(conversationId)}/messages`;
-  const delayed = await request(path, "POST", message);
-  assert.equal(delayed.status, 503);
-  assert.equal(await projectionState(), "idle");
-  available = true;
-  const admitted = await request(path, "POST", message);
-  assert.equal(admitted.status, 200);
-  assert.equal(await projectionState(), "active");
-});
-
-test("local Slack delivery denies a queued reply without an authorized output projection", async () => {
-  let delivered = 0;
-  const app = await createTestProduct();
-  const setup = await app.install();
-  const principalId = string(setup.principalId);
-  const agent = await app.createAgent();
-  const agentId = string(agent.agentId);
-  const createdResponse = await app.request(
-    "/api/product/conversations",
-    "POST",
-    { agentId, operationId: "missing-local-output" }
-  );
-  assert.equal(createdResponse.status, 200);
-  const created = object(await createdResponse.json());
-  const conversationId = string(created.conversationId);
-  await app.options.withDatabase(async (db) => {
-    await db
-      .update(channelConversation)
-      .set({
-        channelId: "channel",
-        kind: "slack",
-        projectionState: "idle",
-        rootTimestamp: "123",
-        slackUserId: "slack-user",
-        workspaceId: "workspace",
-      })
-      .where(eq(channelConversation.conversationId, conversationId));
-    await db.insert(identitySlackLink).values({
-      id: "local-output-link",
-      organizationId: app.options.organizationId,
-      principalId,
-      slackUserId: "slack-user",
-      workspaceId: "workspace",
-    });
-    await db.insert(channelReply).values({
-      conversationId,
-      organizationId: app.options.organizationId,
-      replyId: "missing-output-reply",
-      runId: "missing-output-run",
-      state: "ready",
-      text: "Private untracked output",
-    });
-  });
-  const result = await drainChannelWork({
-    ...app.options,
-    fetch: () => {
-      delivered += 1;
-      return Promise.resolve(
-        Response.json({ channel: "channel", ok: true, ts: "124" })
-      );
-    },
-    mode: "local",
-    slack: {
-      agentId,
-      appId: "app",
-      botToken: "test",
-      signingSecret: "test",
-      workspaceId: "workspace",
-    },
-  });
-  assert.equal(result.sent, 0);
-  assert.equal(delivered, 0);
-  await app.options.withDatabase(async (db) => {
-    const [reply] = await db.select().from(channelReply);
-    assert.equal(reply.state, "failed");
-    assert.deepEqual(reply.providerReceipt, {
-      reason: "Current authorization denied reply delivery.",
-    });
   });
 });
 

@@ -20,6 +20,10 @@ export interface ControlledProviderConfiguration {
   readonly authorize: (
     options: ReadOptions
   ) => Effect.Effect<void, ContractFailure>;
+  readonly prepareContext?: (
+    context: TranscriptContext,
+    options: ReadOptions
+  ) => Effect.Effect<TranscriptContext, ContractFailure>;
   readonly deadlineMs: number;
   readonly maxInputBytes: number;
   readonly fetch?: typeof globalThis.fetch;
@@ -79,14 +83,54 @@ export const createControlledProvider = (
   };
   const controlledStream = (
     model: Model<Api>,
+    context: TranscriptContext,
     options: { readonly signal?: AbortSignal } | undefined,
-    dispatch: (signal: AbortSignal) => AssistantMessageEventStream
+    dispatch: (
+      context: TranscriptContext,
+      signal: AbortSignal
+    ) => AssistantMessageEventStream
   ): AssistantMessageEventStream => {
     const stream = createAssistantMessageEventStream();
     const signal = AbortSignal.any([
       AbortSignal.timeout(configuration.deadlineMs),
       ...(options?.signal ? [options.signal] : []),
     ]);
+    let source: AssistantMessageEventStream | undefined;
+    const fail = () => {
+      const error: AssistantMessage = {
+        api: model.api,
+        content: [],
+        errorMessage: "Controlled model request failed or was denied",
+        model: model.id,
+        provider: model.provider,
+        role: "assistant",
+        stopReason: signal.aborted ? "aborted" : "error",
+        timestamp: Date.now(),
+        usage: {
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: {
+            cacheRead: 0,
+            cacheWrite: 0,
+            input: 0,
+            output: 0,
+            total: 0,
+          },
+          input: 0,
+          output: 0,
+          totalTokens: 0,
+        },
+      };
+      source?.end(error);
+      stream.push({
+        error,
+        reason: signal.aborted ? "aborted" : "error",
+        type: "error",
+      });
+      stream.end(error);
+    };
+    const onAbort = () => fail();
+    signal.addEventListener("abort", onAbort, { once: true });
     const pump = async () => {
       try {
         if (
@@ -105,46 +149,34 @@ export const createControlledProvider = (
           }),
           { signal }
         );
-        const source = dispatch(signal);
+        const prepared = configuration.prepareContext
+          ? await Effect.runPromise(
+              configuration.prepareContext(context, {
+                deadlineAt: Date.now() + configuration.deadlineMs,
+                signal,
+              }),
+              { signal }
+            )
+          : context;
+        signal.throwIfAborted();
+        source = dispatch(prepared, signal);
         for await (const event of source) {
           stream.push(event);
         }
         stream.end(await source.result());
       } catch {
-        const error: AssistantMessage = {
-          api: model.api,
-          content: [],
-          errorMessage: "Controlled model request failed or was denied",
-          model: model.id,
-          provider: model.provider,
-          role: "assistant",
-          stopReason: signal.aborted ? "aborted" : "error",
-          timestamp: Date.now(),
-          usage: {
-            cacheRead: 0,
-            cacheWrite: 0,
-            cost: {
-              cacheRead: 0,
-              cacheWrite: 0,
-              input: 0,
-              output: 0,
-              total: 0,
-            },
-            input: 0,
-            output: 0,
-            totalTokens: 0,
-          },
-        };
-        stream.push({
-          error,
-          reason: signal.aborted ? "aborted" : "error",
-          type: "error",
-        });
-        stream.end(error);
+        fail();
+      } finally {
+        signal.removeEventListener("abort", onAbort);
       }
     };
     // Vendor streaming returns synchronously; the pump contains all rejection paths.
-    void pump();
+    if (signal.aborted) {
+      fail();
+      signal.removeEventListener("abort", onAbort);
+    } else {
+      void pump();
+    }
     return stream;
   };
   const guardedOptions = <Options extends { readonly signal?: AbortSignal }>(
@@ -168,18 +200,18 @@ export const createControlledProvider = (
       context: TranscriptContext,
       options?: ApiStreamOptions<A>
     ) =>
-      controlledStream(model, options, (signal) =>
+      controlledStream(model, context, options, (prepared, signal) =>
         configuration.provider.stream(
           model,
-          context,
+          prepared,
           guardedOptions(options, signal) as ApiStreamOptions<A>
         )
       ),
     streamSimple: (model, context, options) =>
-      controlledStream(model, options, (signal) =>
+      controlledStream(model, context, options, (prepared, signal) =>
         configuration.provider.streamSimple(
           model,
-          context,
+          prepared,
           guardedOptions(options, signal)
         )
       ),

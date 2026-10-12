@@ -10,7 +10,6 @@ export default defineConfig({
     "./src/schema/agents.ts",
     "./src/schema/memory.ts",
     "./src/schema/connectors.ts",
-    "./src/schema/usage.ts",
     "./src/schema/audit.ts",
   ],
 });

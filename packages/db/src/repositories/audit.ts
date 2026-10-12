@@ -10,7 +10,7 @@ export interface AuditProjection {
   readonly agentId: string;
   readonly sessionId: string;
   readonly runId: string;
-  readonly kind: "audit" | "usage";
+  readonly kind: "audit";
   readonly name: string;
   readonly occurredAt: number;
   readonly payload: unknown;

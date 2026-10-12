@@ -40,7 +40,7 @@ const fixture = () => {
   const grants: {
     action: "export";
     resourceId: string;
-    resourceKind: "audit" | "budget";
+    resourceKind: "audit";
   }[] = [];
   const repository = {
     createSlackLinkChallenge(
@@ -194,48 +194,33 @@ test("email equality does not grant Slack linking or export access", async () =>
   await assert.rejects(
     call(
       router.authorizeExport,
-      { kind: "usage", organizationId: "org-other" },
+      { kind: "audit", organizationId: "org-other" },
       { context: context("user-a") }
     ),
     { code: "FORBIDDEN" }
   );
 });
 
-test("audit and usage exports require their own current grants", async () => {
+test("audit export requires a current grant", async () => {
   const state = fixture();
   const router = createIdentityRouter(() => state.repository, state.now);
+  await assert.rejects(
+    call(
+      router.authorizeExport,
+      { kind: "audit", organizationId: "org-a" },
+      { context: context("user-a") }
+    ),
+    { code: "FORBIDDEN" }
+  );
   state.grants.push({
     action: "export",
     resourceId: "org-a",
     resourceKind: "audit",
   });
-
   assert.deepEqual(
     await call(
       router.authorizeExport,
       { kind: "audit", organizationId: "org-a" },
-      { context: context("user-a") }
-    ),
-    { authorized: true, policyVersion: "identity:org-a:1" }
-  );
-  await assert.rejects(
-    call(
-      router.authorizeExport,
-      { kind: "usage", organizationId: "org-a" },
-      { context: context("user-a") }
-    ),
-    { code: "FORBIDDEN" }
-  );
-
-  state.grants.push({
-    action: "export",
-    resourceId: "org-a",
-    resourceKind: "budget",
-  });
-  assert.deepEqual(
-    await call(
-      router.authorizeExport,
-      { kind: "usage", organizationId: "org-a" },
       { context: context("user-a") }
     ),
     { authorized: true, policyVersion: "identity:org-a:1" }

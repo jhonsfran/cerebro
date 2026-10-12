@@ -1,30 +1,22 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Assertions inspect the preceding native response. */
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
-import { Effect } from "effect";
-
-import { createProductHandler } from "../../packages/api/src/routers/conversations";
-import { drainChannelWork } from "../../packages/channels/src/drain";
-import { runEffect } from "../../packages/channels/src/security";
+import { createApiHandler } from "../../packages/api/src/handler";
 import { createChannelService } from "../../packages/channels/src/service";
 import { Unavailable } from "../../packages/contracts/src/failures";
 import { id } from "../../packages/contracts/src/index";
-import { and, eq } from "../../packages/db/node_modules/drizzle-orm";
+import { eq } from "../../packages/db/node_modules/drizzle-orm";
 import { createAgentRepository } from "../../packages/db/src/repositories/agents";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
+import { channelConversation } from "../../packages/db/src/schema/agents";
 import {
-  channelConversation,
-  channelItem,
-} from "../../packages/db/src/schema/agents";
-import { identityGrant } from "../../packages/db/src/schema/identity";
-import {
-  createFixtureSessionService,
-  fixtureRunCount,
+  createFixtureChatClient,
+  fixtureSubmissionCount,
 } from "./fixture-session";
 import {
   array,
   createTestProduct,
-  domainSnapshot,
   object,
   string,
   TEST_BOOTSTRAP_TOKEN,
@@ -61,10 +53,9 @@ test("setup with the bootstrap token chooses one owner", async () => {
   assert.equal(verifiedResult1.status, 401);
 });
 
-test("agent versions, message replay, SSE reconnect, citations, approval, and revocation use REST with PostgreSQL", async () => {
+test("agent versions preserve publish replay and reject concurrent stale updates", async () => {
   const app = await createTestProduct();
   const setup = await app.install();
-  const principalId = string(setup.principalId);
   assert.equal(setup.owner, true);
   const created = await app.createAgent();
   const agentId = string(created.agentId);
@@ -110,211 +101,6 @@ test("agent versions, message replay, SSE reconnect, citations, approval, and re
     instructions: "Changed",
   });
   assert.equal(verifiedResult3.status, 409);
-  const verifiedResult4 = await app.request(
-    "/api/product/conversations",
-    "POST",
-    {
-      agentId,
-      operationId: "conversation-one",
-    }
-  );
-  const conversation = object(await verifiedResult4.json());
-  const conversationId = string(conversation.conversationId);
-  const messagePath = `/api/product/conversations/${conversationId}/messages`;
-  const replies = await Promise.all([
-    app.request(messagePath, "POST", {
-      eventId: "message-one",
-      text: "Describe durable admission.",
-    }),
-    app.request(messagePath, "POST", {
-      eventId: "message-one",
-      text: "Describe durable admission.",
-    }),
-  ]);
-  assert.deepEqual(
-    replies.map((response) => response.status),
-    [200, 200]
-  );
-  assert.equal(fixtureRunCount(), 1);
-  await app.options.withDatabase(async (db) => {
-    const verifiedResult7 = await db.select().from(channelItem);
-    assert.equal(verifiedResult7.length, 5);
-  });
-  const verifiedResult8 = await app.request(messagePath, "POST", {
-    eventId: "message-one",
-    text: "Changed message",
-  });
-  assert.equal(verifiedResult8.status, 409);
-  const verifiedResult9 = await app.request(
-    `/api/product/conversations/${conversationId}`
-  );
-  const view = object(await verifiedResult9.json());
-  const items = array(view.items).map(object);
-  assert.deepEqual(
-    items.map((item) => item.type),
-    ["user", "tool", "output", "citation", "run"]
-  );
-  assert.equal(object(view.snapshot).address !== undefined, true);
-  const cursor = string(items[1]?.cursor);
-  const stream = await app.request(
-    `/api/product/conversations/${conversationId}/events`,
-    "GET",
-    undefined,
-    "test-owner",
-    { "Last-Event-ID": cursor }
-  );
-  assert.equal(stream.headers.get("Content-Type"), "text/event-stream");
-  const streamed = await stream.text();
-  assert.equal(streamed.includes(`id: ${cursor}\n`), false);
-  assert.equal(streamed.includes('"type":"citation"'), true);
-  const citation = items.find((item) => item.type === "citation");
-  const verifiedResult10 = await app.request(string(citation?.href));
-  assert.equal(verifiedResult10.status, 200);
-  const verifiedResult11 = await app.request(messagePath, "POST", {
-    eventId: "approval-one",
-    text: "Request approval before continuing.",
-  });
-  const approvalReply = object(await verifiedResult11.json());
-  const runId = string(object(approvalReply.receipt).runId);
-  const approve = await app.request(
-    `/api/product/conversations/${conversationId}/approvals/${encodeURIComponent(`approval:${runId}`)}`,
-    "POST",
-    { decision: "allow", operationId: "approve-one", runId }
-  );
-  assert.equal(approve.status, 200);
-  assert.equal(object(object(await approve.json()).run).state, "completed");
-  const verifiedResult12 = await app.request(
-    `/api/product/conversations/${conversationId}/audit/${runId}`
-  );
-  assert.equal(verifiedResult12.status, 200);
-  await app.options.withDatabase((db) =>
-    createIdentityRepository(db).setManualGrant(
-      app.options.organizationId,
-      principalId,
-      { action: "execute", resourceId: agentId, resourceKind: "agent" },
-      false
-    )
-  );
-  const verifiedResult13 = await app.request(messagePath, "POST", {
-    eventId: "denied",
-    text: "Denied",
-  });
-  assert.equal(verifiedResult13.status, 403);
-  const verifiedResult14 = await app.request(
-    "/api/product/agents",
-    "POST",
-    app.agentBody
-  );
-  assert.equal(verifiedResult14.status, 200);
-  const verifiedResult15 = await app.request(messagePath, "POST", {
-    eventId: "still-denied",
-    text: "Denied after create replay",
-  });
-  assert.equal(verifiedResult15.status, 403);
-  await app.options.withDatabase((db) =>
-    createIdentityRepository(db).setManualGrant(
-      app.options.organizationId,
-      principalId,
-      { action: "read", resourceId: agentId, resourceKind: "agent" },
-      false
-    )
-  );
-  const verifiedResult16 = await app.request(
-    `/api/product/conversations/${conversationId}`
-  );
-  assert.equal(verifiedResult16.status, 403);
-  const verifiedResult17 = await app.request(string(citation?.href));
-  assert.equal(verifiedResult17.status, 403);
-});
-
-test("revoked subscriptions become idle so later healthy subscriptions progress", async () => {
-  const app = await createTestProduct();
-  const verifiedResult18 = await app.install();
-  const ownerPrincipalId = string(verifiedResult18.principalId);
-  const verifiedResult19 = await app.createAgent();
-  const agentId = string(verifiedResult19.agentId);
-  const target = await app.options.withDatabase((db) =>
-    createIdentityRepository(db).provisionHumanPrincipal(
-      app.options.organizationId,
-      "test-other"
-    )
-  );
-  await app.options.withDatabase(async (db) => {
-    const identity = createIdentityRepository(db);
-    await identity.setManualGrant(
-      app.options.organizationId,
-      target.id,
-      { action: "read", resourceId: agentId, resourceKind: "agent" },
-      true
-    );
-    await identity.setManualGrant(
-      app.options.organizationId,
-      ownerPrincipalId,
-      { action: "read", resourceId: agentId, resourceKind: "agent" },
-      false
-    );
-    await db.insert(channelConversation).values(
-      Array.from({ length: 25 }, (_, index) => ({
-        agentId,
-        bindingKey: `denied-binding-${index}`,
-        conversationId: `denied-${index}`,
-        engine: "pi-v1" as const,
-        kind: "web" as const,
-        lastProjectedAt: new Date(0),
-        organizationId: app.options.organizationId,
-        ownerPrincipalId,
-        projectionState: "active" as const,
-        sessionId: `denied-session-${index}`,
-      }))
-    );
-    await db.insert(channelConversation).values({
-      agentId,
-      bindingKey: "healthy-binding",
-      conversationId: "healthy",
-      engine: "pi-v1",
-      kind: "web",
-      lastProjectedAt: new Date(1),
-      organizationId: app.options.organizationId,
-      ownerPrincipalId: target.id,
-      projectionState: "active",
-      sessionId: "healthy-session",
-    });
-  });
-  const options = {
-    ...app.options,
-    sessions: (db: Parameters<typeof createFixtureSessionService>[0]) => ({
-      ...createFixtureSessionService(db, app.options),
-      inspect: (
-        address: Parameters<
-          ReturnType<typeof createFixtureSessionService>["inspect"]
-        >[0]
-      ) =>
-        Effect.succeed(
-          domainSnapshot(address, {
-            revision: 1,
-            runs: [
-              {
-                completedAt: Date.now(),
-                runId: id.run("healthy-run"),
-                state: "completed",
-              },
-            ],
-          })
-        ),
-    }),
-  };
-  await drainChannelWork(options);
-  await drainChannelWork(options);
-  await app.options.withDatabase(async (db) => {
-    const rows = await db.select().from(channelConversation);
-    assert.equal(
-      rows.every((row) => row.projectionState === "idle"),
-      true
-    );
-    const items = await db.select().from(channelItem);
-    assert.equal(items.length, 1);
-    assert.equal(items[0]?.conversationId, "healthy");
-  });
 });
 
 test("stale access operation replay cannot restore a later revoked grant", async () => {
@@ -352,68 +138,9 @@ test("stale access operation replay cannot restore a later revoked grant", async
   const verifiedResult105 = await app.request(
     `/api/product/conversations/${conversationId}/messages`,
     "POST",
-    { eventId: "denied-after-replay", text: "This must stay denied." }
+    { operationId: "denied-after-replay", text: "This must stay denied." }
   );
   assert.equal(verifiedResult105.status, 403);
-});
-
-test("an unavailable session rejects a message and a client retry admits it once", async () => {
-  const app = await createTestProduct();
-  await app.install();
-  const created = await app.createAgent();
-  const agentId = string(created.agentId);
-  const response = await app.request("/api/product/conversations", "POST", {
-    agentId,
-    operationId: "retry-conversation",
-  });
-  const conversationId = string(object(await response.json()).conversationId);
-  let available = false;
-  const submissions: string[] = [];
-  const handler = createProductHandler({
-    ...app.options,
-    sessions: (db) => {
-      const fixture = createFixtureSessionService(db, app.options);
-      return {
-        ...fixture,
-        submit: (command, effect) =>
-          Effect.gen(function* submit() {
-            if (!available) {
-              return yield* Effect.fail(
-                new Unavailable({ reason: "The session is restarting." })
-              );
-            }
-            submissions.push(command.event.eventId);
-            return yield* fixture.submit(command, effect);
-          }),
-      };
-    },
-  });
-  const submit = () =>
-    handler(
-      new Request(
-        `http://cerebro.test/api/product/conversations/${conversationId}/messages`,
-        {
-          body: JSON.stringify({ eventId: "retry", text: "Retry me" }),
-          headers: {
-            "Content-Type": "application/json",
-            "x-test-user": "test-owner",
-          },
-          method: "POST",
-        }
-      )
-    );
-  const unavailable = await submit();
-  assert.equal(unavailable.status, 503);
-  assert.equal(fixtureRunCount(), 0);
-  available = true;
-  const [first, second] = [await submit(), await submit()];
-  assert.equal(first.status, 200);
-  assert.equal(second.status, 200);
-  const firstReceipt = object(object(await first.json()).receipt);
-  const secondReceipt = object(object(await second.json()).receipt);
-  assert.equal(secondReceipt.runId, firstReceipt.runId);
-  assert.equal(secondReceipt.replayed, true);
-  assert.equal(fixtureRunCount(), 1);
 });
 
 test("a denied message is never admitted and is admitted on retry after access returns", async () => {
@@ -439,326 +166,297 @@ test("a denied message is never admitted and is admitted on retry after access r
     );
   await grant(false);
   const denied = await app.request(path, "POST", {
-    eventId: "denied",
+    operationId: "denied",
     text: "Denied message",
   });
   assert.equal(denied.status, 403);
-  assert.equal(fixtureRunCount(), 0);
+  assert.equal(fixtureSubmissionCount(), 0);
   await grant(true);
   const admitted = await app.request(path, "POST", {
-    eventId: "denied",
+    operationId: "denied",
     text: "Denied message",
   });
   assert.equal(admitted.status, 200);
-  assert.equal(fixtureRunCount(), 1);
+  assert.equal(fixtureSubmissionCount(), 1);
 });
 
-test("audit reads require current company audit permission as well as conversation access", async () => {
+test("native Send retry, snapshot reconnect, source access, approval and Stop use REST", async () => {
   const app = await createTestProduct();
   const setup = await app.install();
-  const ownerPrincipalId = string(setup.principalId);
-  const created = await app.createAgent();
-  const agentId = string(created.agentId);
-  const other = await app.options.withDatabase((db) =>
-    createIdentityRepository(db).provisionHumanPrincipal(
+  const principalId = string(setup.principalId);
+  const agent = await app.createAgent();
+  const agentId = string(agent.agentId);
+  const created = await app.request("/api/product/conversations", "POST", {
+    agentId,
+    operationId: "native-conversation",
+  });
+  const conversationId = string(object(await created.json()).conversationId);
+  const route = `/api/product/conversations/${conversationId}`;
+  const input = {
+    operationId: "input-one",
+    text: "Describe durable admission.",
+  };
+  const first = await app.request(`${route}/messages`, "POST", input);
+  const retry = await app.request(`${route}/messages`, "POST", input);
+  assert.equal(object(object(await first.json()).receipt).accepted, true);
+  assert.equal(object(object(await retry.json()).receipt).accepted, false);
+  assert.equal(fixtureSubmissionCount(), 1);
+  const response = await app.request(route);
+  const snapshot = object(object(await response.json()).snapshot);
+  const messages = array(snapshot.messages).map(object);
+  assert.deepEqual(
+    messages.map((message) => message.role),
+    ["user", "assistant"]
+  );
+  assert.equal(messages[0]?.text, input.text);
+  assert.match(string(messages[1]?.text), /Local pilot source/u);
+  const observation = await app.request(`${route}/observations`);
+  assert.equal(observation.status, 200);
+  assert.match(
+    observation.headers.get("content-type") ?? "",
+    /application\/x-ndjson/u
+  );
+  const frame = object(JSON.parse((await observation.text()).trim()));
+  assert.deepEqual(frame.snapshot, snapshot);
+  const reattached = await app.request(`${route}/observations`);
+  assert.deepEqual(
+    object(JSON.parse((await reattached.text()).trim())).snapshot,
+    snapshot
+  );
+  const sourceRoute = `${route}/sources/pilot-source`;
+  assert.equal((await app.request(sourceRoute)).status, 200);
+  assert.equal(
+    (
+      await app.request(`${route}/messages`, "POST", {
+        operationId: "approval-one",
+        text: "Request approval.",
+      })
+    ).status,
+    200
+  );
+  const approvalRoute = `${route}/approvals/${encodeURIComponent("approval:approval-one")}`;
+  const allowed = await app.request(approvalRoute, "POST", {
+    decision: "allow",
+  });
+  assert.equal(object(object(await allowed.json()).approval).state, "allowed");
+  assert.equal(
+    (await app.request(approvalRoute, "POST", { decision: "allow" })).status,
+    200
+  );
+  assert.equal(
+    (await app.request(approvalRoute, "POST", { decision: "deny" })).status,
+    409
+  );
+  await app.request(`${route}/messages`, "POST", {
+    operationId: "stop-one",
+    text: "Request approval before Stop.",
+  });
+  const stopped = await app.request(`${route}/stop`, "POST", {});
+  assert.deepEqual(await stopped.json(), { stopped: true });
+  await app.options.withDatabase((db) =>
+    createIdentityRepository(db).setManualGrant(
       app.options.organizationId,
-      "test-other"
+      principalId,
+      { action: "read", resourceId: agentId, resourceKind: "agent" },
+      false
     )
   );
-  await app.options.withDatabase(async (db) => {
-    const identity = createIdentityRepository(db);
-    await identity.setManualGrant(
-      app.options.organizationId,
-      other.id,
-      { action: "read", resourceId: agentId, resourceKind: "agent" },
-      true
-    );
-    await identity.setManualGrant(
-      app.options.organizationId,
-      other.id,
-      { action: "execute", resourceId: agentId, resourceKind: "agent" },
-      true
-    );
-  });
-  const checkAuditUser = async (userId: string) => {
-    const conversationResponse = await app.request(
-      "/api/product/conversations",
-      "POST",
-      { agentId, operationId: `audit-conversation-${userId}` },
-      userId
-    );
-    const conversationId = string(
-      object(await conversationResponse.json()).conversationId
-    );
-    const message = await app.request(
-      `/api/product/conversations/${conversationId}/messages`,
-      "POST",
-      { eventId: `audit-message-${userId}`, text: "Read the local source." },
-      userId
-    );
-    assert.equal(message.status, 200);
-    const messageResult = object(await message.json());
-    const runId = string(object(messageResult.receipt).runId);
-    const path = `/api/product/conversations/${conversationId}/audit/${runId}`;
-    const response = await app.request(path, "GET", undefined, userId);
-    assert.equal(response.status, userId === "test-owner" ? 200 : 403);
-    if (userId === "test-owner") {
-      await app.options.withDatabase(async (db) => {
-        await db
-          .delete(identityGrant)
-          .where(
-            and(
-              eq(identityGrant.organizationId, app.options.organizationId),
-              eq(identityGrant.principalId, ownerPrincipalId),
-              eq(identityGrant.resourceKind, "audit"),
-              eq(identityGrant.resourceId, app.options.organizationId),
-              eq(identityGrant.action, "read")
-            )
-          );
-      });
-      const revoked = await app.request(path);
-      assert.equal(revoked.status, 403);
-    }
-  };
-  await checkAuditUser("test-owner");
-  await checkAuditUser("test-other");
+  assert.equal((await app.request(route)).status, 403);
+  assert.equal((await app.request(sourceRoute)).status, 403);
 });
 
-for (const retirement of ["legacy", "retired"] as const) {
-  test(`${retirement} conversations return authorized PostgreSQL transcript and all runs without opening Pi`, async () => {
+test("unavailable native Send admits a client retry once", async () => {
+  const app = await createTestProduct();
+  await app.install();
+  const agent = await app.createAgent();
+  const created = await app.request("/api/product/conversations", "POST", {
+    agentId: string(agent.agentId),
+    operationId: "retry-conversation",
+  });
+  const conversationId = string(object(await created.json()).conversationId);
+  let available = false;
+  const handler = createApiHandler({
+    ...app.options,
+    sessions: (db) => {
+      const fixture = createFixtureChatClient(db, app.options);
+      return {
+        ...fixture,
+        send: (request) =>
+          available
+            ? fixture.send(request)
+            : Promise.reject(
+                new Unavailable({ reason: "The session is restarting." })
+              ),
+      };
+    },
+  });
+  const send = () =>
+    handler(
+      new Request(
+        `http://cerebro.test/api/product/conversations/${conversationId}/messages`,
+        {
+          body: JSON.stringify({ operationId: "retry", text: "Retry me" }),
+          headers: {
+            "Content-Type": "application/json",
+            "x-test-user": "test-owner",
+          },
+          method: "POST",
+        }
+      )
+    );
+  assert.equal((await send()).status, 503);
+  assert.equal(fixtureSubmissionCount(), 0);
+  available = true;
+  const first = object(object(await (await send()).json()).receipt);
+  const second = object(object(await (await send()).json()).receipt);
+  assert.equal(first.accepted, true);
+  assert.deepEqual(second, { ...first, accepted: false });
+  assert.equal(fixtureSubmissionCount(), 1);
+});
+
+for (const engine of ["legacy", "pi-v1"] as const) {
+  test(`retired ${engine} conversations reject native work and history`, async () => {
     const app = await createTestProduct();
     await app.install();
     const agent = await app.createAgent();
-    const response = await app.request("/api/product/conversations", "POST", {
+    const created = await app.request("/api/product/conversations", "POST", {
       agentId: string(agent.agentId),
-      operationId: `retirement-${retirement}`,
+      operationId: `retired-${engine}`,
     });
-    const created = object(await response.json());
-    const conversationId = string(created.conversationId);
-    let opens = 0;
-    await app.options.withDatabase(async (db) => {
-      await db
+    const conversationId = string(object(await created.json()).conversationId);
+    await app.options.withDatabase((db) =>
+      db
         .update(channelConversation)
-        .set(
-          retirement === "legacy"
-            ? { engine: "legacy-v1" }
-            : { retiredAt: new Date() }
-        )
-        .where(eq(channelConversation.conversationId, conversationId));
-      await db.insert(channelItem).values([
-        ...Array.from({ length: 200 }, (_, index) => ({
-          conversationId,
-          item: {
-            eventId: `historical-${index}`,
-            text: `Historical question ${index}`,
-            type: "user" as const,
-          },
-          itemKey: `${conversationId}:user:${index}`,
-          organizationId: app.options.organizationId,
-        })),
-        {
-          conversationId,
-          item: {
-            dependencies: { sourceIds: [], toolIds: [] },
-            runId: "historical-run",
-            text: "Retained answer",
-            type: "output" as const,
-          },
-          itemKey: `${conversationId}:answer`,
-          organizationId: app.options.organizationId,
-        },
-        {
-          conversationId,
-          item: {
-            run: {
-              completedAt: 42,
-              runId: id.run("historical-run"),
-              state: "completed" as const,
-            },
-            runId: "historical-run",
-            type: "run" as const,
-          },
-          itemKey: `${conversationId}:run`,
-          organizationId: app.options.organizationId,
-        },
-      ]);
-      const service = createChannelService(db, {
-        ...app.options,
-        sessions: () => {
-          opens += 1;
-          throw new Error("Retired history must not open Pi.");
-        },
-      });
-      const first = await service.readConversation(
-        "test-owner",
-        conversationId
-      );
-      assert.equal(first.mode, "retired");
-      assert.equal(first.items.length, 200);
-      assert.equal(first.snapshot.runs.length, 1);
-      const next = await service.readConversation(
-        "test-owner",
-        conversationId,
-        first.cursor
-      );
-      assert.equal(next.items.length, 2);
-      assert.equal(next.items[0]?.type, "output");
-      const history = await service.history("test-owner", conversationId);
-      assert.equal(history.runs[0]?.runId, "historical-run");
-      await assert.rejects(service.chatAccess("test-owner", conversationId), {
-        code: "retired",
-        status: 409,
-      });
-      await assert.rejects(
-        service.submit(
-          "test-owner",
-          conversationId,
-          "new-event",
-          "New input",
-          "steer"
-        ),
-        { code: "retired", status: 409 }
-      );
-      await assert.rejects(
-        service.approve(
-          "test-owner",
-          conversationId,
-          "approval",
-          "operation",
-          "historical-run",
-          "allow"
-        ),
-        { code: "retired", status: 409 }
-      );
-      await assert.rejects(
-        service.cancel(
-          "test-owner",
-          conversationId,
-          "historical-run",
-          "operation"
-        ),
-        { code: "retired", status: 409 }
-      );
-      await assert.rejects(
-        service.readConversation("test-other", conversationId),
-        { status: 403 }
-      );
-      assert.equal(opens, 0);
-    });
+        .set({ engine, retiredAt: new Date() })
+        .where(eq(channelConversation.conversationId, conversationId))
+    );
+    const route = `/api/product/conversations/${conversationId}`;
+    assert.equal((await app.request(route)).status, 409);
+    assert.equal(
+      (
+        await app.request(`${route}/messages`, "POST", {
+          operationId: "retired-input",
+          text: "Cannot run",
+        })
+      ).status,
+      409
+    );
+    assert.equal((await app.request(`${route}/stop`, "POST", {})).status, 409);
+    assert.equal(fixtureSubmissionCount(), 0);
   });
 }
 
-test("submission mode is part of the event identity", async () => {
+test("native approval denial retains its binding and decision", async () => {
   const app = await createTestProduct();
   await app.install();
   const agent = await app.createAgent();
-  const response = await app.request("/api/product/conversations", "POST", {
+  const created = await app.request("/api/product/conversations", "POST", {
     agentId: string(agent.agentId),
-    operationId: "mode-replay",
+    operationId: "deny-conversation",
   });
-  const conversationId = string(object(await response.json()).conversationId);
+  const conversationId = string(object(await created.json()).conversationId);
   await app.options.withDatabase(async (db) => {
     const service = createChannelService(db, app.options);
-    const first = await service.submit(
+    await service.submit(
       "test-owner",
       conversationId,
-      "mode-event",
-      "Steer this work",
-      "steer"
+      "approval-input",
+      "Request approval."
     );
-    const replay = await service.submit(
+    const denied = await service.approve(
       "test-owner",
       conversationId,
-      "mode-event",
-      "Steer this work",
-      "steer"
-    );
-    assert.equal(replay.receipt.runId, first.receipt.runId);
-    await assert.rejects(
-      service.submit(
-        "test-owner",
-        conversationId,
-        "mode-event",
-        "Steer this work",
-        "follow-up"
-      ),
-      { status: 409 }
-    );
-  });
-  await drainChannelWork(app.options);
-  await app.options.withDatabase(async (db) => {
-    const records = await db
-      .select()
-      .from(channelItem)
-      .where(eq(channelItem.conversationId, conversationId));
-    const message = records.find((entry) => entry.item.type === "user")?.item;
-    assert.equal(message?.type === "user" ? message.mode : undefined, "steer");
-  });
-});
-
-test("fixture approval denial keeps its decision and operation identity in the domain snapshot", async () => {
-  const app = await createTestProduct();
-  await app.install();
-  const agent = await app.createAgent();
-  const createdResponse = await app.request(
-    "/api/product/conversations",
-    "POST",
-    { agentId: string(agent.agentId), operationId: "deny-approval" }
-  );
-  const conversation = object(await createdResponse.json());
-  const conversationId = string(conversation.conversationId);
-  await app.options.withDatabase(async (db) => {
-    const service = createChannelService(db, app.options);
-    const { receipt } = await service.submit(
-      "test-owner",
-      conversationId,
-      "approval-event",
-      "Request approval",
-      "follow-up"
-    );
-    const approvalId = `approval:${receipt.runId}`;
-    const result = await service.approve(
-      "test-owner",
-      conversationId,
-      approvalId,
-      "deny-operation",
-      receipt.runId,
+      "approval:approval-input",
       "deny"
     );
-    assert.equal(result.run.state, "cancelled");
+    assert.equal(denied.approval.state, "denied");
+    assert.deepEqual(denied.approval, {
+      approvalId: "approval:approval-input",
+      state: "denied",
+    });
     assert.deepEqual(
       await service.approve(
         "test-owner",
         conversationId,
-        approvalId,
-        "deny-operation",
-        receipt.runId,
+        "approval:approval-input",
         "deny"
       ),
-      result
+      denied
     );
     await assert.rejects(
       service.approve(
         "test-owner",
         conversationId,
-        approvalId,
-        "deny-operation",
-        receipt.runId,
+        "approval:approval-input",
         "allow"
       ),
-      { code: "digest-mismatch", status: 409 }
+      { status: 409 }
     );
-    const { address, context } = await service.chatAccess(
+    const { snapshot } = await service.readConversation(
       "test-owner",
       conversationId
     );
-    const snapshot = await runEffect(
-      createFixtureSessionService(db, app.options).inspect(address, context, {
-        deadlineAt: Date.now() + 30_000,
-      })
+    assert.equal(snapshot.busy, false);
+    assert.deepEqual(
+      snapshot.messages.map((message) => message.text),
+      ["Request approval."]
     );
-    assert.equal(snapshot.approvals[0]?.state, "denied");
-    assert.equal(snapshot.tools[0]?.state, "cancelled");
-    assert.equal(snapshot.outputs.length, 0);
   });
+});
+
+test("native messages require an operation ID; approvals and Stop reject extra fields", async () => {
+  const app = await createTestProduct();
+  await app.install();
+  const agent = await app.createAgent();
+  const created = await app.request("/api/product/conversations", "POST", {
+    agentId: string(agent.agentId),
+    operationId: "strict-inputs",
+  });
+  const route = `/api/product/conversations/${string(object(await created.json()).conversationId)}`;
+  assert.equal(
+    (
+      await app.request(`${route}/messages`, "POST", {
+        text: "Request approval.",
+      })
+    ).status,
+    422
+  );
+  await app.request(`${route}/messages`, "POST", {
+    operationId: "input",
+    text: "Request approval.",
+  });
+  assert.equal(
+    (
+      await app.request(
+        `${route}/approvals/${encodeURIComponent("approval:input")}`,
+        "POST",
+        { arguments: {}, decision: "allow" }
+      )
+    ).status,
+    422
+  );
+  assert.equal(
+    (await app.request(`${route}/stop`, "POST", { text: "Changed" })).status,
+    422
+  );
+});
+
+test("only product and Slack request bodies have the 100 KB limit", async () => {
+  const app = await createTestProduct();
+  const large = "x".repeat(150_000);
+  const product = await app.request("/api/product/agents", "POST", {
+    instructions: large,
+  });
+  assert.equal(product.status, 413);
+  const rpc = await app.handler(
+    new Request("http://cerebro.test/rpc/identity/currentPrincipal", {
+      body: JSON.stringify({ json: { organizationId: large } }),
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-user": "test-owner",
+      },
+      method: "POST",
+    })
+  );
+  assert.notEqual(rpc.status, 413);
 });

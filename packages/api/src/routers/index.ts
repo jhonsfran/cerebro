@@ -1,18 +1,14 @@
 import type { RouterClient } from "@orpc/server";
 
-import { protectedProcedure, publicProcedure } from "../index";
 import { identityRouter } from "./identity";
 import { createMemoryRouter } from "./memory";
 import type { MemoryApiFactory } from "./memory";
+import { productRouter } from "./product";
 
 export const createAppRouter = (memoryApiFactory?: MemoryApiFactory) => ({
-  healthCheck: publicProcedure.handler(() => "OK"),
   identity: identityRouter,
   memory: createMemoryRouter(memoryApiFactory),
-  privateData: protectedProcedure.handler(({ context }) => ({
-    message: "This is private",
-    user: context.session?.user,
-  })),
+  product: productRouter,
 });
 export const appRouter = createAppRouter();
 export type AppRouter = typeof appRouter;

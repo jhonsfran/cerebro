@@ -1,13 +1,11 @@
 /* oxlint-disable no-await-in-loop -- Observation frames are applied in wire order. */
-import { Observation } from "@cerebro/contracts/session-service";
+import { ChatObservation } from "@cerebro/contracts/session-service";
+import type { ChatSnapshot } from "@cerebro/contracts/session-service";
 import { Schema } from "effect";
-
-import { projectObservation } from "./projection";
-import type { ConversationProjection } from "./projection";
 
 export const OBSERVATION_CONTENT_TYPE = "application/x-ndjson";
 export const MAX_OBSERVATION_FRAME_BYTES = 1_048_576;
-export const decodeObservation = Schema.decodeUnknownSync(Observation);
+export const decodeObservation = Schema.decodeUnknownSync(ChatObservation);
 
 export type ObservationConnectionStatus =
   | "connecting"
@@ -23,21 +21,14 @@ export interface ObservationClientOptions {
   };
   readonly generation: () => number;
   readonly open: (
-    accessGeneration: number,
+    generation: number,
     signal: AbortSignal
   ) => AsyncIterable<unknown>;
-  readonly onProjection: (projection: ConversationProjection | null) => void;
+  readonly onSnapshot: (snapshot: ChatSnapshot | null) => void;
   readonly onStatus?: (status: ObservationConnectionStatus) => void;
   readonly onDenied: () => void;
   readonly onError?: (error: Error) => void;
   readonly retryDelayMs?: number;
-}
-
-export class ResnapshotRequiredError extends Error {
-  constructor(reason: string) {
-    super(reason);
-    this.name = "ResnapshotRequiredError";
-  }
 }
 
 const accessDenied = (error: unknown): boolean =>
@@ -69,13 +60,11 @@ const pause = async (
   }
 };
 
-// One attachment reads frames until it is detached, denied or replaced.
-// Every reconnect starts from a fresh snapshot; nothing here can submit work.
 export const createObservationClient = (options: ObservationClientOptions) => {
-  let projection: ConversationProjection | null = null;
+  let snapshot: ChatSnapshot | null = null;
   let attachment: AbortController | null = null;
   let disposed = false;
-  const sameConversation = (address: Observation["address"]): boolean =>
+  const sameConversation = (address: ChatSnapshot["address"]): boolean =>
     address.conversationId === options.address.conversationId &&
     address.agentId === options.address.agentId &&
     address.sessionId === options.address.sessionId &&
@@ -89,53 +78,30 @@ export const createObservationClient = (options: ObservationClientOptions) => {
     const deny = () => {
       attachment = null;
       controller.abort();
-      projection = null;
-      options.onProjection(null);
+      snapshot = null;
+      options.onSnapshot(null);
       options.onStatus?.("denied");
       options.onDenied();
     };
-    // Returns false only when the attachment must stop.
-    const apply = (
-      input: unknown,
-      cursor: { epoch?: string; sequence: number }
-    ): boolean => {
+    const apply = (input: unknown): boolean => {
       const frame = decodeObservation(input);
-      if (!sameConversation(frame.address)) {
-        throw new Error("Observation belongs to a different conversation.");
-      }
-      if (frame.accessGeneration !== generation) {
-        return true;
-      }
       if (frame.type === "access-denied") {
         deny();
         return false;
       }
-      if (frame.type === "snapshot") {
-        if (frame.sequence !== 0) {
-          throw new ResnapshotRequiredError("A snapshot starts its epoch.");
-        }
-        cursor.epoch = frame.epoch;
-        cursor.sequence = 0;
-        options.onStatus?.("connected");
-      } else {
-        if (frame.epoch !== cursor.epoch || frame.sequence <= cursor.sequence) {
-          return true;
-        }
-        if (frame.sequence !== cursor.sequence + 1) {
-          throw new ResnapshotRequiredError("Observation sequence gap.");
-        }
-        cursor.sequence = frame.sequence;
+      if (!sameConversation(frame.snapshot.address)) {
+        throw new Error("Observation belongs to a different conversation.");
       }
-      projection = projectObservation(projection, frame);
-      options.onProjection(projection);
+      ({ snapshot } = frame);
+      options.onSnapshot(snapshot);
+      options.onStatus?.("connected");
       return true;
     };
     while (live()) {
-      const cursor: { epoch?: string; sequence: number } = { sequence: -1 };
       try {
         options.onStatus?.("connecting");
         for await (const input of options.open(generation, controller.signal)) {
-          if (!live() || !apply(input, cursor)) {
+          if (!live() || !apply(input)) {
             return;
           }
         }
@@ -179,6 +145,6 @@ export const createObservationClient = (options: ObservationClientOptions) => {
       attachment = null;
       current?.abort();
     },
-    getProjection: () => projection,
+    getSnapshot: () => snapshot,
   };
 };

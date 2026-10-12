@@ -52,7 +52,7 @@ export const identityGrant = pgTable(
       .references(() => identityPrincipal.id),
     resourceId: text("resource_id").notNull(),
     resourceKind: text("resource_kind", {
-      enum: ["agent", "tool", "memory", "artifact", "audit", "budget"],
+      enum: ["agent", "tool", "memory", "artifact", "audit"],
     }).notNull(),
     source: text("source").notNull(),
   },
@@ -110,7 +110,7 @@ export const identityDelegationScope = pgTable(
       .references(() => identityDelegation.id, { onDelete: "cascade" }),
     resourceId: text("resource_id").notNull(),
     resourceKind: text("resource_kind", {
-      enum: ["agent", "tool", "memory", "artifact", "audit", "budget"],
+      enum: ["agent", "tool", "memory", "artifact", "audit"],
     }).notNull(),
   },
   (table) => [
@@ -136,7 +136,7 @@ export const identityRolePermission = pgTable(
       .references(() => organization.id),
     resourceId: text("resource_id").notNull(),
     resourceKind: text("resource_kind", {
-      enum: ["agent", "tool", "memory", "artifact", "audit", "budget"],
+      enum: ["agent", "tool", "memory", "artifact", "audit"],
     }).notNull(),
     roleId: text("role_id").notNull(),
   },
