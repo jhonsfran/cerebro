@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { client } from "../../utils/orpc";
+import { AdminNav, AdminPanel } from "./admin";
+import type { AdminView } from "./admin";
 import {
   assertCurrentAccess,
   currentAccessGeneration,
@@ -10,7 +12,6 @@ import {
   request,
 } from "./api";
 import { agentEditorValues, agentExecutionGrants } from "./configuration";
-import { ConnectorsNavItem, ConnectorsPanel } from "./connectors";
 import { ConversationPanel } from "./conversation";
 import { operationFor } from "./intent";
 import type { OperationIntent } from "./intent";
@@ -660,7 +661,7 @@ export const ProductWorkspace = ({
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const [tab, setTab] = useState<Tab>("conversation");
   const [creating, setCreating] = useState(false);
-  const [showConnectors, setShowConnectors] = useState(false);
+  const [adminView, setAdminView] = useState<AdminView | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [slackCode, setSlackCode] = useState<{
@@ -885,6 +886,14 @@ export const ProductWorkspace = ({
             <span className="status-pill">{setup?.mode ?? "loading"}</span>
           </div>
         </div>
+        <AdminNav
+          visible={setup?.canAdminister === true}
+          active={adminView}
+          open={(view) => {
+            setAdminView(view);
+            setCreating(false);
+          }}
+        />
         <div className="sidebar-section agent-list-heading">
           <p className="eyebrow">Agents</p>
           {setup?.owner ? (
@@ -894,7 +903,7 @@ export const ProductWorkspace = ({
               type="button"
               onClick={() => {
                 setCreating(true);
-                setShowConnectors(false);
+                setAdminView(null);
                 setTab("configuration");
               }}
             >
@@ -902,18 +911,10 @@ export const ProductWorkspace = ({
             </button>
           ) : null}
         </div>
-        <ConnectorsNavItem
-          visible={setup?.canManageConnectors === true}
-          active={showConnectors}
-          open={() => {
-            setShowConnectors(true);
-            setCreating(false);
-          }}
-        />
         <nav className="agent-list" aria-label="Agents">
           {agents.map((entry) => (
             <button
-              className={`agent-list-item ${entry.agentId === activeAgentId && !showConnectors ? "selected" : ""}`}
+              className={`agent-list-item ${entry.agentId === activeAgentId && !adminView ? "selected" : ""}`}
               key={entry.agentId}
               type="button"
               onClick={() => {
@@ -922,7 +923,7 @@ export const ProductWorkspace = ({
                 onConversation();
                 setSelectedId(entry.agentId);
                 setCreating(false);
-                setShowConnectors(false);
+                setAdminView(null);
                 setTab("configuration");
               }}
             >
@@ -973,7 +974,7 @@ export const ProductWorkspace = ({
       </aside>
       <div className="product-main">
         <WorkspaceHeader
-          selected={showConnectors ? undefined : selected}
+          selected={adminView ? undefined : selected}
           creating={creating}
           busy={busy}
           pending={conversationPending && !errorMessage}
@@ -984,8 +985,8 @@ export const ProductWorkspace = ({
             {errorMessage}
           </p>
         ) : null}
-        {showConnectors ? (
-          <ConnectorsPanel />
+        {adminView ? (
+          <AdminPanel view={adminView} />
         ) : (
           <WorkspaceBody
             setup={setup}

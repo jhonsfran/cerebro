@@ -99,6 +99,13 @@
       "when": 1791833099904,
       "tag": "0013_admin_connectors",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791834268261,
+      "tag": "0014_skills",
+      "breakpoints": true
     }
   ]
 }

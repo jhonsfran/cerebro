@@ -870,6 +870,83 @@ test(
           );
         }
       );
+      await t.test(
+        "administrators save skills that new conversations offer",
+        async () => {
+          const skill = {
+            body: "Check the order date, then offer store credit.",
+            description: "Use when a customer asks for a refund.",
+          };
+          await expectStatus(
+            await fixture.request(
+              "/api/product/skills/refund-policy",
+              support.cookie,
+              skill,
+              "PUT"
+            ),
+            403
+          );
+          await expectStatus(
+            await fixture.request(
+              "/api/product/skills/Refund%20Policy",
+              owner.cookie,
+              skill,
+              "PUT"
+            ),
+            422
+          );
+          assert.deepEqual(
+            await fixture.json(
+              "/api/product/skills/refund-policy",
+              owner.cookie,
+              z.object({ name: z.string(), saved: z.literal(true) }),
+              skill,
+              "PUT"
+            ),
+            { name: "refund-policy", saved: true }
+          );
+          const skillList = z.object({
+            skills: z.array(
+              z.object({
+                body: z.string(),
+                description: z.string(),
+                name: z.string(),
+              })
+            ),
+          });
+          assert.deepEqual(
+            await fixture.json("/api/product/skills", owner.cookie, skillList),
+            { skills: [{ ...skill, name: "refund-policy" }] }
+          );
+          // A conversation started now offers the skill tools to the model.
+          const before = await provider();
+          const skillConversation = await createConversation();
+          await send(skillConversation, "Explain the current policy.");
+          await completed(skillConversation);
+          const calls = z
+            .object({
+              model: z.array(
+                z.object({ toolNames: z.array(z.string()).optional() })
+              ),
+            })
+            .parse(await fixture.observations())
+            .model.slice(before.model.length);
+          assert.ok(
+            calls.some((call) => call.toolNames?.includes("activate_skill"))
+          );
+          await fixture.json(
+            "/api/product/skills/refund-policy",
+            owner.cookie,
+            z.object({ name: z.string(), removed: z.literal(true) }),
+            {},
+            "DELETE"
+          );
+          assert.deepEqual(
+            await fixture.json("/api/product/skills", owner.cookie, skillList),
+            { skills: [] }
+          );
+        }
+      );
     } finally {
       await fixture.controls({
         arm: null,

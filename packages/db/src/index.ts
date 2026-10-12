@@ -9,6 +9,7 @@ import { connectorSchema } from "./schema/connectors.ts";
 import { organization } from "./schema/core.ts";
 import { identitySchema } from "./schema/identity.ts";
 import { memorySchema } from "./schema/memory.ts";
+import { skillSchema } from "./schema/skills.ts";
 
 const schema = {
   ...accountSchema,
@@ -17,6 +18,7 @@ const schema = {
   ...identitySchema,
   ...memorySchema,
   ...connectorSchema,
+  ...skillSchema,
   organization,
 };
 const createDb = (client: ReturnType<typeof postgres>) =>
