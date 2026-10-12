@@ -15,6 +15,12 @@ import {
 } from "../apps/server/src/config.ts";
 import { discoverMcpTools } from "../apps/server/src/mcp-discovery.ts";
 import { parseEnterpriseIdentityJSON } from "../packages/auth/src/enterprise.ts";
+import { findSealedAccount } from "../packages/db/src/repositories/accounts.ts";
+import {
+  listConnectors,
+  removeStaleSources,
+  replaceSourceTools,
+} from "../packages/db/src/repositories/catalog.ts";
 import {
   connectorAccountId,
   openCredentials,
@@ -123,6 +129,12 @@ const runtimeConfiguration = parseRuntimeConfiguration(
   await readRuntimeConfiguration(),
   mode
 );
+const rowsOf = (tools) =>
+  tools.map((tool) => ({
+    connectorId: tool.connectorId,
+    definition: tool,
+    id: tool.id,
+  }));
 const runtimeConfigurationJson = JSON.stringify(
   workerConfiguration(runtimeConfiguration)
 );
@@ -184,36 +196,49 @@ try {
       }
     )
   );
+  const database = drizzle(client);
   // runtime.json owns the catalog rows it declares; each start replaces them.
-  await client.begin(async (transaction) => {
-    await transaction`DELETE FROM connector_tool WHERE organization_id = ${organizationId} AND source = 'runtime.json'`;
-    await Promise.all(
-      catalogImports(runtimeConfiguration).map(
-        (tool) => transaction`
-          INSERT INTO connector_tool (organization_id, id, connector_id, source, definition)
-          VALUES (${organizationId}, ${tool.id}, ${tool.connectorId}, 'runtime.json', ${JSON.stringify(tool)}::jsonb)
-        `
-      )
-    );
-  });
+  await database.transaction((transaction) =>
+    replaceSourceTools(
+      transaction,
+      organizationId,
+      "runtime.json",
+      rowsOf(catalogImports(runtimeConfiguration))
+    )
+  );
   // Each connector's discovered tools replace its previous ones. A server that
   // cannot be reached keeps its rows, so a restart never loses working tools.
   const storedHeaders = async (connectorId) => {
     const accountId = connectorAccountId(connectorId);
-    const [row] =
-      await client`SELECT sealed FROM connector_account WHERE organization_id = ${organizationId} AND id = ${accountId}`;
-    if (!row) {
+    const sealed = await findSealedAccount(database, organizationId, accountId);
+    if (!sealed) {
       return {};
     }
     const credentials = await openCredentials(
       accountKey,
       { accountId, organizationId },
-      row.sealed
+      sealed
     );
     return credentials.headers;
   };
+  // A connector an administrator added in the product owns its ID.
+  const listed = await listConnectors(database, organizationId);
+  const added = new Set(
+    listed
+      .filter((connector) => connector.source === "admin")
+      .map((connector) => connector.id)
+  );
+  const fileConnectors = runtimeConfiguration.connectors.filter((connector) => {
+    if (added.has(connector.id)) {
+      process.stdout.write(
+        `MCP connector ${connector.id} is skipped: an administrator added a connector with the same ID.\n`
+      );
+      return false;
+    }
+    return true;
+  });
   const discovered = await Promise.all(
-    runtimeConfiguration.connectors.map(async (connector) => {
+    fileConnectors.map(async (connector) => {
       try {
         const headers =
           connector.credentials?.headers ?? (await storedHeaders(connector.id));
@@ -231,22 +256,21 @@ try {
       }
     })
   );
-  const configuredSources = runtimeConfiguration.connectors.map(
-    (connector) => `mcp:${connector.id}`
-  );
-  await client.begin(async (transaction) => {
-    await transaction`DELETE FROM connector_tool WHERE organization_id = ${organizationId} AND source LIKE 'mcp:%' AND NOT (source = ANY(${configuredSources}::text[]))`;
+  await database.transaction(async (transaction) => {
+    await removeStaleSources(
+      transaction,
+      organizationId,
+      "mcp:",
+      fileConnectors.map((connector) => `mcp:${connector.id}`)
+    );
     for (const entry of discovered.filter(Boolean)) {
-      const source = `mcp:${entry.connector.id}`;
       // oxlint-disable-next-line no-await-in-loop -- One transaction, one connection.
-      await transaction`DELETE FROM connector_tool WHERE organization_id = ${organizationId} AND source = ${source}`;
-      for (const tool of entry.tools) {
-        // oxlint-disable-next-line no-await-in-loop -- One transaction, one connection.
-        await transaction`
-          INSERT INTO connector_tool (organization_id, id, connector_id, source, definition)
-          VALUES (${organizationId}, ${tool.id}, ${tool.connectorId}, ${source}, ${JSON.stringify(tool)}::jsonb)
-        `;
-      }
+      await replaceSourceTools(
+        transaction,
+        organizationId,
+        `mcp:${entry.connector.id}`,
+        rowsOf(entry.tools)
+      );
     }
   });
   if (enterpriseIdentity) {

@@ -92,6 +92,13 @@
       "when": 1791820201961,
       "tag": "0012_tool_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791833099904,
+      "tag": "0013_admin_connectors",
+      "breakpoints": true
     }
   ]
 }

@@ -759,6 +759,117 @@ test(
           evidence.audit = exported;
         }
       );
+      await t.test(
+        "administrators add, refresh, and remove an MCP connector",
+        async () => {
+          const change = z.object({
+            id: z.string(),
+            skipped: z.array(z.string()),
+            toolCount: z.number(),
+          });
+          const input = {
+            headers: { Authorization: "Bearer fixture-connector-key" },
+            id: "crm",
+            url: "http://fixture:8090/mcp",
+          };
+          await expectStatus(
+            await fixture.request(
+              "/api/product/connectors",
+              support.cookie,
+              input,
+              "POST"
+            ),
+            403
+          );
+          assert.deepEqual(
+            await fixture.json(
+              "/api/product/connectors",
+              owner.cookie,
+              change,
+              input,
+              "POST"
+            ),
+            { id: "crm", skipped: [], toolCount: 2 }
+          );
+          await expectStatus(
+            await fixture.request(
+              "/api/product/connectors",
+              owner.cookie,
+              input,
+              "POST"
+            ),
+            409
+          );
+          const listed = await fixture.json(
+            "/api/product/connectors",
+            owner.cookie,
+            z.object({
+              connectors: z.array(
+                z.object({
+                  id: z.string(),
+                  source: z.string(),
+                  toolCount: z.number(),
+                  url: z.string().nullable(),
+                })
+              ),
+            })
+          );
+          assert.deepEqual(
+            listed.connectors.find((connector) => connector.id === "crm"),
+            {
+              id: "crm",
+              source: "admin",
+              toolCount: 2,
+              url: "http://fixture:8090/mcp",
+            }
+          );
+          const sealed = await fixture.sql(
+            "SELECT sealed FROM connector_account WHERE id='connector:crm'"
+          );
+          assert.match(sealed, /^v1\./u);
+          assert.equal(sealed.includes("fixture-connector-key"), false);
+          const catalog = await fixture.json(
+            "/api/product/catalog",
+            owner.cookie,
+            z.object({
+              connectorChoices: z.array(z.object({ id: z.string() })),
+            })
+          );
+          assert.ok(
+            ["crm_archive", "crm_lookup"].every((toolId) =>
+              catalog.connectorChoices.some((choice) => choice.id === toolId)
+            )
+          );
+          // Read and execute on both tools, and execute on the connector.
+          assert.equal(
+            await fixture.sql(
+              "SELECT count(*) FROM identity_grant WHERE source='connector:crm'"
+            ),
+            "5"
+          );
+          const refreshed = await fixture.json(
+            "/api/product/connectors/crm/refresh",
+            owner.cookie,
+            change,
+            {},
+            "POST"
+          );
+          assert.equal(refreshed.toolCount, 2);
+          await fixture.json(
+            "/api/product/connectors/crm",
+            owner.cookie,
+            z.object({ id: z.literal("crm"), removed: z.literal(true) }),
+            {},
+            "DELETE"
+          );
+          assert.equal(
+            await fixture.sql(
+              "SELECT (SELECT count(*) FROM connector_tool WHERE source='admin:crm') + (SELECT count(*) FROM identity_grant WHERE source='connector:crm') + (SELECT count(*) FROM connector_account WHERE id='connector:crm')"
+            ),
+            "0"
+          );
+        }
+      );
     } finally {
       await fixture.controls({
         arm: null,

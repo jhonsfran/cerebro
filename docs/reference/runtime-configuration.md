@@ -78,6 +78,8 @@ Every `write` tool requires `requiresApproval: true`. Every request carries `Ide
 
 On every start, bootstrap calls `tools/list` on each connector and replaces that connector's catalog tools. A tool ID is `<connector id>_<MCP tool name>`, with characters outside `[A-Za-z0-9_-]` replaced by `_`, up to 64 characters. A tool the server marks `readOnlyHint: true` is a read. Every other tool is a write that needs approval. Tools the registry cannot load, such as a duplicate ID, are skipped and logged. If the server cannot be reached, the connector keeps its previous tools. Removing a connector from this file removes its tools.
 
+Administrators can also add MCP connectors in the product under Connectors. Those live in PostgreSQL, not in this file, and survive restarts. A connector in this file with the same ID as one added in the product is skipped.
+
 ### Interrupted calls
 
 Before a call is dispatched, Pi stores a dispatch marker for it. If the process stops before the outcome is recorded, Pi replays the call. An `idempotent` tool is dispatched again. An `at-most-once` tool is not: the conversation shows the call as an unknown outcome and the run continues.

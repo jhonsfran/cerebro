@@ -42,7 +42,7 @@ import {
   EFFECT_DEADLINE_MS,
   INSTALLATION_AGENT_PREFIX,
 } from "./types";
-import type { AccessAction, ChannelOptions } from "./types";
+import type { AccessAction, ChannelOptions, ConnectorInput } from "./types";
 
 export type Conversation = typeof channelConversation.$inferSelect;
 export interface AgentInput {
@@ -105,6 +105,65 @@ export const createChannelService = (
     return row;
   };
 
+  // Connector management needs the installation-wide manage grant, the same
+  // grant that creates agents.
+  const connectorAdmin = async (userId: string) => {
+    if (!options.connectors) {
+      throw new ChannelError(
+        503,
+        "provider-unavailable",
+        "Connectors are not configured."
+      );
+    }
+    const context = await current(userId);
+    await authorize(
+      database,
+      options,
+      context,
+      "manage",
+      "agent",
+      `${INSTALLATION_AGENT_PREFIX}${options.organizationId}`
+    );
+    return { admin: options.connectors, principalId: context.actor.id };
+  };
+  const canManageConnectors = async (userId: string): Promise<boolean> => {
+    try {
+      await connectorAdmin(userId);
+      return true;
+    } catch (error) {
+      if (error instanceof ChannelError) {
+        return false;
+      }
+      throw error;
+    }
+  };
+  const listConnectors = async (userId: string) => {
+    const { admin } = await connectorAdmin(userId);
+    return { connectors: await admin.list(database, options.organizationId) };
+  };
+  const addConnector = async (userId: string, input: ConnectorInput) => {
+    const { admin, principalId } = await connectorAdmin(userId);
+    return await admin.add(
+      database,
+      options.organizationId,
+      principalId,
+      input
+    );
+  };
+  const refreshConnector = async (userId: string, connectorId: string) => {
+    const { admin, principalId } = await connectorAdmin(userId);
+    return await admin.refresh(
+      database,
+      options.organizationId,
+      principalId,
+      connectorId
+    );
+  };
+  const removeConnector = async (userId: string, connectorId: string) => {
+    const { admin } = await connectorAdmin(userId);
+    await admin.remove(database, options.organizationId, connectorId);
+    return { id: connectorId, removed: true };
+  };
   const setup = async (userId: string) => {
     const [record] = await database
       .select()
@@ -115,6 +174,7 @@ export const createChannelService = (
     ).findPrincipalByUser(options.organizationId, userId);
     return {
       bootstrapTokenRequired: Boolean(options.bootstrapToken),
+      canManageConnectors: await canManageConnectors(userId),
       mode: options.mode,
       organizationId: options.organizationId,
       owner: record?.ownerUserId === userId,
@@ -755,6 +815,7 @@ export const createChannelService = (
     );
   };
   return {
+    addConnector,
     admit,
     approve,
     approveAs,
@@ -766,9 +827,12 @@ export const createChannelService = (
     history,
     install,
     listAgents,
+    listConnectors,
     listConversations,
     publishAgent,
     readConversation,
+    refreshConnector,
+    removeConnector,
     setAccess,
     setup,
     source,

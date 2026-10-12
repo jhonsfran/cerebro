@@ -46,6 +46,15 @@ const agentInput = z.object({
   operationId: identifier,
 });
 const conversation = z.object({ conversationId: z.string().min(1) });
+const connectorId = z.object({ connectorId: identifier });
+const connectorInput = z.object({
+  headers: z
+    .record(z.string().min(1).max(128), z.string().min(1).max(4096))
+    .refine((value) => Object.keys(value).length <= 16)
+    .default({}),
+  id: identifier,
+  url: z.string().min(1).max(2048),
+});
 
 const product = o
   .use(async ({ next }) => {
@@ -101,6 +110,12 @@ const product = o
   });
 
 export const productRouter = {
+  addConnector: product
+    .route({ method: "POST", path: "/product/connectors" })
+    .input(connectorInput)
+    .handler(({ context, input }) =>
+      context.service.addConnector(context.userId, input)
+    ),
   approve: product
     .route({
       method: "POST",
@@ -179,10 +194,28 @@ export const productRouter = {
   listAgents: product
     .route({ method: "GET", path: "/product/agents" })
     .handler(({ context }) => context.service.listAgents(context.userId)),
+  listConnectors: product
+    .route({ method: "GET", path: "/product/connectors" })
+    .handler(({ context }) => context.service.listConnectors(context.userId)),
   listConversations: product
     .route({ method: "GET", path: "/product/conversations" })
     .handler(({ context }) =>
       context.service.listConversations(context.userId)
+    ),
+  refreshConnector: product
+    .route({
+      method: "POST",
+      path: "/product/connectors/{connectorId}/refresh",
+    })
+    .input(connectorId)
+    .handler(({ context, input }) =>
+      context.service.refreshConnector(context.userId, input.connectorId)
+    ),
+  removeConnector: product
+    .route({ method: "DELETE", path: "/product/connectors/{connectorId}" })
+    .input(connectorId)
+    .handler(({ context, input }) =>
+      context.service.removeConnector(context.userId, input.connectorId)
     ),
   setAccess: product
     .route({

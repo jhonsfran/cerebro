@@ -10,6 +10,7 @@ import {
   request,
 } from "./api";
 import { agentEditorValues, agentExecutionGrants } from "./configuration";
+import { ConnectorsNavItem, ConnectorsPanel } from "./connectors";
 import { ConversationPanel } from "./conversation";
 import { operationFor } from "./intent";
 import type { OperationIntent } from "./intent";
@@ -659,6 +660,7 @@ export const ProductWorkspace = ({
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const [tab, setTab] = useState<Tab>("conversation");
   const [creating, setCreating] = useState(false);
+  const [showConnectors, setShowConnectors] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [slackCode, setSlackCode] = useState<{
@@ -892,6 +894,7 @@ export const ProductWorkspace = ({
               type="button"
               onClick={() => {
                 setCreating(true);
+                setShowConnectors(false);
                 setTab("configuration");
               }}
             >
@@ -899,10 +902,18 @@ export const ProductWorkspace = ({
             </button>
           ) : null}
         </div>
+        <ConnectorsNavItem
+          visible={setup?.canManageConnectors === true}
+          active={showConnectors}
+          open={() => {
+            setShowConnectors(true);
+            setCreating(false);
+          }}
+        />
         <nav className="agent-list" aria-label="Agents">
           {agents.map((entry) => (
             <button
-              className={`agent-list-item ${entry.agentId === activeAgentId ? "selected" : ""}`}
+              className={`agent-list-item ${entry.agentId === activeAgentId && !showConnectors ? "selected" : ""}`}
               key={entry.agentId}
               type="button"
               onClick={() => {
@@ -911,6 +922,7 @@ export const ProductWorkspace = ({
                 onConversation();
                 setSelectedId(entry.agentId);
                 setCreating(false);
+                setShowConnectors(false);
                 setTab("configuration");
               }}
             >
@@ -961,7 +973,7 @@ export const ProductWorkspace = ({
       </aside>
       <div className="product-main">
         <WorkspaceHeader
-          selected={selected}
+          selected={showConnectors ? undefined : selected}
           creating={creating}
           busy={busy}
           pending={conversationPending && !errorMessage}
@@ -972,37 +984,41 @@ export const ProductWorkspace = ({
             {errorMessage}
           </p>
         ) : null}
-        <WorkspaceBody
-          setup={setup}
-          selected={selected}
-          agent={activeAgent}
-          creating={creating}
-          tab={tab}
-          busy={busy}
-          conversationId={conversationId}
-          conversationPending={conversationPending && !errorMessage}
-          userId={userId}
-          setTab={setTab}
-          setCreating={setCreating}
-          claimSetup={claimSetup}
-          bootstrapToken={bootstrapToken}
-          setBootstrapToken={setBootstrapToken}
-          startConversation={startConversation}
-          refreshAgent={refreshAgent}
-          onSaved={async (agentId) => {
-            const generation = currentAccessGeneration();
-            await loadAgents();
-            assertCurrentAccess(generation);
-            setSelectedId(agentId);
-            setCreating(false);
-            const value = await request(
-              productPath(`agents/${encoded(agentId)}`),
-              agentDetailSchema
-            );
-            assertCurrentAccess(generation);
-            setAgent(value);
-          }}
-        />
+        {showConnectors ? (
+          <ConnectorsPanel />
+        ) : (
+          <WorkspaceBody
+            setup={setup}
+            selected={selected}
+            agent={activeAgent}
+            creating={creating}
+            tab={tab}
+            busy={busy}
+            conversationId={conversationId}
+            conversationPending={conversationPending && !errorMessage}
+            userId={userId}
+            setTab={setTab}
+            setCreating={setCreating}
+            claimSetup={claimSetup}
+            bootstrapToken={bootstrapToken}
+            setBootstrapToken={setBootstrapToken}
+            startConversation={startConversation}
+            refreshAgent={refreshAgent}
+            onSaved={async (agentId) => {
+              const generation = currentAccessGeneration();
+              await loadAgents();
+              assertCurrentAccess(generation);
+              setSelectedId(agentId);
+              setCreating(false);
+              const value = await request(
+                productPath(`agents/${encoded(agentId)}`),
+                agentDetailSchema
+              );
+              assertCurrentAccess(generation);
+              setAgent(value);
+            }}
+          />
+        )}
       </div>
     </main>
   );
