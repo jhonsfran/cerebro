@@ -726,18 +726,14 @@ export const createMemoryRepository = (
       if (request.sources.length === 0 || request.records.length === 0) {
         return [];
       }
-      const sourceClauses = request.sources.map(
-        (source) =>
-          sql`(s.id = ${source.id} and s.version = ${source.version} and s.generation = ${source.generation})`
+      const sources = JSON.stringify(
+        request.sources.map(({ id, version, generation }) => ({
+          id,
+          version,
+          generation,
+        }))
       );
-      const recordClauses = request.records.map(
-        (record) =>
-          sql`(r.id = ${record.id} and r.source_id = ${record.sourceId} and r.source_version = ${record.sourceVersion} and r.visibility = ${JSON.stringify(record.visibility)}::jsonb)`
-      );
-      const dependencyClauses = request.sources.map(
-        (source) =>
-          sql`(ds.id = ${source.id} and ds.version = ${source.version} and ds.generation = ${source.generation})`
-      );
+      const records = JSON.stringify(request.records);
       const embedding = `[${request.vector.join(",")}]`;
       const terms = sql`replace(plainto_tsquery('english', ${request.text})::text, ' & ', ' | ')::tsquery`;
       const fullText = sql`ts_rank_cd(r.search, ${terms})`;
@@ -771,13 +767,24 @@ export const createMemoryRepository = (
         embedding_dimensions: number | null;
         created_at: Date;
         search: string;
-      }>(sql`with authorized as materialized (
-        select r.* from memory_record r join memory_source s on s.organization_id = r.organization_id and s.id = r.source_id
-        where r.organization_id = ${request.organizationId} and (${sql.join(recordClauses, sql` or `)})
-        and (${sql.join(sourceClauses, sql` or `)}) and r.source_version = s.version and s.state = 'active'
+      }>(sql`with allowed_sources as materialized (
+        select * from jsonb_to_recordset(${sources}::jsonb) as scope(id text, version text, generation integer)
+      ), allowed_records as materialized (
+        select * from jsonb_to_recordset(${records}::jsonb) as scope(id text, "sourceId" text, "sourceVersion" text, visibility jsonb)
+      ), authorized as materialized (
+        select r.* from memory_record r
+        join memory_source s on s.organization_id = r.organization_id and s.id = r.source_id
+        join allowed_sources a on a.id = s.id and a.version = s.version and a.generation = s.generation
+        join allowed_records ar on ar.id = r.id and ar."sourceId" = r.source_id and ar."sourceVersion" = r.source_version and ar.visibility = r.visibility
+        where r.organization_id = ${request.organizationId}
+        and r.source_version = s.version and s.state = 'active'
         and (s.expires_at is null or s.expires_at > ${request.now.toISOString()})
         and ${modelMatch}
-        and not exists (select 1 from memory_dependency d left join memory_source ds on ds.organization_id = d.organization_id and ds.id = d.source_id where d.organization_id = s.organization_id and d.derived_source_id = s.id and (ds.id is null or not (${sql.join(dependencyClauses, sql` or `)}) or ds.state <> 'active' or ds.version <> d.source_version or (ds.expires_at is not null and ds.expires_at <= ${request.now.toISOString()})))
+        and not exists (select 1 from memory_dependency d
+          left join memory_source ds on ds.organization_id = d.organization_id and ds.id = d.source_id
+          left join allowed_sources da on da.id = ds.id and da.version = ds.version and da.generation = ds.generation
+          where d.organization_id = s.organization_id and d.derived_source_id = s.id
+          and (da.id is null or ds.state <> 'active' or ds.version <> d.source_version or (ds.expires_at is not null and ds.expires_at <= ${request.now.toISOString()})))
       ) select r.* from authorized r where ${match} order by ${score} desc, r.id asc limit ${request.limit}`);
       return rows.map((row) => ({
         content: row.content,

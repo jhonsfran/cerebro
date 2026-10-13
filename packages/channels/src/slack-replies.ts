@@ -14,14 +14,12 @@ export const DENY_ACTION = "cerebro_deny";
 // What was last posted for one Slack message. An "unknown" post may have been
 // delivered, so it is never posted again; it can still be edited once its ts
 // is known.
-export interface SlackDelivery {
-  readonly ts?: string;
-  readonly text: string;
-  readonly state: "sent" | "unknown" | "failed";
-}
+export type SlackDelivery =
+  | { readonly state: "sent"; readonly text: string; readonly ts: string }
+  | { readonly state: "unknown" | "failed" | "retry"; readonly text: string };
 export interface SlackDeliveryStore {
   readonly get: (key: string) => SlackDelivery | undefined;
-  readonly set: (key: string, delivery: SlackDelivery) => void;
+  readonly set: (key: string, delivery: SlackDelivery) => Promise<void>;
 }
 export interface SlackThread {
   readonly channelId: string;
@@ -138,7 +136,7 @@ export const deliverSlackReplies = async (input: {
     input.canShare
   )) {
     const prior = store.get(message.key);
-    if (prior?.text === message.text) {
+    if (prior?.text === message.text && prior.state !== "retry") {
       continue;
     }
     const content = {
@@ -146,33 +144,36 @@ export const deliverSlackReplies = async (input: {
       text: message.text,
       ...(message.blocks ? { blocks: message.blocks } : {}),
     };
-    if (prior?.ts) {
+    if (prior?.state === "sent") {
       const updated = await slack.edit({ ...content, ts: prior.ts });
       if (updated.state === "sent" || updated.state === "failed") {
         // A rejected edit is not retried; the message keeps its last text.
-        store.set(message.key, { ...prior, text: message.text });
+        await store.set(message.key, { ...prior, text: message.text });
       } else {
         retry = true;
       }
       continue;
     }
-    if (prior) {
+    if (prior && prior.state !== "retry") {
       // A post that may have been delivered is never repeated.
       continue;
     }
+    await store.set(message.key, { state: "unknown", text: message.text });
     const posted = await slack.send({
       ...content,
       threadTs: thread.threadTs,
     });
     if (posted.state === "retry") {
+      await store.set(message.key, { state: "retry", text: message.text });
       retry = true;
       continue;
     }
-    store.set(message.key, {
-      state: posted.state,
-      text: message.text,
-      ...(posted.state === "sent" ? { ts: posted.ts } : {}),
-    });
+    await store.set(
+      message.key,
+      posted.state === "sent"
+        ? { state: "sent", text: message.text, ts: posted.ts }
+        : { state: posted.state, text: message.text }
+    );
   }
   if (retry) {
     throw new Error("Slack delivery is incomplete and will retry.");

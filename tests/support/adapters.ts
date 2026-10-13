@@ -187,7 +187,8 @@ export const createFixtureAdapters = (
       const allowed =
         request.organizationId === fixtureOrganizationId &&
         request.agentId === fixtureAgentId &&
-        request.capability === "fixture-capability";
+        request.kind === "tool" &&
+        request.tool.id === "fixture-capability";
       const value: EntitlementDecision = allowed
         ? { decision: "allow", policyVersion: "fixture-v1" }
         : {

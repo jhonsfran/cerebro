@@ -197,9 +197,13 @@ export const createAgentAuthority = (
                 dependencies.entitlements.check(
                   {
                     agentId: request.pinnedAgent.agentId,
-                    capability: request.tool?.id ?? "model.request",
-                    model: request.model,
                     organizationId: request.address.organizationId,
+                    ...(request.tool
+                      ? { kind: "tool" as const, tool: request.tool }
+                      : {
+                          kind: "model" as const,
+                          model: request.model ?? request.pinnedAgent.model,
+                        }),
                   },
                   {
                     ...options,

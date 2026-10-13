@@ -57,6 +57,7 @@ test("provider guard checks every physical HTTP call, including retries, before 
       return Promise.resolve(new Response("fixture"));
     },
     maxInputBytes: 131_072,
+    maxResponseBytes: 1_048_576,
     model,
     provider,
   });
@@ -110,6 +111,7 @@ test("provider input limit counts UTF-8 bytes before physical dispatch", async (
         return Promise.resolve(new Response("fixture"));
       },
       maxInputBytes: 2,
+      maxResponseBytes: 1_048_576,
       model,
       provider,
     });
@@ -134,6 +136,7 @@ test(
       authorize: () => Effect.void,
       deadlineMs: 10_000,
       maxInputBytes: 4096,
+      maxResponseBytes: 1_048_576,
       model,
       provider: {
         ...faux.provider,
@@ -176,6 +179,7 @@ test("rejected source preparation prevents physical fetch and current permission
       return Promise.resolve(new Response("fixture"));
     },
     maxInputBytes: 4096,
+    maxResponseBytes: 1_048_576,
     model,
     prepareContext: (context) =>
       permitted
@@ -222,4 +226,62 @@ test("rejected source preparation prevents physical fetch and current permission
     { text: "Allowed source answer.", type: "text" },
   ]);
   assert.deepEqual(payloads, ["authorized input"]);
+});
+
+test("provider response limit counts streamed UTF-8 bytes and cancels an oversized body", async () => {
+  for (const oversized of [false, true]) {
+    const faux = fauxProvider();
+    const model = faux.getModel();
+    let cancelled = false;
+    const guarded = createControlledProvider({
+      authorize: () => Effect.void,
+      deadlineMs: 1000,
+      maxInputBytes: 4096,
+      maxResponseBytes: 2,
+      model,
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream({
+              start: (controller) => {
+                controller.enqueue(new TextEncoder().encode("é"));
+                if (oversized) {
+                  controller.enqueue(new TextEncoder().encode("!"));
+                } else {
+                  controller.close();
+                }
+              },
+              cancel: () => {
+                cancelled = true;
+              },
+            })
+          )
+        ),
+      provider: {
+        ...faux.provider,
+        streamSimple: (_model, _transcript, readOptions) => {
+          const stream = createAssistantMessageEventStream();
+          const consume = async () => {
+            try {
+              assert.ok(readOptions?.fetch);
+              const response = await readOptions.fetch(
+                "https://fixture.invalid/model",
+                { body: "x", method: "POST", signal: readOptions.signal }
+              );
+              stream.end(fauxAssistantMessage(await response.text()));
+            } catch {
+              stream.end(fauxAssistantMessage("", { stopReason: "error" }));
+            }
+          };
+          void consume();
+          return stream;
+        },
+      },
+    });
+    const result = await guarded
+      .streamSimple(model, normalizeContext({ messages: [] }))
+      .result();
+    assert.equal(result.stopReason, oversized ? "error" : "stop");
+    assert.equal(cancelled, oversized);
+  }
 });

@@ -223,7 +223,10 @@ test("native snapshots preserve transcript order and stable thinking panels", as
   const server = installConversation(first);
   const view = renderConversation();
   await waitFor(() =>
-    assert.ok(view.container.textContent?.includes("First thought"))
+    assert.ok(
+      server.controllers.length > 0 &&
+        view.container.textContent?.includes("First thought")
+    )
   );
   const details = view.getByText("Thinking").closest("details");
   assert.ok(details);

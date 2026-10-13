@@ -113,6 +113,14 @@ export const createRuntimeContent = (
                 context,
                 limit: 6,
                 organizationId: address.organizationId,
+                sourceIds: agent.grants
+                  .filter(
+                    (grant) =>
+                      grant.action === "read" &&
+                      grant.resource.kind === "memory" &&
+                      grant.resource.organizationId === address.organizationId
+                  )
+                  .map((grant) => id.source(grant.resource.id)),
                 text,
               },
               options

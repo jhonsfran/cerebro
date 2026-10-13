@@ -320,6 +320,7 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
             return await fetch(input, { ...init, headers });
           },
           maxInputBytes: 131_072,
+          maxResponseBytes: 1_048_576,
           model,
           provider,
         },

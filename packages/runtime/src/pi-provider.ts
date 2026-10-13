@@ -14,6 +14,8 @@ import type {
 import type { Provider } from "@earendil-works/pi-ai/models";
 import { Effect } from "effect";
 
+import { boundedModelResponse } from "./model-response.ts";
+
 export interface ControlledProviderConfiguration {
   readonly model: Model<Api>;
   readonly provider: Provider;
@@ -26,6 +28,7 @@ export interface ControlledProviderConfiguration {
   ) => Effect.Effect<TranscriptContext, ContractFailure>;
   readonly deadlineMs: number;
   readonly maxInputBytes: number;
+  readonly maxResponseBytes: number;
   readonly fetch?: typeof globalThis.fetch;
   readonly beforeFetch?: (
     options: ReadOptions
@@ -36,10 +39,13 @@ export const createControlledProvider = (
   configuration: ControlledProviderConfiguration
 ): Provider => {
   if (
-    !Number.isSafeInteger(configuration.maxInputBytes) ||
-    configuration.maxInputBytes < 1
+    [configuration.maxInputBytes, configuration.maxResponseBytes].some(
+      (limit) => !Number.isSafeInteger(limit) || limit < 1
+    )
   ) {
-    throw new RangeError("A positive model input byte limit is required");
+    throw new RangeError(
+      "Positive model input and response byte limits are required"
+    );
   }
   const physicalFetch: typeof globalThis.fetch = async (input, init) => {
     const body = init?.body;
@@ -79,7 +85,11 @@ export const createControlledProvider = (
       }),
       { signal: signal ?? undefined }
     );
-    return await (configuration.fetch ?? globalThis.fetch)(input, init);
+    const response = await (configuration.fetch ?? globalThis.fetch)(
+      input,
+      init
+    );
+    return boundedModelResponse(response, configuration.maxResponseBytes);
   };
   const controlledStream = (
     model: Model<Api>,

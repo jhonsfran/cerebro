@@ -11,7 +11,10 @@ import type {
   EntryId,
   TaskId,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
-import { chatSnapshot } from "../../packages/runtime/src/pi-harness.ts";
+import {
+  chatSnapshot,
+  snapshotToolIds,
+} from "../../packages/runtime/src/pi-harness.ts";
 
 const address = {
   agentId: id.agent("presentation-agent"),
@@ -129,4 +132,43 @@ test("streaming snapshots hide redacted thinking and retain visible thinking", a
       },
     ]
   );
+});
+
+test("internal skill results do not require connector grants", () => {
+  const snapshot = chatSnapshot({
+    address,
+    agentVersion: 1,
+    approvals: [],
+    view: {
+      conversation: { id: ROOT_CONVERSATION_ID },
+      docs: {},
+      entries: [
+        {
+          id: 1,
+          conversationId: ROOT_CONVERSATION_ID,
+          kind: "pi.tool",
+          model: [
+            {
+              role: "toolResult",
+              toolName: "activate_skill",
+              toolCallId: "skill",
+              timestamp: 0,
+              content: [{ type: "text", text: "Company instructions" }],
+              isError: false,
+            },
+            {
+              role: "toolResult",
+              toolName: "company_lookup",
+              toolCallId: "connector",
+              timestamp: 0,
+              content: [{ type: "text", text: "Company result" }],
+              isError: false,
+            },
+          ],
+        },
+      ],
+    },
+  });
+  assert.deepEqual(snapshotToolIds(snapshot), ["company_lookup"]);
+  assert.equal(snapshot.messages[0].text, "Company instructions");
 });

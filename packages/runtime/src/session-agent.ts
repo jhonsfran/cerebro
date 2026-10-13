@@ -36,7 +36,7 @@ import { DurableObject } from "cloudflare:workers";
 import { Effect, Result, Schema } from "effect";
 
 import { createApprovalStore } from "./approval-store.ts";
-import { chatSnapshot, piContext } from "./pi-harness.ts";
+import { chatSnapshot, piContext, snapshotToolIds } from "./pi-harness.ts";
 import { createControlledProvider } from "./pi-provider.ts";
 import type { ControlledProviderConfiguration } from "./pi-provider.ts";
 import { createPiTools } from "./pi-tools.ts";
@@ -112,15 +112,6 @@ const operationAction = {
   send: "execute",
   stop: "execute",
 } as const;
-
-const snapshotToolIds = (snapshot: ChatSnapshot): readonly string[] => [
-  ...new Set([
-    ...snapshot.messages.flatMap((message) =>
-      message.toolName ? [message.toolName] : []
-    ),
-    ...snapshot.approvals.map((approval) => approval.toolId),
-  ]),
-];
 
 export class SessionAgent<
   Environment extends SessionEnvironment = SessionEnvironment,

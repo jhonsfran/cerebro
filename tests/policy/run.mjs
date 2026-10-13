@@ -104,6 +104,21 @@ try {
     throw result.error;
   }
   process.exitCode = result.status ?? 1;
+  if (result.status === 0) {
+    const catalog = spawnSync(
+      "bun",
+      ["test", "tests/policy/catalog-authority.test.ts"],
+      {
+        cwd: root,
+        env: { ...process.env, POLICY_TEST_DATABASE_URL: databaseUrl },
+        stdio: "inherit",
+      }
+    );
+    if (catalog.error) {
+      throw catalog.error;
+    }
+    process.exitCode = catalog.status ?? 1;
+  }
 } finally {
   if (ownedContainer) {
     docker(["rm", "--force", ownedContainer]);

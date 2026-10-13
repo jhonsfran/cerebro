@@ -328,6 +328,7 @@ export const createRuntimeComposition = (
       provider: {
         deadlineMs: modelConfig.deadlineMs,
         maxInputBytes: modelConfig.maxInputBytes,
+        maxResponseBytes: modelConfig.maxResponseBytes,
         model,
         provider,
       },

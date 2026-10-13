@@ -2,7 +2,6 @@ import {
   createAuthorizationPolicy,
   createAuthorizationService,
 } from "@cerebro/authorization";
-import { id } from "@cerebro/contracts";
 import type {
   AuthorizationPolicy,
   ContentDependencies,
@@ -11,10 +10,11 @@ import type {
   PortResult,
   ReadOptions,
 } from "@cerebro/contracts";
+import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import type { Database } from "@cerebro/db";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
-import { connectorToolExists } from "@cerebro/db/repositories/catalog";
+import { findConnectorTool } from "@cerebro/db/repositories/catalog";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import { createMemoryRepository } from "@cerebro/db/repositories/memory";
 import { memoryArtifact } from "@cerebro/db/schema/memory";
@@ -25,10 +25,16 @@ import {
 } from "@cerebro/memory";
 import { accessView } from "@cerebro/memory/access";
 import { artifactRef } from "@cerebro/memory/artifact-store";
+import { bindRegisteredTool } from "@cerebro/tools/registry";
 import { and, asc, eq, like } from "drizzle-orm";
+import { Effect } from "effect";
 
 import type { WorkerEnv } from "./bindings";
-import { runtimeConfiguration } from "./config";
+import {
+  createCatalogRegistry,
+  parseCatalogTool,
+  runtimeConfiguration,
+} from "./config";
 
 export const memoryDependencies = (env: WorkerEnv, database: Database) => ({
   identity: createIdentityRepository(database),
@@ -58,7 +64,7 @@ export const createCurrentAuthorization = (
     ),
 });
 export const createCurrentEntitlements = (
-  env: WorkerEnv
+  env: Pick<WorkerEnv, "DATABASE_URL" | "DEPLOY_MODE" | "RUNTIME_CONFIG_JSON">
 ): EntitlementPolicy => ({
   check: (request, options) =>
     withDatabase(env, async (database) => {
@@ -72,19 +78,33 @@ export const createCurrentEntitlements = (
         return current;
       }
       const configured = runtimeConfiguration(env);
-      const allowed =
-        request.capability.startsWith("session.") ||
-        (request.model
-          ? current.value.model === request.model &&
-            configured.models.some((model) => model.id === request.model)
-          : current.value.enabledToolIds.includes(
-              id.tool(request.capability)
-            ) &&
-            (await connectorToolExists(
-              database,
-              request.organizationId,
-              request.capability
-            )));
+      let allowed = false;
+      if (request.kind === "model") {
+        allowed =
+          current.value.model === request.model &&
+          configured.models.some((model) => model.id === request.model);
+      } else if (current.value.enabledToolIds.includes(request.tool.id)) {
+        const definition = await findConnectorTool(
+          database,
+          request.organizationId,
+          request.tool.id
+        );
+        if (definition !== undefined) {
+          const registry = createCatalogRegistry(
+            [parseCatalogTool(definition)],
+            configured.mode
+          );
+          const entry = registry.get(request.tool.id);
+          if (entry) {
+            const registered = await Effect.runPromise(
+              bindRegisteredTool(entry)
+            );
+            allowed =
+              canonicalToolArguments(registered) ===
+              canonicalToolArguments(request.tool);
+          }
+        }
+      }
       return {
         status: "ok",
         value: allowed
@@ -213,7 +233,7 @@ export const readSource = async (
     },
   };
 };
-export const createCurrentAuthority = (env: WorkerEnv) =>
+export const createCurrentAuthority = (env: Pick<WorkerEnv, "DATABASE_URL">) =>
   createAuthorizationService({
     readSnapshot: (organizationId, actorId, delegationId) =>
       withDatabase(env, (database) =>

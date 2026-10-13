@@ -26,6 +26,8 @@ At least one of `bootstrapToken` and `trustedOwnerUserId` is required.
 
 Every model uses the OpenAI-compatible chat completions API.
 
+Pi owns run execution. The old `maxRequestsPerRun` field never limited requests. The parser removes it from older files; new configurations should omit it. `maxResponseBytes` stops and cancels an oversized HTTP response while it streams.
+
 | Field | Type | Notes |
 | --- | --- | --- |
 | `id` | string | Must equal `provider/model`. Agents select a model by this ID. |
@@ -37,7 +39,6 @@ Every model uses the OpenAI-compatible chat completions API.
 | `maxInputBytes` | integer | Upper bound for one request body, and the context window reported to Pi. |
 | `maxOutputTokens` | integer | Output token limit per request. |
 | `maxResponseBytes` | integer | Upper bound for one response. |
-| `maxRequestsPerRun` | integer | Optional. Defaults to 16. |
 
 Integer limits are positive and at most 1,048,576.
 

@@ -8,10 +8,12 @@ import { approvalMatches, digestToolArguments } from "./tools.ts";
 import type {
   Approval,
   ToolCall,
-  ToolDefinition,
   ToolExecution,
   ToolInvocation,
+  RegisteredTool,
 } from "./tools.ts";
+
+export type { RegisteredTool } from "./tools.ts";
 
 export interface ConnectorRegistration {
   readonly connectorId: string;
@@ -26,9 +28,6 @@ export const connectorFingerprint = (
       cause instanceof Error ? cause : new Error(String(cause)),
     try: () => digestToolArguments(registration),
   });
-export type RegisteredTool = ToolDefinition & {
-  readonly connectorFingerprint: Digest;
-};
 export type BoundToolCall = ToolCall & {
   readonly runId: RunId;
   readonly tool: RegisteredTool;

@@ -21,6 +21,7 @@ import {
 import { readBoundedJson } from "../../packages/tools/src/bounded-json.ts";
 import { createConnectorExecutor } from "../../packages/tools/src/connector.ts";
 import type { ConnectorCredentials } from "../../packages/tools/src/connector.ts";
+import { listMcpTools } from "../../packages/tools/src/mcp.ts";
 import {
   createToolRegistry,
   bindRegisteredTool,
@@ -305,6 +306,48 @@ test("write connectors require approval and use HTTPS in production", () => {
   };
   assert.equal(createToolRegistry([remote], "production").list().length, 1);
   assert.equal(createToolRegistry([tool], "local").list().length, 1);
+});
+
+test("connector tools cannot use internal skill tool names", () => {
+  for (const name of ["activate_skill", "read_skill_resource"]) {
+    const tool = registration();
+    assert.throws(
+      () =>
+        createToolRegistry(
+          [{ ...tool, definition: { ...tool.definition, id: id.tool(name) } }],
+          "local"
+        ),
+      /reserved/u
+    );
+  }
+});
+
+test("MCP cancellation interrupts initialization before tools/list", async () => {
+  const controller = new AbortController();
+  const initialized = Promise.withResolvers<undefined>();
+  const requests: string[] = [];
+  const pending = listMcpTools({
+    url: "https://fixture.invalid/mcp",
+    headers: {},
+    signal: controller.signal,
+    fetch: async (_input, init) => {
+      const message = JSON.parse(String(init?.body));
+      requests.push(message.method);
+      assert.ok(init?.signal);
+      initialized.resolve();
+      const response = Promise.withResolvers<Response>();
+      init.signal.addEventListener(
+        "abort",
+        () => response.reject(new Error("Interrupted initialization")),
+        { once: true }
+      );
+      return await response.promise;
+    },
+  });
+  await initialized.promise;
+  controller.abort();
+  await assert.rejects(pending, /Interrupted initialization/u);
+  assert.deepEqual(requests, ["initialize"]);
 });
 
 test("streamed provider output stops waiting and cancels when the deadline signal aborts", async () => {

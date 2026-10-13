@@ -3,18 +3,21 @@ import { createToolRegistry } from "@cerebro/tools/registry";
 import { z } from "zod";
 
 const positive = z.number().int().positive().max(1_048_576);
-const modelSchema = z.strictObject({
-  apiKey: z.string().min(1),
-  baseUrl: z.url(),
-  deadlineMs: positive,
-  id: z.string().min(1),
-  maxInputBytes: positive,
-  maxOutputTokens: positive,
-  maxRequestsPerRun: positive.default(16),
-  maxResponseBytes: positive,
-  model: z.string().min(1),
-  provider: z.string().min(1),
-});
+const modelSchema = z
+  .strictObject({
+    apiKey: z.string().min(1),
+    baseUrl: z.url(),
+    deadlineMs: positive,
+    id: z.string().min(1),
+    maxInputBytes: positive,
+    maxOutputTokens: positive,
+    // Accepted only to migrate old runtime.json files; Pi owns run execution.
+    maxRequestsPerRun: positive.optional(),
+    maxResponseBytes: positive,
+    model: z.string().min(1),
+    provider: z.string().min(1),
+  })
+  .transform(({ maxRequestsPerRun: _legacyRequestLimit, ...model }) => model);
 const jsonSchema = z.custom<Parameters<typeof z.fromJSONSchema>[0]>(
   (value) =>
     typeof value === "boolean" ||
@@ -245,30 +248,29 @@ export const runtimeConfiguration = (env: {
 
 // The credentials bootstrap seals into connector accounts, one per connector.
 export const connectorCredentialImports = (config: RuntimeConfiguration) => [
-  ...config.connectors.flatMap((connector) =>
-    connector.credentials
-      ? [{ connectorId: connector.id, credentials: connector.credentials }]
-      : []
-  ),
+  ...config.connectors.map((connector) => ({
+    connectorId: connector.id,
+    credentials: connector.credentials ?? { headers: {}, secrets: [] },
+    replace: connector.credentials !== undefined,
+  })),
   ...[...Map.groupBy(config.tools, (tool) => tool.connectorId)].flatMap(
     ([connectorId, tools]) => {
       const withCredentials = tools.flatMap((tool) =>
         tool.credentials ? [tool.credentials] : []
       );
       const [first] = withCredentials;
-      return first
-        ? [
-            {
-              connectorId,
-              credentials: {
-                headers: first.headers,
-                secrets: [
-                  ...new Set(withCredentials.flatMap((item) => item.secrets)),
-                ],
-              },
-            },
-          ]
-        : [];
+      return [
+        {
+          connectorId,
+          replace: first !== undefined,
+          credentials: {
+            headers: first?.headers ?? {},
+            secrets: [
+              ...new Set(withCredentials.flatMap((item) => item.secrets)),
+            ],
+          },
+        },
+      ];
     }
   ),
 ];

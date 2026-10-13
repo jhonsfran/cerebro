@@ -19,11 +19,10 @@ import { z } from "zod";
 import type { WorkerEnv } from "../bindings";
 
 type Conversation = typeof channelConversation.$inferSelect;
-const deliverySchema = z.object({
-  state: z.enum(["sent", "unknown", "failed"]),
-  text: z.string(),
-  ts: z.string().optional(),
-});
+const deliverySchema = z.discriminatedUnion("state", [
+  z.object({ state: z.literal("sent"), text: z.string(), ts: z.string() }),
+  z.object({ state: z.enum(["unknown", "failed", "retry"]), text: z.string() }),
+]);
 const options = (): ReadOptions => ({ deadlineAt: Date.now() + 10_000 });
 
 const currentRecipient = (env: WorkerEnv, conversation: Conversation) =>
@@ -79,12 +78,13 @@ export const createSlackNotifier = (input: {
         .toArray();
       return row ? deliverySchema.parse(JSON.parse(row.delivery)) : undefined;
     },
-    set: (key: string, delivery: SlackDelivery) => {
+    set: async (key: string, delivery: SlackDelivery) => {
       storage.sql.exec(
         "INSERT INTO cerebro_slack_delivery VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET delivery=excluded.delivery",
         key,
         JSON.stringify(delivery)
       );
+      await storage.sync();
     },
   };
   const slack = createSlackApi(input.slack);

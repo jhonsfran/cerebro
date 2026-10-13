@@ -1,5 +1,6 @@
 import type { AgentId, ExecutionContext, OrganizationId } from "./identity.ts";
 import type { PortResult, ReadOptions } from "./port.ts";
+import type { RegisteredTool } from "./tools.ts";
 
 export interface Resource {
   readonly organizationId: OrganizationId;
@@ -32,12 +33,13 @@ export interface AuthorizationPolicy {
   ) => Promise<PortResult<AuthorizationDecision>>;
 }
 
-export interface EntitlementRequest {
+export type EntitlementRequest = {
   readonly organizationId: OrganizationId;
   readonly agentId: AgentId;
-  readonly capability: string;
-  readonly model?: string;
-}
+} & (
+  | { readonly kind: "model"; readonly model: string }
+  | { readonly kind: "tool"; readonly tool: RegisteredTool }
+);
 
 export type EntitlementDecision =
   | { readonly decision: "allow"; readonly policyVersion: string }

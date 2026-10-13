@@ -71,10 +71,22 @@ const promptedTool = (input) => {
   ) {
     return "fixture_effect";
   }
+  if (prompt.includes("Activate skill refund-policy")) {
+    return "activate_skill";
+  }
   return prompt.includes("fixture-read") ? "fixture-read" : undefined;
 };
 const requestedTool = (request, input) =>
   request.headers["x-fixture-tool"] ?? promptedTool(input);
+const toolArguments = (name) => {
+  if (name === "activate_skill") {
+    return { name: "refund-policy" };
+  }
+  if (name === "fixture_effect") {
+    return { value: "approved-fixture" };
+  }
+  return { query: "slice-1" };
+};
 // One user turn keeps one identity across its model requests.
 const turnIdentity = (input) =>
   `turn:${digest(
@@ -91,7 +103,7 @@ const requestsTool = (input, purpose, toolName) =>
       input.messages.findLastIndex((message) => message.role === "user") + 1
     )
     .some((message) => message.role === "tool") &&
-  ["fixture-read", "fixture_effect"].includes(toolName) &&
+  ["fixture-read", "fixture_effect", "activate_skill"].includes(toolName) &&
   input.tools?.some((item) => item.function?.name === toolName);
 
 const recordToken = (call, delta) => {
@@ -238,11 +250,7 @@ export const createFixture = async ({
           tool_calls: [
             {
               function: {
-                arguments: JSON.stringify(
-                  toolName === "fixture_effect"
-                    ? { value: "approved-fixture" }
-                    : { query: "slice-1" }
-                ),
+                arguments: JSON.stringify(toolArguments(toolName)),
                 name: toolName,
               },
               id: `call_${digest({ operationId, toolName }).slice(0, 24)}`,

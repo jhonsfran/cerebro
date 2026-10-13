@@ -19,8 +19,8 @@ import {
 } from "@cerebro/tools/accounts";
 
 import type { WorkerEnv } from "./bindings";
-import { productionEndpoint, withRedactions } from "./config";
 import type { CatalogTool } from "./config";
+import { productionEndpoint, withRedactions } from "./config";
 import { discoverMcpTools } from "./mcp-discovery";
 
 // Lowercase, digits, and hyphens. No underscore, so `<id>_<tool>` IDs from two
@@ -34,7 +34,9 @@ const rows = (tools: readonly CatalogTool[]) =>
     id: tool.id,
   }));
 
-export const createConnectorAdmin = (env: WorkerEnv): ConnectorAdmin => {
+export const createConnectorAdmin = (
+  env: Pick<WorkerEnv, "ACCOUNT_KEY" | "DEPLOY_MODE">
+): ConnectorAdmin => {
   const discover = async (
     connector: { readonly id: string; readonly url: string },
     headers: Readonly<Record<string, string>>
@@ -103,17 +105,14 @@ export const createConnectorAdmin = (env: WorkerEnv): ConnectorAdmin => {
         );
       }
       const accountId = connectorAccountId(input.id);
-      const account =
-        Object.keys(input.headers).length > 0
-          ? {
-              id: accountId,
-              sealed: await sealCredentials(
-                env.ACCOUNT_KEY,
-                { accountId, organizationId },
-                withRedactions({ headers: { ...input.headers }, secrets: [] })
-              ),
-            }
-          : undefined;
+      const account = {
+        id: accountId,
+        sealed: await sealCredentials(
+          env.ACCOUNT_KEY,
+          { accountId, organizationId },
+          withRedactions({ headers: { ...input.headers }, secrets: [] })
+        ),
+      };
       return await save(
         database,
         organizationId,

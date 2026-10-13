@@ -68,7 +68,7 @@ const parse = (value: unknown) =>
 test("production accepts bounded ports and registers connector credentials for redaction", () => {
   const result = parse(configured());
   assert.equal(result.models[0].id, "company/model");
-  assert.equal(result.models[0].maxRequestsPerRun, 16);
+  assert.equal("maxRequestsPerRun" in result.models[0], false);
   assert.deepEqual(result.tools[0].credentials?.secrets, [
     "Bearer private-connector-test-value",
     "private-connector-test-value",
@@ -80,6 +80,7 @@ test("tools and credentials go to the catalog and accounts, never to the Worker"
   assert.deepEqual(connectorCredentialImports(result), [
     {
       connectorId: "company-mcp",
+      replace: true,
       credentials: {
         headers: { Authorization: "Bearer private-connector-test-value" },
         secrets: [
@@ -102,7 +103,13 @@ test("tools and credentials go to the catalog and accounts, never to the Worker"
   );
   const imported = configured();
   Reflect.deleteProperty(imported.tools[0], "credentials");
-  assert.deepEqual(connectorCredentialImports(parse(imported)), []);
+  assert.deepEqual(connectorCredentialImports(parse(imported)), [
+    {
+      connectorId: "company-mcp",
+      replace: false,
+      credentials: { headers: {}, secrets: [] },
+    },
+  ]);
 });
 
 test("MCP connectors are validated and the old mcp-read kind still loads", () => {

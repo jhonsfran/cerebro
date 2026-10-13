@@ -28,5 +28,6 @@ COPY tests/runtime ./tests/runtime
 COPY tests/slice-1/provider.mjs ./tests/slice-1/provider.mjs
 RUN mkdir -p node_modules/@cerebro && \
     ln -s ../../packages/contracts node_modules/@cerebro/contracts && \
-    ln -s ../../packages/db node_modules/@cerebro/db
+    ln -s ../../packages/db node_modules/@cerebro/db && \
+    ln -s ../../packages/tools node_modules/@cerebro/tools
 COPY tests/runtime/wrangler.jsonc ./wrangler.jsonc

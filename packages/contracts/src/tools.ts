@@ -16,6 +16,9 @@ export interface ToolDefinition {
   readonly effect: "read" | "write";
   readonly connectorId: string;
 }
+export type RegisteredTool = ToolDefinition & {
+  readonly connectorFingerprint: Digest;
+};
 
 export interface ToolCall {
   readonly organizationId: OrganizationId;

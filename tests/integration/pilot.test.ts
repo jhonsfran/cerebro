@@ -918,11 +918,18 @@ test(
             await fixture.json("/api/product/skills", owner.cookie, skillList),
             { skills: [{ ...skill, name: "refund-policy" }] }
           );
-          // A conversation started now offers the skill tools to the model.
+          // Activation must leave the transcript readable, including after reload.
           const before = await provider();
           const skillConversation = await createConversation();
-          await send(skillConversation, "Explain the current policy.");
-          await completed(skillConversation);
+          await send(skillConversation, "Activate skill refund-policy");
+          const activated = await completed(skillConversation);
+          assert.ok(
+            activated.snapshot.messages.some(
+              (message) =>
+                message.toolName === "activate_skill" &&
+                message.text.includes(skill.body)
+            )
+          );
           const calls = z
             .object({
               model: z.array(

@@ -58,6 +58,10 @@ export const retrieve = async (
     return invalid("Retrieval needs text and a limit from 1 to 100.");
   }
   const now = dependencies.now ?? Date.now;
+  const selectedSources =
+    query.sourceIds === undefined
+      ? undefined
+      : new Set<string>(query.sourceIds);
   return await bounded(
     options,
     async () => {
@@ -66,6 +70,14 @@ export const retrieve = async (
         return beforeEmbedding;
       }
       if (beforeEmbedding.value.recordIds.length === 0) {
+        return { status: "ok", value: [] };
+      }
+      if (
+        selectedSources &&
+        !beforeEmbedding.value.sources.some((source) =>
+          selectedSources.has(source.id)
+        )
+      ) {
         return { status: "ok", value: [] };
       }
       let vector: readonly number[] = [];
@@ -97,6 +109,7 @@ export const retrieve = async (
       if (access.status !== "ok") {
         return access;
       }
+      const recordIds = new Set(access.value.recordIds);
       const records = await dependencies.repository.search({
         dimensions: dependencies.embeddings?.dimensions ?? 0,
         limit: query.limit,
@@ -104,8 +117,10 @@ export const retrieve = async (
         model: dependencies.embeddings?.model ?? "",
         now: new Date(now()),
         organizationId: query.organizationId,
-        records: access.value.metadata.records.filter((record) =>
-          access.value.recordIds.includes(record.id)
+        records: access.value.metadata.records.filter(
+          (record) =>
+            recordIds.has(record.id) &&
+            (!selectedSources || selectedSources.has(record.sourceId))
         ),
         sources: access.value.sources,
         text: query.text,

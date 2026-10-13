@@ -180,7 +180,7 @@ try {
   // imported they can be removed from the file; the account stays.
   await Promise.all(
     connectorCredentialImports(runtimeConfiguration).map(
-      async ({ connectorId, credentials }) => {
+      async ({ connectorId, credentials, replace }) => {
         const accountId = connectorAccountId(connectorId);
         const sealed = await sealCredentials(
           accountKey,
@@ -192,6 +192,7 @@ try {
           VALUES (${organizationId}, ${accountId}, ${connectorId}, ${sealed})
           ON CONFLICT (organization_id, id)
           DO UPDATE SET sealed = EXCLUDED.sealed, updated_at = now()
+          WHERE ${replace}
         `;
       }
     )

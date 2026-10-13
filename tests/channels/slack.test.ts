@@ -336,8 +336,9 @@ const memoryStore = () => {
   const values = new Map<string, SlackDelivery>();
   return {
     get: (key: string) => values.get(key),
-    set: (key: string, delivery: SlackDelivery) => {
+    set: async (key: string, delivery: SlackDelivery) => {
       values.set(key, delivery);
+      await Promise.resolve();
     },
     values,
   };
@@ -519,6 +520,34 @@ test("Slack delivery never repeats an uncertain post and retries when rate limit
     limited.calls.map((call) => call.text),
     ["Complete answer.", "Complete answer."]
   );
+});
+
+test("Slack recovery does not repeat a post whose local outcome was lost", async () => {
+  const store = memoryStore();
+  const slack = fakeSlack();
+  let crash = true;
+  const input = {
+    snapshot: answerSnapshot("Complete answer."),
+    thread,
+    slack: slack.api,
+    canShare: () => Promise.resolve(true),
+    store: {
+      get: store.get,
+      set: async (key: string, delivery: SlackDelivery) => {
+        if (delivery.state === "sent" && crash) {
+          crash = false;
+          throw new Error("Lost host after the external post");
+        }
+        await store.set(key, delivery);
+      },
+    },
+  };
+  await assert.rejects(deliverSlackReplies(input), /Lost host/u);
+  assert.equal(store.get("message:answer-1")?.state, "unknown");
+  await deliverSlackReplies(input);
+  assert.deepEqual(slack.calls, [
+    { method: "postMessage", text: "Complete answer." },
+  ]);
 });
 
 test("the Slack client classifies delivery results", async () => {

@@ -53,6 +53,8 @@ export type MemoryRecord =
 export interface MemoryQuery extends MemoryScope {
   readonly text: string;
   readonly limit: number;
+  // Undefined searches all current user sources; an empty list searches none.
+  readonly sourceIds?: readonly SourceId[];
 }
 
 export interface MemoryHit {

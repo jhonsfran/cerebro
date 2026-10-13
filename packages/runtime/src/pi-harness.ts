@@ -3,9 +3,21 @@ import type {
   ChatMessage,
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
+import { isInternalToolName } from "@cerebro/tools/tool-names";
 import type { Message } from "@earendil-works/pi-ai";
 import type { ConversationView, Harness } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
+
+export const snapshotToolIds = (snapshot: ChatSnapshot): readonly string[] => [
+  ...new Set([
+    ...snapshot.messages.flatMap((message) =>
+      message.toolName && !isInternalToolName(message.toolName)
+        ? [message.toolName]
+        : []
+    ),
+    ...snapshot.approvals.map((approval) => approval.toolId),
+  ]),
+];
 
 export type PiContext = Parameters<Harness["root"]>[0];
 export const piContext = (signal?: AbortSignal): PiContext =>

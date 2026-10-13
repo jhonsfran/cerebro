@@ -31,13 +31,13 @@ export const listConnectorTools = async (
   return rows.map((row) => row.definition);
 };
 
-export const connectorToolExists = async (
+export const findConnectorTool = async (
   database: Database,
   organizationId: string,
   toolId: string
-): Promise<boolean> => {
+): Promise<unknown | undefined> => {
   const [row] = await database
-    .select({ id: connectorTool.id })
+    .select({ definition: connectorTool.definition })
     .from(connectorTool)
     .where(
       and(
@@ -46,7 +46,7 @@ export const connectorToolExists = async (
       )
     )
     .limit(1);
-  return row !== undefined;
+  return row?.definition;
 };
 
 // Each source owns its rows: replacing a source never touches another's tools.

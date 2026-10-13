@@ -7,6 +7,8 @@ import type { ToolCall, ToolDefinition } from "@cerebro/contracts/tools";
 import { Effect } from "effect";
 import { z } from "zod";
 
+import { isInternalToolName } from "./tool-names.ts";
+
 export type ConnectorTarget =
   | { readonly kind: "mcp"; readonly url: string; readonly method: string }
   | {
@@ -97,6 +99,9 @@ export const createToolRegistry = (
 ): ToolRegistry => {
   const entries = new Map<ToolId, RegisteredTool>();
   for (const registration of registrations) {
+    if (isInternalToolName(registration.definition.id)) {
+      throw new Error("Internal tool names are reserved by the session host.");
+    }
     const definition = Object.freeze(structuredClone(registration.definition));
     const url = new URL(registration.target.url);
     const target = Object.freeze({
@@ -205,7 +210,7 @@ export const bindRegisteredTool = (
   connectorFingerprint({
     connectorId: entry.definition.connectorId,
     destination: entry.target.url,
-    version: entry.connectorVersion ?? entry.definition.version,
+    version: entry.fingerprint,
   }).pipe(
     Effect.map((fingerprint) => ({
       ...entry.definition,
