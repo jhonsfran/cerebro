@@ -242,6 +242,21 @@ test("native chat snapshots retain message and approval binding across JSON tran
         toolName: "fixture-write",
       },
     ],
+    queuedInputs: [
+      { mode: "followUp", submissionId: "input-B", text: "Check it again." },
+    ],
+    tools: [
+      {
+        arguments: { value: "approved" },
+        callId: "call-A",
+        id: "entry-A:0:0",
+        messageId: "entry-A",
+        output: "Allowed",
+        resultMessageId: "entry-B",
+        state: "succeeded",
+        toolName: "fixture-write",
+      },
+    ],
   };
   const encoded = JSON.stringify(snapshot);
   const parsed = Schema.decodeUnknownSync(ChatSnapshot)(JSON.parse(encoded));
@@ -265,6 +280,12 @@ test("native chat snapshots retain message and approval binding across JSON tran
     },
     { approvals: [{ ...snapshot.approvals[0], arguments: { invalid: 1n } }] },
     { approvals: [{ ...snapshot.approvals[0], callId: "" }] },
+    { queuedInputs: [{ ...snapshot.queuedInputs[0], mode: "write" }] },
+    { queuedInputs: undefined },
+    { tools: [{ ...snapshot.tools[0], arguments: { invalid: 1n } }] },
+    { tools: [{ ...snapshot.tools[0], state: "done" }] },
+    { tools: [{ ...snapshot.tools[0], resultMessageId: "" }] },
+    { tools: undefined },
   ]) {
     assert.throws(() =>
       Schema.decodeUnknownSync(ChatSnapshot)({ ...snapshot, ...change })

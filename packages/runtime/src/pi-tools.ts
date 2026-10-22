@@ -28,6 +28,7 @@ import { Effect } from "effect";
 
 import type { createApprovalStore } from "./approval-store.ts";
 import { vendorEffect, waitForCaller } from "./runtime-ports.ts";
+import type { MetadataTransaction } from "./session-agent.ts";
 
 export interface PiRegisteredTool {
   readonly definition: RegisteredTool;
@@ -58,6 +59,7 @@ export interface PiToolConfiguration {
     execution?: ToolExecution
   ) => Effect.Effect<ContentDependencies, ContractFailure>;
   readonly persist: () => Effect.Effect<void, ContractFailure>;
+  readonly metadata: MetadataTransaction;
   readonly deadlineMs: number;
 }
 
@@ -71,7 +73,7 @@ type RecordedOutcome =
 const failureReason = (failure: ContractFailure): string =>
   "reason" in failure ? failure.reason : `${failure.resource} was not found`;
 const unknownResult = {
-  content: [
+  output: [
     {
       text: "The tool was dispatched but its outcome is unknown. It will not be retried. Check the target system before another attempt.",
       type: "text" as const,
@@ -166,12 +168,12 @@ export const createPiTools = (
           );
           if (recorded?.state === "succeeded") {
             return {
-              content: [{ text: recorded.output, type: "text" as const }],
+              output: [{ text: recorded.output, type: "text" as const }],
             };
           }
           if (recorded?.state === "failed") {
             return {
-              content: [{ text: recorded.reason, type: "text" as const }],
+              output: [{ text: recorded.reason, type: "text" as const }],
               isError: true,
             };
           }
@@ -228,11 +230,16 @@ export const createPiTools = (
             );
             approvalId = retained.id;
             yield* configuration.persist();
+            const state = yield* vendorEffect(options, () =>
+              configuration.metadata(
+                () => configuration.approvals.read(retained.id).state
+              )
+            );
             yield* vendorEffect(options, () =>
               api.details(
                 {
                   approvalId: retained.id,
-                  state: configuration.approvals.read(retained.id).state,
+                  state,
                 },
                 context
               )
@@ -333,7 +340,7 @@ export const createPiTools = (
             )
           ).pipe(Effect.andThen(configuration.persist()), Effect.ignore);
           return {
-            content: [
+            output: [
               {
                 text: canonicalToolArguments(execution.output),
                 type: "text" as const,
@@ -361,13 +368,17 @@ export const createPiTools = (
                     context
                   )
                 ).pipe(Effect.ignore, Effect.andThen(Effect.fail(error)));
-              })
+              }),
+              Effect.mapError((error) => new Error(failureReason(error)))
             ),
             { signal: context.abortSignal }
           );
         } finally {
-          if (approvalId) {
-            configuration.approvals.cancel(approvalId);
+          const pendingApprovalId = approvalId;
+          if (pendingApprovalId) {
+            await configuration.metadata(() =>
+              configuration.approvals.cancel(pendingApprovalId)
+            );
           }
         }
       },

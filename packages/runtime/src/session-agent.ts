@@ -15,51 +15,61 @@ import type {
   AgentDefinition,
   ContentDependencies,
 } from "@cerebro/contracts/session";
-import type {
-  ChatObservation,
-  ChatSnapshot,
-} from "@cerebro/contracts/session-service";
+import type { ChatSnapshot } from "@cerebro/contracts/session-service";
+import { ChatForkReceipt } from "@cerebro/contracts/session-service";
 import type { ToolExecutor } from "@cerebro/contracts/tool-service";
 import { createModels } from "@earendil-works/pi-ai/models";
-import { Harness, createRegistry } from "@earendil-works/pi-durable";
-import type { ConversationView } from "@earendil-works/pi-durable";
-import { PiHarness, skills } from "agents/harness/pi";
+import type { MutableModels } from "@earendil-works/pi-ai/models";
+import {
+  Harness,
+  configure,
+  createRegistry,
+  defineDoc,
+  UserEntry,
+  AssistantEntry,
+} from "@earendil-works/pi-durable";
+import type {
+  ConversationId as NativeConversationId,
+  EntryId,
+  JsonObject,
+  Registry,
+} from "@earendil-works/pi-durable";
+import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
 import type {
   LifecycleJobContext,
   LifecycleJobOutcome,
 } from "agents/lifecycle";
-// Types only: the agents/skills entry imports optional script runners that the
-// Worker bundle does not include.
-import type { SkillSource } from "agents/skills";
 import { DurableObject } from "cloudflare:workers";
 import { Effect, Result, Schema } from "effect";
 
-import { createApprovalStore } from "./approval-store.ts";
-import { chatSnapshot, piContext, snapshotToolIds } from "./pi-harness.ts";
-import { createControlledProvider } from "./pi-provider.ts";
+import type { CompanySkill } from "./company-skills.ts";
+import { CompactPayload } from "./conversation-compaction.ts";
+import { searchConversationHistory } from "./conversation-history.ts";
+import { ReminderPayload } from "./conversation-reminders.ts";
+import { ConversationScope } from "./conversation-scope.ts";
+import type { SearchResult } from "./conversation-work.ts";
+import { piContext, snapshotToolIds } from "./pi-harness.ts";
 import type { ControlledProviderConfiguration } from "./pi-provider.ts";
-import { createPiTools } from "./pi-tools.ts";
 import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
 
 export type SessionEnvironment = Readonly<Record<string, unknown>>;
-export interface CompanySkill {
-  readonly name: string;
-  readonly description: string;
-  readonly body: string;
-}
-const companySkillSource = (entries: readonly CompanySkill[]): SkillSource => ({
-  fingerprint: JSON.stringify(entries),
-  id: "cerebro-company-skills",
-  list: () =>
-    Promise.resolve(
-      entries.map(({ description, name }) => ({ description, name }))
-    ),
-  load: (name) =>
-    Promise.resolve(entries.find((entry) => entry.name === name) ?? null),
-});
+export type MetadataTransaction = <A>(
+  operation: () => A | Promise<A>
+) => Promise<A>;
 export interface SessionHostConfiguration {
   readonly address: EventAddress;
+  readonly origin?: {
+    readonly address: EventAddress;
+    readonly entryId: string;
+    readonly agentVersion: number;
+  };
+  readonly contentDependencies?: () => Promise<ContentDependencies>;
+  readonly inheritDependencies?: (
+    source: EventAddress,
+    toolIds: readonly string[],
+    history: boolean
+  ) => void;
   readonly agent: AgentDefinition;
   readonly authority: AuthorityService;
   readonly executor: ToolExecutor;
@@ -67,7 +77,6 @@ export interface SessionHostConfiguration {
   readonly tools: readonly PiRegisteredTool[];
   // Company skills the model can activate by name; their bodies load on demand.
   readonly skills?: readonly CompanySkill[];
-  readonly authenticate: (request: Request) => Promise<ExecutionContext>;
   readonly ownerContext: () => Effect.Effect<ExecutionContext, ContractFailure>;
   readonly notify?: (snapshot: ChatSnapshot) => Promise<void>;
   readonly prepareInput?: (
@@ -82,10 +91,39 @@ export interface SessionHostConfiguration {
   ) => Effect.Effect<void, ContractFailure>;
 }
 
-const options = (signal?: AbortSignal): ReadOptions => ({
-  deadlineAt: Date.now() + 30_000,
-  signal,
+interface ConversationBinding extends JsonObject {
+  address: { [Key in keyof EventAddress]: EventAddress[Key] };
+  agentVersion: number;
+  nativeId: NativeConversationId;
+  origin: string | null;
+}
+const Bindings = defineDoc({
+  initial: (): { conversations: Record<string, ConversationBinding> } => ({
+    conversations: {},
+  }),
+  kind: "cerebro.conversation-bindings",
+  scope: "session",
+  version: 1,
 });
+interface NativeHost {
+  readonly pi: Harness;
+  readonly models: MutableModels;
+  readonly registry: Registry;
+}
+const notifyPayload = Schema.Struct({ sessionId: Schema.NonEmptyString });
+const forkCommand = Schema.Struct({
+  destination: ChatForkReceipt.fields.address,
+  entryId: Schema.NonEmptyString,
+  operationId: Schema.NonEmptyString,
+});
+const childPayload = Schema.Struct({
+  sessionId: Schema.NonEmptyString,
+  childId: Schema.NonEmptyString,
+});
+const nativeEntryId = Schema.declare<EntryId>(
+  (value): value is EntryId =>
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0
+);
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
 ): Promise<A> => {
@@ -95,227 +133,396 @@ const run = async <A>(
   }
   return result.success;
 };
-const sendSchema = Schema.Struct({
-  operationId: Schema.NonEmptyString,
-  text: Schema.NonEmptyString,
-});
-const decisionSchema = Schema.Struct({
-  approvalId: Schema.NonEmptyString,
-  decision: Schema.Literals(["allow", "deny"]),
-});
-
-type ChatOperation = "read" | "send" | "stop" | "allow" | "deny";
-const operationAction = {
-  allow: "approve",
-  deny: "approve",
-  read: "read",
-  send: "execute",
-  stop: "execute",
-} as const;
+const sameAddress = (left: EventAddress, right: EventAddress): boolean =>
+  left.organizationId === right.organizationId &&
+  left.agentId === right.agentId &&
+  left.conversationId === right.conversationId &&
+  left.sessionId === right.sessionId;
+const permanentFailure = (error: unknown): boolean =>
+  error instanceof Denied ||
+  error instanceof NotFound ||
+  error instanceof InvalidInput;
+const reportPiFailure = (
+  identity: string | undefined,
+  error: unknown,
+  address?: EventAddress
+): void => {
+  console.error(
+    JSON.stringify({
+      address,
+      errorCode: toContractFailure(error, "Pi execution failed.")._tag,
+      errorType: error instanceof Error ? error.name : typeof error,
+      event: "pi.execution.failed",
+      identity,
+      service: "cerebro-runtime",
+    })
+  );
+};
 
 export class SessionAgent<
   Environment extends SessionEnvironment = SessionEnvironment,
 > extends DurableObject<Environment> {
-  private initialized:
-    | ReturnType<SessionAgent<Environment>["initialize"]>
-    | undefined;
+  private active: NativeHost | undefined;
+  private readonly scopes = new Map<string, ConversationScope>();
+  private readonly openings = new Map<string, Promise<ConversationScope>>();
   readonly harness = new PiHarness({
     harness: async ({ storage, context }) => {
-      const runtime = await this.ready();
-      const registry = createRegistry();
-      const { configuration } = runtime;
-      registry.install({ name: "cerebro-controlled", tools: runtime.tools });
-      const companySkills = configuration.skills ?? [];
-      if (companySkills.length > 0) {
-        registry.install(await skills([companySkillSource(companySkills)]));
-      }
       const models = createModels();
-      models.setProvider(runtime.provider);
+      const registry = createRegistry();
       const pi = await Harness.open(
         storage,
         {
           models,
+          onReport: (error) => reportPiFailure(this.ctx.id.name, error),
           registry,
           settings: {
-            stream: {
-              maxRetries: 0,
-              timeoutMs: configuration.provider.deadlineMs,
-              transport: "sse",
-            },
+            extensions: [],
+            stream: { maxRetries: 0, transport: "sse" },
           },
         },
         context
       );
-      const root = await pi.root(context, {
-        agent: {
-          instructions: configuration.agent.instructions,
-          model: {
-            modelId: configuration.provider.model.id,
-            provider: configuration.provider.model.provider,
-          },
-        },
-      });
-      this.ctx.waitUntil(root.waitForIdle(context));
-      if (configuration.notify) {
-        const watch = await root.watch(context);
-        watch.start(() => this.scheduleNotify());
-        this.ctx.waitUntil(this.scheduleNotify());
+      const host = { models, pi, registry };
+      const resetFailedIdentity = async () => {
+        const end = await pi.closed;
+        if (end.reason === "failed") {
+          reportPiFailure(this.ctx.id.name, end.error);
+          this.ctx.abort("Pi storage failed. Reopen the identity runtime.");
+        }
+      };
+      void resetFailedIdentity();
+      try {
+        const bindings = await pi.snapshot(Bindings, context);
+        for (const binding of Object.values(bindings?.conversations ?? {})) {
+          try {
+            // oxlint-disable-next-line no-await-in-loop -- Restore every scope before the SDK resumes any persisted task.
+            await this.openScope(binding.address, host, binding);
+          } catch (error) {
+            if (!permanentFailure(error)) {
+              throw error;
+            }
+            reportPiFailure(this.ctx.id.name, error, binding.address);
+          }
+        }
+        this.active = host;
+        return pi;
+      } catch (error) {
+        this.scopes.clear();
+        await pi.close(context);
+        throw error;
       }
-      return pi;
     },
   });
   readonly lifecycle = Lifecycle.install(this).use(this.harness);
 
-  // oxlint-disable-next-line class-methods-use-this -- Server and isolated fixture subclasses supply company services.
-  protected configure(): Effect.Effect<
-    SessionHostConfiguration,
+  // oxlint-disable-next-line class-methods-use-this -- Server and fixture subclasses authenticate the full conversation address.
+  protected resolve(_request: Request): Effect.Effect<
+    {
+      readonly address: EventAddress;
+      readonly context: ExecutionContext;
+    },
     ContractFailure
   > {
     return Effect.fail(
-      new Unavailable({ reason: "Session host composition is not configured." })
+      new Unavailable({
+        reason: "Identity request authentication is not configured.",
+      })
     );
   }
 
-  private async initialize() {
-    const configuration = await run(this.configure());
-    const approvals = createApprovalStore(this.ctx.storage);
-    const authorize = async (
-      context: ExecutionContext,
-      operation: ChatOperation,
-      signal?: AbortSignal,
-      toolIds: readonly string[] = []
-    ): Promise<void> => {
-      await run(
-        configuration.authority.require(
-          {
-            action: operationAction[operation],
-            address: configuration.address,
-            context,
-            model: operation === "send" ? configuration.agent.model : undefined,
-            pinnedAgent: configuration.agent,
-            resource: {
-              id: configuration.agent.agentId,
-              kind: "agent",
-              organizationId: configuration.address.organizationId,
-            },
-          },
-          options(signal)
-        )
-      );
-      if (
-        operation === "read" ||
-        operation === "send" ||
-        operation === "allow"
-      ) {
-        await run(
-          configuration.checkDependencies(
-            context,
-            { sourceIds: [], toolIds },
-            options(signal)
-          )
-        );
+  // oxlint-disable-next-line class-methods-use-this -- Server and fixture subclasses supply immutable per-conversation services.
+  protected configure(
+    _address: EventAddress,
+    _metadata: MetadataTransaction
+  ): Effect.Effect<SessionHostConfiguration, ContractFailure> {
+    return Effect.fail(
+      new Unavailable({
+        reason: "Conversation host composition is not configured.",
+      })
+    );
+  }
+
+  private async openScope(
+    address: EventAddress,
+    host: NativeHost,
+    binding?: ConversationBinding,
+    ancestors: ReadonlySet<string> = new Set()
+  ): Promise<ConversationScope> {
+    if (ancestors.has(address.sessionId)) {
+      throw new InvalidInput({
+        reason: "A conversation fork cannot contain a cycle.",
+      });
+    }
+    const existing = this.scopes.get(address.sessionId);
+    if (existing) {
+      if (!sameAddress(existing.runtime.configuration.address, address)) {
+        throw new InvalidInput({
+          reason: "The conversation address does not match its scope.",
+        });
       }
-    };
-    const provider = createControlledProvider({
-      ...configuration.provider,
-      ...(configuration.prepareInput
-        ? {
-            prepareContext: (context, readOptions) =>
-              Effect.gen(function* prepareCurrentContext() {
-                const { prepareInput } = configuration;
-                if (!prepareInput) {
-                  return context;
-                }
-                const index = context.messages.findLastIndex(
-                  (message) => message.role === "user"
-                );
-                const message = context.messages[index];
-                if (message?.role !== "user") {
-                  return context;
-                }
-                const inputText =
-                  typeof message.content === "string"
-                    ? message.content
-                    : message.content
-                        .filter((block) => block.type === "text")
-                        .map((block) => block.text)
-                        .join("");
-                if (!inputText) {
-                  return context;
-                }
-                const owner = yield* configuration.ownerContext();
-                const text = yield* prepareInput(inputText, owner);
-                if (readOptions.signal?.aborted) {
-                  return yield* Effect.fail(
-                    new Unavailable({
-                      reason: "Model context preparation was interrupted.",
-                    })
-                  );
-                }
-                return {
-                  ...context,
-                  messages: context.messages.map((value, position) =>
-                    position === index ? { ...message, content: text } : value
-                  ),
-                };
-              }),
-          }
-        : {}),
-      authorize: (readOptions) =>
-        Effect.gen(function* currentModelAuthority() {
-          const context = yield* configuration.ownerContext();
-          yield* configuration.authority.require(
-            {
-              action: "execute",
-              address: configuration.address,
-              context,
-              model: configuration.agent.model,
-              pinnedAgent: configuration.agent,
-              resource: {
-                id: configuration.agent.agentId,
-                kind: "agent",
-                organizationId: configuration.address.organizationId,
-              },
-            },
-            readOptions
-          );
-          yield* configuration.checkDependencies(
-            context,
-            { sourceIds: [], toolIds: [] },
-            readOptions
-          );
-        }),
-    });
-    const tools = createPiTools({
-      address: configuration.address,
-      agent: configuration.agent,
-      approvals,
-      authority: configuration.authority,
-      checkDependencies: configuration.checkDependencies,
-      deadlineMs: configuration.provider.deadlineMs,
-      dependencies: configuration.toolDependencies,
-      executor: configuration.executor,
-      ownerContext: configuration.ownerContext,
-      persist: () =>
-        Effect.tryPromise({
-          catch: () =>
-            new Unavailable({ reason: "Native tool dispatch flush failed." }),
-          try: () => this.ctx.storage.sync(),
-        }),
-      tools: configuration.tools,
-    });
-    return { approvals, authorize, configuration, provider, tools };
+      return existing;
+    }
+    let opening = this.openings.get(address.sessionId);
+    if (!opening) {
+      opening = this.createScope(address, host, binding, ancestors);
+      this.openings.set(address.sessionId, opening);
+    }
+    try {
+      const scope = await opening;
+      if (!sameAddress(scope.runtime.configuration.address, address)) {
+        throw new InvalidInput({
+          reason: "The conversation address does not match its scope.",
+        });
+      }
+      return scope;
+    } finally {
+      if (this.openings.get(address.sessionId) === opening) {
+        this.openings.delete(address.sessionId);
+      }
+    }
   }
 
-  private ready() {
-    this.initialized ??= this.initialize();
-    return this.initialized;
+  private async createScope(
+    address: EventAddress,
+    host: NativeHost,
+    binding?: ConversationBinding,
+    ancestors: ReadonlySet<string> = new Set()
+  ): Promise<ConversationScope> {
+    const metadata: MetadataTransaction = (operation) =>
+      host.pi.commit(operation, piContext());
+    const configuration = await metadata(() =>
+      run(this.configure(address, metadata))
+    );
+    const originKey = configuration.origin
+      ? JSON.stringify([
+          configuration.origin.address.organizationId,
+          configuration.origin.address.agentId,
+          configuration.origin.address.conversationId,
+          configuration.origin.address.sessionId,
+          configuration.origin.entryId,
+          configuration.origin.agentVersion,
+        ])
+      : null;
+    if (
+      !sameAddress(address, configuration.address) ||
+      configuration.agent.agentId !== address.agentId ||
+      (binding &&
+        (binding.agentVersion !== configuration.agent.version ||
+          !sameAddress(binding.address, address) ||
+          (binding.origin ?? null) !== originKey))
+    ) {
+      throw new InvalidInput({
+        reason:
+          "The conversation configuration does not match its durable binding.",
+      });
+    }
+    const { origin } = configuration;
+    const fork = binding
+      ? undefined
+      : await this.forkSource(configuration, host, ancestors);
+    const scope = await ConversationScope.open(
+      configuration,
+      {
+        harness: this.harness,
+        install: (extension) => host.registry.install(extension),
+        jobs: this.lifecycle.jobs,
+        metadata,
+        pi: host.pi,
+        search: (term, signal) => this.search(address, host, term, signal),
+        scheduleNotify: (target, nativeId) =>
+          host.pi.commit(
+            () => this.scheduleNotify(target, nativeId),
+            piContext()
+          ),
+        storage: this.ctx.storage,
+        waitUntil: (promise) => this.ctx.waitUntil(promise),
+      },
+      async ({ agent, extensions, provider }) => {
+        for (const extension of extensions) {
+          host.registry.install(extension);
+        }
+        host.models.setProvider(provider);
+        const nativeId =
+          binding?.nativeId ??
+          (await host.pi.commit(async (tx) => {
+            const bindings = await tx.doc(Bindings);
+            const current = bindings.conversations[address.sessionId];
+            if (current) {
+              if (
+                !sameAddress(current.address, address) ||
+                current.agentVersion !== configuration.agent.version ||
+                (current.origin ?? null) !== originKey
+              ) {
+                throw new InvalidInput({
+                  reason:
+                    "The public conversation changed its durable binding.",
+                });
+              }
+              return current.nativeId;
+            }
+            const parentNative = fork?.native;
+            const point = fork?.point;
+            if (origin && !point) {
+              throw new InvalidInput({
+                reason: "The fork entry does not belong to its source.",
+              });
+            }
+            const created =
+              point && parentNative
+                ? await tx.forkConversation(parentNative.id, point.id, {
+                    ownership: { kind: "ownerless" },
+                  })
+                : await tx.createConversation({
+                    ownership: { kind: "ownerless" },
+                  });
+            await configure(tx, created.id, agent);
+            if (origin) {
+              configuration.inheritDependencies?.(
+                origin.address,
+                fork?.toolIds ?? [],
+                false
+              );
+            }
+            bindings.conversations[address.sessionId] = {
+              address: { ...address },
+              agentVersion: configuration.agent.version,
+              nativeId: created.id,
+              origin: originKey,
+            };
+            return created.id;
+          }, piContext()));
+        const native = await host.pi.conversation(nativeId, piContext());
+        if (!native) {
+          throw new NotFound({ resource: "Native conversation" });
+        }
+        return native;
+      }
+    );
+    this.scopes.set(address.sessionId, scope);
+    return scope;
   }
 
-  private async scheduleNotify(): Promise<void> {
+  private async forkSource(
+    configuration: SessionHostConfiguration,
+    host: NativeHost,
+    ancestors: ReadonlySet<string>
+  ) {
+    const { origin, address } = configuration;
+    if (!origin) {
+      return;
+    }
+    if (
+      origin.address.organizationId !== address.organizationId ||
+      origin.address.agentId !== address.agentId ||
+      origin.agentVersion !== configuration.agent.version
+    ) {
+      throw new InvalidInput({
+        reason: "The fork configuration differs from its source.",
+      });
+    }
+    const bindings = await host.pi.snapshot(Bindings, piContext());
+    const parent =
+      this.scopes.get(origin.address.sessionId) ??
+      (await this.openScope(
+        origin.address,
+        host,
+        bindings?.conversations[origin.address.sessionId],
+        new Set([...ancestors, address.sessionId])
+      ));
+    if (parent.runtime.configuration.agent.version !== origin.agentVersion) {
+      throw new InvalidInput({
+        reason: "The fork agent version differs from its source.",
+      });
+    }
+    const snapshot = await parent.read(await run(configuration.ownerContext()));
+    const toolIds = snapshotToolIds(snapshot);
+    const parsedId = await run(
+      Effect.try({
+        catch: () =>
+          new InvalidInput({ reason: "The fork entry ID is invalid." }),
+        try: () =>
+          Schema.decodeUnknownSync(nativeEntryId)(Number(origin.entryId)),
+      })
+    );
+    const historical = await parent.native.entries(
+      { minEntryId: parsedId, maxEntryId: parsedId },
+      1,
+      undefined,
+      piContext()
+    );
+    const [point] = historical.items;
+    if (
+      !point ||
+      String(point.id) !== origin.entryId ||
+      !(UserEntry.is(point) || AssistantEntry.is(point))
+    ) {
+      throw new InvalidInput({
+        reason:
+          "The fork entry is not a user or assistant message in its source.",
+      });
+    }
+    return { native: parent.native, point, toolIds };
+  }
+
+  private async search(
+    address: EventAddress,
+    host: NativeHost,
+    term: string,
+    signal?: AbortSignal
+  ): Promise<SearchResult> {
+    const target = this.scopes.get(address.sessionId);
+    if (!target) {
+      throw new NotFound({ resource: "Search conversation" });
+    }
+    const bindings = await host.pi.snapshot(Bindings, piContext(signal));
+    return searchConversationHistory(
+      {
+        target,
+        addresses: Object.values(bindings?.conversations ?? {}).map(
+          (binding) => binding.address
+        ),
+        open: async (source) =>
+          this.scopes.get(source.sessionId) ??
+          (await this.openScope(
+            source,
+            host,
+            bindings?.conversations[source.sessionId]
+          )),
+        metadata: (operation) => host.pi.commit(operation, piContext(signal)),
+        persist: () => this.ctx.storage.sync(),
+      },
+      term,
+      signal
+    );
+  }
+
+  private async scope(address: EventAddress): Promise<ConversationScope> {
+    await this.harness.pi();
+    const host = this.active;
+    if (!host) {
+      throw new Unavailable({ reason: "The identity runtime is unavailable." });
+    }
+    const bindings = await host.pi.snapshot(Bindings, piContext());
+    return this.openScope(
+      address,
+      host,
+      bindings?.conversations[address.sessionId]
+    );
+  }
+
+  protected async nativeSession(address: EventAddress): Promise<string> {
+    const scope = await this.scope(address);
+    return String(scope.native.id);
+  }
+
+  private async scheduleNotify(
+    address: EventAddress,
+    nativeId: string
+  ): Promise<void> {
     await this.lifecycle.jobs.push({
       fn: "cerebro-notify",
-      id: "cerebro-notify",
+      id: `cerebro-notify:${nativeId}`,
+      payload: { sessionId: address.sessionId },
       recoveryLoop: true,
       singleflight: true,
       time: Date.now() + 1000,
@@ -323,182 +530,52 @@ export class SessionAgent<
   }
 
   async onJob({ job }: LifecycleJobContext): Promise<LifecycleJobOutcome> {
-    if (job.fn !== "cerebro-notify") {
-      return;
-    }
-    const runtime = await this.ready();
-    if (!runtime.configuration.notify) {
+    if (
+      ![
+        "cerebro-notify",
+        "cerebro-child",
+        "cerebro-reminder",
+        "cerebro-compact",
+      ].includes(job.fn)
+    ) {
       return;
     }
     try {
-      const owner = await run(runtime.configuration.ownerContext());
-      const snapshot = await this.read(owner);
-      await runtime.configuration.notify(snapshot);
+      const { sessionId } = Schema.decodeUnknownSync(notifyPayload)(
+        job.payload
+      );
+      const pi = await this.harness.pi();
+      const bindings = await pi.snapshot(Bindings, piContext());
+      const binding = bindings?.conversations[sessionId];
+      if (binding) {
+        const scope = await this.scope(binding.address);
+        if (job.fn === "cerebro-child") {
+          const payload = Schema.decodeUnknownSync(childPayload)(job.payload);
+          await scope.work.stop(payload.childId);
+          return;
+        }
+        if (job.fn === "cerebro-reminder") {
+          const payload = Schema.decodeUnknownSync(ReminderPayload)(
+            job.payload
+          );
+          return await scope.reminders.deliver(
+            payload.reminderId,
+            payload.occurrence,
+            payload.input
+          );
+        }
+        if (job.fn === "cerebro-compact") {
+          const payload = Schema.decodeUnknownSync(CompactPayload)(job.payload);
+          return await scope.compaction.run({ ...payload, kind: "compact" });
+        }
+        await scope.notify();
+      }
     } catch (error) {
-      if (error instanceof Denied) {
+      if (permanentFailure(error)) {
         return;
       }
       return { rescheduleAt: Date.now() + 5000 };
     }
-  }
-
-  private async snapshot(view: ConversationView): Promise<ChatSnapshot> {
-    const runtime = await this.ready();
-    const pi = await this.harness.pi();
-    const approvals = await pi.commit(
-      () => runtime.approvals.all(),
-      piContext()
-    );
-    return chatSnapshot({
-      address: runtime.configuration.address,
-      agentVersion: runtime.configuration.agent.version,
-      approvals,
-      view,
-    });
-  }
-
-  private async read(
-    context: ExecutionContext,
-    signal?: AbortSignal
-  ): Promise<ChatSnapshot> {
-    const runtime = await this.ready();
-    await runtime.authorize(context, "read", signal);
-    const pi = await this.harness.pi();
-    const root = await pi.root(piContext(signal));
-    const watch = await root.watch(piContext(signal));
-    try {
-      const snapshot = await this.snapshot(watch.value);
-      await runtime.authorize(
-        context,
-        "read",
-        signal,
-        snapshotToolIds(snapshot)
-      );
-      return snapshot;
-    } finally {
-      await watch.stop();
-    }
-  }
-
-  private async observe(
-    context: ExecutionContext,
-    signal: AbortSignal
-  ): Promise<Response> {
-    const runtime = await this.ready();
-    await runtime.authorize(context, "read", signal);
-    const abort = new AbortController();
-    const nativeContext = piContext(AbortSignal.any([signal, abort.signal]));
-    const pi = await this.harness.pi();
-    const root = await pi.root(nativeContext);
-    const watch = await root.watch(nativeContext);
-    let initial: ChatSnapshot;
-    try {
-      initial = await this.snapshot(watch.value);
-      await runtime.authorize(
-        context,
-        "read",
-        signal,
-        snapshotToolIds(initial)
-      );
-    } catch (error) {
-      await watch.stop();
-      throw error;
-    }
-    let accessTools = snapshotToolIds(initial);
-    const encoder = new TextEncoder();
-    let resumeReader: (() => void) | undefined;
-    let closed = false;
-    let checking = false;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const close = async () => {
-      if (closed) {
-        return;
-      }
-      closed = true;
-      if (timer) {
-        clearInterval(timer);
-      }
-      resumeReader?.();
-      abort.abort();
-      await watch.stop();
-    };
-    const stream = new ReadableStream<Uint8Array>({
-      cancel: close,
-      pull: () => {
-        resumeReader?.();
-        resumeReader = undefined;
-      },
-      start: (controller) => {
-        const emit = (frame: ChatObservation) =>
-          controller.enqueue(encoder.encode(`${JSON.stringify(frame)}\n`));
-        const denied = async (error: unknown) => {
-          if (closed) {
-            return;
-          }
-          if (error instanceof Denied) {
-            runtime.approvals.revalidate();
-            emit({
-              reason:
-                error.code === "unauthorized" ? "unauthorized" : "revoked",
-              type: "access-denied",
-            });
-            controller.close();
-          } else {
-            controller.error(toContractFailure(error));
-          }
-          await close();
-        };
-        emit({ snapshot: initial, type: "snapshot" });
-        watch.start(async (view) => {
-          try {
-            if ((controller.desiredSize ?? 0) <= 0) {
-              const pending = Promise.withResolvers<boolean>();
-              resumeReader = () => pending.resolve(true);
-              await pending.promise;
-            }
-            if (closed) {
-              return;
-            }
-            const snapshot = await this.snapshot(view);
-            accessTools = snapshotToolIds(snapshot);
-            await runtime.authorize(context, "read", signal, accessTools);
-            emit({ snapshot, type: "snapshot" });
-          } catch (error) {
-            await denied(error);
-          }
-        });
-        const checkAccess = async () => {
-          if (closed || checking) {
-            return;
-          }
-          checking = true;
-          try {
-            await runtime.authorize(context, "read", signal, accessTools);
-          } catch (error) {
-            await denied(error);
-          } finally {
-            checking = false;
-          }
-        };
-        timer = setInterval(() => {
-          void checkAccess();
-        }, 1000);
-        const waitForClose = async () => {
-          await watch.closed;
-          if (!closed) {
-            controller.close();
-            await close();
-          }
-        };
-        void waitForClose();
-      },
-    });
-    return new Response(stream, {
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Type": "application/x-ndjson",
-      },
-    });
   }
 
   async dispose(): Promise<void> {
@@ -507,83 +584,46 @@ export class SessionAgent<
 
   async onRequest(request: Request): Promise<Response> {
     try {
-      const runtime = await this.ready();
-      const context = await runtime.configuration.authenticate(request);
-      const path = new URL(request.url).pathname;
-      if (path === "/observe") {
-        return await this.observe(context, request.signal);
-      }
-      if (path === "/read") {
-        return Response.json({
-          status: "ok",
-          value: await this.read(context, request.signal),
-        });
-      }
-      if (path === "/stop") {
-        await runtime.authorize(context, "stop", request.signal);
-        return Response.json({
-          status: "ok",
-          value: { stopped: await this.harness.abort() },
-        });
-      }
-      let body: unknown;
-      try {
-        body = await request.json();
-      } catch {
-        throw new InvalidInput({ reason: "Invalid chat command JSON." });
-      }
-      if (path === "/send") {
+      const { address, context } = await run(this.resolve(request));
+      const scope = await this.scope(address);
+      if (new URL(request.url).pathname === "/fork") {
         const command = await run(
-          Schema.decodeUnknownEffect(sendSchema)(body).pipe(
-            Effect.mapError(
-              () =>
-                new InvalidInput({ reason: "The chat submission is invalid." })
-            )
-          )
+          Effect.tryPromise({
+            catch: () =>
+              new InvalidInput({ reason: "The fork command is invalid." }),
+            try: async () =>
+              Schema.decodeUnknownSync(forkCommand)(await request.json()),
+          })
         );
-        await runtime.authorize(context, "send", request.signal);
-        const receipt = await this.harness.submit(command.text, {
-          operationId: command.operationId,
-        });
-        const pi = await this.harness.pi();
-        const root = await pi.root(piContext());
-        this.ctx.waitUntil(root.waitForIdle(piContext()));
-        return Response.json({ status: "ok", value: receipt });
-      }
-      if (path === "/decide") {
-        const command = await run(
-          Schema.decodeUnknownEffect(decisionSchema)(body).pipe(
-            Effect.mapError(
-              () =>
-                new InvalidInput({
-                  reason: "The approval decision is invalid.",
-                })
-            )
-          )
-        );
-        await runtime.authorize(
-          context,
-          command.decision === "allow" ? "allow" : "deny",
-          request.signal
-        );
-        const pi = await this.harness.pi();
-        const value = await pi.commit(
-          () => runtime.approvals.decide(command.approvalId, command.decision),
-          piContext(request.signal)
-        );
+        await scope.read(context, request.signal);
+        await scope.runtime.authorize(context, "send", request.signal);
+        if (
+          command.destination.organizationId !== address.organizationId ||
+          command.destination.agentId !== address.agentId
+        ) {
+          throw new InvalidInput({
+            reason: "A fork must retain its company and agent.",
+          });
+        }
+        const destination = await this.scope(command.destination);
+        const { origin } = destination.runtime.configuration;
+        if (
+          !origin ||
+          !sameAddress(origin.address, address) ||
+          origin.entryId !== command.entryId
+        ) {
+          throw new InvalidInput({
+            reason: "The destination does not reserve this fork.",
+          });
+        }
         await this.ctx.storage.sync();
         return Response.json({
           status: "ok",
-          value: { approvalId: value.approvalId, state: value.state },
+          value: { address: destination.runtime.configuration.address },
         });
       }
-      throw new NotFound({ resource: "Chat route" });
+      return await scope.handle(request, context);
     } catch (error) {
-      if (error instanceof Denied) {
-        // A denial may mean access was revoked; waiting approvals recheck once instead of polling.
-        const runtime = await this.initialized?.catch(() => null);
-        runtime?.approvals.revalidate();
-      }
       const response = failureToHttp(
         toContractFailure(error, "The native chat request is unavailable.")
       );

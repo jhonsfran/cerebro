@@ -314,7 +314,7 @@ test("unavailable native Send admits a client retry once", async () => {
   assert.equal(fixtureSubmissionCount(), 1);
 });
 
-for (const engine of ["legacy", "pi-v1"] as const) {
+for (const engine of ["legacy-v1", "pi-v1", "pi-identity-v1"] as const) {
   test(`retired ${engine} conversations reject native work and history`, async () => {
     const app = await createTestProduct();
     await app.install();
@@ -343,8 +343,45 @@ for (const engine of ["legacy", "pi-v1"] as const) {
     );
     assert.equal((await app.request(`${route}/stop`, "POST", {})).status, 409);
     assert.equal(fixtureSubmissionCount(), 0);
+    assert.deepEqual(
+      object(await (await app.request("/api/product/conversations")).json())
+        .conversations,
+      []
+    );
   });
 }
+
+test("old Pi engine conversations are hidden and cannot execute without a retirement timestamp", async () => {
+  const app = await createTestProduct();
+  await app.install();
+  const agent = await app.createAgent();
+  const created = await app.request("/api/product/conversations", "POST", {
+    agentId: string(agent.agentId),
+    operationId: "old-engine",
+  });
+  const conversationId = string(object(await created.json()).conversationId);
+  await app.options.withDatabase((db) =>
+    db
+      .update(channelConversation)
+      .set({ engine: "pi-v1" })
+      .where(eq(channelConversation.conversationId, conversationId))
+  );
+  assert.deepEqual(
+    object(await (await app.request("/api/product/conversations")).json())
+      .conversations,
+    []
+  );
+  const rejected = await app.request(
+    `/api/product/conversations/${conversationId}/messages`,
+    "POST",
+    {
+      operationId: "old-input",
+      text: "Must not execute.",
+    }
+  );
+  assert.equal(rejected.status, 409);
+  assert.equal(fixtureSubmissionCount(), 0);
+});
 
 test("native approval denial retains its binding and decision", async () => {
   const app = await createTestProduct();

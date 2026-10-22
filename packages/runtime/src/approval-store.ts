@@ -74,7 +74,10 @@ const publicValue = (row: ApprovalRow): ChatApproval => {
 };
 export type ApprovalChange = "decided" | "revalidate";
 
-export const createApprovalStore = (storage: DurableObjectStorage) => {
+export const createApprovalStore = (
+  storage: DurableObjectStorage,
+  sessionId: string
+) => {
   const waiters = new Map<string, Deferred.Deferred<ApprovalChange>>();
   const notify = (approvalId: string, change: ApprovalChange) => {
     const waiter = waiters.get(approvalId);
@@ -83,12 +86,13 @@ export const createApprovalStore = (storage: DurableObjectStorage) => {
     }
   };
   storage.sql.exec(
-    "CREATE TABLE IF NOT EXISTS cerebro_approval (approval_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, call_id TEXT NOT NULL, arguments TEXT NOT NULL, permit TEXT NOT NULL, state TEXT NOT NULL)"
+    "CREATE TABLE IF NOT EXISTS cerebro_approval (approval_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, task_id TEXT NOT NULL, call_id TEXT NOT NULL, arguments TEXT NOT NULL, permit TEXT NOT NULL, state TEXT NOT NULL)"
   );
   const readRow = (approvalId: string): ApprovalRow => {
     const [row] = storage.sql
       .exec<ApprovalRow>(
-        "SELECT * FROM cerebro_approval WHERE approval_id=?",
+        "SELECT * FROM cerebro_approval WHERE session_id=? AND approval_id=?",
+        sessionId,
         approvalId
       )
       .toArray();
@@ -101,13 +105,17 @@ export const createApprovalStore = (storage: DurableObjectStorage) => {
   return {
     all: () =>
       storage.sql
-        .exec<ApprovalRow>("SELECT * FROM cerebro_approval ORDER BY rowid")
+        .exec<ApprovalRow>(
+          "SELECT * FROM cerebro_approval WHERE session_id=? ORDER BY rowid",
+          sessionId
+        )
         .toArray()
         .map(publicValue),
     cancel: (approvalId: string) => {
       waiters.delete(approvalId);
       storage.sql.exec(
-        "UPDATE cerebro_approval SET state='cancelled' WHERE approval_id=? AND state='pending'",
+        "UPDATE cerebro_approval SET state='cancelled' WHERE session_id=? AND approval_id=? AND state='pending'",
+        sessionId,
         approvalId
       );
     },
@@ -124,8 +132,9 @@ export const createApprovalStore = (storage: DurableObjectStorage) => {
         });
       }
       storage.sql.exec(
-        "UPDATE cerebro_approval SET state=? WHERE approval_id=? AND state='pending'",
+        "UPDATE cerebro_approval SET state=? WHERE session_id=? AND approval_id=? AND state='pending'",
         state,
+        sessionId,
         approvalId
       );
       notify(approvalId, "decided");
@@ -140,7 +149,8 @@ export const createApprovalStore = (storage: DurableObjectStorage) => {
     permit: (operationId: string): BoundApproval | undefined => {
       const [row] = storage.sql
         .exec<ApprovalRow>(
-          "SELECT * FROM cerebro_approval WHERE approval_id=? AND state='allowed'",
+          "SELECT * FROM cerebro_approval WHERE session_id=? AND approval_id=? AND state='allowed'",
+          sessionId,
           `approval:${operationId}`
         )
         .toArray();
@@ -159,8 +169,9 @@ export const createApprovalStore = (storage: DurableObjectStorage) => {
       callId: string
     ): BoundApproval => {
       storage.sql.exec(
-        "INSERT OR IGNORE INTO cerebro_approval VALUES (?, ?, ?, ?, ?, 'pending')",
+        "INSERT OR IGNORE INTO cerebro_approval VALUES (?, ?, ?, ?, ?, ?, 'pending')",
         candidate.id,
+        sessionId,
         invocation.runId,
         callId,
         canonicalToolArguments(invocation.arguments),

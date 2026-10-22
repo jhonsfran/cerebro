@@ -7,10 +7,18 @@ export const OBSERVATION_CONTENT_TYPE = "application/x-ndjson";
 export const MAX_OBSERVATION_FRAME_BYTES = 1_048_576;
 export const decodeObservation = Schema.decodeUnknownSync(ChatObservation);
 
+export class ObservationProtocolError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ObservationProtocolError";
+  }
+}
+
 export type ObservationConnectionStatus =
   | "connecting"
   | "connected"
   | "disconnected"
+  | "failed"
   | "denied";
 export interface ObservationClientOptions {
   readonly address: {
@@ -36,6 +44,21 @@ const accessDenied = (error: unknown): boolean =>
   error !== null &&
   "status" in error &&
   (error.status === 401 || error.status === 403);
+
+const terminalFailure = (error: unknown): boolean => {
+  if (error instanceof ObservationProtocolError) {
+    return true;
+  }
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    typeof error.status === "number" &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    ![408, 425, 429].includes(error.status)
+  );
+};
 
 const pause = async (
   milliseconds: number,
@@ -84,13 +107,22 @@ export const createObservationClient = (options: ObservationClientOptions) => {
       options.onDenied();
     };
     const apply = (input: unknown): boolean => {
-      const frame = decodeObservation(input);
+      let frame;
+      try {
+        frame = decodeObservation(input);
+      } catch {
+        throw new ObservationProtocolError(
+          "The conversation snapshot is invalid."
+        );
+      }
       if (frame.type === "access-denied") {
         deny();
         return false;
       }
       if (!sameConversation(frame.snapshot.address)) {
-        throw new Error("Observation belongs to a different conversation.");
+        throw new ObservationProtocolError(
+          "Observation belongs to a different conversation."
+        );
       }
       ({ snapshot } = frame);
       options.onSnapshot(snapshot);
@@ -116,6 +148,12 @@ export const createObservationClient = (options: ObservationClientOptions) => {
         options.onError?.(
           error instanceof Error ? error : new Error(String(error))
         );
+        if (terminalFailure(error)) {
+          attachment = null;
+          controller.abort();
+          options.onStatus?.("failed");
+          return;
+        }
       }
       if (!live()) {
         return;

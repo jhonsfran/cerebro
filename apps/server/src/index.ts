@@ -10,7 +10,8 @@ import { authRoutes } from "./routes/auth";
 import { healthRoutes } from "./routes/health";
 
 export { AuditSink } from "./audit-sink";
-export { SessionAgent } from "./session/agent";
+export { IdentityAgent } from "./session/agent";
+export { SessionAgent } from "./session/retired-agent";
 
 const app = new Hono<{ Bindings: WorkerEnv }>();
 

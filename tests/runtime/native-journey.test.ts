@@ -1,107 +1,219 @@
 /* oxlint-disable unicorn/no-await-expression-member, no-await-in-loop -- Each native observation and crash boundary depends on the preceding result. */
 import assert from "node:assert/strict";
-import { after, before, test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
-import type { EventAddress } from "../../packages/contracts/src/events.ts";
-import type { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
+import { Schema } from "effect";
+
 import {
   addressFor,
-  boot,
-  compose,
   control,
   decide,
   dependencyCheckpoint,
   evidence,
   lifecycle,
   nativeStorage,
-  newStack,
   observe,
   pending,
   provider,
   rawRequest,
   read,
   request,
+  runtimeEvidence,
   send,
   stop,
   waitFor,
 } from "./helpers.ts";
-import type { Stack } from "./helpers.ts";
+import {
+  runtimeJourney,
+  answer,
+  completed,
+  writeCount,
+  restart,
+  waitForQuiet,
+} from "./runtime-journey.ts";
+import { storageConformanceCases } from "./storage-conformance.ts";
 
-let stack: Stack;
-let failed = false;
-const answer = "Cerebro slice 1 completed.";
-const completed = (snapshot: ChatSnapshot): boolean =>
-  !snapshot.busy &&
-  snapshot.messages.some(
-    (message) =>
-      message.role === "assistant" &&
-      message.state === "complete" &&
-      message.text === answer
-  );
-const writeCount = async (operationId: string): Promise<number> =>
-  (await provider(stack)).tools.filter(
-    (tool) => tool.operationId === operationId && tool.write
-  ).length;
-const authorityCalls = async (
-  address: EventAddress,
-  failNextToolCheck?: boolean
-): Promise<number> => {
-  const value = await request(stack, "/runtime/fixture/authority", {
-    address,
-    failNextToolCheck,
-  });
-  assert.ok(value && typeof value === "object" && "calls" in value);
-  return Number(value.calls);
-};
-const restart = (): void => {
-  compose(stack, ["kill", "-s", "SIGKILL", "celld"]);
-  compose(stack, ["up", "-d", "--wait", "celld"]);
-};
-before(
-  async () => {
-    stack = await newStack("journey");
-    boot(stack);
-  },
-  { timeout: 600_000 }
+const journey = runtimeJourney("native-journey");
+journey(
+  "the PiHarness SQLite adapter passes upstream storage conformance",
+  async (stack) => {
+    const response = await fetch(
+      `http://127.0.0.1:${stack.apiPort}/conformance/storage`,
+      { method: "POST", signal: AbortSignal.timeout(60_000) }
+    );
+    assert.equal(response.status, 200, await response.clone().text());
+    const result = Schema.decodeUnknownSync(
+      Schema.Struct({ passed: Schema.Array(Schema.String) })
+    )(await response.json());
+    const expected = storageConformanceCases(() => {
+      throw new Error("Conformance cases execute in the Durable Object");
+    }).map((testCase) => testCase.name);
+    assert.deepEqual(result.passed, expected);
+    await evidence(stack, "storage-conformance", result);
+  }
 );
-after(
-  async () => {
-    if (failed) {
-      await evidence(stack, "failure", {
-        logs: compose(stack, [
-          "logs",
-          "--no-color",
-          "--tail=150",
-          "celld",
-          "bootstrap",
-        ]),
-        provider: await provider(stack),
-      });
-    }
-    compose(stack, ["down", "-v"]);
-  },
-  { timeout: 120_000 }
-);
-const journey = (name: string, run: () => Promise<void>) =>
-  test(name, { timeout: 180_000 }, async () => {
+
+journey(
+  "a lost native commit response resets the host and retains one accepted input",
+  async (stack) => {
+    const address = addressFor("company-journey", "commit-failure");
+    const operationId = "commit-failure-input";
+    const beforeFailure = await runtimeEvidence(stack, address);
+    await request(stack, "/runtime/fixture/fail-commit", {
+      address,
+      operationId,
+    });
+    let interruptedStatus: number | undefined;
     try {
-      await control(stack, {
-        arm: null,
-        delayMs: 0,
-        failFirst: false,
-        release: true,
-      });
-      await run();
+      const response = await fetch(
+        `http://127.0.0.1:${stack.apiPort}/runtime/send`,
+        {
+          body: JSON.stringify({
+            address,
+            operationId,
+            text: "Explain the committed recovery policy.",
+          }),
+          headers: { "Content-Type": "application/json" },
+          method: "POST",
+          signal: AbortSignal.timeout(30_000),
+        }
+      );
+      interruptedStatus = response.status;
     } catch (error) {
-      failed = true;
-      throw error;
+      assert.ok(error instanceof TypeError);
     }
-  });
+    assert.notEqual(interruptedStatus, 200);
+    const retry = await waitFor(
+      () =>
+        send(
+          stack,
+          address,
+          operationId,
+          "Explain the committed recovery policy."
+        ),
+      (value) => value.operationId === operationId
+    );
+    assert.equal(retry.accepted, false);
+    const final = await waitFor(() => read(stack, address), completed);
+    const recovered = await runtimeEvidence(stack, address);
+    assert.notEqual(recovered.instanceId, beforeFailure.instanceId);
+    assert.equal(recovered.failures.length, 1);
+    assert.equal(recovered.failures[0]?.instanceId, beforeFailure.instanceId);
+    assert.equal(recovered.failures[0]?.operationId, operationId);
+    assert.ok((recovered.failures[0]?.committedSeq ?? 0) > 0);
+    assert.deepEqual(
+      final.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.text),
+      ["Explain the committed recovery policy."]
+    );
+    assert.equal(final.messages.at(-1)?.text, answer);
+    assert.equal((await nativeStorage(stack, address)).submissions.length, 1);
+    assert.equal(
+      (await provider(stack)).model.filter(
+        (call) =>
+          call.operationId === operationId && call.completedAt !== undefined
+      ).length,
+      1
+    );
+    await send(
+      stack,
+      address,
+      "after-commit-failure",
+      "Explain normal operation."
+    );
+    const subsequent = await waitFor(
+      () => read(stack, address),
+      (snapshot) =>
+        completed(snapshot) &&
+        snapshot.messages.filter((message) => message.role === "user")
+          .length === 2
+    );
+    const quiet = await waitForQuiet(stack, address);
+    await evidence(stack, "commit-failure-recovery", {
+      beforeFailure,
+      final,
+      interruptedStatus,
+      quiet,
+      recovered,
+      retry,
+      subsequent,
+    });
+  }
+);
+
+journey(
+  "completion and Stop drain wake jobs, notifications, and the platform alarm",
+  async (stack) => {
+    const address = addressFor("company-journey", "notify-lifecycle");
+    await control(stack, { delayMs: 5000 });
+    await send(
+      stack,
+      address,
+      "notify-complete",
+      "Explain notification delivery."
+    );
+    const active = await waitFor(
+      () => lifecycle(stack, address),
+      (value) => value.jobs.length > 0 && value.pending.length > 0
+    );
+    assert.notEqual(active.alarmAt, null);
+    const busy = await waitFor(
+      () => runtimeEvidence(stack, address),
+      (value) => value.notifications.some((snapshot) => snapshot.busy)
+    );
+    assert.ok(busy.notifications.some((snapshot) => snapshot.busy));
+    const delivered = await waitFor(
+      () => runtimeEvidence(stack, address),
+      (value) => value.notifications.some(completed)
+    );
+    assert.equal(delivered.notifications.at(-1)?.messages.at(-1)?.text, answer);
+    const completedQuiet = await waitForQuiet(stack, address);
+    const completedCount = (await runtimeEvidence(stack, address)).notifications
+      .length;
+    await delay(1500);
+    assert.equal(
+      (await runtimeEvidence(stack, address)).notifications.length,
+      completedCount
+    );
+    await send(stack, address, "notify-stop", "Stop this notification run.");
+    await waitFor(
+      () => runtimeEvidence(stack, address),
+      (value) => value.notifications.at(-1)?.busy === true
+    );
+    assert.deepEqual(await stop(stack, address), { stopped: true });
+    const stopped = await waitFor(
+      () => runtimeEvidence(stack, address),
+      (value) => {
+        const snapshot = value.notifications.at(-1);
+        return (
+          snapshot?.busy === false &&
+          snapshot.messages.some(
+            (message) => message.text === "Stop this notification run."
+          )
+        );
+      }
+    );
+    const stoppedQuiet = await waitForQuiet(stack, address);
+    const stoppedCount = stopped.notifications.length;
+    await delay(1500);
+    assert.equal(
+      (await runtimeEvidence(stack, address)).notifications.length,
+      stoppedCount
+    );
+    await evidence(stack, "lifecycle-drain", {
+      active,
+      completedQuiet,
+      delivered,
+      stopped,
+      stoppedQuiet,
+    });
+  }
+);
 
 journey(
   "Send retries retain one native user message; reconnect presents current partial and final text",
-  async () => {
+  async (stack) => {
     const address = addressFor("company-journey", "stream");
     await control(stack, { delayMs: 300 });
     const attached = await observe(stack, address);
@@ -179,7 +291,7 @@ journey(
 
 journey(
   "concurrent Send retries place one native input and make one physical model request",
-  async () => {
+  async (stack) => {
     const address = addressFor("company-journey", "concurrent-send");
     const receipts = await Promise.all([
       send(stack, address, "concurrent-input", "Explain concurrent admission."),
@@ -216,7 +328,7 @@ journey(
 
 journey(
   "Stop interrupts a delayed native generation and the same session accepts another input",
-  async () => {
+  async (stack) => {
     const address = addressFor("company-journey", "stop");
     await control(stack, { delayMs: 5000 });
     await send(stack, address, "stopped-input", "Explain the current policy.");
@@ -253,7 +365,7 @@ journey(
 
 journey(
   "content access revocation blocks reads and Allow while Stop and Deny remain available",
-  async () => {
+  async (stack) => {
     const stoppedAddress = addressFor("company-journey", "content-stop");
     await control(stack, { delayMs: 5000 });
     await send(
@@ -345,7 +457,7 @@ journey(
       status: "ok",
       value: { approvalId: approval.approvalId, state: "denied" },
     });
-    assert.equal(await writeCount(approval.operationId), 0);
+    assert.equal(await writeCount(stack, approval.operationId), 0);
     await request(stack, "/runtime/fixture/content-access", {
       address: deniedAddress,
       enabled: true,
@@ -355,7 +467,7 @@ journey(
       (value) => !value.busy
     );
     assert.equal(final.approvals[0]?.state, "denied");
-    assert.equal(await writeCount(approval.operationId), 0);
+    assert.equal(await writeCount(stack, approval.operationId), 0);
     await evidence(stack, "source-control", {
       deniedReceipt,
       final,
@@ -367,7 +479,7 @@ journey(
 
 journey(
   "source revocation after durable Allow prevents dispatch at the final dependency check",
-  async () => {
+  async (stack) => {
     const address = addressFor("company-journey", "post-allow-source");
     await dependencyCheckpoint(stack, address, {
       armed: true,
@@ -396,7 +508,7 @@ journey(
       ),
       false
     );
-    assert.equal(await writeCount(approval.operationId), 0);
+    assert.equal(await writeCount(stack, approval.operationId), 0);
     await request(stack, "/runtime/fixture/content-access", {
       address,
       enabled: false,
@@ -408,7 +520,7 @@ journey(
         value.tasks.length > 0 &&
         value.tasks.every((task) => task.status === "terminal")
     );
-    assert.equal(await writeCount(approval.operationId), 0);
+    assert.equal(await writeCount(stack, approval.operationId), 0);
     await request(stack, "/runtime/fixture/content-access", {
       address,
       enabled: true,
@@ -438,7 +550,7 @@ journey(
 
 journey(
   "SIGKILL recovery resumes native generation before a read or observer wakes the host",
-  async () => {
+  async (stack) => {
     const address = addressFor("company-journey", "generation-crash");
     await control(stack, { delayMs: 5000 });
     await send(stack, address, "recover-input", "Explain the recovery policy.");
@@ -452,7 +564,7 @@ journey(
         )
     );
     const killedAt = Date.now();
-    restart();
+    restart(stack);
     await control(stack, { delayMs: 0 });
     const recovered = await waitFor(
       () => provider(stack),
@@ -493,309 +605,6 @@ journey(
       recovered,
       scheduled,
       storage,
-    });
-  }
-);
-
-journey(
-  "pending approval survives SIGKILL with its native task binding; repeated Allow makes one physical write",
-  async () => {
-    const address = addressFor("company-journey", "approval-crash");
-    await send(stack, address, "approval-input", "Apply fixture_effect once.");
-    const approval = await pending(stack, address);
-    assert.equal(await writeCount(approval.operationId), 0);
-    restart();
-    const recovered = await pending(stack, address);
-    assert.deepEqual(recovered, approval);
-    assert.equal(await writeCount(approval.operationId), 0);
-    const allowed = await decide(stack, address, recovered);
-    assert.equal(allowed.state, "allowed");
-    assert.deepEqual(await decide(stack, address, recovered), allowed);
-    const final = await waitFor(() => read(stack, address), completed);
-    assert.equal(await writeCount(approval.operationId), 1);
-    assert.equal(
-      final.approvals.find((item) => item.approvalId === approval.approvalId)
-        ?.state,
-      "allowed"
-    );
-    const changed = await rawRequest(stack, "/runtime/decide", {
-      address,
-      approvalId: approval.approvalId,
-      decision: "deny",
-    });
-    assert.equal(changed.status, 409);
-    await evidence(stack, "approval-recovery", {
-      allowed,
-      approval,
-      final,
-      provider: await provider(stack),
-      recovered,
-    });
-  }
-);
-
-journey(
-  "a waiting approval makes no authority calls until Allow wakes it",
-  async () => {
-    const address = addressFor("company-journey", "approval-wake");
-    await send(stack, address, "wake-input", "Apply fixture_effect once.");
-    const approval = await pending(stack, address);
-    const callsBefore = await authorityCalls(address);
-    await delay(2000);
-    assert.equal(await authorityCalls(address), callsBefore);
-    const decidedAt = Date.now();
-    await decide(stack, address, approval);
-    await waitFor(
-      () => writeCount(approval.operationId),
-      (count) => count === 1,
-      5000
-    );
-    assert.ok(Date.now() - decidedAt < 5000);
-    await evidence(stack, "approval-wake", {
-      approval,
-      authorityCallsWhileWaiting: 0,
-    });
-  }
-);
-
-journey(
-  "a transient authority failure keeps the approval pending",
-  async () => {
-    const address = addressFor("company-journey", "approval-transient");
-    await send(stack, address, "transient-input", "Apply fixture_effect once.");
-    const approval = await pending(stack, address);
-    await authorityCalls(address, true);
-    const outsider = await rawRequest(
-      stack,
-      "/runtime/read",
-      { address },
-      "user:company-other"
-    );
-    assert.equal(outsider.status, 403);
-    await delay(500);
-    assert.equal(
-      (await pending(stack, address)).approvalId,
-      approval.approvalId
-    );
-    await decide(stack, address, approval);
-    await waitFor(
-      () => writeCount(approval.operationId),
-      (count) => count === 1
-    );
-  }
-);
-
-journey(
-  "Deny, wrong owner, and current access revocation prevent tool dispatch",
-  async () => {
-    const deniedAddress = addressFor("company-journey", "deny");
-    await send(
-      stack,
-      deniedAddress,
-      "denied-input",
-      "Apply fixture_effect once."
-    );
-    const denied = await pending(stack, deniedAddress);
-    assert.equal(
-      (await decide(stack, deniedAddress, denied, "deny")).state,
-      "denied"
-    );
-    const finalDenied = await waitFor(
-      () => read(stack, deniedAddress),
-      completed
-    );
-    assert.equal(await writeCount(denied.operationId), 0);
-    assert.equal(finalDenied.approvals[0]?.state, "denied");
-
-    const address = addressFor("company-journey", "revoked-approval");
-    await send(stack, address, "revoked-input", "Apply fixture_effect once.");
-    const approval = await pending(stack, address);
-    const outsider = await rawRequest(
-      stack,
-      "/runtime/decide",
-      { address, approvalId: approval.approvalId, decision: "allow" },
-      "user:company-other"
-    );
-    assert.equal(outsider.status, 403);
-    const attached = await observe(stack, address);
-    assert.equal((await attached.next()).type, "snapshot");
-    await request(stack, "/runtime/fixture/access", {
-      address,
-      enabled: false,
-    });
-    const denial = await waitFor(
-      () => attached.next(),
-      (frame) => frame.type === "access-denied"
-    );
-    assert.deepEqual(denial, { reason: "unauthorized", type: "access-denied" });
-    await attached.close();
-    assert.equal(
-      (
-        await rawRequest(stack, "/runtime/decide", {
-          address,
-          approvalId: approval.approvalId,
-          decision: "allow",
-        })
-      ).status,
-      403
-    );
-    assert.equal(
-      (await rawRequest(stack, "/runtime/read", { address })).status,
-      403
-    );
-    assert.equal(await writeCount(approval.operationId), 0);
-    await request(stack, "/runtime/fixture/access", { address, enabled: true });
-    const reopened = await waitFor(
-      () => read(stack, address),
-      (value) => !value.busy
-    );
-    assert.equal(reopened.messages[0]?.text, "Apply fixture_effect once.");
-    await evidence(stack, "denial", {
-      denial,
-      finalDenied,
-      provider: await provider(stack),
-      reopened,
-    });
-  }
-);
-
-journey(
-  "access revoked while a write runs reports an unknown outcome after one dispatch",
-  async () => {
-    const address = addressFor("company-journey", "revoked-during-write");
-    await control(stack, { arm: { boundary: "after-tool-dispatch" } });
-    await send(
-      stack,
-      address,
-      "revoked-during-input",
-      "Apply fixture_effect once."
-    );
-    const approval = await pending(stack, address);
-    await decide(stack, address, approval);
-    await waitFor(
-      () => provider(stack),
-      (value) =>
-        value.held === 1 &&
-        value.tools.some(
-          (tool) => tool.operationId === approval.operationId && tool.write
-        )
-    );
-    await request(stack, "/runtime/fixture/access", {
-      address,
-      enabled: false,
-    });
-    await control(stack, { arm: null, release: true });
-    // Reads are denied while access is off; the check after dispatch runs within milliseconds.
-    await delay(1000);
-    await request(stack, "/runtime/fixture/access", { address, enabled: true });
-    const final = await waitFor(
-      () => read(stack, address),
-      (value) => !value.busy
-    );
-    assert.equal(await writeCount(approval.operationId), 1);
-    assert.ok(
-      final.messages.some(
-        (message) =>
-          message.role === "tool" && /outcome is unknown/u.test(message.text)
-      )
-    );
-  }
-);
-
-journey(
-  "a process crash after physical write retains the Pi dispatch memo and reports an unknown result",
-  async () => {
-    const address = addressFor("company-journey", "dispatch-crash");
-    await control(stack, { arm: { boundary: "after-tool-dispatch" } });
-    await send(stack, address, "dispatch-input", "Apply fixture_effect once.");
-    const approval = await pending(stack, address);
-    await decide(stack, address, approval);
-    await waitFor(
-      () => provider(stack),
-      (value) =>
-        value.held === 1 &&
-        value.tools.some(
-          (tool) => tool.operationId === approval.operationId && tool.write
-        )
-    );
-    assert.equal(await writeCount(approval.operationId), 1);
-    const dispatched = await nativeStorage(stack, address);
-    assert.ok(
-      dispatched.tasks.some((task) => task.memos?.includes("cerebro-dispatch"))
-    );
-    restart();
-    await control(stack, { arm: null, release: true });
-    const final = await waitFor(() => read(stack, address), completed);
-    assert.equal(await writeCount(approval.operationId), 1);
-    assert.ok(
-      final.messages.some(
-        (message) =>
-          message.role === "tool" && /outcome is unknown/u.test(message.text)
-      )
-    );
-    const storage = await nativeStorage(stack, address);
-    await evidence(stack, "dispatch-recovery", {
-      approval,
-      dispatched,
-      final,
-      provider: await provider(stack),
-      storage,
-    });
-  }
-);
-
-journey(
-  "two intentional native tool calls with equal arguments retain distinct occurrence identities",
-  async () => {
-    const address = addressFor("company-journey", "occurrence");
-    await send(
-      stack,
-      address,
-      "first-occurrence",
-      "Apply fixture_effect once."
-    );
-    const first = await pending(stack, address);
-    await decide(stack, address, first);
-    await waitFor(() => read(stack, address), completed);
-    await send(
-      stack,
-      address,
-      "second-occurrence",
-      "Apply fixture_effect once."
-    );
-    const second = await pending(stack, address);
-    assert.notEqual(second.operationId, first.operationId);
-    assert.notEqual(second.taskId, first.taskId);
-    assert.deepEqual(second.arguments, first.arguments);
-    await decide(stack, address, second);
-    const final = await waitFor(
-      () => read(stack, address),
-      (value) =>
-        !value.busy &&
-        value.messages.filter((message) => message.role === "tool").length === 2
-    );
-    assert.equal(await writeCount(first.operationId), 1);
-    assert.equal(await writeCount(second.operationId), 1);
-    assert.equal(
-      (
-        await send(
-          stack,
-          address,
-          "first-occurrence",
-          "Apply fixture_effect once."
-        )
-      ).accepted,
-      false
-    );
-    assert.equal(
-      final.messages.filter((message) => message.role === "user").length,
-      2
-    );
-    await evidence(stack, "equal-occurrences", {
-      final,
-      first,
-      provider: await provider(stack),
-      second,
     });
   }
 );

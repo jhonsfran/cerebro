@@ -19,6 +19,8 @@ const snapshot = {
   agentVersion: 1,
   approvals: [],
   busy: false,
+  queuedInputs: [],
+  tools: [],
   messages: [
     {
       id: "entry-1",

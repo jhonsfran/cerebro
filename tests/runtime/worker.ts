@@ -4,9 +4,11 @@ import type { TestEnvironment } from "./environment.ts";
 
 export { AuditSink } from "./audit-sink.ts";
 export { SessionAgent } from "./fixture-session.ts";
+export { StorageConformance } from "./storage-fixture.ts";
 
 const routingSchema = z
   .object({
+    ownerPrincipalId: z.string().min(1).optional(),
     address: z.object({
       agentId: z.string().min(1),
       conversationId: z.string().min(1),
@@ -21,6 +23,12 @@ export default {
     const path = new URL(request.url).pathname;
     if (path === "/health") {
       return Response.json({ ok: true });
+    }
+    if (path === "/conformance/storage" && request.method === "POST") {
+      const namespace = env.STORAGE_CONFORMANCE;
+      return await namespace
+        .get(namespace.idFromName(crypto.randomUUID()))
+        .fetch(request);
     }
     if (path === "/audit/replay" && request.method === "POST") {
       const body = await request.text();
@@ -51,9 +59,7 @@ export default {
     const { address } = input.data;
     const name = JSON.stringify([
       address.organizationId,
-      address.agentId,
-      address.conversationId,
-      address.sessionId,
+      input.data.ownerPrincipalId ?? `user:${address.organizationId}`,
     ]);
     const session = env.SESSION.get(env.SESSION.idFromName(name));
     return await session.fetch(
@@ -65,6 +71,7 @@ export default {
             "Content-Type": "application/json",
             "x-fixture-principal":
               request.headers.get("x-fixture-principal") ??
+              input.data.ownerPrincipalId ??
               `user:${address.organizationId}`,
           },
           method: "POST",

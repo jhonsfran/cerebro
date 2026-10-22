@@ -8,6 +8,7 @@ import type {
 } from "../../packages/channels/src/types";
 import type { EventAddress } from "../../packages/contracts/src/events";
 import { ChatSnapshot } from "../../packages/contracts/src/session-service";
+import type { ChatClient } from "../../packages/contracts/src/session-service";
 import { sql } from "../../packages/db/node_modules/drizzle-orm";
 import { withDatabase } from "../../packages/db/src/index";
 import { user } from "../../packages/db/src/schema/auth";
@@ -29,7 +30,8 @@ export const array = (value: unknown): unknown[] =>
   z.array(z.unknown()).parse(value);
 export const createTestProduct = async (
   slack?: SlackConfiguration,
-  fetch?: typeof globalThis.fetch
+  fetch?: typeof globalThis.fetch,
+  sessions?: (client: ChatClient) => ChatClient
 ) => {
   const databaseUrl = process.env.CHANNEL_TEST_DATABASE_URL;
   if (!databaseUrl) {
@@ -56,9 +58,7 @@ export const createTestProduct = async (
       ),
     mode: "local",
     observationResponse: (request) =>
-      options.withDatabase((db) =>
-        createFixtureChatClient(db, options).observe(request)
-      ),
+      options.withDatabase((db) => options.sessions(db).observe(request)),
     organizationId: "channel-test-company",
     readSource: (_database, _context, input) =>
       Promise.resolve(
@@ -74,7 +74,10 @@ export const createTestProduct = async (
             }
           : { resource: "source", status: "not-found" }
       ),
-    sessions: (db) => createFixtureChatClient(db, options),
+    sessions: (db) => {
+      const client = createFixtureChatClient(db, options);
+      return sessions ? sessions(client) : client;
+    },
     slack,
     withDatabase: database,
   };
@@ -208,6 +211,8 @@ export const chatSnapshot = (
   Schema.decodeUnknownSync(ChatSnapshot)({
     address,
     agentVersion: 1,
+    queuedInputs: [],
+    tools: [],
     approvals: [],
     busy: false,
     messages: [],

@@ -76,6 +76,7 @@ export const ProductWorkspace = ({
             startConversation={startConversation}
             refreshAgent={refreshAgent}
             onSaved={agentSaved}
+            onConversation={onConversation}
           />
         )}
       </div>

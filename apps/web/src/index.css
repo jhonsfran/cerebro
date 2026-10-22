@@ -444,7 +444,138 @@
   max-height: 440px;
   overflow-y: auto;
   padding: 25px 4px;
-  scroll-behavior: smooth;
+}
+.transcript-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+}
+.transcript-entry-user {
+  align-items: flex-end;
+}
+.tool-execution {
+  width: 100%;
+  border: 1px solid var(--product-line);
+  border-radius: 8px;
+  background: #f4f5ef;
+  padding: 14px 18px;
+  font-size: 12px;
+}
+.tool-execution-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.tool-execution pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.tool-execution .approval-card {
+  margin-top: 12px;
+}
+.chat-message.user-message.queued-message {
+  border-style: dashed;
+}
+.message-fork {
+  font-size: 10px;
+  padding: 4px 8px;
+}
+.conversation-activity {
+  border-top: 1px solid var(--product-line);
+  border-bottom: 1px solid var(--product-line);
+  margin: 8px 0 18px;
+  padding: 12px 0;
+  font-size: 12px;
+}
+.conversation-activity summary {
+  cursor: pointer;
+}
+.activity-summary > span {
+  color: var(--product-muted);
+  font-size: 11px;
+  margin-left: 10px;
+}
+.activity-body,
+.child-work-body,
+.reminder-form {
+  display: grid;
+  gap: 12px;
+}
+.activity-body {
+  padding-top: 16px;
+}
+.activity-body h3 {
+  font-size: 12px;
+  font-weight: 650;
+  margin-bottom: 8px;
+}
+.child-work {
+  border: 1px solid var(--product-line);
+  border-radius: 8px;
+  margin-top: 8px;
+  padding: 12px;
+}
+.child-work > summary > strong {
+  margin: 0 10px;
+  overflow-wrap: anywhere;
+}
+.child-work > summary > .tool-status {
+  display: inline;
+}
+.child-work .transcript {
+  min-height: 0;
+  max-height: 300px;
+  padding: 10px 0;
+}
+.task-identity {
+  color: var(--product-muted);
+  font-family: monospace;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.reminder-list,
+.task-list ul {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  padding: 10px 0;
+}
+.reminder-list li {
+  border-left: 2px solid var(--product-line);
+  padding-left: 12px;
+  overflow-wrap: anywhere;
+}
+.reminder-list .quiet-button {
+  margin-top: 8px;
+}
+.reminder-create {
+  margin-top: 12px;
+}
+.reminder-form {
+  margin-top: 12px;
+  max-width: 520px;
+}
+.reminder-form input,
+.reminder-form select,
+.reminder-form textarea {
+  border: 1px solid var(--product-line);
+  border-radius: 6px;
+  background: #fffefa;
+  color: inherit;
+  padding: 8px 10px;
+  width: 100%;
+}
+.reminder-form .quiet-button {
+  justify-self: start;
+}
+.fork-origin {
+  color: var(--product-muted);
+  margin-bottom: 12px;
 }
 .conversation-empty {
   width: 100%;

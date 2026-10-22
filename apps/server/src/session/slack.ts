@@ -13,6 +13,7 @@ import type { ChatSnapshot } from "@cerebro/contracts/session-service";
 import { withDatabase } from "@cerebro/db";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import type { channelConversation } from "@cerebro/db/schema/agents";
+import type { MetadataTransaction } from "@cerebro/runtime/session-agent";
 import { Effect } from "effect";
 import { z } from "zod";
 
@@ -57,6 +58,7 @@ const currentRecipient = (env: WorkerEnv, conversation: Conversation) =>
 export const createSlackNotifier = (input: {
   readonly env: WorkerEnv;
   readonly storage: DurableObjectStorage;
+  readonly metadata: MetadataTransaction;
   readonly conversation: Conversation;
   readonly slack: SlackConfiguration;
   readonly address: EventAddress;
@@ -66,23 +68,28 @@ export const createSlackNotifier = (input: {
 }) => {
   const { conversation, storage } = input;
   storage.sql.exec(
-    "CREATE TABLE IF NOT EXISTS cerebro_slack_delivery (key TEXT PRIMARY KEY, delivery TEXT NOT NULL)"
+    "CREATE TABLE IF NOT EXISTS cerebro_slack_delivery (session_id TEXT NOT NULL, key TEXT NOT NULL, delivery TEXT NOT NULL, PRIMARY KEY(session_id, key))"
   );
   const store = {
-    get: (key: string): SlackDelivery | undefined => {
-      const [row] = storage.sql
-        .exec<{ delivery: string }>(
-          "SELECT delivery FROM cerebro_slack_delivery WHERE key=?",
-          key
-        )
-        .toArray();
-      return row ? deliverySchema.parse(JSON.parse(row.delivery)) : undefined;
-    },
+    get: (key: string): Promise<SlackDelivery | undefined> =>
+      input.metadata(() => {
+        const [row] = storage.sql
+          .exec<{ delivery: string }>(
+            "SELECT delivery FROM cerebro_slack_delivery WHERE session_id=? AND key=?",
+            input.address.sessionId,
+            key
+          )
+          .toArray();
+        return row ? deliverySchema.parse(JSON.parse(row.delivery)) : undefined;
+      }),
     set: async (key: string, delivery: SlackDelivery) => {
-      storage.sql.exec(
-        "INSERT INTO cerebro_slack_delivery VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET delivery=excluded.delivery",
-        key,
-        JSON.stringify(delivery)
+      await input.metadata(() =>
+        storage.sql.exec(
+          "INSERT INTO cerebro_slack_delivery VALUES (?, ?, ?) ON CONFLICT(session_id, key) DO UPDATE SET delivery=excluded.delivery",
+          input.address.sessionId,
+          key,
+          JSON.stringify(delivery)
+        )
       );
       await storage.sync();
     },

@@ -10,9 +10,15 @@
     "TRACE_NATIVE": "0",
   },
   "durable_objects": {
-    "bindings": [{ "name": "SESSION", "class_name": "SessionAgent" }],
+    "bindings": [
+      { "name": "SESSION", "class_name": "SessionAgent" },
+      { "name": "STORAGE_CONFORMANCE", "class_name": "StorageConformance" },
+    ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SessionAgent"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["SessionAgent"] },
+    { "tag": "v2", "new_sqlite_classes": ["StorageConformance"] },
+  ],
   "services": [
     {
       "binding": "AUDIT_SINK",

@@ -18,7 +18,7 @@ export type SlackDelivery =
   | { readonly state: "sent"; readonly text: string; readonly ts: string }
   | { readonly state: "unknown" | "failed" | "retry"; readonly text: string };
 export interface SlackDeliveryStore {
-  readonly get: (key: string) => SlackDelivery | undefined;
+  readonly get: (key: string) => Promise<SlackDelivery | undefined>;
   readonly set: (key: string, delivery: SlackDelivery) => Promise<void>;
 }
 export interface SlackThread {
@@ -135,7 +135,7 @@ export const deliverSlackReplies = async (input: {
     thread,
     input.canShare
   )) {
-    const prior = store.get(message.key);
+    const prior = await store.get(message.key);
     if (prior?.text === message.text && prior.state !== "retry") {
       continue;
     }

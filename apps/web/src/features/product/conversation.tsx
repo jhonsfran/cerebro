@@ -1,72 +1,30 @@
 import type {
-  ChatApproval,
-  ChatMessage,
+  ChatControl,
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
 import { useEffect, useRef, useState } from "react";
-import type { RefObject } from "react";
 
-import {
-  assertCurrentAccess,
-  cacheKey,
-  currentAccessGeneration,
-  encoded,
-  productPath,
-  request,
-} from "./api";
+import { cacheKey, encoded, productPath, request } from "./api";
 import type { PendingChatMessage } from "./chat";
+import { CHAT_MESSAGE_LENGTH_ERROR, MAX_CHAT_MESSAGE_LENGTH } from "./chat";
 import {
+  controlConversation,
   decideApproval,
+  forkConversation,
   stopConversation,
-  submitMessage,
   useConversationConnection,
 } from "./chat-connection";
-import {
-  readPendingChat,
-  storePendingChat,
-  usePendingChat,
-} from "./pending-chat";
+import { useMessageDelivery } from "./chat-delivery";
+import { ConversationActivity } from "./conversation-activity";
+import { ConversationTranscript } from "./conversation-transcript";
+import { operationFor } from "./intent";
+import type { OperationIntent } from "./intent";
+import { usePendingChat } from "./pending-chat";
 import { conversationSchema } from "./types";
 import type { Conversation } from "./types";
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : "The request failed.";
-
-const messageLabel = (message: ChatMessage, agentName: string): string => {
-  if (message.role === "user") {
-    return "You";
-  }
-  return message.role === "tool"
-    ? `Tool: ${message.toolName ?? "Result"}`
-    : agentName;
-};
-
-const TranscriptMessage = ({
-  message,
-  agentName,
-}: {
-  message: ChatMessage;
-  agentName: string;
-}) => (
-  <article
-    className={`chat-message ${message.role === "user" ? "user-message" : "answer-message"}`}
-  >
-    <p className="message-label">{messageLabel(message, agentName)}</p>
-    {message.thinking ? (
-      <details>
-        <summary>Thinking</summary>
-        <p>{message.thinking}</p>
-      </details>
-    ) : null}
-    {message.role === "tool" ? (
-      <details>
-        <summary>Tool result</summary>
-        <pre>{message.text}</pre>
-      </details>
-    ) : null}
-    {message.role !== "tool" && message.text ? <p>{message.text}</p> : null}
-  </article>
-);
 
 const ConversationComposer = ({
   text,
@@ -74,6 +32,7 @@ const ConversationComposer = ({
   sending,
   connected,
   pending,
+  reject,
   send,
 }: {
   text: string;
@@ -81,14 +40,19 @@ const ConversationComposer = ({
   sending: boolean;
   connected: boolean;
   pending: PendingChatMessage | null;
-  send: (message: PendingChatMessage) => Promise<void>;
+  reject: (message: string) => void;
+  send: (message: PendingChatMessage) => void;
 }) => (
   <form
     className="message-composer"
     onSubmit={(event) => {
       event.preventDefault();
+      if (text.trim().length > MAX_CHAT_MESSAGE_LENGTH) {
+        reject(CHAT_MESSAGE_LENGTH_ERROR);
+        return;
+      }
       if (text.trim() && !pending && !sending && connected) {
-        void send({ operationId: crypto.randomUUID(), text: text.trim() });
+        send({ operationId: crypto.randomUUID(), text: text.trim() });
       }
     }}
   >
@@ -101,6 +65,7 @@ const ConversationComposer = ({
       onChange={(event) => setText(event.target.value)}
       placeholder="Ask your company assistant..."
       rows={2}
+      maxLength={MAX_CHAT_MESSAGE_LENGTH}
       disabled={sending || !connected || Boolean(pending)}
     />
     <div className="composer-footer">
@@ -116,40 +81,6 @@ const ConversationComposer = ({
   </form>
 );
 
-const ApprovalRequest = ({
-  approval,
-  disabled,
-  decide,
-}: {
-  approval: ChatApproval;
-  disabled: boolean;
-  decide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
-}) => (
-  <section className="approval-card" aria-label="Approval required">
-    <p className="eyebrow">Approval required</p>
-    <h3>{approval.toolId}</h3>
-    <pre>{JSON.stringify(approval.arguments, null, 2)}</pre>
-    <div className="button-row">
-      <button
-        className="primary-button"
-        disabled={disabled}
-        type="button"
-        onClick={() => decide(approval.approvalId, "allow")}
-      >
-        Approve request
-      </button>
-      <button
-        className="quiet-button"
-        disabled={disabled}
-        type="button"
-        onClick={() => decide(approval.approvalId, "deny")}
-      >
-        Deny request
-      </button>
-    </div>
-  </section>
-);
-
 const ConversationHeader = ({
   agentName,
   sessionId,
@@ -158,6 +89,7 @@ const ConversationHeader = ({
   busy,
   disabled,
   toggle,
+  reconnect,
   stop,
 }: {
   agentName: string;
@@ -167,6 +99,7 @@ const ConversationHeader = ({
   busy: boolean;
   disabled: boolean;
   toggle: () => void;
+  reconnect: () => void;
   stop: () => Promise<void>;
 }) => (
   <>
@@ -186,8 +119,12 @@ const ConversationHeader = ({
             Stop
           </button>
         ) : null}
-        <button className="quiet-button" type="button" onClick={toggle}>
-          {connected ? "Disconnect" : "Reconnect"}
+        <button
+          className="quiet-button"
+          type="button"
+          onClick={connection === "failed" ? reconnect : toggle}
+        >
+          {connected && connection !== "failed" ? "Disconnect" : "Reconnect"}
         </button>
       </div>
     </div>
@@ -203,59 +140,15 @@ const ConversationHeader = ({
   </>
 );
 
-const ConversationTranscript = ({
-  snapshot,
-  agentName,
-  connecting,
-  disabled,
-  decide,
-  transcript,
-}: {
-  snapshot: Pick<ChatSnapshot, "messages" | "approvals">;
-  agentName: string;
-  connecting: boolean;
-  disabled: boolean;
-  decide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
-  transcript: RefObject<HTMLDivElement | null>;
-}) => (
-  <div
-    className="transcript"
-    ref={transcript}
-    aria-live="polite"
-    aria-relevant="additions text"
-  >
-    {snapshot.messages.length === 0 ? (
-      <div className="conversation-empty">
-        <span className="empty-mark">c</span>
-        <h3>Start with a question.</h3>
-        <p>Send a message to your company assistant.</p>
-      </div>
-    ) : null}
-    {snapshot.messages.map((message) => (
-      <TranscriptMessage
-        agentName={agentName}
-        key={message.id}
-        message={message}
-      />
-    ))}
-    {connecting ? <output className="tool-status">Connecting...</output> : null}
-    {snapshot.approvals
-      .filter((approval) => approval.state === "pending")
-      .map((approval) => (
-        <ApprovalRequest
-          key={approval.approvalId}
-          approval={approval}
-          disabled={disabled}
-          decide={decide}
-        />
-      ))}
-  </div>
-);
-
-const EMPTY_CHAT: Pick<ChatSnapshot, "messages" | "approvals" | "busy"> = {
+const EMPTY_CHAT: Pick<
+  ChatSnapshot,
+  "messages" | "approvals" | "busy" | "queuedInputs" | "tools" | "activity"
+> = {
   approvals: [],
   busy: false,
   messages: [],
+  queuedInputs: [],
+  tools: [],
 };
 
 const ConversationSession = ({
@@ -264,32 +157,40 @@ const ConversationSession = ({
   agentId,
   agentName,
   onStartConversation,
+  onConversation,
 }: {
   conversationId: string;
   userId: string;
   agentId: string;
   agentName: string;
   onStartConversation?: () => void;
+  onConversation?: (conversationId: string) => void;
 }) => {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [text, setText] = useState("");
-  const [sending, setSending] = useState(false);
   const [acting, setActing] = useState(false);
   const [connected, setConnected] = useState(true);
   const [accessValid, setAccessValid] = useState(true);
-  const transcript = useRef<HTMLDivElement>(null);
+  const forkIntent = useRef<OperationIntent | null>(null);
   const path = productPath(`conversations/${encoded(conversationId)}`);
   const pendingKey = cacheKey(userId, conversationId, "pending");
   const pending = usePendingChat(pendingKey);
   const {
     connection,
     error: chatError,
+    reconnect,
     snapshot: observedSnapshot,
   } = useConversationConnection(conversation, path, connected && accessValid);
   const snapshot = observedSnapshot ?? conversation?.snapshot ?? EMPTY_CHAT;
   const online = connected && connection === "connected" && accessValid;
-  const displayedError = errorMessage || chatError;
+  const controlsDisabled = !online || acting;
+  const delivery = useMessageDelivery(path, pendingKey, online, (message) => {
+    setText((current) => (current.trim() === message.text ? "" : current));
+  });
+  const displayedError = [errorMessage, delivery.error, chatError].find(
+    Boolean
+  );
 
   useEffect(() => {
     const clear = () => {
@@ -334,53 +235,38 @@ const ConversationSession = ({
     return () => controller.abort();
   }, [agentId, conversationId, path]);
 
-  useEffect(() => {
-    if (snapshot.messages.length || snapshot.approvals.length) {
-      transcript.current?.scrollTo({
-        behavior: "smooth",
-        top: transcript.current.scrollHeight,
-      });
-    }
-  }, [snapshot]);
-
-  const send = async (message: PendingChatMessage) => {
-    const currentPending = readPendingChat(pendingKey);
-    if (
-      !online ||
-      (currentPending && currentPending.operationId !== message.operationId)
-    ) {
-      return;
-    }
-    setSending(true);
+  const send = (message: PendingChatMessage) => {
     setErrorMessage("");
-    storePendingChat(pendingKey, message);
-    const generation = currentAccessGeneration();
-    try {
-      const result = await submitMessage(path, message);
-      assertCurrentAccess(generation);
-      if (result.receipt.operationId === message.operationId) {
-        storePendingChat(pendingKey, null);
-        setText("");
-      } else {
-        setErrorMessage("The message receipt belongs to another operation.");
-      }
-    } catch (error) {
-      setErrorMessage(messageOf(error));
-    }
-    setSending(false);
+    delivery.send(message);
   };
   const act = async (command: () => Promise<unknown>) => {
     if (!online || acting) {
-      return;
+      return false;
     }
     setActing(true);
     setErrorMessage("");
+    let accepted = true;
     try {
       await command();
     } catch (error) {
       setErrorMessage(messageOf(error));
+      accepted = false;
     }
     setActing(false);
+    return accepted;
+  };
+  const control = (command: ChatControl) =>
+    act(() => controlConversation(path, command));
+  const fork = async (entryId: string) => {
+    await act(async () => {
+      const value = await forkConversation(
+        path,
+        entryId,
+        operationFor(forkIntent, { entryId })
+      );
+      forkIntent.current = null;
+      onConversation?.(value.conversationId);
+    });
   };
 
   if (!accessValid) {
@@ -399,9 +285,12 @@ const ConversationSession = ({
         connection={connection}
         connected={connected}
         busy={snapshot.busy}
-        disabled={!online || acting}
+        disabled={controlsDisabled}
         toggle={() => setConnected((value) => !value)}
-        stop={() => act(() => stopConversation(path))}
+        reconnect={reconnect}
+        stop={async () => {
+          await act(() => stopConversation(path));
+        }}
       />
       {displayedError ? (
         <p className="error-banner" role="alert">
@@ -421,22 +310,30 @@ const ConversationSession = ({
         snapshot={snapshot}
         agentName={agentName}
         connecting={connected && connection === "connecting"}
-        disabled={!online || acting}
-        decide={(approvalId, decision) =>
-          act(() => decideApproval(path, approvalId, decision))
-        }
-        transcript={transcript}
+        disabled={controlsDisabled}
+        decide={async (approvalId, decision) => {
+          await act(() => decideApproval(path, approvalId, decision));
+        }}
+        fork={onConversation ? fork : undefined}
+      />
+      <ConversationActivity
+        activity={snapshot.activity}
+        disabled={controlsDisabled}
+        control={control}
+        onConversation={onConversation}
       />
       {pending ? (
         <div className="pending-message">
           <p>
-            A message awaits confirmation. Retry with the same operation ID.
+            {delivery.sending
+              ? "Confirming your message..."
+              : "Your message awaits confirmation."}
           </p>
           <button
             className="quiet-button"
-            disabled={!online || sending}
+            disabled={!online || delivery.sending}
             type="button"
-            onClick={() => send(pending)}
+            onClick={() => delivery.retry()}
           >
             Retry message
           </button>
@@ -445,9 +342,10 @@ const ConversationSession = ({
       <ConversationComposer
         text={text}
         setText={setText}
-        sending={sending}
+        sending={delivery.sending}
         connected={online}
         pending={pending}
+        reject={setErrorMessage}
         send={send}
       />
     </section>

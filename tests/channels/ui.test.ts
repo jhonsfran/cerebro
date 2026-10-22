@@ -210,6 +210,7 @@ const { readObservations, submitMessage, stopConversation, decideApproval } =
 const {
   MAX_OBSERVATION_FRAME_BYTES,
   OBSERVATION_CONTENT_TYPE,
+  ObservationProtocolError,
   decodeObservation,
 } = await import("../../apps/web/src/features/product/observation");
 const emptyObservation = () =>
@@ -222,6 +223,8 @@ const emptyObservation = () =>
         sessionId: "session",
       },
       agentVersion: 1,
+      queuedInputs: [],
+      tools: [],
       approvals: [],
       busy: false,
       messages: [],
@@ -745,3 +748,34 @@ test("agent editor leaves the model empty when no configured model is available"
     }
   );
 });
+
+for (const invalid of ["content-type", "json"] as const) {
+  test(`${invalid} violations are terminal observation errors`, async () => {
+    installFetch(
+      () =>
+        new Response(invalid === "json" ? "not json\n" : "{}\n", {
+          headers: {
+            "Content-Type":
+              invalid === "json" ? OBSERVATION_CONTENT_TYPE : "text/plain",
+          },
+        })
+    );
+    await assert.rejects(
+      Array.fromAsync(
+        readObservations(
+          "/conversation",
+          currentAccessGeneration(),
+          new AbortController().signal
+        )
+      ),
+      (error: unknown) => {
+        assert.equal(error instanceof ObservationProtocolError, true);
+        assert.match(
+          String(error),
+          invalid === "json" ? /not valid JSON/u : /must return NDJSON/u
+        );
+        return true;
+      }
+    );
+  });
+}

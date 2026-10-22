@@ -1,6 +1,8 @@
 import type { EventAddress } from "@cerebro/contracts/events";
+import { ChatToolExecution } from "@cerebro/contracts/session-service";
 import type {
   ChatMessage,
+  ChatQueuedInput,
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
 import { isInternalToolName } from "@cerebro/tools/tool-names";
@@ -9,14 +11,18 @@ import type { ConversationView, Harness } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 export const snapshotToolIds = (snapshot: ChatSnapshot): readonly string[] => [
-  ...new Set([
-    ...snapshot.messages.flatMap((message) =>
-      message.toolName && !isInternalToolName(message.toolName)
-        ? [message.toolName]
-        : []
-    ),
-    ...snapshot.approvals.map((approval) => approval.toolId),
-  ]),
+  ...new Set(
+    [
+      ...snapshot.messages.flatMap((message) =>
+        message.toolName ? [message.toolName] : []
+      ),
+      ...snapshot.approvals.map((approval) => approval.toolId),
+      ...snapshot.tools.map((tool) => tool.toolName),
+      ...(snapshot.activity?.children ?? []).flatMap((child) =>
+        child.tools.map((tool) => tool.toolName)
+      ),
+    ].filter((toolName) => !isInternalToolName(toolName))
+  ),
 ];
 
 export type PiContext = Parameters<Harness["root"]>[0];
@@ -46,8 +52,139 @@ const liveSchema = Schema.Struct({
     })
   ),
   run: Schema.optional(Schema.Struct({ taskId: Schema.Number })),
+  tools: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        callId: Schema.String,
+        entry: Schema.optional(Schema.Number),
+        name: Schema.String,
+        output: Schema.optional(Schema.String),
+        status: Schema.Literals(["pending", "running", "done"]),
+      })
+    )
+  ),
 });
-const inboxSchema = Schema.Struct({ items: Schema.Array(Schema.Unknown) });
+const inputContent = Schema.Union([
+  Schema.String,
+  Schema.Array(
+    Schema.Union([
+      Schema.Struct({ text: Schema.String, type: Schema.Literal("text") }),
+      Schema.Struct({ type: Schema.Literal("image") }),
+    ])
+  ),
+]);
+const inboxSchema = Schema.Struct({
+  items: Schema.Array(
+    Schema.Union([
+      Schema.Struct({
+        content: inputContent,
+        id: Schema.Number,
+        mode: Schema.Literals(["steer", "followUp"]),
+      }),
+      Schema.Struct({ id: Schema.Number, mode: Schema.Literal("write") }),
+    ])
+  ),
+});
+
+const queuedInputs = (inbox: typeof inboxSchema.Type): ChatQueuedInput[] =>
+  inbox.items.flatMap((item) =>
+    item.mode === "write"
+      ? []
+      : [
+          {
+            mode: item.mode,
+            submissionId: String(item.id),
+            text:
+              typeof item.content === "string"
+                ? item.content
+                : item.content
+                    .map((part) =>
+                      part.type === "text" ? part.text : "[Image]"
+                    )
+                    .join("\n"),
+          },
+        ]
+  );
+
+const applyLiveToolSlots = (
+  tools: ChatToolExecution[],
+  slots: NonNullable<typeof liveSchema.Type.tools>
+): ChatToolExecution[] => {
+  for (const slot of slots) {
+    if (slot.entry !== undefined) {
+      continue;
+    }
+    const index = tools.findLastIndex(
+      (tool) =>
+        tool.callId === slot.callId && tool.resultMessageId === undefined
+    );
+    const tool = tools[index];
+    if (!tool) {
+      continue;
+    }
+    tools[index] = {
+      ...tool,
+      output: slot.output ?? "",
+      state: slot.status === "done" ? "interrupted" : slot.status,
+    };
+  }
+  return tools;
+};
+
+const toolExecutions = (
+  view: ConversationView,
+  live: typeof liveSchema.Type
+): ChatToolExecution[] => {
+  const tools: ChatToolExecution[] = [];
+  const unmatched = new Map<string, number[]>();
+  for (const entry of view.entries) {
+    for (const [modelIndex, message] of (entry.model ?? []).entries()) {
+      const messageId =
+        entry.model?.length === 1
+          ? String(entry.id)
+          : `${entry.id}:${modelIndex}`;
+      if (message.role === "assistant") {
+        unmatched.clear();
+        for (const [blockIndex, block] of message.content.entries()) {
+          if (block.type !== "toolCall") {
+            continue;
+          }
+          const index = tools.length;
+          tools.push({
+            arguments: Schema.decodeUnknownSync(
+              ChatToolExecution.fields.arguments
+            )(block.arguments),
+            callId: block.id,
+            id: `${entry.id}:${modelIndex}:${blockIndex}`,
+            messageId,
+            output: "",
+            state: "interrupted",
+            toolName: block.name,
+          });
+          const indices = unmatched.get(block.id) ?? [];
+          indices.push(index);
+          unmatched.set(block.id, indices);
+        }
+      } else if (message.role === "toolResult") {
+        const index = unmatched.get(message.toolCallId)?.shift();
+        const tool = index === undefined ? undefined : tools[index];
+        if (index === undefined || !tool) {
+          continue;
+        }
+        tools[index] = {
+          ...tool,
+          output: message.content
+            .filter((block) => block.type === "text")
+            .map((block) => block.text)
+            .join(""),
+          resultMessageId: messageId,
+          state: message.isError ? "failed" : "succeeded",
+        };
+      }
+    }
+  }
+  return applyLiveToolSlots(tools, live.tools ?? []);
+};
 
 const presentedMessage = (
   message: Message,
@@ -99,13 +236,9 @@ const presentedMessage = (
   };
 };
 
-export const chatSnapshot = (input: {
-  readonly address: EventAddress;
-  readonly agentVersion: number;
-  readonly approvals: ChatSnapshot["approvals"];
-  readonly view: ConversationView;
-}): ChatSnapshot => {
-  const { view } = input;
+export const chatPresentation = (
+  view: ConversationView
+): Pick<ChatSnapshot, "busy" | "messages" | "queuedInputs" | "tools"> => {
   const messages: ChatMessage[] = [];
   for (const entry of view.entries) {
     for (const [index, message] of (entry.model ?? []).entries()) {
@@ -114,7 +247,17 @@ export const chatSnapshot = (input: {
         entry.model?.length === 1 ? String(entry.id) : `${entry.id}:${index}`
       );
       if (presented) {
-        messages.push(presented);
+        messages.push({
+          ...presented,
+          ...(entry.kind === "pi.compaction"
+            ? { kind: "summary" as const, role: "assistant" as const }
+            : {}),
+          ...(presented.role !== "tool" &&
+          entry.kind !== "pi.compaction" &&
+          entry.kind !== "pi.reset"
+            ? { entryId: String(entry.id) }
+            : {}),
+        });
       }
     }
   }
@@ -142,10 +285,21 @@ export const chatSnapshot = (input: {
     });
   }
   return {
-    address: input.address,
-    agentVersion: input.agentVersion,
-    approvals: input.approvals,
     busy: live.run !== undefined || inbox.items.length > 0,
     messages,
+    queuedInputs: queuedInputs(inbox),
+    tools: toolExecutions(view, live),
   };
 };
+
+export const chatSnapshot = (input: {
+  readonly address: EventAddress;
+  readonly agentVersion: number;
+  readonly approvals: ChatSnapshot["approvals"];
+  readonly view: ConversationView;
+}): ChatSnapshot => ({
+  address: input.address,
+  agentVersion: input.agentVersion,
+  approvals: input.approvals,
+  ...chatPresentation(input.view),
+});

@@ -295,16 +295,17 @@ const config = {
   compatibility_date: "2026-09-28",
   compatibility_flags: ["nodejs_compat"],
   durable_objects: {
-    bindings: [{ class_name: "SessionAgent", name: "SESSION" }],
+    bindings: [{ class_name: "IdentityAgent", name: "SESSION" }],
   },
   main: "apps/server/src/index.ts",
   // Applied migration tags are history. celld cannot delete classes, so the
   // retired SessionFixture, ChannelDispatcher, and GatewayJournal stay named
-  // here but unexported.
+  // here but unexported. SessionAgent remains exported with inert handlers.
   migrations: [
     { new_sqlite_classes: ["SessionFixture"], tag: "v1" },
     { new_sqlite_classes: ["ChannelDispatcher"], tag: "v2" },
     { new_sqlite_classes: ["SessionAgent", "GatewayJournal"], tag: "v3" },
+    { new_sqlite_classes: ["IdentityAgent"], tag: "v4" },
   ],
   name: "cerebro-api",
   services: [
