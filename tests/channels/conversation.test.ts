@@ -1,3 +1,4 @@
+/* oxlint-disable no-await-in-loop -- UI snapshots must be applied and checked in order. */
 import { afterEach, beforeEach, mock, test } from "bun:test";
 import assert from "node:assert/strict";
 
@@ -6,6 +7,10 @@ import { Schema } from "effect";
 import { JSDOM } from "../../apps/web/node_modules/jsdom";
 import { createElement } from "../../apps/web/node_modules/react";
 import { renderToString } from "../../apps/web/node_modules/react-dom/server";
+import {
+  CHAT_MESSAGE_LENGTH_ERROR,
+  pendingChatSchema,
+} from "../../apps/web/src/features/product/chat";
 import { decodeObservation } from "../../apps/web/src/features/product/observation";
 import { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
 
@@ -91,6 +96,8 @@ const snapshot = (overrides: Partial<ChatSnapshot> = {}): ChatSnapshot =>
       sessionId: "session",
     },
     agentVersion: 1,
+    queuedInputs: [],
+    tools: [],
     approvals: [],
     busy: false,
     messages: [],
@@ -139,6 +146,7 @@ test("saved pending messages do not change the server and initial browser markup
   assert.equal(browserMarkup, serverMarkup);
   assert.ok(!serverMarkup.includes("Retry message"));
 });
+
 const installConversation = (
   initial: ChatSnapshot,
   mutate?: (url: string, body: unknown) => Response | Promise<Response>
@@ -205,6 +213,80 @@ const installConversation = (
     requests,
   };
 };
+
+test("the composer retains a 16001-character draft without pending admission and sends 16000 characters", async () => {
+  const submitted: string[] = [];
+  const server = installConversation(snapshot(), (url, body) => {
+    assert.equal(url.endsWith("/messages"), true);
+    const message = pendingChatSchema.parse(body);
+    submitted.push(message.text);
+    return Response.json({
+      receipt: {
+        accepted: true,
+        operationId: message.operationId,
+        session: "session",
+      },
+    });
+  });
+  const view = renderConversation();
+  const composer = view.getByRole("textbox", { name: "Message" });
+  await waitFor(() => assert.equal(composer.hasAttribute("disabled"), false));
+  assert.equal(composer.getAttribute("maxlength"), "16000");
+  const oversized = "x".repeat(16_001);
+  fireEvent.change(composer, { target: { value: oversized } });
+  const form = composer.closest("form");
+  assert.ok(form);
+  fireEvent.submit(form);
+  assert.equal(view.getByRole("alert").textContent, CHAT_MESSAGE_LENGTH_ERROR);
+  assert.equal(composer.getAttribute("disabled"), null);
+  assert.equal(view.getByDisplayValue(oversized), composer);
+  assert.equal(
+    sessionStorage.getItem(cacheKey("user", "conversation", "pending")),
+    null
+  );
+  assert.equal(
+    server.requests.filter((item) => item.url.endsWith("/messages")).length,
+    0
+  );
+  const accepted = "x".repeat(16_000);
+  fireEvent.change(composer, { target: { value: accepted } });
+  fireEvent.submit(form);
+  await waitFor(() => assert.deepEqual(submitted, [accepted]));
+  await waitFor(() => assert.equal(view.queryByRole("alert"), null));
+  assert.equal(
+    sessionStorage.getItem(cacheKey("user", "conversation", "pending")),
+    null
+  );
+  assert.equal(view.getByDisplayValue(""), composer);
+});
+
+test("an oversized cached pending message is ignored and does not block a new valid message", async () => {
+  const key = cacheKey("user", "conversation", "pending");
+  sessionStorage.setItem(
+    key,
+    JSON.stringify({ operationId: "old-oversized", text: "x".repeat(16_001) })
+  );
+  const submitted: string[] = [];
+  installConversation(snapshot(), (_url, body) => {
+    const message = pendingChatSchema.parse(body);
+    submitted.push(message.text);
+    return Response.json({
+      receipt: {
+        accepted: true,
+        operationId: message.operationId,
+        session: "session",
+      },
+    });
+  });
+  const view = renderConversation();
+  const composer = view.getByRole("textbox", { name: "Message" });
+  await waitFor(() => assert.equal(composer.hasAttribute("disabled"), false));
+  assert.equal(view.queryByRole("button", { name: "Retry message" }), null);
+  fireEvent.change(composer, { target: { value: "A valid new message." } });
+  fireEvent.click(view.getByRole("button", { name: "Send message" }));
+  await waitFor(() => assert.deepEqual(submitted, ["A valid new message."]));
+  await waitFor(() => assert.equal(sessionStorage.getItem(key), null));
+});
 
 test("native snapshots preserve transcript order and stable thinking panels", async () => {
   const first = snapshot({
@@ -282,7 +364,7 @@ test("native snapshots preserve transcript order and stable thinking panels", as
   assert.equal(view.container.textContent?.includes("First thought"), false);
 });
 
-test("Send remains available during native work and retry preserves the pending operation ID", async () => {
+test("pending input recovers automatically with its original operation ID", async () => {
   const key = cacheKey("user", "conversation", "pending");
   sessionStorage.setItem(
     key,
@@ -307,15 +389,16 @@ test("Send remains available during native work and retry preserves the pending 
     });
   });
   const view = renderConversation();
-  const retry = view.getByRole("button", { name: "Retry message" });
-  await waitFor(() => assert.equal(retry.disabled, false));
-  await act(() => retry.click());
-  await waitFor(() => assert.equal(retry.disabled, false));
+  await waitFor(() => assert.equal(submissions, 1));
   assert.deepEqual(JSON.parse(sessionStorage.getItem(key) ?? "null"), {
     operationId: "native-operation",
     text: "Queued question",
   });
-  await act(() => retry.click());
+  assert.equal(
+    view.getByRole<HTMLButtonElement>("button", { name: "Retry message" })
+      .disabled,
+    true
+  );
   await waitFor(() => assert.equal(sessionStorage.getItem(key), null));
   assert.equal(submissions, 2);
   assert.equal(view.container.querySelector("textarea")?.disabled, false);
@@ -543,4 +626,275 @@ test("signout clears visible private content, pending retry, and the observation
     server.requests.filter((item) => item.url.endsWith("/observations")).length,
     1
   );
+});
+
+test("queued inputs and tool executions stay visible once through placement and completion", async () => {
+  const initial = snapshot({
+    busy: true,
+    messages: [
+      {
+        id: "request",
+        role: "assistant",
+        state: "complete",
+        text: "I will check.",
+      },
+    ],
+    queuedInputs: [
+      { mode: "followUp", submissionId: "submission", text: "Queued question" },
+    ],
+    tools: [
+      {
+        arguments: { query: "policy" },
+        callId: "call",
+        id: "request:0:0",
+        messageId: "request",
+        output: "Searching",
+        state: "running",
+        toolName: "read-policy",
+      },
+    ],
+  });
+  const server = installConversation(initial);
+  const view = renderConversation();
+  await waitFor(() =>
+    assert.equal(
+      view
+        .getByRole("article", { name: "read-policy Running" })
+        .textContent?.includes("Searching"),
+      true
+    )
+  );
+  assert.equal(view.getAllByText("Queued question").length, 1);
+  assert.equal(view.getByText("Queued").textContent, "Queued");
+  const completed = snapshot({
+    messages: [
+      ...initial.messages,
+      {
+        id: "result",
+        role: "tool",
+        state: "complete",
+        text: "Policy found",
+        toolName: "read-policy",
+      },
+      {
+        id: "placed",
+        role: "user",
+        state: "complete",
+        text: "Queued question",
+      },
+    ],
+    tools: initial.tools.map((tool) => ({
+      ...tool,
+      output: "Policy found",
+      resultMessageId: "result",
+      state: "succeeded",
+    })),
+  });
+  await act(() => server.replace(completed));
+  assert.equal(
+    view
+      .getByRole("article", { name: "read-policy Completed" })
+      .textContent?.includes("Policy found"),
+    true
+  );
+  assert.equal(view.getAllByText("Policy found").length, 1);
+  assert.equal(view.getAllByText("Queued question").length, 1);
+  assert.equal(view.queryByText("Searching"), null);
+  assert.equal(view.queryByText("Queued"), null);
+  for (const [state, label] of [
+    ["failed", "Failed"],
+    ["interrupted", "Interrupted"],
+  ] as const) {
+    await act(() =>
+      server.replace({
+        ...completed,
+        tools: completed.tools.map((tool) => ({ ...tool, state })),
+      })
+    );
+    assert.equal(
+      view
+        .getByRole("article", { name: `read-policy ${label}` })
+        .textContent?.includes("Policy found"),
+      true
+    );
+  }
+});
+
+test("an approval is attached only to the active occurrence of a reused tool call ID", async () => {
+  const initial = snapshot({
+    approvals: [
+      {
+        approvalId: "approval",
+        arguments: { ticket: "ticket" },
+        callId: "reused-call",
+        expiresAt: 60_000,
+        operationId: "operation",
+        state: "pending",
+        taskId: "task",
+        toolId: "write-ticket",
+      },
+    ],
+    busy: true,
+    messages: [
+      {
+        id: "first",
+        role: "assistant",
+        state: "complete",
+        text: "First request",
+      },
+      {
+        id: "second",
+        role: "assistant",
+        state: "complete",
+        text: "Second request",
+      },
+    ],
+    tools: [
+      {
+        arguments: {},
+        callId: "reused-call",
+        id: "first:0:0",
+        messageId: "first",
+        output: "Earlier result",
+        state: "succeeded",
+        toolName: "write-ticket",
+      },
+      {
+        arguments: { ticket: "ticket" },
+        callId: "reused-call",
+        id: "second:0:0",
+        messageId: "second",
+        output: "",
+        state: "pending",
+        toolName: "write-ticket",
+      },
+    ],
+  });
+  installConversation(initial);
+  const view = renderConversation();
+  await waitFor(() =>
+    assert.equal(
+      view
+        .getByRole("article", { name: "write-ticket Waiting" })
+        .querySelectorAll(".approval-card").length,
+      1
+    )
+  );
+  assert.equal(
+    view
+      .getByRole("article", { name: "write-ticket Completed" })
+      .querySelectorAll(".approval-card").length,
+    0
+  );
+  assert.equal(
+    view.getAllByRole("region", { name: "Approval required" }).length,
+    1
+  );
+});
+
+test("a terminal observation fault shows Reconnect and opens a fresh attachment", async () => {
+  const server = installConversation(
+    snapshot({
+      messages: [
+        {
+          id: "answer",
+          role: "assistant",
+          state: "complete",
+          text: "Authorized answer",
+        },
+      ],
+    })
+  );
+  const view = renderConversation();
+  await waitFor(() => assert.equal(server.controllers.length, 1));
+  await act(() => {
+    server.controllers[0]?.enqueue(
+      new TextEncoder().encode('{"invalid":true}\n')
+    );
+  });
+  await waitFor(() =>
+    assert.equal(
+      view.getByRole("button", { name: "Reconnect" }).textContent,
+      "Reconnect"
+    )
+  );
+  assert.equal(
+    view.getByText("Authorized answer").textContent,
+    "Authorized answer"
+  );
+  await act(() => view.getByRole("button", { name: "Reconnect" }).click());
+  await waitFor(() => assert.equal(server.controllers.length, 2));
+  assert.equal(
+    view.getByRole("button", { name: "Disconnect" }).textContent,
+    "Disconnect"
+  );
+  assert.equal(
+    server.requests.filter((request) => request.url.endsWith("/messages"))
+      .length,
+    0
+  );
+});
+
+test("streaming follows the latest content only while the reader stays near the bottom", async () => {
+  const server = installConversation(
+    snapshot({
+      messages: [
+        {
+          id: "answer",
+          role: "assistant",
+          state: "streaming",
+          text: "First text",
+        },
+      ],
+    })
+  );
+  const view = renderConversation();
+  await waitFor(() =>
+    assert.equal(view.getByText("First text").textContent, "First text")
+  );
+  const transcript = view.getByRole("log", { name: "Conversation messages" });
+  const positions: ScrollToOptions[] = [];
+  Object.defineProperties(transcript, {
+    clientHeight: { configurable: true, value: 200 },
+    scrollHeight: { configurable: true, value: 1000 },
+    scrollTo: {
+      configurable: true,
+      value: (options: ScrollToOptions) => positions.push(options),
+    },
+    scrollTop: { configurable: true, value: 100, writable: true },
+  });
+  fireEvent.scroll(transcript);
+  await act(() =>
+    server.replace(
+      snapshot({
+        messages: [
+          {
+            id: "answer",
+            role: "assistant",
+            state: "streaming",
+            text: "More text",
+          },
+        ],
+      })
+    )
+  );
+  assert.deepEqual(positions, []);
+  transcript.scrollTop = 780;
+  fireEvent.scroll(transcript);
+  await act(() =>
+    server.replace(
+      snapshot({
+        messages: [
+          {
+            id: "answer",
+            role: "assistant",
+            state: "complete",
+            text: "Completed text",
+          },
+        ],
+      })
+    )
+  );
+  assert.deepEqual(positions, [{ behavior: "instant", top: 1000 }]);
+  assert.equal(view.getByText("Completed text").textContent, "Completed text");
 });

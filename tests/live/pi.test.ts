@@ -1,14 +1,20 @@
-/* oxlint-disable no-await-in-loop -- The live read must complete before its durable result is checked. */
+/* oxlint-disable no-await-in-loop -- Failure cleanup cancels only work created in this test conversation. */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
 import { z } from "zod";
+
+import type { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
+import {
+  decodeLiveReceipt,
+  decodeLiveSnapshot,
+  waitForLiveRead,
+} from "./pi-acceptance.ts";
 
 const localUrl = z
   .url()
@@ -26,27 +32,13 @@ const credentials = z.strictObject({
   toolId: z.string().min(1),
   webUrl: localUrl,
 });
-const snapshotSchema = z.object({
-  snapshot: z.object({
-    outputs: z.array(
-      z.object({
-        answerId: z.string(),
-        dependencies: z.object({ toolIds: z.array(z.string()) }),
-        runIds: z.array(z.string()),
-      })
-    ),
-    runs: z.array(z.object({ runId: z.string(), state: z.string() })),
-    tools: z.array(
-      z.object({
-        effect: z.enum(["read", "write"]),
-        operationId: z.string(),
-        runId: z.string(),
-        state: z.string(),
-        toolId: z.string(),
-      })
-    ),
-  }),
-});
+const remoteEndpoint = (value: string): boolean => {
+  const url = new URL(value);
+  return (
+    url.protocol === "https:" &&
+    !["fixture", "localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+  );
+};
 
 test(
   "configured live Pi model completes one real controlled MCP read",
@@ -66,9 +58,13 @@ test(
         models: z.array(z.object({ baseUrl: z.url(), id: z.string() })),
         tools: z.array(
           z.object({
-            effect: z.literal("read"),
+            effect: z.enum(["read", "write"]),
             id: z.string(),
-            target: z.object({ kind: z.literal("mcp-read"), url: z.url() }),
+            requiresApproval: z.boolean(),
+            target: z.object({
+              kind: z.enum(["mcp", "mcp-read", "http-write"]),
+              url: z.url(),
+            }),
           })
         ),
       })
@@ -81,15 +77,20 @@ test(
       model && tool,
       "Select a configured live model and controlled MCP read."
     );
-    assert.equal(new URL(model.baseUrl).protocol, "https:");
+    assert.ok(
+      remoteEndpoint(model.baseUrl),
+      "The live model must use a remote HTTPS endpoint."
+    );
+    assert.ok(
+      remoteEndpoint(tool.target.url),
+      "The live MCP must use a remote HTTPS endpoint."
+    );
+    assert.equal(tool.effect, "read");
+    assert.equal(tool.requiresApproval, false);
+    assert.ok(["mcp", "mcp-read"].includes(tool.target.kind));
     assert.ok(
       !config.modelId.startsWith("fixture") &&
         !config.toolId.startsWith("fixture")
-    );
-    assert.ok(
-      !["fixture", "localhost", "127.0.0.1", "[::1]"].includes(
-        new URL(tool.target.url).hostname
-      )
     );
     const request = async (route: string, body?: unknown): Promise<unknown> => {
       const response = await fetch(new URL(route, config.apiUrl), {
@@ -110,7 +111,8 @@ test(
       return await response.json();
     };
     const fixtureRoute = await fetch(
-      new URL("/api/fixture/runtime/isolation", config.apiUrl)
+      new URL("/api/fixture/runtime/isolation", config.apiUrl),
+      { signal: AbortSignal.timeout(20_000) }
     );
     assert.equal(
       fixtureRoute.status,
@@ -132,83 +134,105 @@ test(
     assert.equal(agent.definition.model, config.modelId);
     assert.deepEqual(agent.definition.enabledToolIds, [config.toolId]);
     const identity = randomUUID();
+    const operationId = `pi-live-${identity}`;
     const conversation = z.object({ conversationId: z.string() }).parse(
       await request("/api/product/conversations", {
         agentId: config.agentId,
-        operationId: `pi-live-${identity}`,
+        operationId,
       })
     );
     const route = `/api/product/conversations/${encodeURIComponent(conversation.conversationId)}`;
-    const accepted = z
-      .object({ receipt: z.object({ runId: z.string() }) })
-      .parse(
-        await request(`${route}/messages`, {
-          eventId: `pi-live-${identity}`,
-          mode: "follow-up",
-          text: config.prompt,
-        })
+    let latest: ChatSnapshot | undefined;
+    let passed = false;
+    try {
+      const input = { operationId, text: config.prompt };
+      const receipt = decodeLiveReceipt(
+        await request(`${route}/messages`, input)
       );
-    const { receipt } = accepted;
-    const deadlineAt = Date.now() + 120_000;
-    let result = snapshotSchema.parse(await request(route));
-    while (
-      Date.now() < deadlineAt &&
-      result.snapshot.runs.find((run) => run.runId === receipt.runId)?.state !==
-        "completed"
-    ) {
-      const run = result.snapshot.runs.find(
-        (value) => value.runId === receipt.runId
+      assert.equal(receipt.accepted, true);
+      assert.equal(receipt.operationId, operationId);
+      const read = async () => {
+        const value = await request(route);
+        latest = decodeLiveSnapshot(value);
+        return value;
+      };
+      const options = {
+        agentId: config.agentId,
+        conversationId: conversation.conversationId,
+        prompt: config.prompt,
+        read,
+        toolId: config.toolId,
+      };
+      const result = await waitForLiveRead(options);
+      const replay = decodeLiveReceipt(
+        await request(`${route}/messages`, input)
       );
-      assert.ok(
-        !run ||
-          ["queued", "running", "waiting-for-approval"].includes(run.state),
-        `The live run terminated as ${run?.state}.`
+      assert.deepEqual(replay, { ...receipt, accepted: false });
+      const repeated = await waitForLiveRead(options);
+      assert.equal(repeated.execution.id, result.execution.id);
+      assert.equal(repeated.answer.id, result.answer.id);
+      const execute = promisify(execFile);
+      const [revision, status] = await Promise.all([
+        execute("rtk", ["proxy", "git", "rev-parse", "HEAD"]),
+        execute("rtk", [
+          "proxy",
+          "git",
+          "status",
+          "--porcelain=v1",
+          "--",
+          ".",
+          ":(exclude)artifacts/**",
+        ]),
+      ]);
+      const sha = revision.stdout.trim();
+      const directory = path.resolve(
+        "artifacts/slice-1",
+        sha,
+        `pi-live-${identity}`
       );
-      await delay(250);
-      result = snapshotSchema.parse(await request(route));
+      await mkdir(directory, { recursive: true });
+      await writeFile(
+        path.join(directory, "acceptance.json"),
+        `${JSON.stringify(
+          {
+            answerId: result.answer.id,
+            conversationId: conversation.conversationId,
+            fixtureId: config.fixtureId,
+            modelId: config.modelId,
+            operationId,
+            replayAccepted: replay.accepted,
+            session: receipt.session,
+            sha,
+            sourceCheckoutDirty: status.stdout.trim().length > 0,
+            state: "PASS",
+            toolExecutionId: result.execution.id,
+            toolId: config.toolId,
+          },
+          null,
+          2
+        )}\n`
+      );
+      passed = true;
+    } finally {
+      if (!passed) {
+        for (const reminder of latest?.activity?.reminders ?? []) {
+          if (reminder.state === "scheduled") {
+            try {
+              await request(`${route}/control`, {
+                kind: "cancel-schedule",
+                scheduleId: reminder.id,
+              });
+            } catch {
+              // Preserve the acceptance failure if access also prevents cleanup.
+            }
+          }
+        }
+        try {
+          await request(`${route}/stop`, {});
+        } catch {
+          // Preserve the acceptance failure if access also prevents cleanup.
+        }
+      }
     }
-    assert.equal(
-      result.snapshot.runs.find((run) => run.runId === receipt.runId)?.state,
-      "completed"
-    );
-    const tools = result.snapshot.tools.filter(
-      (value) => value.runId === receipt.runId
-    );
-    assert.equal(tools.length, 1);
-    assert.equal(tools[0]?.toolId, config.toolId);
-    assert.equal(tools[0]?.effect, "read");
-    assert.equal(tools[0]?.state, "succeeded");
-    const outputs = result.snapshot.outputs.filter((value) =>
-      value.runIds.includes(receipt.runId)
-    );
-    assert.equal(outputs.length, 1);
-    assert.ok(outputs[0]?.dependencies.toolIds.includes(config.toolId));
-    const execute = promisify(execFile);
-    const revision = await execute("git", ["rev-parse", "HEAD"]);
-    const sha = revision.stdout.trim();
-    const directory = path.resolve(
-      "artifacts/slice-1",
-      sha,
-      `pi-live-${identity}`
-    );
-    await mkdir(directory, { recursive: true });
-    await writeFile(
-      path.join(directory, "acceptance.json"),
-      `${JSON.stringify(
-        {
-          answerId: outputs[0]?.answerId,
-          conversationId: conversation.conversationId,
-          fixtureId: config.fixtureId,
-          modelId: config.modelId,
-          operationId: tools[0]?.operationId,
-          runId: receipt.runId,
-          sha,
-          state: "PASS",
-          toolId: config.toolId,
-        },
-        null,
-        2
-      )}\n`
-    );
   }
 );

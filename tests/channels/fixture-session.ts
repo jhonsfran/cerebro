@@ -4,20 +4,25 @@ import { authorize, unwrap } from "../../packages/channels/src/security";
 import { ChannelError } from "../../packages/channels/src/types";
 import type { ChannelOptions } from "../../packages/channels/src/types";
 import type { EventAddress } from "../../packages/contracts/src/events";
+import { id } from "../../packages/contracts/src/identity";
 import { ChatSnapshot } from "../../packages/contracts/src/session-service";
 import type {
   ChatApproval,
+  ChatActivity,
   ChatClient,
   ChatRequest,
 } from "../../packages/contracts/src/session-service";
+import { and, eq } from "../../packages/db/node_modules/drizzle-orm";
 import type { Database } from "../../packages/db/src/index";
 import { createAgentRepository } from "../../packages/db/src/repositories/agents";
+import { channelConversation } from "../../packages/db/src/schema/agents";
 
 export const FIXTURE_SOURCE_ID = "pilot-source";
 export const FIXTURE_TOOL_ID = "fixture-read";
 export const FIXTURE_MODEL_ID = "fixture-model";
 
 interface FixtureConversation {
+  readonly commands: Map<string, string>;
   snapshot: ChatSnapshot;
   readonly inputs: Map<string, string>;
 }
@@ -51,6 +56,7 @@ const complete = (
     messages: [
       ...selected.snapshot.messages,
       {
+        entryId: `answer:${operationId}`,
         id: `answer:${operationId}`,
         role: "assistant",
         state: "complete",
@@ -75,6 +81,35 @@ export const createFixtureChatClient = (
         "The request was interrupted."
       );
     }
+    const [row] = await database
+      .select()
+      .from(channelConversation)
+      .where(
+        and(
+          eq(
+            channelConversation.organizationId,
+            request.address.organizationId
+          ),
+          eq(
+            channelConversation.conversationId,
+            request.address.conversationId
+          ),
+          eq(channelConversation.sessionId, request.address.sessionId),
+          eq(channelConversation.agentId, request.address.agentId)
+        )
+      );
+    if (
+      !row ||
+      row.ownerPrincipalId !== request.context.actor.id ||
+      row.retiredAt ||
+      row.engine !== "pi-identity-v1"
+    ) {
+      throw new ChannelError(
+        404,
+        "not-found",
+        "The conversation was not found."
+      );
+    }
     await authorize(
       database,
       options,
@@ -97,22 +132,71 @@ export const createFixtureChatClient = (
       return await inFlight;
     }
     const create = async (): Promise<FixtureConversation> => {
+      const [row] = await database
+        .select()
+        .from(channelConversation)
+        .where(
+          eq(channelConversation.conversationId, request.address.conversationId)
+        );
+      const origin = row?.forkOrigin;
+      let inherited: FixtureConversation | undefined;
+      let inheritedMessages: ChatSnapshot["messages"] = [];
+      if (origin) {
+        inherited = await conversation({
+          ...request,
+          address: {
+            ...request.address,
+            conversationId: id.conversation(origin.parentConversationId),
+            sessionId: id.session(origin.parentSessionId),
+          },
+        });
+        const selected = inherited.snapshot.messages.findIndex(
+          (message) => message.entryId === origin.entryId
+        );
+        if (selected === -1) {
+          throw new ChannelError(
+            422,
+            "invalid-input",
+            "The fork entry was not found."
+          );
+        }
+        inheritedMessages = structuredClone(
+          inherited.snapshot.messages.slice(0, selected + 1)
+        );
+      }
       const agent = unwrap(
         await createAgentRepository(database).get(
           request.address.organizationId,
           request.address.agentId,
-          "latest",
+          origin?.agentVersion ?? "latest",
           { deadlineAt: now() + 10_000 }
         )
       );
       const created: FixtureConversation = {
+        commands: new Map(),
         inputs: new Map(),
         snapshot: {
+          activity: {
+            children: [],
+            compactions: [],
+            reminders: [],
+            tasks: [],
+            ...(origin
+              ? {
+                  origin: {
+                    conversationId: origin.parentConversationId,
+                    entryId: origin.entryId,
+                  },
+                }
+              : {}),
+          },
           address: request.address,
-          agentVersion: agent.version,
+          agentVersion: inherited?.snapshot.agentVersion ?? agent.version,
+          queuedInputs: [],
+          tools: [],
           approvals: [],
           busy: false,
-          messages: [],
+          messages: inheritedMessages,
         },
       };
       conversations.set(sessionKey, created);
@@ -127,6 +211,135 @@ export const createFixtureChatClient = (
     }
   };
   const service: ChatClient = {
+    async control(request) {
+      await access(request, "execute");
+      const selected = await conversation(request);
+      const activity: ChatActivity = selected.snapshot.activity ?? {
+        children: [],
+        compactions: [],
+        reminders: [],
+        tasks: [],
+      };
+      const { command } = request;
+      if (command.kind === "cancel-schedule") {
+        const reminder = activity.reminders.find(
+          (value) => value.id === command.scheduleId
+        );
+        if (!reminder) {
+          throw new ChannelError(
+            404,
+            "not-found",
+            "The reminder was not found."
+          );
+        }
+        selected.snapshot = {
+          ...selected.snapshot,
+          activity: {
+            ...activity,
+            reminders: activity.reminders.map((value) =>
+              value.id === reminder.id
+                ? { ...value, state: "cancelled" }
+                : value
+            ),
+          },
+        };
+        return { id: reminder.id, kind: command.kind };
+      }
+      if (command.kind === "stop-child") {
+        const child = activity.children.find(
+          (value) => value.id === command.childId
+        );
+        if (!child) {
+          throw new ChannelError(404, "not-found", "The child was not found.");
+        }
+        selected.snapshot = {
+          ...selected.snapshot,
+          activity: {
+            ...activity,
+            children: activity.children.map((value) =>
+              value.id === child.id ? { ...value, state: "interrupted" } : value
+            ),
+          },
+        };
+        return { id: child.id, kind: command.kind };
+      }
+      const digest = JSON.stringify(command);
+      const retained = selected.commands.get(command.operationId);
+      if (retained && retained !== digest) {
+        throw new ChannelError(
+          409,
+          "conflict",
+          "The operation names another command."
+        );
+      }
+      const commandId = `${command.kind}:${command.operationId}`;
+      if (!retained) {
+        selected.commands.set(command.operationId, digest);
+        selected.snapshot = {
+          ...selected.snapshot,
+          activity:
+            command.kind === "compact"
+              ? {
+                  ...activity,
+                  compactions: [
+                    ...activity.compactions,
+                    {
+                      attempt: 1,
+                      blocking: false,
+                      id: commandId,
+                      reason: "manual",
+                    },
+                  ],
+                }
+              : {
+                  ...activity,
+                  reminders: [
+                    ...activity.reminders,
+                    {
+                      id: commandId,
+                      instruction: command.instruction,
+                      ...(command.recurrence
+                        ? { recurrence: command.recurrence }
+                        : {}),
+                      runAt: command.runAt,
+                      state: "scheduled",
+                    },
+                  ],
+                },
+        };
+      }
+      return { id: commandId, kind: command.kind };
+    },
+    async fork(request) {
+      await access(request, "execute");
+      const source = await service.read(request);
+      await access({ ...request, address: request.destination }, "execute");
+      const [row] = await database
+        .select()
+        .from(channelConversation)
+        .where(
+          eq(
+            channelConversation.conversationId,
+            request.destination.conversationId
+          )
+        );
+      if (
+        !row?.forkOrigin ||
+        row.forkOrigin.parentConversationId !==
+          request.address.conversationId ||
+        row.forkOrigin.parentSessionId !== request.address.sessionId ||
+        row.forkOrigin.entryId !== request.entryId ||
+        row.forkOrigin.agentVersion !== source.agentVersion
+      ) {
+        throw new ChannelError(
+          409,
+          "conflict",
+          "The fork destination has another origin."
+        );
+      }
+      await conversation({ ...request, address: request.destination });
+      return { address: request.destination };
+    },
     async decide(request) {
       await access(request, "approve");
       const selected = await conversation(request);
@@ -220,6 +433,7 @@ export const createFixtureChatClient = (
         messages: [
           ...selected.snapshot.messages,
           {
+            entryId: request.operationId,
             id: request.operationId,
             role: "user",
             state: "complete",

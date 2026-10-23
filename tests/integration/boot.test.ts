@@ -1,17 +1,31 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:net";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 
+import { Schema } from "effect";
+
 import { assertWorkerEnv } from "../../apps/server/src/bindings.ts";
 import type { WorkerEnv } from "../../apps/server/src/bindings.ts";
+import {
+  ChatReceipt,
+  ChatSnapshot,
+} from "../../packages/contracts/src/session-service.ts";
 
 const exec = promisify(execFile);
-const project = `cerebro-boot-${randomBytes(4).toString("hex")}`;
+const project = `cerebro-boot-${randomUUID().slice(0, 8)}`;
+const conversationView = Schema.Struct({ snapshot: ChatSnapshot });
+const sendReceipt = Schema.Struct({ receipt: ChatReceipt });
+const authSession = Schema.Struct({
+  user: Schema.Struct({ email: Schema.String }),
+});
+const unusedBinding = (): never => {
+  throw new Error("This configuration check does not use Worker bindings.");
+};
 // Production compose.yaml plus the test-only fake model provider.
 const compose = [
   "compose",
@@ -40,11 +54,21 @@ const freePort = async (): Promise<number> => {
 test("production configuration requires verified PostgreSQL TLS", () => {
   const environment = {
     ACCOUNT_KEY: "k".repeat(32),
+    AUDIT_SINK: { connect: unusedBinding, fetch: unusedBinding },
     BETTER_AUTH_SECRET: "a".repeat(32),
     BETTER_AUTH_URL: "https://api.example.test",
     CORS_ORIGIN: "https://web.example.test",
     DATABASE_URL: "postgres://user:pass@db.example.test/app?sslmode=require",
     DEPLOY_MODE: "production",
+    RUNTIME_CONFIG_JSON: "{}",
+    SESSION: {
+      get: unusedBinding,
+      getByName: unusedBinding,
+      idFromName: unusedBinding,
+      idFromString: unusedBinding,
+      jurisdiction: unusedBinding,
+      newUniqueId: unusedBinding,
+    },
   } satisfies WorkerEnv;
   assert.throws(() => assertWorkerEnv(environment), /sslmode=verify-full/u);
   assert.doesNotThrow(() =>
@@ -86,12 +110,12 @@ test("fresh Compose boot preserves an auth user, a conversation, and an artifact
     assert.equal(ready.status, 200);
     assert.deepEqual(await ready.json(), { ok: true });
 
-    const email = `boot-${randomBytes(8).toString("hex")}@example.test`;
+    const email = `boot-${randomUUID()}@example.test`;
     const signup = await fetch(`${baseUrl}/api/auth/sign-up/email`, {
       body: JSON.stringify({
         email,
         name: "Boot User",
-        password: randomBytes(24).toString("base64url"),
+        password: `${randomUUID()}${randomUUID()}`,
       }),
       headers: {
         "Content-Type": "application/json",
@@ -109,7 +133,9 @@ test("fresh Compose boot preserves an auth user, a conversation, and an artifact
       headers: { Cookie: cookie },
     });
     assert.equal(initialSession.status, 200);
-    const initialAuth = await initialSession.json();
+    const initialAuth = Schema.decodeUnknownSync(authSession)(
+      await initialSession.json()
+    );
     assert.equal(initialAuth.user.email, email);
 
     const product = async (
@@ -161,22 +187,32 @@ test("fresh Compose boot preserves an auth user, a conversation, and an artifact
     };
     const conversationRoute = `conversations/${encodeURIComponent(conversationId)}`;
     const sent = await product(`${conversationRoute}/messages`, cookie, {
-      eventId: "boot-message",
+      operationId: "boot-message",
       text: "Hello from the boot check.",
     });
     assert.equal(sent.status, 200);
-    interface View {
-      snapshot: { runs: { state: string }[]; outputs: unknown[] };
-    }
-    const view = async (requestCookie = cookie): Promise<View> => {
+    const accepted = Schema.decodeUnknownSync(sendReceipt)(await sent.json());
+    assert.equal(accepted.receipt.operationId, "boot-message");
+    assert.equal(accepted.receipt.accepted, true);
+    const view = async (
+      requestCookie = cookie
+    ): Promise<typeof conversationView.Type> => {
       const response = await product(conversationRoute, requestCookie);
       assert.equal(response.status, 200);
-      return (await response.json()) as View;
+      return Schema.decodeUnknownSync(conversationView)(await response.json());
     };
-    const settle = async (deadline: number): Promise<View> => {
+    const settle = async (
+      deadline: number
+    ): Promise<typeof conversationView.Type> => {
       const current = await view();
       if (
-        current.snapshot.runs[0]?.state === "completed" ||
+        (!current.snapshot.busy &&
+          current.snapshot.queuedInputs.length === 0 &&
+          (current.snapshot.activity?.tasks.length ?? 0) === 0 &&
+          current.snapshot.messages.some(
+            (message) =>
+              message.role === "assistant" && message.state === "complete"
+          )) ||
         Date.now() >= deadline
       ) {
         return current;
@@ -185,13 +221,25 @@ test("fresh Compose boot preserves an auth user, a conversation, and an artifact
       return await settle(deadline);
     };
     const completed = await settle(Date.now() + 60_000);
-    assert.equal(completed.snapshot.runs[0]?.state, "completed");
-    assert.equal(completed.snapshot.outputs.length, 1);
+    assert.equal(completed.snapshot.busy, false);
+    assert.equal(completed.snapshot.queuedInputs.length, 0);
+    assert.equal(completed.snapshot.activity?.tasks.length, 0);
+    assert.deepEqual(
+      completed.snapshot.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.text),
+      ["Hello from the boot check."]
+    );
+    const answers = completed.snapshot.messages.filter(
+      (message) => message.role === "assistant" && message.state === "complete"
+    );
+    assert.equal(answers.length, 1);
+    assert.ok(answers[0]?.text.trim());
     const otherSignup = await fetch(`${baseUrl}/api/auth/sign-up/email`, {
       body: JSON.stringify({
-        email: `other-${randomBytes(8).toString("hex")}@example.test`,
+        email: `other-${randomUUID()}@example.test`,
         name: "Other User",
-        password: randomBytes(24).toString("base64url"),
+        password: `${randomUUID()}${randomUUID()}`,
       }),
       headers: {
         "Content-Type": "application/json",
@@ -207,7 +255,7 @@ test("fresh Compose boot preserves an auth user, a conversation, and an artifact
     const foreign = await product(conversationRoute, otherCookie);
     assert.ok([403, 404].includes(foreign.status));
     await foreign.body?.cancel();
-    const artifactKey = `boot-${randomBytes(8).toString("hex")}`;
+    const artifactKey = `boot-${randomUUID()}`;
     const artifact = await docker(
       "run",
       "--rm",
@@ -227,7 +275,9 @@ test("fresh Compose boot preserves an auth user, a conversation, and an artifact
       headers: { Cookie: cookie },
     });
     assert.equal(resumedAuth.status, 200);
-    const resumedAuthBody = await resumedAuth.json();
+    const resumedAuthBody = Schema.decodeUnknownSync(authSession)(
+      await resumedAuth.json()
+    );
     assert.equal(resumedAuthBody.user.email, email);
     const resumedView = await view();
     assert.deepEqual(resumedView.snapshot, completed.snapshot);

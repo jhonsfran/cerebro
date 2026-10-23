@@ -14,9 +14,14 @@ import { Schema } from "effect";
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/identity.ts";
-import type { ChatApproval } from "../../packages/contracts/src/session-service.ts";
+import type {
+  ChatApproval,
+  ChatControl as ChatControlValue,
+} from "../../packages/contracts/src/session-service.ts";
 import {
+  ChatControlReceipt,
   ChatDecisionReceipt,
+  ChatForkReceipt,
   ChatObservation,
   ChatReceipt,
   ChatSnapshot,
@@ -322,22 +327,35 @@ export const fixtureContext = (organizationId: string): ExecutionContext => ({
 });
 export const addressFor = (
   organizationId: string,
-  conversationId: string
+  conversationId: string,
+  agentId = "agent-1"
 ): EventAddress => ({
-  agentId: id.agent("agent-1"),
+  agentId: id.agent(agentId),
   conversationId: id.conversation(conversationId),
   organizationId: id.organization(organizationId),
-  sessionId: id.session(`session:${organizationId}:${conversationId}`),
+  sessionId: id.session(
+    `session:${organizationId}:${agentId}:${conversationId}`
+  ),
 });
 export const send = async (
   stack: Stack,
   address: EventAddress,
   operationId: string,
   text: string
-): Promise<ChatReceipt> =>
-  Schema.decodeUnknownSync(ChatReceipt)(
-    await request(stack, "/runtime/send", { address, operationId, text })
-  );
+): Promise<ChatReceipt> => {
+  const value = await request(stack, "/runtime/send", {
+    address,
+    operationId,
+    text,
+  });
+  try {
+    return Schema.decodeUnknownSync(ChatReceipt)(value);
+  } catch (error) {
+    throw new Error(`Invalid chat receipt: ${JSON.stringify(value)}`, {
+      cause: error,
+    });
+  }
+};
 export const read = async (
   stack: Stack,
   address: EventAddress,
@@ -350,6 +368,87 @@ export const stop = async (stack: Stack, address: EventAddress) =>
   Schema.decodeUnknownSync(Schema.Struct({ stopped: Schema.Boolean }))(
     await request(stack, "/runtime/stop", { address })
   );
+export const chatControl = async (
+  stack: Stack,
+  address: EventAddress,
+  command: ChatControlValue
+) =>
+  Schema.decodeUnknownSync(ChatControlReceipt)(
+    await request(stack, "/runtime/control", { address, command })
+  );
+export const reserveFork = async (
+  stack: Stack,
+  destination: EventAddress,
+  source: EventAddress,
+  entryId: string,
+  agentVersion: number
+): Promise<void> => {
+  await request(stack, "/runtime/fixture/capabilities/reserve-fork", {
+    address: destination,
+    origin: { address: source, agentVersion, entryId },
+  });
+};
+export const fork = async (
+  stack: Stack,
+  address: EventAddress,
+  destination: EventAddress,
+  entryId: string,
+  operationId: string
+) =>
+  Schema.decodeUnknownSync(ChatForkReceipt)(
+    await request(stack, "/runtime/fork", {
+      address,
+      destination,
+      entryId,
+      operationId,
+    })
+  );
+export const capabilityProvider = async (stack: Stack) =>
+  Schema.decodeUnknownSync(
+    Schema.Struct({
+      model: Schema.Array(
+        Schema.Struct({
+          operationId: Schema.String,
+          prompt: Schema.String,
+          purpose: Schema.Literals(["turn", "compaction"]),
+          scope: Schema.String,
+          startedAt: Schema.Number,
+          completedAt: Schema.optional(Schema.Number),
+          toolNames: Schema.Array(Schema.String),
+        })
+      ),
+    })
+  )(await getFixture(stack, "/capabilities/observations"));
+export const capabilityStorage = async (stack: Stack, address: EventAddress) =>
+  Schema.decodeUnknownSync(
+    Schema.Struct({
+      conversations: Schema.Array(
+        Schema.Struct({
+          id: Schema.Number,
+          ownerConversationId: Schema.NullOr(Schema.Number),
+          ownerTaskId: Schema.NullOr(Schema.Number),
+          parentConversationId: Schema.NullOr(Schema.Number),
+          parentEntryId: Schema.NullOr(Schema.Number),
+        })
+      ),
+      submissions: Schema.Array(
+        Schema.Struct({
+          id: Schema.Number,
+          conversationId: Schema.Number,
+          requestId: Schema.NullOr(Schema.String),
+          status: Schema.String,
+        })
+      ),
+      tasks: Schema.Array(
+        Schema.Struct({
+          id: Schema.Number,
+          conversationId: Schema.Number,
+          kind: Schema.String,
+          status: Schema.String,
+        })
+      ),
+    })
+  )(await request(stack, "/runtime/fixture/capabilities/storage", { address }));
 export const pending = async (
   stack: Stack,
   address: EventAddress
@@ -442,8 +541,74 @@ export const nativeStorage = async (stack: Stack, address: EventAddress) =>
   )(await request(stack, "/runtime/fixture/native-storage", { address }));
 export const lifecycle = async (stack: Stack, address: EventAddress) =>
   Schema.decodeUnknownSync(
-    Schema.Struct({ jobs: Schema.Array(Schema.Struct({ fn: Schema.String })) })
+    Schema.Struct({
+      alarmAt: Schema.NullOr(Schema.Number),
+      alarms: Schema.Array(Schema.Struct({ at: Schema.Number })),
+      jobs: Schema.Array(
+        Schema.Struct({
+          capability: Schema.String,
+          execution_started_at: Schema.NullOr(Schema.Number),
+          fn: Schema.String,
+          id: Schema.String,
+          running: Schema.Number,
+          time: Schema.Number,
+        })
+      ),
+      pending: Schema.Array(
+        Schema.Struct({
+          operationId: Schema.String,
+          session: Schema.String,
+          status: Schema.Literals(["queued", "running"]),
+        })
+      ),
+    })
   )(await request(stack, "/runtime/fixture/lifecycle", { address }));
+export const runtimeEvidence = async (
+  stack: Stack,
+  address: EventAddress,
+  ownerPrincipalId?: string
+) =>
+  Schema.decodeUnknownSync(
+    Schema.Struct({
+      failures: Schema.Array(
+        Schema.Struct({
+          committedSeq: Schema.Number,
+          instanceId: Schema.String,
+          operationId: Schema.String,
+        })
+      ),
+      instanceId: Schema.String,
+      nativeSessionId: Schema.String,
+      modelRequests: Schema.Array(
+        Schema.Struct({
+          operationId: Schema.String,
+          body: Schema.Struct({
+            model: Schema.String,
+            messages: Schema.Array(
+              Schema.Struct({ role: Schema.String, content: Schema.Unknown })
+            ),
+            tools: Schema.optional(
+              Schema.Array(
+                Schema.Struct({
+                  function: Schema.Struct({
+                    name: Schema.String,
+                    description: Schema.String,
+                    parameters: Schema.Unknown,
+                  }),
+                })
+              )
+            ),
+          }),
+        })
+      ),
+      notifications: Schema.Array(ChatSnapshot),
+    })
+  )(
+    await request(stack, "/runtime/fixture/runtime", {
+      address,
+      ...(ownerPrincipalId ? { ownerPrincipalId } : {}),
+    })
+  );
 export const dependencyCheckpoint = async (
   stack: Stack,
   address: EventAddress,

@@ -8,6 +8,7 @@ import { Schema } from "effect";
 import {
   createObservationClient,
   decodeObservation,
+  ObservationProtocolError,
 } from "../../apps/web/src/features/product/observation";
 import { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
 
@@ -19,6 +20,8 @@ const snapshot = Schema.decodeUnknownSync(ChatSnapshot)({
     sessionId: "session-1",
   },
   agentVersion: 1,
+  queuedInputs: [],
+  tools: [],
   approvals: [],
   busy: true,
   messages: [
@@ -32,6 +35,7 @@ const snapshot = Schema.decodeUnknownSync(ChatSnapshot)({
     },
   ],
 });
+
 const frame = (value = snapshot) =>
   decodeObservation({ snapshot: value, type: "snapshot" });
 const waitFor = async (predicate: () => boolean) => {
@@ -278,4 +282,91 @@ test("detaching releases the attachment and reattach requests a fresh snapshot",
     "connected",
     "disconnected",
   ]);
+});
+
+for (const failure of ["schema", "address", "limit"] as const) {
+  test(`${failure} faults stop observation until explicit reconnect`, async () => {
+    let opens = 0;
+    const statuses: string[] = [];
+    const errors: string[] = [];
+    const observer = createObservationClient({
+      address: snapshot.address,
+      generation: () => 0,
+      onDenied: () => assert.fail("Unexpected denial"),
+      onError: (error) => errors.push(error.message),
+      onSnapshot: () => {},
+      onStatus: (status) => statuses.push(status),
+      open: (_generation, signal) =>
+        (async function* source() {
+          opens += 1;
+          yield frame();
+          if (opens === 1) {
+            if (failure === "schema") {
+              yield { snapshot: {}, type: "snapshot" };
+            } else if (failure === "address") {
+              yield frame({
+                ...snapshot,
+                address: {
+                  ...snapshot.address,
+                  conversationId: "another-conversation",
+                },
+              });
+            } else {
+              throw new ObservationProtocolError(
+                "Observation frame exceeds the transport limit."
+              );
+            }
+            return;
+          }
+          await openUntilAbort(signal);
+        })(),
+      retryDelayMs: 1,
+    });
+    try {
+      observer.attach();
+      await waitFor(() => statuses.at(-1) === "failed");
+      await delay(20);
+      assert.equal(opens, 1);
+      assert.equal(errors.length, 1);
+      assert.deepEqual(observer.getSnapshot(), snapshot);
+      assert.deepEqual(statuses, ["connecting", "connected", "failed"]);
+      observer.attach();
+      await waitFor(() => opens === 2 && statuses.at(-1) === "connected");
+      assert.deepEqual(observer.getSnapshot(), snapshot);
+    } finally {
+      observer.dispose();
+    }
+  });
+}
+
+test("an interrupted frame retries and restores a fresh snapshot", async () => {
+  let opens = 0;
+  const fresh = { ...snapshot, busy: false, messages: [] };
+  const errors: string[] = [];
+  const observer = createObservationClient({
+    address: snapshot.address,
+    generation: () => 0,
+    onDenied: () => assert.fail("Unexpected denial"),
+    onError: (error) => errors.push(error.message),
+    onSnapshot: () => {},
+    open: (_generation, signal) =>
+      (async function* source() {
+        opens += 1;
+        if (opens === 1) {
+          yield frame();
+          throw new Error("Observation ended inside a frame.");
+        }
+        yield frame(fresh);
+        await openUntilAbort(signal);
+      })(),
+    retryDelayMs: 1,
+  });
+  try {
+    observer.attach();
+    await waitFor(() => opens === 2);
+    assert.deepEqual(observer.getSnapshot(), fresh);
+    assert.deepEqual(errors, ["Observation ended inside a frame."]);
+  } finally {
+    observer.dispose();
+  }
 });

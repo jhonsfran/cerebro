@@ -9,6 +9,11 @@ import {
 import { z } from "zod";
 
 const identifier = z.string().trim().min(1).max(512);
+const identitySchema = z.strictObject({
+  organizationId: identifier.transform(id.organization),
+  ownerPrincipalId: identifier.transform(id.principal),
+});
+export type SessionIdentity = z.infer<typeof identitySchema>;
 const principal = z.strictObject({
   id: identifier.transform(id.principal),
   kind: z.enum(["human", "service", "agent"]),
@@ -39,7 +44,16 @@ const proofSchema = z.strictObject({
   context: contextSchema,
   digest: z.string(),
   expiresAt: z.number().finite(),
-  path: z.enum(["/send", "/read", "/observe", "/decide", "/stop"]),
+  identity: identitySchema,
+  path: z.enum([
+    "/send",
+    "/read",
+    "/observe",
+    "/decide",
+    "/stop",
+    "/fork",
+    "/control",
+  ]),
 });
 const signedSchema = z.strictObject({
   proof: proofSchema,
@@ -68,8 +82,11 @@ const sign = async (secret: string, proof: z.infer<typeof proofSchema>) =>
 export const authenticateSessionRequest = async (
   request: Request,
   secret: string,
-  address: EventAddress
-): Promise<ExecutionContext> => {
+  identity: SessionIdentity
+): Promise<{
+  readonly address: EventAddress;
+  readonly context: ExecutionContext;
+}> => {
   try {
     const signed = signedSchema.parse(
       JSON.parse(request.headers.get("x-cerebro-session-proof") ?? "null")
@@ -90,13 +107,14 @@ export const authenticateSessionRequest = async (
       proof.expiresAt <= Date.now() ||
       proof.expiresAt > Date.now() + 60_000 ||
       proof.path !== new URL(request.url).pathname ||
-      canonicalToolArguments(proof.address) !==
-        canonicalToolArguments(address) ||
+      canonicalToolArguments(proof.identity) !==
+        canonicalToolArguments(identity) ||
+      proof.address.organizationId !== identity.organizationId ||
       proof.digest !== (await digestToolArguments(await request.clone().text()))
     ) {
       throw new Error("Invalid private session credential");
     }
-    return proof.context;
+    return { address: proof.address, context: proof.context };
   } catch {
     throw new Denied({
       code: "unauthorized",
@@ -110,7 +128,8 @@ export const signSessionRequest = async (
   context: ExecutionContext,
   path: z.infer<typeof proofSchema>["path"],
   body: string,
-  secret: string
+  secret: string,
+  identity: SessionIdentity
 ): Promise<string> => {
   const proof = {
     address: {
@@ -122,6 +141,7 @@ export const signSessionRequest = async (
     context,
     digest: await digestToolArguments(body),
     expiresAt: Date.now() + 50_000,
+    identity,
     path,
   };
   return JSON.stringify({ proof, signature: await sign(secret, proof) });

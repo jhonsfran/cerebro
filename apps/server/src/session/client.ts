@@ -13,10 +13,15 @@ import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import {
   ChatDecisionReceipt,
+  ChatControlReceipt,
+  ChatForkReceipt,
   ChatReceipt,
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
 import type { ChatClient } from "@cerebro/contracts/session-service";
+import { withDatabase } from "@cerebro/db";
+import { channelConversation } from "@cerebro/db/schema/agents";
+import { and, eq, isNull } from "drizzle-orm";
 import { Schema } from "effect";
 import { z } from "zod";
 
@@ -24,7 +29,14 @@ import type { WorkerEnv } from "../bindings";
 import { runtimeConfiguration } from "../config";
 import { signSessionRequest } from "./proof";
 
-type SessionPath = "/send" | "/read" | "/observe" | "/decide" | "/stop";
+type SessionPath =
+  | "/send"
+  | "/read"
+  | "/observe"
+  | "/decide"
+  | "/stop"
+  | "/control"
+  | "/fork";
 const responseSchema = z.object({
   status: z.literal("ok"),
   value: z.unknown(),
@@ -75,15 +87,49 @@ export const createSessionClient = (env: WorkerEnv): ChatClient => {
   }): Promise<Response> => {
     try {
       const text = JSON.stringify(input.body);
+      const [conversation] = await withDatabase(env, (database) =>
+        database
+          .select()
+          .from(channelConversation)
+          .where(
+            and(
+              eq(
+                channelConversation.organizationId,
+                input.address.organizationId
+              ),
+              eq(channelConversation.agentId, input.address.agentId),
+              eq(
+                channelConversation.conversationId,
+                input.address.conversationId
+              ),
+              eq(channelConversation.sessionId, input.address.sessionId),
+              eq(channelConversation.engine, "pi-identity-v1"),
+              isNull(channelConversation.retiredAt)
+            )
+          )
+      );
+      if (!conversation) {
+        throw new Denied({
+          code: "unauthorized",
+          reason: "The conversation is retired or unavailable.",
+        });
+      }
+      const identity = {
+        organizationId: id.organization(conversation.organizationId),
+        ownerPrincipalId: id.principal(conversation.ownerPrincipalId),
+      };
       const proof = await signSessionRequest(
         input.address,
         input.context,
         input.path,
         text,
-        runtimeConfiguration(env).gatewaySigningKey
+        runtimeConfiguration(env).gatewaySigningKey,
+        identity
       );
-      const { organizationId, agentId, conversationId } = input.address;
-      const name = JSON.stringify([organizationId, agentId, conversationId]);
+      const name = JSON.stringify([
+        identity.organizationId,
+        identity.ownerPrincipalId,
+      ]);
       const stub = env.SESSION.get(env.SESSION.idFromName(name));
       return await stub.fetch(
         new Request(`https://session.internal${input.path}`, {
@@ -122,6 +168,22 @@ export const createSessionClient = (env: WorkerEnv): ChatClient => {
     }
   };
   return {
+    control: ({ command, ...input }) =>
+      invoke(
+        { ...input, body: { command }, path: "/control" },
+        Schema.decodeUnknownSync(ChatControlReceipt),
+        "operationId" in command ? command.operationId : undefined
+      ),
+    fork: ({ destination, entryId, operationId, ...input }) =>
+      invoke(
+        {
+          ...input,
+          body: { destination, entryId, operationId },
+          path: "/fork",
+        },
+        Schema.decodeUnknownSync(ChatForkReceipt),
+        operationId
+      ),
     decide: ({ approvalId, decision, ...input }) =>
       invoke(
         { ...input, body: { approvalId, decision }, path: "/decide" },

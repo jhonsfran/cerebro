@@ -1,4 +1,4 @@
-import type { SessionAgent } from "./session/agent";
+import type { IdentityAgent } from "./session/agent";
 
 export interface WorkerEnv {
   readonly [binding: string]: unknown;
@@ -10,7 +10,7 @@ export interface WorkerEnv {
   DEPLOY_MODE: "local" | "production";
   CHANNEL_ORGANIZATION_ID?: string;
   SLACK_CHANNEL_JSON?: string;
-  SESSION: DurableObjectNamespace<SessionAgent>;
+  SESSION: DurableObjectNamespace<IdentityAgent>;
   AUDIT_SINK: Fetcher;
   ACCOUNT_KEY: string;
   RUNTIME_CONFIG_JSON: string;

@@ -93,7 +93,10 @@ try {
       "tests/channels/slack.test.ts",
       "tests/channels/ui.test.ts",
       "tests/channels/conversation.test.ts",
+      "tests/channels/delivery.test.ts",
       "tests/channels/observation.test.ts",
+      "tests/channels/capabilities-ui.test.ts",
+      "tests/channels/forks.test.ts",
     ],
     {
       env: { ...process.env, CHANNEL_TEST_DATABASE_URL: databaseUrl },

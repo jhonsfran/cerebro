@@ -335,7 +335,7 @@ test("a Slack button decides an approval as the linked person", async () => {
 const memoryStore = () => {
   const values = new Map<string, SlackDelivery>();
   return {
-    get: (key: string) => values.get(key),
+    get: (key: string) => Promise.resolve(values.get(key)),
     set: async (key: string, delivery: SlackDelivery) => {
       values.set(key, delivery);
       await Promise.resolve();
@@ -543,7 +543,8 @@ test("Slack recovery does not repeat a post whose local outcome was lost", async
     },
   };
   await assert.rejects(deliverSlackReplies(input), /Lost host/u);
-  assert.equal(store.get("message:answer-1")?.state, "unknown");
+  const retained = await store.get("message:answer-1");
+  assert.equal(retained?.state, "unknown");
   await deliverSlackReplies(input);
   assert.deepEqual(slack.calls, [
     { method: "postMessage", text: "Complete answer." },

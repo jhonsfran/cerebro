@@ -195,7 +195,7 @@ const bindConversation = async (
   principalId: string
 ) => {
   const rootTimestamp = message.threadTs ?? message.ts;
-  const bindingKey = `pi-v1:slack:${await digest({ agentId: configuration.agentId, channelId: message.channel, organizationId: options.organizationId, principalId, rootTimestamp, userId: message.user, workspaceId: configuration.workspaceId })}`;
+  const bindingKey = `pi-identity-v1:slack:${await digest({ agentId: configuration.agentId, channelId: message.channel, organizationId: options.organizationId, principalId, rootTimestamp, userId: message.user, workspaceId: configuration.workspaceId })}`;
   const conversationId = `conversation:${await digest(bindingKey)}`;
   await database
     .insert(channelConversation)
@@ -204,7 +204,7 @@ const bindConversation = async (
       bindingKey,
       channelId: message.channel,
       conversationId,
-      engine: "pi-v1",
+      engine: "pi-identity-v1",
       kind: "slack",
       organizationId: options.organizationId,
       ownerPrincipalId: principalId,

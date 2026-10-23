@@ -20,6 +20,7 @@ interface WorkspaceBodyProps {
   startConversation: () => Promise<void>;
   refreshAgent: () => Promise<void>;
   onSaved: (agentId: string) => Promise<void>;
+  onConversation: (conversationId: string) => void;
 }
 const tabLabels = {
   access: "Access",
@@ -120,6 +121,7 @@ const AgentWorkspace = (props: WorkspaceBodyProps & { setup: Setup }) => {
     startConversation,
     refreshAgent,
     onSaved,
+    onConversation,
   } = props;
   const tab: AgentTab = view.kind === "create" ? "configuration" : view.tab;
   let content = (
@@ -172,6 +174,7 @@ const AgentWorkspace = (props: WorkspaceBodyProps & { setup: Setup }) => {
         userId={userId}
         agentId={selected.agentId}
         agentName={selected.name}
+        onConversation={onConversation}
         onStartConversation={() => {
           void startConversation();
         }}

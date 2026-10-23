@@ -2,7 +2,9 @@ import { createChannelService } from "@cerebro/channels/service";
 import { ChannelError } from "@cerebro/channels/types";
 import { id } from "@cerebro/contracts";
 import { failureToHttp, isContractFailure } from "@cerebro/contracts/failures";
+import { ChatControl } from "@cerebro/contracts/session-service";
 import { ORPCError } from "@orpc/server";
+import { Schema } from "effect";
 import { z } from "zod";
 
 import { o } from "../index";
@@ -13,6 +15,17 @@ const identifier = z
   .max(256)
   .regex(/^[^\s/]+$/u);
 const operation = z.object({ operationId: identifier });
+const chatControl = z.unknown().transform((value, context) => {
+  try {
+    return Schema.decodeUnknownSync(ChatControl)(value);
+  } catch {
+    context.addIssue({
+      code: "custom",
+      message: "Invalid conversation command.",
+    });
+    return z.NEVER;
+  }
+});
 const agentInput = z.object({
   enabledToolIds: z.array(identifier).max(32).default([]),
   expectedVersion: z.number().int().positive().optional(),
@@ -165,6 +178,35 @@ export const productRouter = {
         input.operationId
       )
     ),
+  forkConversation: product
+    .route({
+      method: "POST",
+      path: "/product/conversations/{conversationId}/fork",
+    })
+    .input(
+      conversation.extend({ operationId: identifier, entryId: identifier })
+    )
+    .handler(({ context, input }) =>
+      context.service.forkConversation(
+        context.userId,
+        input.conversationId,
+        input
+      )
+    ),
+  controlConversation: product
+    .route({
+      method: "POST",
+      path: "/product/conversations/{conversationId}/control",
+    })
+    .input(conversation.and(chatControl))
+    .handler(({ context, input }) => {
+      const { conversationId, ...command } = input;
+      return context.service.controlConversation(
+        context.userId,
+        conversationId,
+        command
+      );
+    }),
   deleteSkill: product
     .route({ method: "DELETE", path: "/product/skills/{name}" })
     .input(z.object({ name: skillName }))

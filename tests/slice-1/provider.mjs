@@ -66,6 +66,20 @@ const promptedTool = (input) => {
     input.messages.findLast((message) => message.role === "user")
   );
   if (
+    input.tools?.some((item) => item.function?.name === "search_conversations")
+  ) {
+    return "search_conversations";
+  }
+  if (prompt.includes("Delegate a verification task")) {
+    return "subagent";
+  }
+  if (prompt.includes("Search earlier verification conversations")) {
+    return "search_history";
+  }
+  if (prompt.includes("Schedule a verification reminder")) {
+    return "schedule";
+  }
+  if (
     prompt.includes("fixture_effect") ||
     prompt.includes("approval fixture")
   ) {
@@ -79,6 +93,21 @@ const promptedTool = (input) => {
 const requestedTool = (request, input) =>
   request.headers["x-fixture-tool"] ?? promptedTool(input);
 const toolArguments = (name) => {
+  if (name === "subagent") {
+    return { task: "Reply with the child verification result." };
+  }
+  if (name === "search_history") {
+    return { question: "Find the earlier launch decision." };
+  }
+  if (name === "search_conversations") {
+    return { term: "launch decision" };
+  }
+  if (name === "schedule") {
+    return {
+      delaySeconds: 15,
+      instruction: "Run the scheduled verification check.",
+    };
+  }
   if (name === "activate_skill") {
     return { name: "refund-policy" };
   }
@@ -103,7 +132,15 @@ const requestsTool = (input, purpose, toolName) =>
       input.messages.findLastIndex((message) => message.role === "user") + 1
     )
     .some((message) => message.role === "tool") &&
-  ["fixture-read", "fixture_effect", "activate_skill"].includes(toolName) &&
+  [
+    "fixture-read",
+    "fixture_effect",
+    "activate_skill",
+    "subagent",
+    "search_history",
+    "search_conversations",
+    "schedule",
+  ].includes(toolName) &&
   input.tools?.some((item) => item.function?.name === toolName);
 
 const recordToken = (call, delta) => {

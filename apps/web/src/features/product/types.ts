@@ -1,4 +1,5 @@
 import {
+  ChatControlReceipt,
   ChatDecisionReceipt,
   ChatReceipt,
   ChatSnapshot,
@@ -101,6 +102,14 @@ export const messageReceiptSchema = z.object({
     .transform((input) => Schema.decodeUnknownSync(ChatReceipt)(input)),
 });
 export const stopReceiptSchema = z.object({ stopped: z.boolean() });
+export const chatControlReceiptSchema = z
+  .unknown()
+  .transform((input) => Schema.decodeUnknownSync(ChatControlReceipt)(input));
+export const forkedConversationSchema = z.object({
+  agentId: z.string(),
+  conversationId: z.string(),
+  sessionId: z.string(),
+});
 export const approvalReceiptSchema = z.object({
   approval: z
     .unknown()
