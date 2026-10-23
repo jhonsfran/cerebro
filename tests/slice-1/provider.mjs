@@ -70,6 +70,9 @@ const promptedTool = (input) => {
   ) {
     return "search_conversations";
   }
+  if (prompt.includes("Show a verification report")) {
+    return "render_ui";
+  }
   if (prompt.includes("Delegate a verification task")) {
     return "subagent";
   }
@@ -92,7 +95,53 @@ const promptedTool = (input) => {
 };
 const requestedTool = (request, input) =>
   request.headers["x-fixture-tool"] ?? promptedTool(input);
-const toolArguments = (name) => {
+export const verificationUiRequest = () => ({
+  fallbackText:
+    "Verification report. Two checks passed. Runtime and reconnect are ready.",
+  spec: {
+    root: "report",
+    elements: {
+      report: {
+        type: "Card",
+        props: {
+          title: "Verification report",
+          description: "Two checks passed.",
+        },
+        children: ["metric", "checks"],
+      },
+      metric: {
+        type: "Metric",
+        props: { label: "Passed checks", value: "2" },
+        children: [],
+      },
+      checks: {
+        type: "Table",
+        props: {
+          caption: "Verification checks",
+          columns: ["Check", "Status"],
+          rows: [
+            ["Runtime", "Passed"],
+            ["Reconnect", "Passed"],
+          ],
+        },
+        children: [],
+      },
+    },
+  },
+});
+
+const toolArguments = (name, input) => {
+  if (name === "render_ui") {
+    const value = verificationUiRequest();
+    if (
+      messageText(
+        input.messages.findLast((message) => message.role === "user")
+      ).includes("invalid UI")
+    ) {
+      value.spec.elements.checks.props.rows = [["Uneven row"]];
+    }
+    return value;
+  }
   if (name === "subagent") {
     return { task: "Reply with the child verification result." };
   }
@@ -134,6 +183,7 @@ const requestsTool = (input, purpose, toolName) =>
     .some((message) => message.role === "tool") &&
   [
     "fixture-read",
+    "render_ui",
     "fixture_effect",
     "activate_skill",
     "subagent",
@@ -276,10 +326,13 @@ export const createFixture = async ({
     }
     const toolName = requestedTool(request, input);
     const tool = requestsTool(input, purpose, toolName);
-    const text =
-      purpose === "compaction"
-        ? "Fixture compacted history."
-        : "Cerebro slice 1 completed.";
+    let text = "Cerebro slice 1 completed.";
+    if (purpose === "compaction") {
+      text = "Fixture compacted history.";
+    } else if (toolName === "render_ui") {
+      text =
+        "Verification report. Two checks passed. Runtime and reconnect are ready.";
+    }
     const message = tool
       ? {
           content: null,
@@ -287,7 +340,7 @@ export const createFixture = async ({
           tool_calls: [
             {
               function: {
-                arguments: JSON.stringify(toolArguments(toolName)),
+                arguments: JSON.stringify(toolArguments(toolName, input)),
                 name: toolName,
               },
               id: `call_${digest({ operationId, toolName }).slice(0, 24)}`,

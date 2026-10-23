@@ -3,6 +3,10 @@ import { test } from "node:test";
 
 import { id } from "../../packages/contracts/src/identity.ts";
 import {
+  parseUiRequest,
+  uiPresentationBytes,
+} from "../../packages/generative-ui/src/presentation.ts";
+import {
   fauxAssistantMessage,
   fauxToolCall,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
@@ -21,6 +25,7 @@ import {
   chatSnapshot,
   snapshotToolIds,
 } from "../../packages/runtime/src/pi-harness.ts";
+import { verificationUiRequest } from "../slice-1/provider.mjs";
 
 const address = {
   agentId: id.agent("presentation-agent"),
@@ -104,6 +109,7 @@ test("committed snapshots hide redacted thinking and retain visible thinking", a
     {
       entryId: String(entryId),
       id: `${entryId}:0`,
+      outcome: "answered",
       role: "assistant",
       state: "complete",
       text: "Visible answer.",
@@ -111,6 +117,7 @@ test("committed snapshots hide redacted thinking and retain visible thinking", a
     {
       entryId: String(entryId),
       id: `${entryId}:1`,
+      outcome: "answered",
       role: "assistant",
       state: "complete",
       text: "Another answer.",
@@ -237,10 +244,13 @@ test("queued inputs retain submission identity and mode while passive writes sta
 
 test("repeated provider call IDs retain distinct tool executions and their ordered results", async () => {
   const first = await presentationEntry(
-    fauxAssistantMessage([
-      fauxToolCall("company_lookup", { query: "first" }, { id: "reused" }),
-      fauxToolCall("company_lookup", { query: "second" }, { id: "reused" }),
-    ])
+    fauxAssistantMessage(
+      [
+        fauxToolCall("company_lookup", { query: "first" }, { id: "reused" }),
+        fauxToolCall("company_lookup", { query: "second" }, { id: "reused" }),
+      ],
+      { stopReason: "toolUse" }
+    )
   );
   const firstResult = await presentationEntry(
     toolResult("reused", "First result.")
@@ -250,7 +260,8 @@ test("repeated provider call IDs retain distinct tool executions and their order
   );
   const later = await presentationEntry(
     fauxAssistantMessage(
-      fauxToolCall("company_lookup", { query: "later" }, { id: "reused" })
+      fauxToolCall("company_lookup", { query: "later" }, { id: "reused" }),
+      { stopReason: "toolUse" }
     )
   );
   const laterResult = await presentationEntry(
@@ -298,6 +309,7 @@ test("repeated provider call IDs retain distinct tool executions and their order
   assert.deepEqual(snapshot.messages[0], {
     entryId: String(first.id),
     id: String(first.id),
+    outcome: "tool-call",
     role: "assistant",
     state: "complete",
     text: "",
@@ -440,5 +452,126 @@ test("tool authorization includes pending and running requests before results ex
   assert.deepEqual(
     snapshot.tools.map((tool) => tool.state),
     ["pending", "running", "running"]
+  );
+});
+
+const acceptedUi = () => {
+  const result = parseUiRequest(verificationUiRequest());
+  if (result.kind !== "valid") {
+    assert.fail(result.reason);
+  }
+  return result.presentation;
+};
+const uiResult = (
+  options: {
+    callName?: string;
+    resultName?: string;
+    isError?: boolean;
+    details?: unknown;
+  } = {}
+) => ({
+  request: fauxAssistantMessage(
+    fauxToolCall(options.callName ?? "render_ui", verificationUiRequest(), {
+      id: "ui-call",
+    })
+  ),
+  result: {
+    content: [{ type: "text" as const, text: "Report text." }],
+    details: options.details ?? acceptedUi(),
+    isError: options.isError ?? false,
+    role: "toolResult" as const,
+    timestamp: 0,
+    toolCallId: "ui-call",
+    toolName: options.resultName ?? "render_ui",
+  },
+});
+
+test("only a matched successful internal UI result can publish its validated details", async () => {
+  for (const [options, publishes] of [
+    [{}, true],
+    [{ isError: true }, false],
+    [{ callName: "company_lookup" }, false],
+    [{ resultName: "company_lookup" }, false],
+    [{ callName: "company_lookup", resultName: "company_lookup" }, false],
+    [{ details: { ...acceptedUi(), version: 99 } }, false],
+    [
+      { details: { ...acceptedUi(), spec: { root: "missing", elements: {} } } },
+      false,
+    ],
+  ] as const) {
+    const messages = uiResult(options);
+    const snapshot = present(
+      // oxlint-disable-next-line no-await-in-loop -- Each case checks independently minted native identities.
+      await Promise.all([
+        presentationEntry(messages.request),
+        presentationEntry(messages.result),
+      ])
+    );
+    assert.equal(snapshot.tools.length, 1);
+    assert.equal(snapshot.tools[0]?.output, "Report text.");
+    assert.deepEqual(
+      snapshot.tools[0]?.presentation,
+      publishes ? acceptedUi() : undefined
+    );
+    if (!options.callName) {
+      assert.deepEqual(snapshot.tools[0]?.arguments, {});
+    }
+    assert.deepEqual(
+      snapshotToolIds(snapshot),
+      options.callName || options.resultName ? ["company_lookup"] : []
+    );
+  }
+});
+
+test("snapshot UI budget keeps newest accepted reports and strips specification arguments", async () => {
+  const request = verificationUiRequest();
+  request.fallbackText = "x".repeat(8000);
+  request.spec.elements.report.props.description = "a".repeat(4096);
+  request.spec.elements.metric.props.value = "b".repeat(4096);
+  const result = parseUiRequest(request);
+  if (result.kind !== "valid") {
+    assert.fail(result.reason);
+  }
+  const entries: EntryRecord[] = [];
+  for (let index = 0; index < 10; index += 1) {
+    entries.push(
+      // oxlint-disable-next-line no-await-in-loop -- Entries retain their native transcript order.
+      ...(await Promise.all([
+        presentationEntry(
+          fauxAssistantMessage(
+            fauxToolCall("render_ui", request, { id: `call-${index}` })
+          )
+        ),
+        presentationEntry({
+          content: [{ type: "text", text: "Report fallback." }],
+          details: result.presentation,
+          isError: false,
+          role: "toolResult",
+          timestamp: 0,
+          toolCallId: `call-${index}`,
+          toolName: "render_ui",
+        }),
+      ]))
+    );
+  }
+  const snapshot = present(entries);
+  const retained = snapshot.tools.filter((tool) => tool.presentation);
+  assert.ok(retained.length > 0 && retained.length < 10);
+  assert.equal(snapshot.tools[0]?.presentation, undefined);
+  assert.deepEqual(snapshot.tools.at(-1)?.presentation, result.presentation);
+  assert.ok(
+    retained.reduce(
+      (sum, tool) =>
+        sum + (tool.presentation ? uiPresentationBytes(tool.presentation) : 0),
+      0
+    ) <=
+      128 * 1024
+  );
+  assert.ok(
+    snapshot.tools.every(
+      (tool) =>
+        tool.output === "Report fallback." &&
+        JSON.stringify(tool.arguments) === "{}"
+    )
   );
 });

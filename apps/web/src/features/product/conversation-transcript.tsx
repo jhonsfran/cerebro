@@ -5,6 +5,8 @@ import type {
 } from "@cerebro/contracts/session-service";
 import { useEffect, useRef } from "react";
 
+import { ToolExecution } from "./tool-execution";
+
 const messageLabel = (message: ChatMessage, agentName: string): string => {
   if (message.kind === "summary") {
     return "Context";
@@ -85,14 +87,6 @@ const ApprovalRequest = ({
     </div>
   </section>
 );
-
-const toolStatus = {
-  failed: "Failed",
-  interrupted: "Interrupted",
-  pending: "Waiting",
-  running: "Running",
-  succeeded: "Completed",
-} satisfies Record<ChatSnapshot["tools"][number]["state"], string>;
 
 export const ConversationTranscript = ({
   snapshot,
@@ -208,26 +202,7 @@ export const ConversationTranscript = ({
               <TranscriptMessage agentName={agentName} message={message} />
             ) : null}
             {tools.map((tool) => (
-              <article
-                className="tool-execution"
-                key={tool.id}
-                aria-label={`${tool.toolName} ${toolStatus[tool.state]}`}
-                aria-busy={tool.state === "pending" || tool.state === "running"}
-              >
-                <header className="tool-execution-header">
-                  <strong>{tool.toolName}</strong>
-                  <span className="tool-status">{toolStatus[tool.state]}</span>
-                </header>
-                <details>
-                  <summary>Arguments</summary>
-                  <pre>{JSON.stringify(tool.arguments, null, 2)}</pre>
-                </details>
-                {tool.output ? (
-                  <details>
-                    <summary>Output</summary>
-                    <pre className="tool-output">{tool.output}</pre>
-                  </details>
-                ) : null}
+              <ToolExecution key={tool.id} tool={tool}>
                 {(activeApprovals.get(tool.id) ?? []).map((approval) => (
                   <ApprovalRequest
                     approval={approval}
@@ -236,7 +211,7 @@ export const ConversationTranscript = ({
                     key={approval.approvalId}
                   />
                 ))}
-              </article>
+              </ToolExecution>
             ))}
             {fork &&
             entryId &&

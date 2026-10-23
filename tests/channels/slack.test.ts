@@ -21,6 +21,23 @@ import {
   channelConversation,
   channelLinkEvent,
 } from "../../packages/db/src/schema/agents";
+import {
+  createModels,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxToolCall,
+} from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
+import {
+  createRegistry,
+  Harness,
+  MemoryStorage,
+} from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
+import { createGenerativeUiTool } from "../../packages/runtime/src/generative-ui-tool";
+import {
+  chatPresentation,
+  piContext,
+} from "../../packages/runtime/src/pi-harness";
+import { verificationUiRequest } from "../slice-1/provider.mjs";
 import { fixtureSubmissionCount } from "./fixture-session";
 import {
   createTestProduct,
@@ -584,3 +601,327 @@ test("the Slack client classifies delivery results", async () => {
   assert.equal(urls[0], "http://slack.test/api/chat.postMessage");
   assert.equal(toSlackText("# Title"), "*Title*");
 });
+
+const reportSnapshot = (busy = false) =>
+  chatSnapshot(address, {
+    busy,
+    messages: [
+      {
+        id: "user-report",
+        role: "user",
+        state: "complete",
+        text: "Show the report.",
+      },
+      {
+        id: "report-call",
+        outcome: "tool-call",
+        role: "assistant",
+        state: "complete",
+        text: "",
+      },
+      {
+        id: "report-result",
+        role: "tool",
+        toolName: "render_ui",
+        state: "complete",
+        text: "Two checks passed.",
+      },
+      {
+        id: "empty-answer",
+        outcome: "answered",
+        role: "assistant",
+        state: "complete",
+        text: " ",
+      },
+    ],
+    tools: [
+      {
+        arguments: {},
+        callId: "ui",
+        id: "report-call:0:0",
+        messageId: "report-call",
+        output: "Two checks passed.",
+        resultMessageId: "report-result",
+        state: "succeeded",
+        toolName: "render_ui",
+      },
+    ],
+  });
+
+test("Slack emits a settled report fallback once and withholds it while the current turn is busy", async () => {
+  const store = memoryStore();
+  const slack = fakeSlack();
+  const deliver = (snapshot: ReturnType<typeof chatSnapshot>) =>
+    deliverSlackReplies({
+      canShare: () => Promise.resolve(true),
+      slack: slack.api,
+      snapshot,
+      store,
+      thread,
+    });
+  await deliver(reportSnapshot(true));
+  assert.deepEqual(slack.calls, []);
+  await deliver(reportSnapshot());
+  await deliver(reportSnapshot());
+  assert.deepEqual(slack.calls, [
+    { method: "postMessage", text: "Two checks passed." },
+  ]);
+  assert.equal(store.values.get("presentation:report-call:0:0")?.state, "sent");
+});
+
+test("a normal assistant answer suppresses report fallback for that turn", async () => {
+  const store = memoryStore();
+  const slack = fakeSlack();
+  const snapshot = reportSnapshot();
+  await deliverSlackReplies({
+    canShare: () => Promise.resolve(true),
+    slack: slack.api,
+    snapshot: {
+      ...snapshot,
+      messages: [
+        ...snapshot.messages,
+        {
+          id: "normal-answer",
+          outcome: "answered",
+          role: "assistant",
+          state: "complete",
+          text: "Runtime and reconnect passed.",
+        },
+      ],
+    },
+    store,
+    thread,
+  });
+  assert.deepEqual(slack.calls, [
+    { method: "postMessage", text: "Runtime and reconnect passed." },
+  ]);
+  assert.equal(store.values.has("presentation:report-call:0:0"), false);
+});
+
+test("report fallback is turn-bound and passes the same recipient access checks as answers", async () => {
+  const store = memoryStore();
+  const slack = fakeSlack();
+  const report = reportSnapshot();
+  const later = {
+    ...report,
+    busy: true,
+    messages: [
+      ...report.messages,
+      {
+        id: "later-user",
+        role: "user" as const,
+        state: "complete" as const,
+        text: "Next question.",
+      },
+      {
+        id: "later-answer",
+        role: "assistant" as const,
+        state: "streaming" as const,
+        text: "Checking",
+      },
+    ],
+  };
+  await deliverSlackReplies({
+    canShare: () => Promise.resolve(true),
+    slack: slack.api,
+    snapshot: later,
+    store,
+    thread,
+  });
+  await deliverSlackReplies({
+    canShare: () => Promise.resolve(false),
+    slack: slack.api,
+    snapshot: later,
+    store,
+    thread,
+  });
+  assert.deepEqual(slack.calls, [
+    { method: "postMessage", text: "Two checks passed." },
+    {
+      method: "update",
+      text: "I can no longer share this answer because your access changed.",
+      ts: "1.0",
+    },
+  ]);
+  const denied = fakeSlack();
+  await deliverSlackReplies({
+    canShare: () => Promise.resolve(false),
+    slack: denied.api,
+    snapshot: report,
+    store: memoryStore(),
+    thread,
+  });
+  assert.deepEqual(denied.calls, [
+    {
+      method: "postMessage",
+      text: "I can no longer share this answer because your access changed.",
+    },
+  ]);
+});
+
+test("reconnect delivers a report-only turn before a later ordinary assistant answer", async () => {
+  const report = reportSnapshot();
+  const slack = fakeSlack();
+  const store = memoryStore();
+  const snapshot = {
+    ...report,
+    messages: [
+      ...report.messages,
+      {
+        id: "next-user",
+        role: "user" as const,
+        state: "complete" as const,
+        text: "Next question.",
+      },
+      {
+        id: "next-answer",
+        outcome: "answered" as const,
+        role: "assistant" as const,
+        state: "complete" as const,
+        text: "The later answer.",
+      },
+    ],
+  };
+  await deliverSlackReplies({
+    canShare: () => Promise.resolve(true),
+    slack: slack.api,
+    snapshot,
+    store,
+    thread,
+  });
+  assert.deepEqual(slack.calls, [
+    { method: "postMessage", text: "Two checks passed." },
+    { method: "postMessage", text: "The later answer." },
+  ]);
+});
+
+test("an intermediate tool preface cannot suppress a report fallback", async () => {
+  const report = reportSnapshot();
+  const slack = fakeSlack();
+  const snapshot = {
+    ...report,
+    messages: [
+      ...report.messages,
+      {
+        id: "preface",
+        outcome: "tool-call" as const,
+        role: "assistant" as const,
+        state: "complete" as const,
+        text: "I will verify this.",
+      },
+      {
+        id: "lookup-result",
+        role: "tool" as const,
+        state: "complete" as const,
+        text: "Checked",
+        toolName: "lookup",
+      },
+      {
+        id: "empty-final",
+        outcome: "answered" as const,
+        role: "assistant" as const,
+        state: "complete" as const,
+        text: "",
+      },
+    ],
+    tools: [
+      ...report.tools,
+      {
+        arguments: {},
+        callId: "lookup",
+        id: "preface:0:0",
+        messageId: "preface",
+        output: "Lookup interrupted.",
+        resultMessageId: "lookup-result",
+        state: "interrupted" as const,
+        toolName: "lookup",
+      },
+    ],
+  };
+  await deliverSlackReplies({
+    canShare: () => Promise.resolve(true),
+    slack: slack.api,
+    snapshot,
+    store: memoryStore(),
+    thread,
+  });
+  assert.deepEqual(slack.calls, [
+    { method: "postMessage", text: "Two checks passed." },
+    { method: "postMessage", text: "I will verify this." },
+  ]);
+});
+
+for (const stopReason of ["error", "aborted"] as const) {
+  test(`Slack delivers the report summary when the native reply ends with ${stopReason}`, async () => {
+    const context = piContext();
+    const faux = fauxProvider();
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("render_ui", verificationUiRequest()), {
+        stopReason: "toolUse",
+      }),
+      fauxAssistantMessage("The results are", {
+        errorMessage: "Connection failed.",
+        stopReason,
+      }),
+    ]);
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const registry = createRegistry();
+    const extension = {
+      name: "generative-ui",
+      tools: [createGenerativeUiTool({ authorize: async () => {} })],
+    };
+    registry.install(extension);
+    const harness = await Harness.open(
+      new MemoryStorage(),
+      {
+        models,
+        registry,
+        settings: { extensions: [extension], retry: { enabled: false } },
+      },
+      context
+    );
+    try {
+      const root = await harness.root(context);
+      const model = faux.getModel();
+      await root.configure(
+        { model: { modelId: model.id, provider: model.provider } },
+        context
+      );
+      const submitted = await root.submit(
+        { content: "Show the report.", type: "input" },
+        context
+      );
+      const settled = await submitted.wait(context);
+      assert.equal(settled.status, "unanswered");
+      const watch = await root.watch(context);
+      try {
+        const snapshot = chatSnapshot(
+          address,
+          // oxlint-disable-next-line unicorn/prefer-structured-clone -- Exercise the JSON transport before channel delivery.
+          JSON.parse(JSON.stringify(chatPresentation(watch.value)))
+        );
+        assert.equal(snapshot.tools[0]?.state, "succeeded");
+        const slack = fakeSlack();
+        const store = memoryStore();
+        await deliverSlackReplies({
+          canShare: () => Promise.resolve(true),
+          slack: slack.api,
+          snapshot,
+          store,
+          thread,
+        });
+        assert.deepEqual(slack.calls, [
+          {
+            method: "postMessage",
+            text: "Verification report. Two checks passed. Runtime and reconnect are ready.",
+          },
+        ]);
+      } finally {
+        await watch.stop();
+      }
+    } finally {
+      await harness.close(context);
+    }
+  });
+}

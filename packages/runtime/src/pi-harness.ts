@@ -5,6 +5,11 @@ import type {
   ChatQueuedInput,
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
+import {
+  MAX_SNAPSHOT_UI_BYTES,
+  parseUiPresentation,
+  uiPresentationBytes,
+} from "@cerebro/generative-ui/presentation";
 import { isInternalToolName } from "@cerebro/tools/tool-names";
 import type { Message } from "@earendil-works/pi-ai";
 import type { ConversationView, Harness } from "@earendil-works/pi-durable";
@@ -131,6 +136,40 @@ const applyLiveToolSlots = (
   return tools;
 };
 
+const acceptedPresentation = (
+  tool: ChatToolExecution,
+  message: Extract<Message, { role: "toolResult" }>
+) => {
+  if (
+    tool.toolName !== "render_ui" ||
+    message.toolName !== "render_ui" ||
+    message.isError
+  ) {
+    return;
+  }
+  const result = parseUiPresentation(message.details);
+  return result.kind === "valid" ? result.presentation : undefined;
+};
+
+const retainPresentations = (
+  tools: ChatToolExecution[]
+): ChatToolExecution[] => {
+  let retainedBytes = 0;
+  for (const [index, tool] of tools.toReversed().entries()) {
+    if (!tool.presentation) {
+      continue;
+    }
+    const bytes = uiPresentationBytes(tool.presentation);
+    if (retainedBytes + bytes <= MAX_SNAPSHOT_UI_BYTES) {
+      retainedBytes += bytes;
+    } else {
+      const { presentation: _presentation, ...textTool } = tool;
+      tools[tools.length - 1 - index] = textTool;
+    }
+  }
+  return tools;
+};
+
 const toolExecutions = (
   view: ConversationView,
   live: typeof liveSchema.Type
@@ -153,7 +192,7 @@ const toolExecutions = (
           tools.push({
             arguments: Schema.decodeUnknownSync(
               ChatToolExecution.fields.arguments
-            )(block.arguments),
+            )(block.name === "render_ui" ? {} : block.arguments),
             callId: block.id,
             id: `${entry.id}:${modelIndex}:${blockIndex}`,
             messageId,
@@ -171,8 +210,10 @@ const toolExecutions = (
         if (index === undefined || !tool) {
           continue;
         }
+        const presentation = acceptedPresentation(tool, message);
         tools[index] = {
           ...tool,
+          ...(presentation ? { presentation } : {}),
           output: message.content
             .filter((block) => block.type === "text")
             .map((block) => block.text)
@@ -183,7 +224,35 @@ const toolExecutions = (
       }
     }
   }
-  return applyLiveToolSlots(tools, live.tools ?? []);
+  return retainPresentations(applyLiveToolSlots(tools, live.tools ?? []));
+};
+
+const assistantOutcome = (
+  message: Extract<Message, { role: "assistant" }>
+): NonNullable<ChatMessage["outcome"]> => {
+  switch (message.stopReason) {
+    case "stop":
+    case "length": {
+      return "answered";
+    }
+    case "toolUse": {
+      return message.content.some((block) => block.type === "toolCall")
+        ? "tool-call"
+        : "answered";
+    }
+    case "aborted": {
+      return "interrupted";
+    }
+    case "error":
+    case "deferred":
+    case "pending": {
+      return "failed";
+    }
+    default: {
+      const exhaustive: never = message.stopReason;
+      return exhaustive;
+    }
+  }
 };
 
 const presentedMessage = (
@@ -226,6 +295,7 @@ const presentedMessage = (
     .join("");
   return {
     id,
+    outcome: assistantOutcome(message),
     role: "assistant",
     state: "complete",
     text: message.content

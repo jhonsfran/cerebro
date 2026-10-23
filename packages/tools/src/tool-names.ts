@@ -1,5 +1,6 @@
 const internalToolNames = new Set([
   "activate_skill",
+  "render_ui",
   "read_skill_resource",
   "subagent",
   "search_history",

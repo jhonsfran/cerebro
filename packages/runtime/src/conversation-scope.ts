@@ -38,6 +38,7 @@ import { conversationProvider } from "./conversation-provider.ts";
 import { createConversationReminders } from "./conversation-reminders.ts";
 import { createConversationWork } from "./conversation-work.ts";
 import type { SearchResult } from "./conversation-work.ts";
+import { createGenerativeUiTool } from "./generative-ui-tool.ts";
 import { chatSnapshot, piContext, snapshotToolIds } from "./pi-harness.ts";
 import { createControlledProvider } from "./pi-provider.ts";
 import { createPiTools } from "./pi-tools.ts";
@@ -357,7 +358,12 @@ export class ConversationScope {
     services.install({
       name: `cerebro-tools:${configuration.address.sessionId}`,
       hooks: scope.work.hooks,
-      tools: [...runtime.tools, ...scope.work.tools, ...scope.reminders.tools],
+      tools: [
+        ...runtime.tools,
+        ...scope.work.tools,
+        ...scope.reminders.tools,
+        createGenerativeUiTool({ authorize }),
+      ],
     });
     await scope.reminders.restore();
     if (configuration.notify) {

@@ -62,6 +62,7 @@ const childId = (child: ChildRecord): string => `child:${child.nativeId}`;
 const requestId = (child: ChildRecord): string =>
   `${child.purpose}:${child.ownerTaskId}`;
 const removedTools = new Set([
+  "render_ui",
   "subagent",
   "search_history",
   "search_conversations",
@@ -349,8 +350,9 @@ export const createConversationWork = (options: ConversationWorkOptions) => {
                 tools: snapshot.tools.slice(-DISPLAY_ITEMS).map((tool) => {
                   const argumentsText = JSON.stringify(tool.arguments);
                   const rendered = retain(argumentsText);
+                  const { presentation: _presentation, ...textTool } = tool;
                   return {
-                    ...tool,
+                    ...textTool,
                     arguments:
                       rendered === argumentsText ? tool.arguments : rendered,
                     output: retain(tool.output),

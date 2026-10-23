@@ -31,6 +31,7 @@ COPY packages/authorization/package.json ./packages/authorization/package.json
 COPY packages/channels/package.json ./packages/channels/package.json
 COPY packages/config/package.json ./packages/config/package.json
 COPY packages/contracts/package.json ./packages/contracts/package.json
+COPY packages/generative-ui/package.json ./packages/generative-ui/package.json
 COPY packages/db/package.json ./packages/db/package.json
 COPY packages/memory/package.json ./packages/memory/package.json
 COPY packages/runtime/package.json ./packages/runtime/package.json

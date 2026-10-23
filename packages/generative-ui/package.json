@@ -1,0 +1,21 @@
+{
+  "name": "@cerebro/generative-ui",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./catalog": "./src/catalog.ts",
+    "./presentation": "./src/presentation.ts"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "check-types": "tsc -b"
+  },
+  "dependencies": {
+    "@json-render/core": "0.21.2",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cerebro/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

@@ -894,3 +894,103 @@
 .detail-dialog::backdrop {
   background: #172e2670;
 }
+
+.generated-ui {
+  --foreground: var(--product-ink);
+  --card: #fffefa;
+  --card-foreground: var(--product-ink);
+  --muted-foreground: var(--product-muted);
+  --border: var(--product-line);
+  --ring: var(--product-accent);
+  min-width: 0;
+  margin-block: 12px;
+  overflow-wrap: anywhere;
+  color: var(--foreground);
+}
+.generated-ui p,
+.generated-ui dl {
+  margin: 0;
+}
+.generated-ui h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.generated-card,
+.generated-stack,
+.generated-card [data-slot="card-content"] {
+  min-width: 0;
+}
+.generated-card [data-slot="card-content"],
+.generated-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.generated-stack-horizontal {
+  flex-direction: row;
+  flex-wrap: wrap;
+}
+.generated-stack-horizontal > * {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.generated-muted {
+  color: var(--muted-foreground);
+}
+.generated-metric strong {
+  display: block;
+  font-size: 24px;
+  line-height: 1.4;
+}
+.generated-key-value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 8px;
+}
+.generated-key-value dt {
+  color: var(--muted-foreground);
+}
+.generated-key-value dd {
+  margin: 0;
+}
+.generated-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.generated-table-scroll:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.generated-table-scroll table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+}
+.generated-table-scroll caption {
+  text-align: left;
+  padding-bottom: 8px;
+  font-weight: 600;
+}
+.generated-table-scroll th,
+.generated-table-scroll td {
+  min-width: 90px;
+  max-width: 280px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.generated-summary {
+  margin-top: 8px;
+}
+.generated-summary p {
+  margin-top: 8px;
+  white-space: pre-wrap;
+}
+
+.generated-fallback {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

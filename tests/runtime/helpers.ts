@@ -61,6 +61,7 @@ const sourceIdentity = () => {
   const hash = createHash("sha256");
   for (const directory of [
     "packages/contracts/src",
+    "packages/generative-ui/src",
     "packages/runtime/src",
     "packages/tools/src",
     "packages/db/src",

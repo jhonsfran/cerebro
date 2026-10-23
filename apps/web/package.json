@@ -11,7 +11,9 @@
   "dependencies": {
     "@cerebro/api": "workspace:*",
     "@cerebro/contracts": "workspace:*",
+    "@cerebro/generative-ui": "workspace:*",
     "@cerebro/ui": "workspace:*",
+    "@json-render/react": "0.21.2",
     "@orpc/client": "catalog:",
     "@orpc/server": "catalog:",
     "@orpc/tanstack-query": "^1.15.0",

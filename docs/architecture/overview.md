@@ -66,11 +66,22 @@ Skills are company playbooks that administrators write in the product. When a se
 | Public-to-native conversation mapping | Pi session document | Identity SQLite |
 | Owner, agent version, content access dependencies, and approvals | Cerebro | Conversation-scoped company metadata beside Pi state |
 | Chat messages, partial text, and busy status | Pi current view | Derived on read, then held in browser memory |
+| Accepted generated reports | Internal `render_ui` tool | Pi tool result details in the active transcript |
 | Slack delivery identity | Channel adapter | Conversation-scoped identity SQLite |
 | Source documents and artifacts | Artifact storage | Artifact MinIO |
 | celld durable state | celld | Separate runtime MinIO |
 
 ChatSnapshot presents native Pi messages, queued inputs, tool execution state, and company approval data. Cerebro does not persist that snapshot. Pi decides when execution is active or complete. The browser uses native message order and entry identities. Tool identities include their transcript position because providers can reuse call IDs. Reset and compaction can change the current view. A separate permanent answer archive is not part of the chat contract.
+
+## Generated reports
+
+Agents can call the internal `render_ui` tool to compose read-only reports from Stack, Card, Text, Metric, KeyValue, and Table components. The shared `@cerebro/generative-ui` catalog defines their properties. The web registry maps those definitions to React components.
+
+The tool checks current conversation authority and validates a complete rooted tree. It stores the versioned specification in Pi result details and returns a plain text summary. Only a successful matching `render_ui` result can publish a presentation. Existing snapshot authorization and source dependencies also apply to reports.
+
+Each presentation is limited to 32 KiB, 64 elements, and eight levels. Tables allow eight columns and 50 rows. A snapshot retains at most 128 KiB of presentations, with newer reports taking priority. Omitted and unsupported presentations retain text output. Public tool arguments omit the specification to avoid duplicate copies. Delegated child conversations use text results.
+
+Reload and reconnect reconstruct reports from durable tool results. Compaction and reset follow the active transcript. The browser offers a text summary for each report. Committed assistant messages carry their native reply outcome. Slack uses a completed answer, or the tool summary after a settled turn without an answer. Failed and interrupted reply fragments do not suppress or replace that summary.
 
 ## Send, Stop, and reconnect
 
