@@ -73,14 +73,15 @@ const parse = (value: unknown): UiParseResult => {
     }
     const result = uiPresentationSchema.safeParse(value);
     if (!result.success) {
-      const [issue] = result.error.issues;
       return {
         kind: "invalid",
-        reason:
-          `Invalid UI at ${issue?.path.join(".") || "presentation"}: ${issue?.message ?? "invalid value"}`.slice(
-            0,
-            400
-          ),
+        reason: `Invalid UI: ${result.error.issues
+          .slice(0, 4)
+          .map(
+            (issue) =>
+              `${issue.path.join(".") || "presentation"}: ${issue.message}`
+          )
+          .join("; ")}`.slice(0, 400),
       };
     }
     const reason = treeError(result.data.spec);

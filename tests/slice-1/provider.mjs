@@ -70,7 +70,10 @@ const promptedTool = (input) => {
   ) {
     return "search_conversations";
   }
-  if (prompt.includes("Show a verification report")) {
+  if (
+    prompt.includes("Show a verification report") ||
+    prompt.includes("UI rendering test")
+  ) {
     return "render_ui";
   }
   if (prompt.includes("Delegate a verification task")) {
@@ -130,14 +133,86 @@ export const verificationUiRequest = () => ({
   },
 });
 
+export const componentUiRequest = () => ({
+  fallbackText:
+    "Regional service status. This is test data. Regions: 2; Healthy: 1; Alerts: 1. " +
+    "Environment: Local test. North: Healthy, 120 ms. South: Degraded, 850 ms.",
+  spec: {
+    root: "root",
+    elements: {
+      root: {
+        type: "Stack",
+        props: { direction: "vertical" },
+        children: ["report"],
+      },
+      report: {
+        type: "Card",
+        props: {
+          title: "UI rendering test",
+          description: "Synthetic data for component verification.",
+        },
+        children: ["heading", "note", "metrics", "environment", "checks"],
+      },
+      heading: {
+        type: "Text",
+        props: { text: "Regional service status", tone: "default" },
+        children: [],
+      },
+      note: {
+        type: "Text",
+        props: { text: "This is test data.", tone: "muted" },
+        children: [],
+      },
+      metrics: {
+        type: "Stack",
+        props: { direction: "horizontal" },
+        children: ["regions", "healthy", "alerts"],
+      },
+      regions: {
+        type: "Metric",
+        props: { label: "Regions", value: "2" },
+        children: [],
+      },
+      healthy: {
+        type: "Metric",
+        props: { label: "Healthy", value: "1" },
+        children: [],
+      },
+      alerts: {
+        type: "Metric",
+        props: { label: "Alerts", value: "1" },
+        children: [],
+      },
+      environment: {
+        type: "KeyValue",
+        props: { label: "Environment", value: "Local test" },
+        children: [],
+      },
+      checks: {
+        type: "Table",
+        props: {
+          caption: "Regional checks",
+          columns: ["Region", "Status", "Response time"],
+          rows: [
+            ["North", "Healthy", "120 ms"],
+            ["South", "Degraded", "850 ms"],
+          ],
+        },
+        children: [],
+      },
+    },
+  },
+});
+
 const toolArguments = (name, input) => {
   if (name === "render_ui") {
-    const value = verificationUiRequest();
-    if (
-      messageText(
-        input.messages.findLast((message) => message.role === "user")
-      ).includes("invalid UI")
-    ) {
+    const prompt = messageText(
+      input.messages.findLast((message) => message.role === "user")
+    );
+    const value = prompt.includes("UI rendering test")
+      ? componentUiRequest()
+      : verificationUiRequest();
+    if (prompt.includes("invalid UI")) {
       value.spec.elements.checks.props.rows = [["Uneven row"]];
     }
     return value;
@@ -330,8 +405,7 @@ export const createFixture = async ({
     if (purpose === "compaction") {
       text = "Fixture compacted history.";
     } else if (toolName === "render_ui") {
-      text =
-        "Verification report. Two checks passed. Runtime and reconnect are ready.";
+      text = toolArguments(toolName, input).fallbackText;
     }
     const message = tool
       ? {

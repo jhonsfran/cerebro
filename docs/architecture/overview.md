@@ -77,7 +77,7 @@ ChatSnapshot presents native Pi messages, queued inputs, tool execution state, a
 
 Agents can call the internal `render_ui` tool to compose read-only reports from Stack, Card, Text, Metric, KeyValue, and Table components. The shared `@cerebro/generative-ui` catalog defines their properties. The web registry maps those definitions to React components.
 
-The tool checks current conversation authority and validates a complete rooted tree. It stores the versioned specification in Pi result details and returns a plain text summary. Only a successful matching `render_ui` result can publish a presentation. Existing snapshot authorization and source dependencies also apply to reports.
+The tool checks current conversation authority and validates a complete rooted tree. Its argument preparation uses the component schema before Pi's general validator, so invalid fields produce bounded errors for the selected component. The tool instructions include exact property names and a leaf example. It stores the versioned specification in Pi result details and returns a plain text summary. Only a successful matching `render_ui` result can publish a presentation. Existing snapshot authorization and source dependencies also apply to reports.
 
 Each presentation is limited to 32 KiB, 64 elements, and eight levels. Tables allow eight columns and 50 rows. A snapshot retains at most 128 KiB of presentations, with newer reports taking priority. Omitted and unsupported presentations retain text output. Public tool arguments omit the specification to avoid duplicate copies. Delegated child conversations use text results.
 

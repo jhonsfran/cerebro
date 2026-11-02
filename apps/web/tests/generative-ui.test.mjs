@@ -5,7 +5,10 @@ import { parseUiRequest } from "@cerebro/generative-ui/presentation";
 import { JSDOM } from "jsdom";
 import { createElement } from "react";
 
-import { verificationUiRequest } from "../../../tests/slice-1/provider.mjs";
+import {
+  componentUiRequest,
+  verificationUiRequest,
+} from "../../../tests/slice-1/provider.mjs";
 import { ConversationTranscript } from "../src/features/product/conversation-transcript";
 
 const globalNames = [
@@ -136,4 +139,41 @@ test("an omitted or unsupported report keeps its ordinary text output visible", 
   assert.equal(fallback.closest("details"), null);
   assert.ok(view.getByText("Agent report"));
   assert.equal(view.queryByText("Arguments"), null);
+});
+
+test("the regional report renders all six components with the supplied test values", () => {
+  const accepted = parseUiRequest(componentUiRequest());
+  assert.equal(accepted.kind, "valid");
+  const view = render(
+    createElement(
+      ConversationTranscript,
+      props(snapshot(accepted.presentation))
+    )
+  );
+  assert.ok(view.getByRole("heading", { name: "UI rendering test" }));
+  assert.ok(view.getByText("Synthetic data for component verification."));
+  assert.ok(view.getByText("Regional service status"));
+  assert.equal(
+    view.getByText("This is test data.").className,
+    "generated-muted"
+  );
+  const metrics = view.container.querySelector(".generated-stack-horizontal");
+  assert.deepEqual(
+    [...metrics.querySelectorAll(".generated-metric")].map(
+      (metric) => metric.textContent
+    ),
+    ["Regions2", "Healthy1", "Alerts1"]
+  );
+  assert.equal(view.container.querySelector("dt").textContent, "Environment");
+  assert.equal(view.container.querySelector("dd").textContent, "Local test");
+  const table = view.getByRole("table", { name: "Regional checks" });
+  assert.deepEqual(
+    [...table.querySelectorAll("tbody tr")].map((row) =>
+      [...row.querySelectorAll("td")].map((cell) => cell.textContent)
+    ),
+    [
+      ["North", "Healthy", "120 ms"],
+      ["South", "Degraded", "850 ms"],
+    ]
+  );
 });

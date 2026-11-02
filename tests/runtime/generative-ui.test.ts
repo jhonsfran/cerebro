@@ -47,7 +47,7 @@ const open = async (filename: string, authorize = () => Promise.resolve()) => {
     { models, registry, settings: { extensions: [extension] } },
     context
   );
-  return { harness, model: faux.getModel() };
+  return { harness, model: faux.getModel(), faux };
 };
 
 test("the real Pi tool stores UI details and restores the same report after storage reopen", async () => {
@@ -142,6 +142,65 @@ test("the native UI tool withholds a presentation after authorization denial", a
       assert.equal(snapshot.tools[0]?.state, "failed");
       assert.equal(snapshot.tools[0]?.presentation, undefined);
       assert.match(snapshot.tools[0]?.output ?? "", /Access revoked/u);
+    } finally {
+      await watch.stop();
+    }
+  } finally {
+    await fixture.harness.close(context);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("native UI validation identifies Text fields without unrelated component errors", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "cerebro-ui-invalid-"));
+  const fixture = await open(path.join(directory, "pi.sqlite"));
+  fixture.faux.setResponses([
+    fauxAssistantMessage(
+      fauxToolCall("render_ui", {
+        spec: {
+          root: "s",
+          elements: {
+            s: {
+              type: "Stack",
+              props: { direction: "vertical" },
+              children: ["t"],
+            },
+            t: {
+              type: "Text",
+              props: { content: "Regional service status", tone: "default" },
+            },
+          },
+        },
+        fallbackText: "Regional service status",
+      }),
+      { stopReason: "toolUse" }
+    ),
+    fauxAssistantMessage("The report arguments need correction."),
+  ]);
+  try {
+    const root = await fixture.harness.root(context);
+    await root.configure(
+      {
+        model: { modelId: fixture.model.id, provider: fixture.model.provider },
+      },
+      context
+    );
+    const submitted = await root.submit(
+      { content: "Show regional service status.", type: "input" },
+      context
+    );
+    await submitted.wait(context);
+    const watch = await root.watch(context);
+    try {
+      const [tool] = chatPresentation(watch.value).tools;
+      assert.equal(tool?.state, "failed");
+      assert.equal(tool?.presentation, undefined);
+      assert.match(tool?.output ?? "", /spec\.elements\.t\.props\.text/u);
+      assert.match(tool?.output ?? "", /spec\.elements\.t\.children/u);
+      assert.doesNotMatch(
+        tool?.output ?? "",
+        /must be equal to constant|Received arguments/u
+      );
     } finally {
       await watch.stop();
     }
