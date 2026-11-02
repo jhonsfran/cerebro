@@ -1,8 +1,9 @@
-import { Loader2 } from "lucide-react";
+import { Spinner } from "@cerebro/ui/components/spinner";
 
 const Loader = () => (
   <div className="flex h-full items-center justify-center pt-8">
-    <Loader2 className="animate-spin" />
+    <Spinner className="size-6" />
+    <span className="sr-only">Loading…</span>
   </div>
 );
 

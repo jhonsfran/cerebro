@@ -30,6 +30,8 @@ const globalNames = [
   "document",
   "navigator",
   "HTMLElement",
+  "Element",
+  "Node",
   "sessionStorage",
   "Event",
   "fetch",
@@ -49,6 +51,8 @@ const installDom = () => {
     "document",
     "navigator",
     "HTMLElement",
+    "Element",
+    "Node",
     "sessionStorage",
     "Event",
   ] as const) {

@@ -2,16 +2,22 @@ import { Link } from "@tanstack/react-router";
 
 import UserMenu from "./user-menu";
 
+const navLink =
+  "text-shell-muted hover:text-shell-foreground focus-visible:outline-shell-foreground focus-visible:outline-2 focus-visible:outline-offset-4 [&.active]:text-shell-foreground";
+
 const Header = () => (
-  <header className="flex min-h-16 items-center justify-between border-b border-white/10 bg-[#193327] px-6 text-[#e9f1e3]">
+  <header className="bg-shell text-shell-foreground border-shell-border flex h-(--header-height) items-center justify-between border-b px-4 md:px-6">
     <nav
       aria-label="Main navigation"
       className="flex items-center gap-6 text-sm"
     >
-      <Link to="/" className="font-semibold tracking-tight">
+      <Link
+        to="/"
+        className="font-display focus-visible:outline-shell-foreground text-lg tracking-tight focus-visible:outline-2 focus-visible:outline-offset-4"
+      >
         Cerebro
       </Link>
-      <Link to="/dashboard" className="text-[#bfd0b5]">
+      <Link to="/dashboard" className={navLink}>
         Workspace
       </Link>
     </nav>

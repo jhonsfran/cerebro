@@ -1,4 +1,5 @@
 import { Toaster } from "@cerebro/ui/components/sonner";
+import { TooltipProvider } from "@cerebro/ui/components/tooltip";
 import type { QueryClient } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import {
@@ -23,15 +24,19 @@ export interface RouterAppContext {
 }
 
 const RootDocument = () => (
-  <html lang="en" className="dark">
+  <html lang="en">
     <head>
       <HeadContent />
     </head>
     <body>
-      <div className="grid h-svh grid-rows-[auto_1fr]">
-        <Header />
-        <Outlet />
-      </div>
+      <TooltipProvider>
+        <div className="grid h-svh grid-rows-[auto_minmax(0,1fr)]">
+          <Header />
+          <div className="min-h-0 overflow-y-auto">
+            <Outlet />
+          </div>
+        </div>
+      </TooltipProvider>
       <Toaster richColors />
       <TanStackRouterDevtools position="bottom-left" />
       <ReactQueryDevtools position="bottom" buttonPosition="bottom-right" />

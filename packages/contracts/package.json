@@ -12,6 +12,7 @@
     "test": "node --experimental-strip-types --test ../../tests/contracts/contracts.test.ts"
   },
   "dependencies": {
+    "@cerebro/generative-ui": "workspace:*",
     "effect": "4.0.1"
   },
   "devDependencies": {

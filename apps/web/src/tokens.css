@@ -1,0 +1,46 @@
+/* Cerebro brand theme for the shadcn components in @cerebro/ui.
+ * Every colour in the app reads from these variables; components use them
+ * through the semantic Tailwind names (bg-primary, text-muted-foreground…). */
+:root {
+  --background: oklch(97.4% 0.007 135);
+  --foreground: oklch(28.6% 0.036 165);
+  --card: oklch(99.4% 0.004 120);
+  --card-foreground: oklch(28.6% 0.036 165);
+  --popover: oklch(99.4% 0.004 120);
+  --popover-foreground: oklch(28.6% 0.036 165);
+  --primary: oklch(40.4% 0.068 159);
+  --primary-foreground: oklch(98.5% 0.006 130);
+  --secondary: oklch(92.5% 0.03 150);
+  --secondary-foreground: oklch(28.6% 0.036 165);
+  --muted: oklch(95.4% 0.011 135);
+  --muted-foreground: oklch(49% 0.024 155);
+  --accent: oklch(92.4% 0.017 140);
+  --accent-foreground: oklch(28.6% 0.036 165);
+  --destructive: oklch(47% 0.12 33);
+  --border: oklch(90.5% 0.015 136);
+  --input: oklch(63% 0.02 150);
+  --ring: oklch(52% 0.1 158);
+
+  --sidebar: oklch(95.4% 0.011 135);
+  --sidebar-foreground: oklch(28.6% 0.036 165);
+  --sidebar-primary: oklch(40.4% 0.068 159);
+  --sidebar-primary-foreground: oklch(98.5% 0.006 130);
+  --sidebar-accent: oklch(92.4% 0.017 140);
+  --sidebar-accent-foreground: oklch(28.6% 0.036 165);
+  --sidebar-border: oklch(90.5% 0.015 136);
+  --sidebar-ring: oklch(52% 0.1 158);
+
+  /* The top bar keeps the brand's dark green. */
+  --shell: oklch(29.6% 0.039 163);
+  --shell-foreground: oklch(95% 0.02 131);
+  --shell-muted: oklch(83.7% 0.041 134);
+  --shell-border: oklch(40% 0.035 160);
+
+  --warning: oklch(97.4% 0.02 92);
+  --warning-border: oklch(82% 0.065 89);
+  --warning-foreground: oklch(40% 0.06 75);
+
+  --header-height: 3.5rem;
+  --measure-chat: 46rem;
+  --measure-page: 68rem;
+}

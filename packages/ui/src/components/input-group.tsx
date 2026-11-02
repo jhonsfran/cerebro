@@ -60,7 +60,9 @@ const InputGroupAddon = ({
     data-align={align}
     className={cn(inputGroupAddonVariants({ align }), className)}
     onClick={(e) => {
-      if (e.target instanceof Element && e.target.closest("button")) {
+      // Duck-typed so it works across DOM realms (iframes, test DOMs).
+      const target = e.target as Partial<Pick<Element, "closest">>;
+      if (target.closest?.("button")) {
         return;
       }
       e.currentTarget.parentElement

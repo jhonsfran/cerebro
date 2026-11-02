@@ -58,3 +58,6 @@ coverage
 .cache
 tmp
 temp
+
+# Hallmark design-run log
+.hallmark/

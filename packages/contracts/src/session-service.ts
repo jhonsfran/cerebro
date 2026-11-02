@@ -2,6 +2,7 @@
 import { Schema } from "effect";
 
 import type { EventAddress } from "./events.ts";
+import { UiPresentationFromUnknown } from "./generative-ui.ts";
 import type { ExecutionContext } from "./identity.ts";
 import { canonicalToolArguments } from "./tools.ts";
 
@@ -31,6 +32,9 @@ export const ChatMessage = Schema.Struct({
   entryId: Schema.optional(Schema.NonEmptyString),
   kind: Schema.optional(Schema.Literal("summary")),
   id: Schema.NonEmptyString,
+  outcome: Schema.optional(
+    Schema.Literals(["answered", "tool-call", "failed", "interrupted"])
+  ),
   role: Schema.Literals(["user", "assistant", "tool"]),
   state: Schema.Literals(["complete", "streaming"]),
   text: Schema.String,
@@ -52,6 +56,7 @@ export const ChatToolExecution = Schema.Struct({
   id: Schema.NonEmptyString,
   messageId: Schema.NonEmptyString,
   output: Schema.String,
+  presentation: Schema.optional(UiPresentationFromUnknown),
   resultMessageId: Schema.optional(Schema.NonEmptyString),
   state: Schema.Literals([
     "pending",

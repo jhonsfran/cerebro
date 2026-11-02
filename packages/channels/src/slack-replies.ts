@@ -86,6 +86,44 @@ const approvalMessage = (
   };
 };
 
+const presentationFallbacks = (snapshot: ChatSnapshot) =>
+  snapshot.tools.flatMap((tool) => {
+    if (
+      tool.toolName !== "render_ui" ||
+      tool.state !== "succeeded" ||
+      !tool.output.trim() ||
+      !tool.resultMessageId
+    ) {
+      return [];
+    }
+    const resultIndex = snapshot.messages.findIndex(
+      (message) => message.id === tool.resultMessageId
+    );
+    if (resultIndex === -1) {
+      return [];
+    }
+    const afterResult = snapshot.messages.slice(resultIndex + 1);
+    const nextTurn = afterResult.findIndex(
+      (message) => message.role === "user"
+    );
+    if (nextTurn === -1 && snapshot.busy) {
+      return [];
+    }
+    const turnEnd = nextTurn === -1 ? afterResult.length : nextTurn;
+    const answered = afterResult
+      .slice(0, turnEnd)
+      .some((message) => message.outcome === "answered" && message.text.trim());
+    return answered
+      ? []
+      : [
+          {
+            key: `presentation:${tool.id}`,
+            messageId: tool.resultMessageId,
+            text: tool.output.trim().slice(0, 8000),
+          },
+        ];
+  });
+
 export const desiredSlackMessages = async (
   snapshot: ChatSnapshot,
   thread: SlackThread,
@@ -93,20 +131,35 @@ export const desiredSlackMessages = async (
 ): Promise<readonly DesiredMessage[]> => {
   const messages: DesiredMessage[] = [];
   const allowed = await canShare();
+  const fallbacks = new Map<string, DesiredMessage[]>();
+  for (const fallback of presentationFallbacks(snapshot)) {
+    const values = fallbacks.get(fallback.messageId) ?? [];
+    values.push(fallback);
+    fallbacks.set(fallback.messageId, values);
+  }
   for (const message of snapshot.messages) {
     if (
-      message.role !== "assistant" ||
-      message.state !== "complete" ||
-      !message.text.trim()
+      message.role === "assistant" &&
+      message.state === "complete" &&
+      message.outcome !== "failed" &&
+      message.outcome !== "interrupted" &&
+      message.text.trim()
     ) {
-      continue;
+      messages.push({
+        key: `message:${message.id}`,
+        text: allowed
+          ? toSlackText(message.text.trim())
+          : "I can no longer share this answer because your access changed.",
+      });
     }
-    messages.push({
-      key: `message:${message.id}`,
-      text: allowed
-        ? toSlackText(message.text.trim())
-        : "I can no longer share this answer because your access changed.",
-    });
+    for (const fallback of fallbacks.get(message.id) ?? []) {
+      messages.push({
+        key: fallback.key,
+        text: allowed
+          ? toSlackText(fallback.text)
+          : "I can no longer share this answer because your access changed.",
+      });
+    }
   }
   for (const approval of snapshot.approvals) {
     messages.push(

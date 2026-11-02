@@ -21,6 +21,7 @@ COPY tests/runtime/scripts/patch-dependencies.mjs ./scripts/patch-dependencies.m
 RUN node scripts/patch-dependencies.mjs
 FROM dependencies AS app
 COPY packages/contracts ./packages/contracts
+COPY packages/generative-ui ./packages/generative-ui
 COPY packages/db ./packages/db
 COPY packages/runtime ./packages/runtime
 COPY packages/tools ./packages/tools
@@ -28,6 +29,7 @@ COPY tests/runtime ./tests/runtime
 COPY tests/slice-1/provider.mjs ./tests/slice-1/provider.mjs
 RUN mkdir -p node_modules/@cerebro && \
     ln -s ../../packages/contracts node_modules/@cerebro/contracts && \
+    ln -s ../../packages/generative-ui node_modules/@cerebro/generative-ui && \
     ln -s ../../packages/db node_modules/@cerebro/db && \
     ln -s ../../packages/tools node_modules/@cerebro/tools
 COPY tests/runtime/wrangler.jsonc ./wrangler.jsonc
