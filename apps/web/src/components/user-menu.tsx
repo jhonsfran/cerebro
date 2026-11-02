@@ -1,4 +1,4 @@
-import { Button } from "@cerebro/ui/components/button";
+import { Button, buttonVariants } from "@cerebro/ui/components/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,10 +9,15 @@ import {
   DropdownMenuTrigger,
 } from "@cerebro/ui/components/dropdown-menu";
 import { Skeleton } from "@cerebro/ui/components/skeleton";
+import { cn } from "@cerebro/ui/lib/utils";
 import { Link, useNavigate } from "@tanstack/react-router";
 
 import { clearProductCache } from "@/features/product/api";
 import { authClient } from "@/lib/auth-client";
+
+// Ghost buttons on the dark top bar keep its light text.
+const onShell =
+  "text-shell-foreground hover:bg-shell-border hover:text-shell-foreground aria-expanded:bg-shell-border aria-expanded:text-shell-foreground";
 
 const UserMenu = () => {
   const navigate = useNavigate();
@@ -24,15 +29,20 @@ const UserMenu = () => {
 
   if (!session) {
     return (
-      <Link to="/login">
-        <Button variant="outline">Sign In</Button>
+      <Link
+        to="/login"
+        className={cn(buttonVariants({ variant: "ghost" }), onShell)}
+      >
+        Sign In
       </Link>
     );
   }
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="outline" />}>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" className={onShell} />}
+      >
         {session.user.name}
       </DropdownMenuTrigger>
       <DropdownMenuContent className="bg-card">

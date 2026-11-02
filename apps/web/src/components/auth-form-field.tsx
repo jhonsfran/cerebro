@@ -1,5 +1,5 @@
+import { Field, FieldError, FieldLabel } from "@cerebro/ui/components/field";
 import { Input } from "@cerebro/ui/components/input";
-import { Label } from "@cerebro/ui/components/label";
 
 export const AuthFormField = ({
   name,
@@ -18,20 +18,17 @@ export const AuthFormField = ({
   onChange: (value: string) => void;
   errors: readonly ({ message: string } | undefined)[];
 }) => (
-  <div className="space-y-2">
-    <Label htmlFor={name}>{label}</Label>
+  <Field data-invalid={errors.length > 0 || undefined}>
+    <FieldLabel htmlFor={name}>{label}</FieldLabel>
     <Input
       id={name}
       name={name}
       type={type}
       value={value}
+      aria-invalid={errors.length > 0 || undefined}
       onBlur={onBlur}
       onChange={(event) => onChange(event.target.value)}
     />
-    {errors.map((error) => (
-      <p key={error?.message} className="text-red-500">
-        {error?.message}
-      </p>
-    ))}
-  </div>
+    <FieldError errors={[...errors]} />
+  </Field>
 );

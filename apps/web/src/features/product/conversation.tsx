@@ -2,6 +2,29 @@ import type {
   ChatControl,
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+} from "@cerebro/ui/components/alert";
+import { Badge } from "@cerebro/ui/components/badge";
+import { Button } from "@cerebro/ui/components/button";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupText,
+  InputGroupTextarea,
+} from "@cerebro/ui/components/input-group";
+import { Kbd } from "@cerebro/ui/components/kbd";
+import { Label } from "@cerebro/ui/components/label";
+import { Spinner } from "@cerebro/ui/components/spinner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@cerebro/ui/components/tooltip";
+import { ArrowUp, Clock, RotateCw, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { cacheKey, encoded, productPath, request } from "./api";
@@ -17,8 +40,10 @@ import {
 import { useMessageDelivery } from "./chat-delivery";
 import { ConversationActivity } from "./conversation-activity";
 import { ConversationTranscript } from "./conversation-transcript";
+import { ErrorAlert } from "./feedback";
 import { operationFor } from "./intent";
 import type { OperationIntent } from "./intent";
+import type { ObservationConnectionStatus } from "./observation";
 import { usePendingChat } from "./pending-chat";
 import { conversationSchema } from "./types";
 import type { Conversation } from "./types";
@@ -44,7 +69,7 @@ const ConversationComposer = ({
   send: (message: PendingChatMessage) => void;
 }) => (
   <form
-    className="message-composer"
+    className="bg-background sticky bottom-0 mx-auto w-full max-w-(--measure-chat) px-4 pt-2 pb-4"
     onSubmit={(event) => {
       event.preventDefault();
       if (text.trim().length > MAX_CHAT_MESSAGE_LENGTH) {
@@ -56,33 +81,79 @@ const ConversationComposer = ({
       }
     }}
   >
-    <label className="sr-only" htmlFor="message">
+    <Label className="sr-only" htmlFor="message">
       Message
-    </label>
-    <textarea
-      id="message"
-      value={text}
-      onChange={(event) => setText(event.target.value)}
-      placeholder="Ask your company assistant..."
-      rows={2}
-      maxLength={MAX_CHAT_MESSAGE_LENGTH}
-      disabled={sending || !connected || Boolean(pending)}
-    />
-    <div className="composer-footer">
-      <span>Your conversation is private.</span>
-      <button
-        className="primary-button"
-        type="submit"
-        disabled={sending || !connected || !text.trim() || Boolean(pending)}
-      >
-        {sending ? "Sending..." : "Send message"}
-      </button>
-    </div>
+    </Label>
+    <InputGroup className="bg-card">
+      <InputGroupTextarea
+        id="message"
+        aria-describedby="message-help"
+        className="max-h-60 min-h-16 text-sm"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={(event) => {
+          if (
+            event.key === "Enter" &&
+            !event.shiftKey &&
+            !event.nativeEvent.isComposing
+          ) {
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
+          }
+        }}
+        placeholder="Ask your company assistant…"
+        rows={2}
+        maxLength={MAX_CHAT_MESSAGE_LENGTH}
+        disabled={sending || !connected || Boolean(pending)}
+      />
+      <InputGroupAddon align="block-end">
+        <InputGroupText id="message-help" className="hidden sm:flex">
+          <span>
+            <Kbd>Enter</Kbd> sends, <Kbd>Shift</Kbd> + <Kbd>Enter</Kbd> adds a
+            line. Your conversation is private.
+          </span>
+        </InputGroupText>
+        <InputGroupButton
+          type="submit"
+          variant="default"
+          size="sm"
+          className="ml-auto"
+          disabled={sending || !connected || !text.trim() || Boolean(pending)}
+        >
+          {sending ? (
+            <Spinner data-icon="inline-start" />
+          ) : (
+            <ArrowUp data-icon="inline-start" aria-hidden="true" />
+          )}
+          {sending ? "Sending…" : "Send message"}
+        </InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
   </form>
 );
 
-const ConversationHeader = ({
-  agentName,
+const SESSION_PREFIX = /^session:/u;
+
+const connectionLabels = {
+  connected: "Connected",
+  connecting: "Connecting…",
+  denied: "Access denied",
+  disconnected: "Disconnected",
+  failed: "Connection failed",
+} satisfies Record<ObservationConnectionStatus, string>;
+
+const connectionVariant = (
+  connection: ObservationConnectionStatus
+): "secondary" | "outline" | "destructive" => {
+  if (connection === "connected") {
+    return "secondary";
+  }
+  return connection === "failed" || connection === "denied"
+    ? "destructive"
+    : "outline";
+};
+
+const ConversationToolbar = ({
   sessionId,
   connection,
   connected,
@@ -92,9 +163,8 @@ const ConversationHeader = ({
   reconnect,
   stop,
 }: {
-  agentName: string;
   sessionId: string | undefined;
-  connection: string;
+  connection: ObservationConnectionStatus;
   connected: boolean;
   busy: boolean;
   disabled: boolean;
@@ -102,42 +172,50 @@ const ConversationHeader = ({
   reconnect: () => void;
   stop: () => Promise<void>;
 }) => (
-  <>
-    <div className="panel-heading">
-      <div>
-        <p className="eyebrow">Conversation</p>
-        <h2>{agentName}</h2>
-      </div>
-      <div className="button-row">
-        {busy ? (
-          <button
-            className="quiet-button"
-            type="button"
-            disabled={disabled}
-            onClick={stop}
-          >
-            Stop
-          </button>
-        ) : null}
-        <button
-          className="quiet-button"
+  <div className="flex min-h-11 flex-wrap items-center gap-2 border-b px-4 py-1.5">
+    <Badge
+      variant={connectionVariant(connection)}
+      render={<output data-state={connection} />}
+    >
+      {connection === "connecting" ? (
+        <Spinner data-icon="inline-start" />
+      ) : null}
+      {connectionLabels[connection]}
+    </Badge>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <p className="text-muted-foreground min-w-0 truncate text-xs tabular-nums" />
+        }
+      >
+        Session{" "}
+        {sessionId?.replace(SESSION_PREFIX, "").slice(0, 12) ?? "loading"}
+      </TooltipTrigger>
+      <TooltipContent>{sessionId ?? "Loading the session"}</TooltipContent>
+    </Tooltip>
+    <div className="ml-auto flex items-center gap-1">
+      {busy ? (
+        <Button
+          variant="outline"
+          size="sm"
           type="button"
-          onClick={connection === "failed" ? reconnect : toggle}
+          disabled={disabled}
+          onClick={stop}
         >
-          {connected && connection !== "failed" ? "Disconnect" : "Reconnect"}
-        </button>
-      </div>
+          <Square data-icon="inline-start" aria-hidden="true" />
+          Stop
+        </Button>
+      ) : null}
+      <Button
+        variant="ghost"
+        size="sm"
+        type="button"
+        onClick={connection === "failed" ? reconnect : toggle}
+      >
+        {connected && connection !== "failed" ? "Disconnect" : "Reconnect"}
+      </Button>
     </div>
-    <div className="session-line">
-      <span
-        className={`connection-dot ${connection === "disconnected" ? "offline" : ""}`}
-      />
-      <span>{connection}</span>
-      <span title={sessionId}>
-        Session {sessionId?.slice(0, 12) ?? "loading"}
-      </span>
-    </div>
-  </>
+  </div>
 );
 
 const EMPTY_CHAT: Pick<
@@ -271,16 +349,15 @@ const ConversationSession = ({
 
   if (!accessValid) {
     return (
-      <p className="error-banner" role="alert">
+      <ErrorAlert className="m-4 w-auto">
         Conversation access is no longer available.
-      </p>
+      </ErrorAlert>
     );
   }
 
   return (
-    <section className="conversation-panel" aria-label="Conversation">
-      <ConversationHeader
-        agentName={agentName}
+    <section className="flex min-h-0 flex-1 flex-col" aria-label="Conversation">
+      <ConversationToolbar
         sessionId={conversation?.sessionId}
         connection={connection}
         connected={connected}
@@ -293,18 +370,18 @@ const ConversationSession = ({
         }}
       />
       {displayedError ? (
-        <p className="error-banner" role="alert">
-          {displayedError}
-        </p>
-      ) : null}
-      {!conversation && displayedError && onStartConversation ? (
-        <button
-          className="quiet-button"
-          type="button"
-          onClick={onStartConversation}
-        >
-          Start new conversation
-        </button>
+        <div className="mx-auto flex w-full max-w-(--measure-chat) flex-col items-start gap-2 px-4 pt-4">
+          <ErrorAlert>{displayedError}</ErrorAlert>
+          {!conversation && onStartConversation ? (
+            <Button
+              variant="outline"
+              type="button"
+              onClick={onStartConversation}
+            >
+              Start new conversation
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       <ConversationTranscript
         snapshot={snapshot}
@@ -323,20 +400,30 @@ const ConversationSession = ({
         onConversation={onConversation}
       />
       {pending ? (
-        <div className="pending-message">
-          <p>
-            {delivery.sending
-              ? "Confirming your message..."
-              : "Your message awaits confirmation."}
-          </p>
-          <button
-            className="quiet-button"
-            disabled={!online || delivery.sending}
-            type="button"
-            onClick={() => delivery.retry()}
+        <div className="mx-auto w-full max-w-(--measure-chat) px-4">
+          <Alert
+            role="note"
+            className="border-warning-border bg-warning text-warning-foreground"
           >
-            Retry message
-          </button>
+            {delivery.sending ? <Spinner /> : <Clock aria-hidden="true" />}
+            <AlertDescription className="text-warning-foreground">
+              {delivery.sending
+                ? "Confirming your message…"
+                : "Your message awaits confirmation."}
+            </AlertDescription>
+            <AlertAction>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!online || delivery.sending}
+                type="button"
+                onClick={() => delivery.retry()}
+              >
+                <RotateCw data-icon="inline-start" aria-hidden="true" />
+                Retry message
+              </Button>
+            </AlertAction>
+          </Alert>
         </div>
       ) : null}
       <ConversationComposer

@@ -1,4 +1,14 @@
 import { Button } from "@cerebro/ui/components/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@cerebro/ui/components/card";
+import { FieldGroup } from "@cerebro/ui/components/field";
+import { Spinner } from "@cerebro/ui/components/spinner";
 import { useForm } from "@tanstack/react-form";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
@@ -52,77 +62,78 @@ const SignInForm = ({ onSwitchToSignUp }: { onSwitchToSignUp: () => void }) => {
   }
 
   return (
-    <div className="mx-auto mt-10 w-full max-w-md p-6">
-      <h1 className="mb-6 text-center text-3xl font-bold">Welcome Back</h1>
+    <main className="flex min-h-full items-start justify-center px-4 py-10 md:items-center">
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle>
+            <h1 className="font-display text-2xl font-normal">Welcome back</h1>
+          </CardTitle>
+          <CardDescription>Sign in to your company workspace.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              form.handleSubmit();
+            }}
+          >
+            <FieldGroup>
+              <form.Field name="email">
+                {(field) => (
+                  <AuthFormField
+                    name={field.name}
+                    label="Email"
+                    type="email"
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={field.handleChange}
+                    errors={field.state.meta.errors}
+                  />
+                )}
+              </form.Field>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          form.handleSubmit();
-        }}
-        className="space-y-4"
-      >
-        <div>
-          <form.Field name="email">
-            {(field) => (
-              <AuthFormField
-                name={field.name}
-                label="Email"
-                type="email"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={field.handleChange}
-                errors={field.state.meta.errors}
-              />
-            )}
-          </form.Field>
-        </div>
+              <form.Field name="password">
+                {(field) => (
+                  <AuthFormField
+                    name={field.name}
+                    label="Password"
+                    type="password"
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={field.handleChange}
+                    errors={field.state.meta.errors}
+                  />
+                )}
+              </form.Field>
 
-        <div>
-          <form.Field name="password">
-            {(field) => (
-              <AuthFormField
-                name={field.name}
-                label="Password"
-                type="password"
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={field.handleChange}
-                errors={field.state.meta.errors}
-              />
-            )}
-          </form.Field>
-        </div>
-
-        <form.Subscribe
-          selector={(state) => ({
-            canSubmit: state.canSubmit,
-            isSubmitting: state.isSubmitting,
-          })}
-        >
-          {({ canSubmit, isSubmitting }) => (
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={!canSubmit || isSubmitting}
-            >
-              {isSubmitting ? "Submitting..." : "Sign In"}
-            </Button>
-          )}
-        </form.Subscribe>
-      </form>
-
-      <div className="mt-4 text-center">
-        <Button
-          variant="link"
-          onClick={onSwitchToSignUp}
-          className="text-indigo-600 hover:text-indigo-800"
-        >
-          Need an account? Sign Up
-        </Button>
-      </div>
-    </div>
+              <form.Subscribe
+                selector={(state) => ({
+                  canSubmit: state.canSubmit,
+                  isSubmitting: state.isSubmitting,
+                })}
+              >
+                {({ canSubmit, isSubmitting }) => (
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={!canSubmit || isSubmitting}
+                  >
+                    {isSubmitting ? <Spinner data-icon="inline-start" /> : null}
+                    {isSubmitting ? "Submitting…" : "Sign In"}
+                  </Button>
+                )}
+              </form.Subscribe>
+            </FieldGroup>
+          </form>
+        </CardContent>
+        <CardFooter className="justify-center">
+          <Button variant="link" type="button" onClick={onSwitchToSignUp}>
+            Need an account? Sign Up
+          </Button>
+        </CardFooter>
+      </Card>
+    </main>
   );
 };
 

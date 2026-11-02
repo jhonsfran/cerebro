@@ -1,10 +1,27 @@
+import { Checkbox } from "@cerebro/ui/components/checkbox";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@cerebro/ui/components/table";
 import { useRef, useState } from "react";
 
 import { encoded, mutate, productPath } from "./api";
+import { ErrorAlert, PageBody, PageIntro } from "./feedback";
 import { operationFor } from "./intent";
 import type { OperationIntent } from "./intent";
 import { accessMutationSchema } from "./types";
 import type { AccessAction, AgentDetail } from "./types";
+
+const accessActions = ["read", "execute", "approve"] as const;
+const actionLabels = {
+  approve: "Approve",
+  execute: "Execute",
+  read: "Read",
+} satisfies Record<(typeof accessActions)[number], string>;
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : "The request failed.";
@@ -46,57 +63,61 @@ export const AccessPanel = ({
     setBusy(false);
   };
   return (
-    <section className="settings-panel">
-      <div className="panel-heading">
-        <div>
-          <p className="eyebrow">Access management</p>
-          <h2>Who can use {agent.name}?</h2>
-        </div>
-      </div>
-      <p className="muted-text">
+    <PageBody>
+      <PageIntro id="access-title" title={`Who can use ${agent.name}?`}>
         Changes apply to the next action in web and linked Slack conversations.
-      </p>
-      {errorMessage ? (
-        <p className="error-banner" role="alert">
-          {errorMessage}
-        </p>
-      ) : null}
-      <div className="access-table">
-        <div className="access-row access-labels">
-          <span>Company principal</span>
-          <span>Read</span>
-          <span>Execute</span>
-          <span>Approve</span>
-        </div>
-        {agent.access.map((entry) => (
-          <div className="access-row" key={entry.principalId}>
-            <div>
-              <strong>{entry.name}</strong>
-              <small>{entry.principalId}</small>
-            </div>
-            {(["read", "execute", "approve"] as const).map((action) => (
-              <label key={action}>
-                <span className="sr-only">
-                  {action} access for {entry.name}
-                </span>
-                <input
-                  type="checkbox"
-                  checked={entry.actions.includes(action)}
-                  disabled={busy}
-                  onChange={(event) =>
-                    change(
-                      entry.principalId,
-                      event.target.checked
-                        ? [...entry.actions, action]
-                        : entry.actions.filter((value) => value !== action)
-                    )
-                  }
-                />
-              </label>
+      </PageIntro>
+      {errorMessage ? <ErrorAlert>{errorMessage}</ErrorAlert> : null}
+      <div className="bg-card border">
+        <Table aria-labelledby="access-title" aria-busy={busy}>
+          <TableHeader>
+            <TableRow>
+              <TableHead scope="col">Company principal</TableHead>
+              {accessActions.map((action) => (
+                <TableHead
+                  scope="col"
+                  className="w-24 text-center"
+                  key={action}
+                >
+                  {actionLabels[action]}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {agent.access.map((entry) => (
+              <TableRow key={entry.principalId}>
+                <TableHead scope="row" className="h-auto py-2 font-normal">
+                  <span className="flex flex-col">
+                    <span className="font-medium">{entry.name}</span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {entry.principalId}
+                    </span>
+                  </span>
+                </TableHead>
+                {accessActions.map((action) => (
+                  <TableCell className="text-center" key={action}>
+                    <Checkbox
+                      className="mx-auto"
+                      aria-label={`${action} access for ${entry.name}`}
+                      checked={entry.actions.includes(action)}
+                      disabled={busy}
+                      onCheckedChange={(checked) =>
+                        change(
+                          entry.principalId,
+                          checked
+                            ? [...entry.actions, action]
+                            : entry.actions.filter((value) => value !== action)
+                        )
+                      }
+                    />
+                  </TableCell>
+                ))}
+              </TableRow>
             ))}
-          </div>
-        ))}
+          </TableBody>
+        </Table>
       </div>
-    </section>
+    </PageBody>
   );
 };

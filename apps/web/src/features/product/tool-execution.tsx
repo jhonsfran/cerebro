@@ -1,6 +1,11 @@
 import type { ChatToolExecution } from "@cerebro/contracts/session-service";
+import { Badge } from "@cerebro/ui/components/badge";
+import { Spinner } from "@cerebro/ui/components/spinner";
+import { cn } from "@cerebro/ui/lib/utils";
+import { ChartColumn, Check, CircleAlert, Wrench } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { Disclosure } from "./disclosure";
 import { GenerativeUi } from "./generative-ui";
 
 const toolStatus = {
@@ -20,43 +25,102 @@ const ReportContent = ({ tool }: { tool: ChatToolExecution }) => {
   ) : null;
 };
 
-const ToolDiagnostics = ({ tool }: { tool: ChatToolExecution }) => (
+const ToolDiagnostics = ({
+  tool,
+  awaitingApproval,
+}: {
+  tool: ChatToolExecution;
+  awaitingApproval: boolean;
+}) => (
   <>
-    <details>
-      <summary>Arguments</summary>
-      <pre>{JSON.stringify(tool.arguments, null, 2)}</pre>
-    </details>
+    {awaitingApproval ? null : (
+      <Disclosure summary="Arguments" className="message-disclosure">
+        <pre>{JSON.stringify(tool.arguments, null, 2)}</pre>
+      </Disclosure>
+    )}
     {tool.output ? (
-      <details>
-        <summary>Output</summary>
+      <Disclosure summary="Output" className="message-disclosure">
         <pre className="tool-output">{tool.output}</pre>
-      </details>
+      </Disclosure>
     ) : null}
   </>
 );
 
+const StatusBadge = ({ state }: { state: ChatToolExecution["state"] }) => {
+  if (state === "pending" || state === "running") {
+    return (
+      <Badge variant="outline">
+        <Spinner data-icon="inline-start" />
+        {toolStatus[state]}
+      </Badge>
+    );
+  }
+  if (state === "succeeded") {
+    return (
+      <Badge variant="secondary">
+        <Check data-icon="inline-start" aria-hidden="true" />
+        {toolStatus[state]}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="destructive">
+      <CircleAlert data-icon="inline-start" aria-hidden="true" />
+      {toolStatus[state]}
+    </Badge>
+  );
+};
+
 export const ToolExecution = ({
   tool,
+  awaitingApproval = false,
   children,
 }: {
   tool: ChatToolExecution;
+  awaitingApproval?: boolean;
   children: ReactNode;
 }) => {
-  const { label, content } =
-    tool.toolName === "render_ui"
-      ? { label: "Agent report", content: <ReportContent tool={tool} /> }
-      : { label: tool.toolName, content: <ToolDiagnostics tool={tool} /> };
+  const report = tool.toolName === "render_ui";
+  const { label, content } = report
+    ? { label: "Agent report", content: <ReportContent tool={tool} /> }
+    : {
+        label: tool.toolName,
+        content: (
+          <ToolDiagnostics tool={tool} awaitingApproval={awaitingApproval} />
+        ),
+      };
   return (
     <article
-      className="tool-execution"
+      className={cn(
+        "tool-execution bg-card flex flex-col border text-xs",
+        report && "tool-report"
+      )}
+      data-state={tool.state}
       aria-label={`${label} ${toolStatus[tool.state]}`}
       aria-busy={tool.state === "pending" || tool.state === "running"}
     >
-      <header className="tool-execution-header">
-        <strong>{label}</strong>
-        <span className="tool-status">{toolStatus[tool.state]}</span>
+      <header className="flex items-center justify-between gap-2 px-3 py-2">
+        <span className="flex min-w-0 items-center gap-2 font-medium">
+          {report ? (
+            <ChartColumn
+              aria-hidden="true"
+              className="text-muted-foreground size-3.5 shrink-0"
+            />
+          ) : (
+            <Wrench
+              aria-hidden="true"
+              className="text-muted-foreground size-3.5 shrink-0"
+            />
+          )}
+          <span className={cn("truncate", !report && "font-mono")}>
+            {label}
+          </span>
+        </span>
+        <StatusBadge state={tool.state} />
       </header>
-      {content}
+      <div className="flex flex-col gap-2 px-3 pb-3 empty:hidden">
+        {content}
+      </div>
       {children}
     </article>
   );

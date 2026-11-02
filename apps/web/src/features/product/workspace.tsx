@@ -1,7 +1,16 @@
+import { SidebarInset, SidebarProvider } from "@cerebro/ui/components/sidebar";
+
 import { AdminPanel } from "./admin";
+import type { AdminView } from "./admin";
+import { ErrorAlert } from "./feedback";
 import { useWorkspace } from "./use-workspace";
 import { WorkspaceBody, WorkspaceHeader } from "./workspace-panels";
 import { WorkspaceSidebar } from "./workspace-sidebar";
+
+const adminTitles = {
+  connectors: "Connectors",
+  skills: "Skills",
+} satisfies Record<AdminView, string>;
 
 export const ProductWorkspace = ({
   userId,
@@ -34,7 +43,7 @@ export const ProductWorkspace = ({
     agentSaved,
   } = useWorkspace({ userId, conversationId, onConversation });
   return (
-    <main className="product-workspace">
+    <SidebarProvider className="h-full min-h-0">
       <WorkspaceSidebar
         userName={userName}
         setup={setup}
@@ -44,18 +53,24 @@ export const ProductWorkspace = ({
         setView={setView}
         onSelect={selectAgent}
       />
-      <div className="product-main">
+      <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
         <WorkspaceHeader
+          title={view.kind === "admin" ? adminTitles[view.view] : undefined}
           selected={view.kind === "admin" ? undefined : selected}
           creating={view.kind === "create"}
+          offerNew={
+            !(
+              view.kind === "agent" &&
+              view.tab === "conversation" &&
+              !conversationId
+            )
+          }
           busy={busy}
           pending={conversationPending && !errorMessage}
           onNew={startConversation}
         />
         {errorMessage ? (
-          <p className="error-banner" role="alert">
-            {errorMessage}
-          </p>
+          <ErrorAlert className="mx-4 mt-4 w-auto">{errorMessage}</ErrorAlert>
         ) : null}
         {view.kind === "admin" ? (
           <AdminPanel view={view.view} />
@@ -79,7 +94,7 @@ export const ProductWorkspace = ({
             onConversation={onConversation}
           />
         )}
-      </div>
-    </main>
+      </SidebarInset>
+    </SidebarProvider>
   );
 };

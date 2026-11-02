@@ -5,8 +5,20 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
+  CardTitle,
 } from "@cerebro/ui/components/card";
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@cerebro/ui/components/table";
 import { defineRegistry, JSONUIProvider, Renderer } from "@json-render/react";
+
+import { Disclosure } from "./disclosure";
 
 const { registry } = defineRegistry(uiCatalog, {
   components: {
@@ -18,7 +30,9 @@ const { registry } = defineRegistry(uiCatalog, {
     Card: ({ props, children }) => (
       <Card className="generated-card" size="sm">
         <CardHeader>
-          <h3>{props.title}</h3>
+          <CardTitle>
+            <h3>{props.title}</h3>
+          </CardTitle>
           {props.description ? (
             <CardDescription>{props.description}</CardDescription>
           ) : null}
@@ -47,34 +61,34 @@ const { registry } = defineRegistry(uiCatalog, {
       </dl>
     ),
     Table: ({ props }) => (
-      <section
-        className="generated-table-scroll"
-        // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Keyboard users must be able to scroll overflowing tables.
-        tabIndex={0}
-        aria-label={props.caption}
-      >
-        <table>
-          <caption>{props.caption}</caption>
-          <thead>
-            <tr>
-              {props.columns.map((column, index) => (
-                <th key={`${index}:${column}`} scope="col">
-                  {column}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {props.rows.map((row, rowIndex) => (
-              <tr key={`${rowIndex}:${JSON.stringify(row)}`}>
-                {row.map((cell, columnIndex) => (
-                  <td key={`${columnIndex}:${cell}`}>{cell}</td>
-                ))}
-              </tr>
+      <Table className="tabular-nums">
+        <TableCaption className="text-foreground mt-0 mb-2 caption-top text-left font-medium">
+          {props.caption}
+        </TableCaption>
+        <TableHeader>
+          <TableRow>
+            {props.columns.map((column, index) => (
+              <TableHead key={`${index}:${column}`} scope="col">
+                {column}
+              </TableHead>
             ))}
-          </tbody>
-        </table>
-      </section>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {props.rows.map((row, rowIndex) => (
+            <TableRow key={`${rowIndex}:${JSON.stringify(row)}`}>
+              {row.map((cell, columnIndex) => (
+                <TableCell
+                  className="max-w-72 whitespace-normal"
+                  key={`${columnIndex}:${cell}`}
+                >
+                  {cell}
+                </TableCell>
+              ))}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     ),
   },
 });
@@ -88,9 +102,8 @@ export const GenerativeUi = ({
     <JSONUIProvider registry={registry}>
       <Renderer registry={registry} spec={presentation.spec} />
     </JSONUIProvider>
-    <details className="generated-summary">
-      <summary>Text summary</summary>
+    <Disclosure summary="Text summary" className="generated-summary mt-3">
       <p>{presentation.fallbackText}</p>
-    </details>
+    </Disclosure>
   </section>
 );

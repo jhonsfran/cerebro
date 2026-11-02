@@ -1,12 +1,22 @@
+import {
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@cerebro/ui/components/sidebar";
+import { BookOpenText, Plug } from "lucide-react";
+
 import { ConnectorsPanel } from "./connectors";
 import { SkillsPanel } from "./skills";
 
 export type AdminView = "connectors" | "skills";
 
-const items: readonly { readonly view: AdminView; readonly label: string }[] = [
-  { label: "Connectors", view: "connectors" },
-  { label: "Skills", view: "skills" },
-];
+const items = [
+  { icon: Plug, label: "Connectors", view: "connectors" },
+  { icon: BookOpenText, label: "Skills", view: "skills" },
+] as const;
 
 // Installation settings, shown to people with the installation manage grant.
 export const AdminNav = ({
@@ -19,24 +29,28 @@ export const AdminNav = ({
   open: (view: AdminView) => void;
 }) =>
   visible ? (
-    <>
-      <div className="sidebar-section">
-        <p className="eyebrow">Administration</p>
-      </div>
-      <nav className="agent-list" aria-label="Administration">
-        {items.map((item) => (
-          <button
-            className={`agent-list-item ${active === item.view ? "selected" : ""}`}
-            key={item.view}
-            type="button"
-            onClick={() => open(item.view)}
-          >
-            <span className="agent-avatar">⚙</span>
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </nav>
-    </>
+    <SidebarGroup>
+      <SidebarGroupLabel id="sidebar-admin-label">
+        Administration
+      </SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu aria-labelledby="sidebar-admin-label">
+          {items.map(({ icon: Icon, label, view }) => (
+            <SidebarMenuItem key={view}>
+              <SidebarMenuButton
+                type="button"
+                isActive={active === view}
+                aria-current={active === view ? "page" : undefined}
+                onClick={() => open(view)}
+              >
+                <Icon aria-hidden="true" />
+                <span>{label}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ))}
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
   ) : null;
 
 export const AdminPanel = ({ view }: { view: AdminView }) =>

@@ -19,8 +19,13 @@ const globalNames = [
   "document",
   "navigator",
   "HTMLElement",
+  "Element",
+  "Node",
+  "getComputedStyle",
   "sessionStorage",
   "Event",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
   "fetch",
   "IS_REACT_ACT_ENVIRONMENT",
 ] as const;
@@ -31,6 +36,7 @@ const originalGlobals = globalNames.map((name) => ({
 let dom: JSDOM;
 const installDom = () => {
   dom = new JSDOM("<!doctype html><html><body></body></html>", {
+    pretendToBeVisual: true,
     url: "http://fixture.invalid",
   });
   for (const name of [
@@ -38,8 +44,13 @@ const installDom = () => {
     "document",
     "navigator",
     "HTMLElement",
+    "Element",
+    "Node",
+    "getComputedStyle",
     "sessionStorage",
     "Event",
+    "requestAnimationFrame",
+    "cancelAnimationFrame",
   ] as const) {
     Object.defineProperty(globalThis, name, {
       configurable: true,
@@ -421,9 +432,12 @@ test("scheduled follow-ups preserve retry intent, recurrence timezone and explic
       target: { value: "Inspect the next import" },
     });
     fireEvent.change(firstRun, { target: { value: future } });
-    fireEvent.change(view.getByRole("combobox", { name: "Repeat" }), {
-      target: { value: "month" },
-    });
+    fireEvent.click(view.getByRole("combobox", { name: "Repeat" }));
+  });
+  const monthly = await view.findByRole("option", { name: "Every month" });
+  await act(() => {
+    fireEvent.pointerDown(monthly);
+    fireEvent.click(monthly);
   });
   await act(() => {
     fireEvent.change(view.getByLabelText("Repeat interval"), {

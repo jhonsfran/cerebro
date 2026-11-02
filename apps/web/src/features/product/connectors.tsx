@@ -1,6 +1,43 @@
+import { Badge } from "@cerebro/ui/components/badge";
+import { Button } from "@cerebro/ui/components/button";
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@cerebro/ui/components/card";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@cerebro/ui/components/empty";
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@cerebro/ui/components/field";
+import { Input } from "@cerebro/ui/components/input";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemTitle,
+} from "@cerebro/ui/components/item";
+import { Skeleton } from "@cerebro/ui/components/skeleton";
+import { Spinner } from "@cerebro/ui/components/spinner";
+import { Plug } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 import { encoded, mutate, productPath, request } from "./api";
+import { ConfirmRemoval } from "./confirm-removal";
+import { ErrorAlert, PageBody, PageIntro } from "./feedback";
 import {
   connectorChangeSchema,
   connectorListSchema,
@@ -33,8 +70,9 @@ export const ConnectorsPanel = () => {
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
   useEffect(() => {
     const controller = new AbortController();
     const load = async () => {
@@ -42,10 +80,12 @@ export const ConnectorsPanel = () => {
         const listed = await listConnectors(controller.signal);
         if (!controller.signal.aborted) {
           setConnectors(listed);
+          setLoaded(true);
         }
       } catch (error) {
         if (!controller.signal.aborted) {
           setErrorMessage(messageOf(error));
+          setLoaded(true);
         }
       }
     };
@@ -55,11 +95,11 @@ export const ConnectorsPanel = () => {
   const run = async (action: () => Promise<string>) => {
     setBusy(true);
     setErrorMessage("");
-    setNotice("");
+    setConfirming(null);
     try {
       const message = await action();
       setConnectors(await listConnectors());
-      setNotice(message);
+      toast.success(message);
     } catch (error) {
       setErrorMessage(messageOf(error));
     }
@@ -101,103 +141,173 @@ export const ConnectorsPanel = () => {
       return `Removed ${connectorId} and its tools.`;
     });
   return (
-    <section className="settings-panel">
-      <div className="panel-heading">
-        <div>
-          <p className="eyebrow">Connectors</p>
-          <h2>MCP servers your agents can use</h2>
-        </div>
-      </div>
-      <p className="muted-text">
+    <PageBody>
+      <PageIntro id="connectors-title" title="MCP servers your agents can use">
         Tools a server marks read-only run without approval. Every other tool
         asks for approval before it runs. Enable tools in the agent
         configuration.
-      </p>
-      {errorMessage ? (
-        <p className="error-banner" role="alert">
-          {errorMessage}
-        </p>
-      ) : null}
-      {notice ? <output className="muted-text">{notice}</output> : null}
-      <div className="access-table">
-        <div className="access-row access-labels">
-          <span>Connector</span>
-          <span>Tools</span>
-          <span>Source</span>
-          <span />
-        </div>
-        {connectors.map((connector) => (
-          <div className="access-row" key={connector.id}>
-            <div>
-              <strong>{connector.id}</strong>
-              <small>{connector.url ?? "Declared in runtime.json"}</small>
-            </div>
-            <span>{connector.toolCount}</span>
-            <span>{connector.source === "admin" ? "Added here" : "File"}</span>
-            {connector.source === "admin" ? (
-              <span className="row-actions">
-                <button
-                  className="text-button"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => refresh(connector.id)}
-                >
-                  Refresh
-                </button>
-                <button
-                  className="text-button"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => remove(connector.id)}
-                >
-                  Remove
-                </button>
-              </span>
-            ) : (
-              <span />
-            )}
+      </PageIntro>
+      {errorMessage ? <ErrorAlert>{errorMessage}</ErrorAlert> : null}
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <section
+          className="flex flex-col gap-3"
+          aria-labelledby="connectors-list-title"
+        >
+          <div className="flex min-h-7 items-center">
+            <h3 id="connectors-list-title" className="text-xs font-medium">
+              Configured servers
+            </h3>
           </div>
-        ))}
+          {loaded ? null : (
+            <div className="flex flex-col gap-2" aria-busy="true">
+              <span className="sr-only">Loading connectors…</span>
+              <Skeleton className="h-16" />
+              <Skeleton className="h-16" />
+            </div>
+          )}
+          {loaded && connectors.length === 0 ? (
+            <Empty className="border">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Plug aria-hidden="true" />
+                </EmptyMedia>
+                <EmptyTitle>No connectors yet</EmptyTitle>
+                <EmptyDescription>
+                  Add an MCP server with the form.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : null}
+          {connectors.length > 0 ? (
+            <ItemGroup className="gap-2">
+              {connectors.map((connector) => (
+                <Item variant="outline" className="bg-card" key={connector.id}>
+                  <ItemContent>
+                    <ItemTitle>
+                      <span className="font-mono">{connector.id}</span>
+                      <Badge variant="secondary">
+                        {connector.toolCount === 1
+                          ? "1 tool"
+                          : `${connector.toolCount} tools`}
+                      </Badge>
+                    </ItemTitle>
+                    <ItemDescription className="break-all">
+                      {connector.url ?? "Declared in runtime.json"}
+                      {connector.source === "admin"
+                        ? ", added here"
+                        : ", from the runtime file"}
+                    </ItemDescription>
+                  </ItemContent>
+                  {connector.source === "admin" ? (
+                    <ItemActions>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => refresh(connector.id)}
+                      >
+                        Refresh
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        disabled={busy}
+                        onClick={() => setConfirming(connector.id)}
+                      >
+                        Remove
+                      </Button>
+                    </ItemActions>
+                  ) : null}
+                </Item>
+              ))}
+            </ItemGroup>
+          ) : null}
+        </section>
+        <Card>
+          <form
+            className="contents"
+            aria-labelledby="connector-form-title"
+            onSubmit={(event) => {
+              event.preventDefault();
+              add();
+            }}
+          >
+            <CardHeader>
+              <CardTitle>
+                <h3 id="connector-form-title">Add a connector</h3>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="connector-id">Connector ID</FieldLabel>
+                  <Input
+                    id="connector-id"
+                    aria-describedby="connector-id-help"
+                    autoComplete="off"
+                    className="font-mono"
+                    placeholder="crm"
+                    pattern="[a-z0-9][a-z0-9-]{0,39}"
+                    value={id}
+                    onChange={(event) => setId(event.target.value)}
+                    required
+                  />
+                  <FieldDescription id="connector-id-help">
+                    Lowercase letters, numbers and hyphens, up to 40 characters.
+                  </FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="connector-url">
+                    MCP server URL
+                  </FieldLabel>
+                  <Input
+                    id="connector-url"
+                    autoComplete="off"
+                    placeholder="https://mcp.example.com/mcp"
+                    type="url"
+                    value={url}
+                    onChange={(event) => setUrl(event.target.value)}
+                    required
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="connector-token">
+                    Bearer token (optional)
+                  </FieldLabel>
+                  <Input
+                    id="connector-token"
+                    aria-describedby="connector-token-help"
+                    autoComplete="off"
+                    type="password"
+                    value={token}
+                    onChange={(event) => setToken(event.target.value)}
+                  />
+                  <FieldDescription id="connector-token-help">
+                    Sealed on the server and never shown again.
+                  </FieldDescription>
+                </Field>
+              </FieldGroup>
+            </CardContent>
+            <CardFooter>
+              <Button disabled={busy} type="submit">
+                {busy ? <Spinner data-icon="inline-start" /> : null}
+                Add connector
+              </Button>
+            </CardFooter>
+          </form>
+        </Card>
       </div>
-      <form
-        className="agent-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          add();
-        }}
+      <ConfirmRemoval
+        target={confirming}
+        busy={busy}
+        onCancel={() => setConfirming(null)}
+        onConfirm={remove}
       >
-        <label htmlFor="connector-id">Connector ID</label>
-        <input
-          id="connector-id"
-          autoComplete="off"
-          placeholder="crm"
-          pattern="[a-z0-9][a-z0-9-]{0,39}"
-          value={id}
-          onChange={(event) => setId(event.target.value)}
-          required
-        />
-        <label htmlFor="connector-url">MCP server URL</label>
-        <input
-          id="connector-url"
-          autoComplete="off"
-          placeholder="https://mcp.example.com/mcp"
-          type="url"
-          value={url}
-          onChange={(event) => setUrl(event.target.value)}
-          required
-        />
-        <label htmlFor="connector-token">Bearer token (optional)</label>
-        <input
-          id="connector-token"
-          autoComplete="off"
-          type="password"
-          value={token}
-          onChange={(event) => setToken(event.target.value)}
-        />
-        <button className="primary-button" disabled={busy} type="submit">
-          Add connector
-        </button>
-      </form>
-    </section>
+        Agents lose every tool this server provides. Add it again to restore
+        them.
+      </ConfirmRemoval>
+    </PageBody>
   );
 };
