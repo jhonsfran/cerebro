@@ -88,6 +88,7 @@ try {
       "--test-concurrency=1",
       "tests/channels/native/product.test.ts",
       "tests/channels/native/slack-events.test.ts",
+      "tests/channels/native/coordinator.test.ts",
     ],
     {
       cwd: root,

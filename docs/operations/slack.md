@@ -55,8 +55,44 @@ Cerebro confirms the link in the DM. An unlinked person who writes to the app ge
 
 ## What happens to a message
 
-1. Slack sends the event. Cerebro verifies its signature, answers Slack right away, and does the work after the response, so Slack does not retry it. A retried event is safe: each event is admitted once.
-2. The conversation's session posts **Working on it…** in the thread, then edits that message into the answer. Sources appear under the answer.
-3. When a tool needs approval, the session posts the request with **Approve** and **Deny** buttons. A button press decides the approval as the linked person, with the same permission checks as the web app. The message then shows the decision.
+1. Cerebro verifies the signature, workspace, and app. It saves an accepted event to the durable event queue before it acknowledges Slack. A queue failure gets an unsuccessful response so Slack can retry. URL verification returns its challenge after signature validation.
+2. The consumer checks the event type and account link. It saves either an ignored decision or a fixed conversation target under the provider event ID. A retry keeps that decision. Current access is checked again before execution and disclosure.
+3. The conversation's session posts **Working on it…** in the thread, then edits that message into the answer. Sources appear under the answer.
+4. When a tool needs approval, the session posts the request with **Approve** and **Deny** buttons. A button press decides the approval as the linked person, with the same permission checks as the web app. The message then shows the decision.
 
-The session keeps its own record of what it posted, so a crash or a repeated commit edits the existing message instead of posting a new one. Slack replies that were possibly delivered are never posted twice. When Slack rate limits a post, the session tries again a few seconds later.
+The session journals Slack writes. It edits a known message on replay. If a post's delivery is uncertain, it does not blindly repeat the post. This prevents duplicate retries but can leave an uncertain reply undelivered. A known rate-limit response can be retried after the delay.
+
+## Enable background teams
+
+Publish coordinator, lead, and worker agents with the models and grants each role needs. Set `channels.json`'s `agentId` to the coordinator. Add the optional [coordination profile](../reference/runtime-configuration.md#coordination) to `runtime.json`, then run bootstrap again.
+
+The coordinator gets `start_team`, `get_work`, `message_team`, and `stop_work`. The lead gets `delegate_worker`. Team tools are read-only. The source conversation delivers the result to the original Slack thread.
+
+In a thread with active work, further messages go directly to that team. The exact lowercase messages `status` and `stop` are controls. They do not call the coordinator model. A later request can start new work after the previous team has settled.
+
+See the [cell diagram and code](../architecture/slack-coordinator.md) for placement, limits, and recovery.
+
+## Inspect and replay failed events
+
+Run the queue wrapper inside the installation's `celld` container. Use the same Compose project, environment, and files as deployment. For the production configuration in [the deployment guide](production.md):
+
+```sh
+docker compose -f compose.yaml -f compose.production.yaml exec -T celld \
+  node /app/deploy/queues.mjs info cerebro-slack-events-dead-letter
+
+docker compose -f compose.yaml -f compose.production.yaml exec -T celld \
+  node /app/deploy/queues.mjs peek cerebro-slack-events-dead-letter --limit 5
+
+docker compose -f compose.yaml -f compose.production.yaml exec -T celld \
+  node /app/deploy/queues.mjs redrive cerebro-slack-events-dead-letter --limit 5
+```
+
+Inspect the failure and fix its cause before redrive. The wrapper loads fleet credentials from the mounted secrets directory. Its output can contain message text, so restrict it to operators.
+
+| Source queue            | Dead-letter queue                   |
+| ----------------------- | ----------------------------------- |
+| `cerebro-slack-events`  | `cerebro-slack-events-dead-letter`  |
+| `cerebro-team-commands` | `cerebro-team-commands-dead-letter` |
+| `cerebro-team-reports`  | `cerebro-team-reports-dead-letter`  |
+
+Dead-letter queues have no application consumer. `info` and `peek` work on all six queues. `redrive` accepts only a dead-letter queue and requires an explicit limit from 1 to 100. It returns messages to their source queue with their original application event, command, or report IDs. Duplicate delivery does not create new logical work. Previously ignored Slack events stay ignored.

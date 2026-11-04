@@ -29,6 +29,12 @@ History search uses a child with only `search_conversations`. It scans bound pro
 
 Source and provenance copies are conservative. They include all recorded parent dependencies. Their SQL operations use Pi's mutation queue, but commit before Pi's physical storage transaction. A failed native fork can therefore leave extra dependency rows. Retry converges on one native branch and retains those rows.
 
+## Slack background teams
+
+An optional coordination profile gives Slack conversations tools to start independent teams. Existing thread conversations share one identity-wide active-work index. Each work ID selects a private TeamAgent cell with a lead and at most two worker conversations. Published agents select each role's model and grants. Team tools are read-only, and results return through the source conversation after current access checks.
+
+Durable queues transport Slack events, team commands, and reports. Pi remains the execution engine in each cell. See the [cell diagram and code](slack-coordinator.md) for placement, limits, controls, and recovery.
+
 ## Reminders and context summaries
 
 Native conversation documents hold reminder intent and occurrence state. Lifecycle jobs supply the physical wake. A job contains enough immutable input to recover creation interrupted before native admission. Startup reconstructs missing wakes. Each occurrence submits one stable operation ID through PiHarness. Recurrence advances automatically from the previous scheduled time and skips missed occurrences. Calendar recurrence preserves local time in its IANA timezone.
@@ -103,7 +109,7 @@ Source access controls transcript reads, new input, model requests, and allowed 
 
 ## Recovery
 
-Pi persists the transcript, inbox, generation, and tool tasks. PiHarness schedules host wake-up after eviction or restart. The host retains Pi's native idle wait with `ctx.waitUntil` while work runs. Cerebro has no second execution queue or copied-state repair job.
+Pi persists the transcript, inbox, generation, and tool tasks. PiHarness schedules host wake-up after eviction or restart. The host retains Pi's native idle wait with `ctx.waitUntil` while work runs. Transport queues deliver inputs and reports; they do not replace Pi's execution state.
 
 The host restores each conversation's provider and tool bindings before Pi resumes persisted work. The host reports background Pi failures with the session address and error category. A fatal storage failure closes Pi and resets the identity Durable Object, so all of that identity's conversations share this recovery scope. The next request or wake-up opens the native session from durable storage. Diagnostic logs exclude raw provider errors and tool arguments.
 

@@ -275,6 +275,131 @@ const recordToken = (call, delta) => {
   }
 };
 
+const legacyMessage = (request, input, purpose, operationId) => {
+  const toolName = requestedTool(request, input);
+  const tool = requestsTool(input, purpose, toolName);
+  let text = "Cerebro slice 1 completed.";
+  if (purpose === "compaction") {
+    text = "Fixture compacted history.";
+  } else if (toolName === "render_ui") {
+    text = toolArguments(toolName, input).fallbackText;
+  }
+  return tool
+    ? {
+        content: null,
+        role: "assistant",
+        tool_calls: [
+          {
+            function: {
+              arguments: JSON.stringify(toolArguments(toolName, input)),
+              name: toolName,
+            },
+            id: `call_${digest({ operationId, toolName }).slice(0, 24)}`,
+            type: "function",
+          },
+        ],
+      }
+    : { content: text, role: "assistant" };
+};
+const teamMessage = (input, operationId, purpose) => {
+  const latest = input.messages.findLastIndex(
+    (message) => message.role === "user"
+  );
+  const prompt = messageText(input.messages[latest]);
+  if (purpose !== "turn" || !prompt.includes("SLACK_TEAM_FIXTURE")) {
+    return;
+  }
+  const results = input.messages
+    .slice(latest + 1)
+    .filter((message) => message.role === "tool")
+    .map(messageText);
+  const offered = new Set(
+    (input.tools ?? []).map((tool) => tool.function?.name)
+  );
+  const calls = (name, values) => ({
+    content: null,
+    role: "assistant",
+    tool_calls: values.map((value, index) => ({
+      function: { arguments: JSON.stringify(value), name },
+      id: `call_${digest({ operationId, name, index }).slice(0, 24)}`,
+      type: "function",
+    })),
+  });
+  if (offered.has("start_team")) {
+    return results.length > 0
+      ? {
+          content: "SLACK_TEAM_FIXTURE coordinator accepted background work.",
+          role: "assistant",
+        }
+      : calls("start_team", [
+          {
+            goal: "SLACK_TEAM_FIXTURE Analyze both worker checks and return a bounded summary.",
+          },
+        ]);
+  }
+  if (offered.has("delegate_worker")) {
+    return results.length > 0
+      ? {
+          content: `SLACK_TEAM_FIXTURE lead summary: ${results
+            .slice(0, 2)
+            .map((text) => text.slice(0, 1000))
+            .join(" ")}`,
+          role: "assistant",
+        }
+      : calls("delegate_worker", [
+          { text: "SLACK_TEAM_FIXTURE worker:one. Return one bounded result." },
+          { text: "SLACK_TEAM_FIXTURE worker:two. Return one bounded result." },
+        ]);
+  }
+  if (prompt.includes("SLACK_TEAM_FIXTURE worker:one")) {
+    return {
+      content: "SLACK_TEAM_FIXTURE worker one complete.",
+      role: "assistant",
+    };
+  }
+  if (prompt.includes("SLACK_TEAM_FIXTURE worker:two")) {
+    return {
+      content: "SLACK_TEAM_FIXTURE worker two complete.",
+      role: "assistant",
+    };
+  }
+};
+const validateModelControls = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid model controls");
+  }
+  for (const [model, control] of Object.entries(value)) {
+    if (
+      !model ||
+      !control ||
+      typeof control.hold !== "boolean" ||
+      !Number.isInteger(control.delayMs) ||
+      control.delayMs < 0 ||
+      control.delayMs > 5000
+    ) {
+      throw new Error("Invalid model controls");
+    }
+  }
+  return value;
+};
+
+const validSlackMessage = (input, method) =>
+  input &&
+  typeof input.channel === "string" &&
+  input.channel.length > 0 &&
+  typeof input.text === "string" &&
+  (input.blocks === undefined || Array.isArray(input.blocks)) &&
+  (input.thread_ts === undefined || typeof input.thread_ts === "string") &&
+  (method !== "chat.postEphemeral" ||
+    (typeof input.user === "string" && input.user.length > 0)) &&
+  (method !== "chat.update" ||
+    (typeof input.ts === "string" && input.ts.length > 0));
+const slackMethods = new Set([
+  "POST /slack/chat.postMessage",
+  "POST /slack/chat.update",
+  "POST /slack/chat.postEphemeral",
+]);
+
 export const createFixture = async ({
   directory,
   fixtureId,
@@ -309,6 +434,12 @@ export const createFixture = async ({
       throw error;
     }
   }
+  state.controls.models ??= {};
+  state.slack ??= {
+    calls: [],
+    messages: [],
+    nextTimestamp: 1_800_000_000_000_000,
+  };
   let writes = Promise.resolve();
   const save = () => {
     state.revision += 1;
@@ -323,6 +454,24 @@ export const createFixture = async ({
   };
   await save();
   const held = new Set();
+  const modelHolds = new Map();
+  const modelDelay = (model) =>
+    state.controls.models[model]?.delayMs ?? state.controls.delayMs;
+  const holdModel = async (model, response) => {
+    if (!state.controls.models[model]?.hold) {
+      return;
+    }
+    const { promise, resolve } = Promise.withResolvers();
+    const release = () => {
+      held.delete(release);
+      modelHolds.delete(release);
+      resolve();
+    };
+    held.add(release);
+    modelHolds.set(release, model);
+    response.once("close", release);
+    await promise;
+  };
   const checkpoint = async (boundary, operationId, response) => {
     if (!boundaries.includes(boundary)) {
       throw new Error("Unknown checkpoint boundary");
@@ -399,30 +548,14 @@ export const createFixture = async ({
       });
       return;
     }
-    const toolName = requestedTool(request, input);
-    const tool = requestsTool(input, purpose, toolName);
-    let text = "Cerebro slice 1 completed.";
-    if (purpose === "compaction") {
-      text = "Fixture compacted history.";
-    } else if (toolName === "render_ui") {
-      text = toolArguments(toolName, input).fallbackText;
+    await holdModel(input.model, response);
+    if (response.destroyed) {
+      return;
     }
-    const message = tool
-      ? {
-          content: null,
-          role: "assistant",
-          tool_calls: [
-            {
-              function: {
-                arguments: JSON.stringify(toolArguments(toolName, input)),
-                name: toolName,
-              },
-              id: `call_${digest({ operationId, toolName }).slice(0, 24)}`,
-              type: "function",
-            },
-          ],
-        }
-      : { content: text, role: "assistant" };
+    const message =
+      teamMessage(input, operationId, purpose) ??
+      legacyMessage(request, input, purpose, operationId);
+    const tool = Boolean(message.tool_calls?.length);
     const base = {
       created: 1,
       id: `chatcmpl_${operationId}`,
@@ -438,15 +571,15 @@ export const createFixture = async ({
         ? [
             {
               ...message,
-              tool_calls: message.tool_calls.map((item) => ({
+              tool_calls: message.tool_calls.map((item, index) => ({
                 ...item,
-                index: 0,
+                index,
               })),
             },
           ]
         : [
             { content: "", role: "assistant" },
-            ...text.split(" ").map((word, index) => ({
+            ...message.content.split(" ").map((word, index) => ({
               content: `${index ? " " : ""}${word}`,
             })),
           ];
@@ -454,7 +587,7 @@ export const createFixture = async ({
         if (response.destroyed) {
           return;
         }
-        await delay(state.controls.delayMs);
+        await delay(modelDelay(input.model));
         recordToken(call, delta);
         response.write(
           `data: ${JSON.stringify({ ...base, choices: [{ delta, finish_reason: null, index: 0 }], object: "chat.completion.chunk" })}\n\n`
@@ -467,7 +600,7 @@ export const createFixture = async ({
         `data: ${JSON.stringify({ ...base, choices: [{ delta: {}, finish_reason: tool ? "tool_calls" : "stop", index: 0 }], object: "chat.completion.chunk", usage })}\n\ndata: [DONE]\n\n`
       );
     } else {
-      await delay(state.controls.delayMs);
+      await delay(modelDelay(input.model));
       call.firstTokenAt = Date.now();
       call.completedAt = Date.now();
       call.status = 200;
@@ -588,6 +721,9 @@ export const createFixture = async ({
     }
   };
   const applyControls = (input) => {
+    if (input.models !== undefined) {
+      state.controls.models = validateModelControls(input.models);
+    }
     if (input.delayMs !== undefined) {
       if (
         !Number.isInteger(input.delayMs) ||
@@ -611,22 +747,91 @@ export const createFixture = async ({
       state.controls.arm = input.arm;
     }
   };
+  const slack = async (request, response, route) => {
+    if (!slackMethods.has(route)) {
+      return false;
+    }
+    const method = route.slice("POST /slack/".length);
+    if (request.headers.authorization !== "Bearer fixture-slack-token") {
+      json(response, 200, { error: "invalid_auth", ok: false });
+      return true;
+    }
+    const input = await body(request);
+    if (!validSlackMessage(input, method)) {
+      json(response, 200, { error: "invalid_arguments", ok: false });
+      return true;
+    }
+    let result;
+    if (method === "chat.update") {
+      const message = state.slack.messages.find(
+        (value) => value.channel === input.channel && value.ts === input.ts
+      );
+      if (!message) {
+        result = { error: "message_not_found", ok: false };
+      } else if (message.kind === "ephemeral") {
+        result = { error: "cant_update_message", ok: false };
+      } else {
+        message.text = input.text;
+        message.blocks = input.blocks ?? [];
+        result = {
+          channel: message.channel,
+          message: { text: message.text },
+          ok: true,
+          text: message.text,
+          ts: message.ts,
+        };
+      }
+    } else {
+      const timestamp = state.slack.nextTimestamp;
+      state.slack.nextTimestamp += 1;
+      const ts = `${Math.floor(timestamp / 1_000_000)}.${String(timestamp % 1_000_000).padStart(6, "0")}`;
+      const message = {
+        blocks: input.blocks ?? [],
+        channel: input.channel,
+        kind: method === "chat.postEphemeral" ? "ephemeral" : "message",
+        text: input.text,
+        ts,
+        ...(input.thread_ts ? { threadTs: input.thread_ts } : {}),
+        ...(method === "chat.postEphemeral" ? { user: input.user } : {}),
+      };
+      state.slack.messages.push(message);
+      result =
+        method === "chat.postEphemeral"
+          ? { message_ts: ts, ok: true }
+          : {
+              channel: message.channel,
+              message: {
+                blocks: message.blocks,
+                text: message.text,
+                ts,
+                ...(message.threadTs ? { thread_ts: message.threadTs } : {}),
+              },
+              ok: true,
+              ts,
+            };
+    }
+    state.slack.calls.push({ method, request: input, response: result });
+    await save();
+    json(response, 200, result);
+    return true;
+  };
   const server = createServer(async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://fixture:8090");
-      if (request.method === "GET" && url.pathname === "/health") {
+      const route = `${request.method} ${url.pathname}`;
+      if (await slack(request, response, route)) {
+        return;
+      }
+      if (route === "GET /health") {
         json(response, 200, { fixtureId, ok: true, sha });
-      } else if (request.method === "GET" && url.pathname === "/observations") {
+      } else if (route === "GET /observations") {
         // Serve the file that crossed the persistence boundary, not mutable process state.
         await writes;
         json(response, 200, {
           ...JSON.parse(await readFile(filename, "utf-8")),
           held: held.size,
         });
-      } else if (
-        request.method === "POST" &&
-        ["/control", "/checkpoints"].includes(url.pathname)
-      ) {
+      } else if (["POST /control", "POST /checkpoints"].includes(route)) {
         if (request.headers["x-fixture-control"] !== controlToken) {
           json(response, 403, { error: "Fixture control token required" });
           return;
@@ -637,6 +842,11 @@ export const createFixture = async ({
         } else {
           applyControls(input);
           await save();
+          for (const [release, modelId] of modelHolds) {
+            if (!state.controls.models[modelId]?.hold) {
+              release();
+            }
+          }
           if (input.release) {
             for (const release of held) {
               release();
@@ -644,15 +854,9 @@ export const createFixture = async ({
           }
         }
         json(response, 200, { ok: true, revision: state.revision });
-      } else if (
-        request.method === "POST" &&
-        url.pathname === "/v1/chat/completions"
-      ) {
+      } else if (route === "POST /v1/chat/completions") {
         await model(request, response);
-      } else if (
-        request.method === "POST" &&
-        ["/mcp", "/effects"].includes(url.pathname)
-      ) {
+      } else if (["POST /mcp", "POST /effects"].includes(route)) {
         if (request.headers.authorization !== "Bearer fixture-connector-key") {
           json(response, 401, {
             error: "Fixture connector credentials required",
