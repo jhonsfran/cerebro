@@ -99,6 +99,6 @@ The runtime command also runs the six dependency checks. Native and browser chec
 
 ## Final review and publication
 
-- [ ] Audit new decision-log rows against this authorized run and actual artifacts with an independent reviewer.
-- [ ] Confirm the working tree is clean and each unit has its own reviewed commit.
-- [ ] Push the feature branch and update PR 19 around the final web and Slack behavior. Do not merge or deploy.
+- [x] Audit new decision-log rows against this authorized run and actual artifacts with an independent reviewer.
+- [x] Confirm the working tree is clean and each unit has its own reviewed commit.
+- [x] Push the feature branch and update PR 19 around the final web and Slack behavior. Do not merge or deploy.
