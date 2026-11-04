@@ -38,7 +38,11 @@ export const createConnectorAdmin = (
   env: Pick<WorkerEnv, "ACCOUNT_KEY" | "DEPLOY_MODE">
 ): ConnectorAdmin => {
   const discover = async (
-    connector: { readonly id: string; readonly url: string },
+    connector: {
+      readonly id: string;
+      readonly url: string;
+      readonly readTools: readonly string[];
+    },
     headers: Readonly<Record<string, string>>
   ) => {
     try {
@@ -55,7 +59,11 @@ export const createConnectorAdmin = (
     database: Database,
     organizationId: string,
     principalId: string,
-    connector: { readonly id: string; readonly url: string },
+    connector: {
+      readonly id: string;
+      readonly url: string;
+      readonly readTools: readonly string[];
+    },
     headers: Readonly<Record<string, string>>,
     account?: { readonly id: string; readonly sealed: string }
   ): Promise<ConnectorChange> => {
@@ -117,7 +125,7 @@ export const createConnectorAdmin = (
         database,
         organizationId,
         principalId,
-        { id: input.id, url: url.href },
+        { id: input.id, readTools: [], url: url.href },
         input.headers,
         account
       );
@@ -155,7 +163,7 @@ export const createConnectorAdmin = (
         database,
         organizationId,
         principalId,
-        { id: connectorId, url: connector.url },
+        { id: connectorId, readTools: [], url: connector.url },
         headers
       );
     },

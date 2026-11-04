@@ -57,13 +57,14 @@ const toolSchema = z.strictObject({
   ]),
   version: z.string().min(1),
 });
-// An MCP server whose tools bootstrap discovers into the catalog.
+// An MCP server whose tools bootstrap discovers into the catalog. Only the
+// tools named in readTools run without approval.
 const connectorSchema = z.strictObject({
   credentials: credentialsSchema.optional(),
   id: z.string().min(1),
+  readTools: z.array(z.string().min(1)).default([]),
   url: z.url(),
 });
-export type McpConnector = z.infer<typeof connectorSchema>;
 const schema = z.strictObject({
   artifacts: z.strictObject({
     accessKeyId: z.string().min(1),

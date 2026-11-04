@@ -123,7 +123,8 @@ test(
       ),
       "fixture-read,fixture_effect"
     );
-    // Discovered MCP tools: only the read-only one is a read without approval.
+    // Discovered MCP tools: only the one runtime.json lists in readTools is a
+    // read without approval.
     assert.equal(
       await fixture.sql(
         "SELECT string_agg(id || ':' || (definition->>'effect') || ':' || (definition->>'requiresApproval'), ',' ORDER BY id COLLATE \"C\") FROM connector_tool WHERE source='mcp:fixture-mcp'"

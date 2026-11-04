@@ -33,6 +33,7 @@ const configuration = {
     {
       credentials: connector.credentials,
       id: "fixture-mcp",
+      readTools: ["lookup"],
       url: "http://fixture:8090/mcp",
     },
   ],
