@@ -5,6 +5,7 @@ import { createProvider } from "@earendil-works/pi-ai/models";
 import { Effect } from "effect";
 import { z } from "zod";
 
+import type { ToolAuditEvent } from "../../packages/contracts/src/audit.ts";
 import { enforceDecision } from "../../packages/contracts/src/authority-service.ts";
 import type { AuthorityService } from "../../packages/contracts/src/authority-service.ts";
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
@@ -23,6 +24,7 @@ import {
 import type { ExecutionContext } from "../../packages/contracts/src/identity.ts";
 import type { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
 import { createApprovalStore } from "../../packages/runtime/src/approval-store.ts";
+import { sendToAuditSink } from "../../packages/runtime/src/audit-sink.ts";
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
 import { SessionAgent as NativeSessionAgent } from "../../packages/runtime/src/session-agent.ts";
 import type {
@@ -59,12 +61,18 @@ const receiptOutput = z.object({
   value: z.string(),
 });
 const identityTuple = z.tuple([z.string(), z.string()]);
+const auditName = z.enum(["tool.dispatched", "tool.settled"]).optional();
+interface AuditFault {
+  readonly fail: ToolAuditEvent["name"] | null;
+  readonly hold: ToolAuditEvent["name"] | null;
+}
 
 export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
   private readonly instanceId = crypto.randomUUID();
   private readonly configurations = new Map<string, SessionHostConfiguration>();
   private readonly authorityCallCounts = new Map<string, number>();
   private readonly failingToolChecks = new Set<string>();
+  private readonly auditFaults = new Map<string, AuditFault>();
 
   private identity() {
     const [organizationId, principalId] = identityTuple.parse(
@@ -268,6 +276,10 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
       this.ctx.storage.sql.exec(
         "CREATE TABLE IF NOT EXISTS fixture_model_request (session_id TEXT NOT NULL, operation_id TEXT NOT NULL, body TEXT NOT NULL)"
       );
+      this.ctx.storage.sql.exec(
+        "CREATE TABLE IF NOT EXISTS fixture_audit_event (session_id TEXT NOT NULL, body TEXT NOT NULL)"
+      );
+      const sendAudit = sendToAuditSink(this.env.AUDIT_SINK);
       const context = ownerContext(address, identity.principalId);
       const agent = {
         agentId: address.agentId,
@@ -398,6 +410,35 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
       const configuration: SessionHostConfiguration = {
         address,
         agent,
+        // The production sink, with injected failures and holds. Each delivered
+        // event is logged in storage so a restart cannot erase the evidence.
+        audit: (event) =>
+          Effect.gen({ self: this }, function* fixtureAudit() {
+            const fault = this.auditFaults.get(address.sessionId);
+            if (fault?.fail === event.name) {
+              return yield* Effect.fail(
+                new Unavailable({ reason: "Fixture audit sink is down." })
+              );
+            }
+            yield* sendAudit(event);
+            yield* Effect.tryPromise({
+              catch: () =>
+                new Unavailable({ reason: "Fixture audit log failed." }),
+              try: async () => {
+                await metadata(() => {
+                  this.ctx.storage.sql.exec(
+                    "INSERT INTO fixture_audit_event VALUES (?, ?)",
+                    address.sessionId,
+                    JSON.stringify(event)
+                  );
+                });
+                await this.ctx.storage.sync();
+              },
+            });
+            if (fault?.hold === event.name) {
+              yield* Effect.never;
+            }
+          }),
         authority,
         ...(origin
           ? {
@@ -712,6 +753,30 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
     });
   }
 
+  private async auditFixture(
+    request: Request,
+    address: EventAddress
+  ): Promise<Response> {
+    const input = z
+      .object({ fail: auditName, hold: auditName })
+      .parse(await request.json());
+    const current = this.auditFaults.get(address.sessionId);
+    this.auditFaults.set(address.sessionId, {
+      fail: input.fail ?? current?.fail ?? null,
+      hold: input.hold ?? current?.hold ?? null,
+    });
+    return Response.json({
+      status: "ok",
+      value: this.ctx.storage.sql
+        .exec<{ body: string }>(
+          "SELECT body FROM fixture_audit_event WHERE session_id=? ORDER BY rowid",
+          address.sessionId
+        )
+        .toArray()
+        .map((row) => JSON.parse(row.body)),
+    });
+  }
+
   override async onRequest(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (!path.startsWith("/fixture/")) {
@@ -839,6 +904,9 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
             failNextToolCheck: this.failingToolChecks.has(address.sessionId),
           },
         });
+      }
+      if (path === "/fixture/audit") {
+        return await this.auditFixture(request, address);
       }
       if (path === "/fixture/native-storage") {
         return Response.json({

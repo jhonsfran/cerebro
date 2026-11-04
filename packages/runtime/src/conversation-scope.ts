@@ -193,6 +193,7 @@ const createResources = (
     address: configuration.address,
     agent: configuration.agent,
     approvals,
+    audit: configuration.audit,
     authority: configuration.authority,
     checkDependencies: configuration.checkDependencies,
     deadlineMs: configuration.provider.deadlineMs,

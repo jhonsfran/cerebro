@@ -84,6 +84,7 @@ export interface SessionHostConfiguration {
     context: ExecutionContext
   ) => Effect.Effect<string, ContractFailure>;
   readonly toolDependencies: PiToolConfiguration["dependencies"];
+  readonly audit: PiToolConfiguration["audit"];
   readonly checkDependencies: (
     context: ExecutionContext,
     dependencies: ContentDependencies,
