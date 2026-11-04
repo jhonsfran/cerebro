@@ -2,7 +2,10 @@ import { Conflict, Denied } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
-import { TeamReportReceiptSchema } from "@cerebro/contracts/work";
+import {
+  TeamReportReceiptSchema,
+  TeamReportDeliverySchema,
+} from "@cerebro/contracts/work";
 import type { TeamReportDelivery } from "@cerebro/contracts/work";
 import { defineDocFamily } from "@earendil-works/pi-durable";
 import type { Conversation, Harness } from "@earendil-works/pi-durable";
@@ -14,7 +17,12 @@ import {
   WorkDocuments,
   coordinatorOperationKey,
   requireCoordinatorWork,
+  requireWorkSource,
   sameWorkSource,
+} from "./coordinator-ledger.ts";
+import type {
+  CoordinationBinding,
+  CoordinatorWorkRecord,
 } from "./coordinator-ledger.ts";
 import type { createCoordinatorWork } from "./coordinator-work.ts";
 import { importContentIn } from "./imported-content.ts";
@@ -43,6 +51,35 @@ const run = async (
     throw result.failure;
   }
 };
+const requireReportSource = (
+  record: CoordinatorWorkRecord,
+  delivery: TeamReportDelivery,
+  binding: CoordinationBinding
+): void => {
+  requireWorkSource(record, binding);
+  const { admission } = record;
+  const legacyAdmission = "sourceSlackThread" in admission;
+  const legacyDelivery = "sourceSlackThread" in delivery;
+  if (
+    !sameWorkSource(
+      admission.sourceEventAddress,
+      delivery.sourceEventAddress
+    ) ||
+    admission.key.organizationId !== delivery.report.key.organizationId ||
+    admission.key.ownerPrincipalId !== delivery.report.key.ownerPrincipalId ||
+    admission.key.workId !== delivery.report.key.workId ||
+    legacyAdmission !== legacyDelivery ||
+    (legacyAdmission &&
+      legacyDelivery &&
+      canonicalToolArguments(admission.sourceSlackThread) !==
+        canonicalToolArguments(delivery.sourceSlackThread))
+  ) {
+    throw new Denied({
+      code: "unauthorized",
+      reason: "The saved report source changed.",
+    });
+  }
+};
 export const createCoordinatorReport =
   (options: {
     readonly pi: Harness;
@@ -63,10 +100,13 @@ export const createCoordinatorReport =
     readonly persist: () => Promise<void>;
   }) =>
   async (
-    delivery: TeamReportDelivery,
+    input: TeamReportDelivery,
     context: ExecutionContext,
     signal?: AbortSignal
   ) => {
+    const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
+      onExcessProperty: "error",
+    })(input);
     const { report } = delivery;
     const { configuration } = options.runtime;
     const { checkImportedDependencies, importDependencies } = configuration;
@@ -77,11 +117,7 @@ export const createCoordinatorReport =
       });
     }
     const binding = options.coordination.binding();
-    if (
-      !sameWorkSource(delivery.sourceEventAddress, binding.address) ||
-      canonicalToolArguments(delivery.sourceSlackThread) !==
-        canonicalToolArguments(binding.thread)
-    ) {
+    if (!sameWorkSource(delivery.sourceEventAddress, binding.address)) {
       throw new Denied({
         code: "unauthorized",
         reason: "The report source changed.",
@@ -100,6 +136,9 @@ export const createCoordinatorReport =
       piContext(signal)
     );
     const previous = saved?.record;
+    if (previous) {
+      requireReportSource(previous, delivery, binding);
+    }
     const admitsContent =
       previous !== null &&
       previous !== undefined &&
@@ -128,17 +167,7 @@ export const createCoordinatorReport =
         binding,
         report.key.workId
       );
-      if (
-        canonicalToolArguments(record.admission.sourceEventAddress) !==
-          canonicalToolArguments(delivery.sourceEventAddress) ||
-        canonicalToolArguments(record.admission.sourceSlackThread) !==
-          canonicalToolArguments(delivery.sourceSlackThread)
-      ) {
-        throw new Denied({
-          code: "unauthorized",
-          reason: "The saved report source changed.",
-        });
-      }
+      requireReportSource(record, delivery, binding);
       const document = await tx.doc(
         SourceReportReceipts,
         options.native.id,

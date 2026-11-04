@@ -188,7 +188,6 @@ export const setup = async (timeoutMs = 600_000) => {
             },
             ownerPrincipalId,
             profile,
-            thread: source.thread,
             resolveRolePins: () =>
               Promise.resolve({
                 lead: {

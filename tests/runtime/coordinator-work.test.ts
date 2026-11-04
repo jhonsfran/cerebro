@@ -47,7 +47,7 @@ test("two Slack scopes share identity slots, keep destinations across reopen, an
     );
     assert.match(
       wrong.snapshot.tools.at(-1)?.output ?? "",
-      /another Slack source/u
+      /another conversation/u
     );
     await assert.rejects(
       fixture.pi().commit(

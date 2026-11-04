@@ -71,10 +71,17 @@ export const requireTeamAdmission = (
   state: TeamStateValue,
   admission: WorkAdmission
 ): void => {
+  const decoded = Schema.decodeUnknownSync(WorkAdmissionSchema, {
+    onExcessProperty: "error",
+  })(admission);
+  const saved = state.admission
+    ? Schema.decodeUnknownSync(WorkAdmissionSchema, {
+        onExcessProperty: "error",
+      })(state.admission)
+    : null;
   if (
-    state.admission &&
-    canonicalToolArguments(state.admission) !==
-      canonicalToolArguments(admission)
+    saved &&
+    canonicalToolArguments(saved) !== canonicalToolArguments(decoded)
   ) {
     throw new Conflict({
       code: "digest-mismatch",
@@ -82,7 +89,7 @@ export const requireTeamAdmission = (
     });
   }
   if (!state.admission) {
-    state.admission = Schema.decodeUnknownSync(WorkAdmissionSchema)(admission);
+    state.admission = decoded;
   }
 };
 export const requireTeamRunning = (
@@ -99,7 +106,9 @@ export const requireTeamRunning = (
       reason: "The team work is no longer running.",
     });
   }
-  return state.admission;
+  return Schema.decodeUnknownSync(WorkAdmissionSchema, {
+    onExcessProperty: "error",
+  })(state.admission);
 };
 export const teamCommandDependencies = (command: TeamCommand) =>
   Schema.decodeUnknownSync(BoundedContentDependenciesSchema)({

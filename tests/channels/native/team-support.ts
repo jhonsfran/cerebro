@@ -156,6 +156,8 @@ export const observed = async () =>
           operationId: z.string(),
           startedAt: z.number(),
           completedAt: z.number().optional(),
+          toolNames: z.array(z.string()),
+          messageTextDigests: z.array(z.string()),
         })
       ),
       slack: z.object({
@@ -249,14 +251,17 @@ export const drained = (name: string) =>
     (value) => value.stored === 0 && value.backlogCount === 0,
     30_000
   );
-export const controlReportQueue = async (operation: "pause" | "resume") => {
-  const output = await docker(
-    "exec",
-    await fixture.container("celld"),
-    "node",
-    "--input-type=module",
-    "-e",
-    `
+export const controlReportQueue = (operation: "pause" | "resume") =>
+  waitForFixture(
+    async () => {
+      try {
+        const output = await docker(
+          "exec",
+          await fixture.container("celld"),
+          "node",
+          "--input-type=module",
+          "-e",
+          `
     import { readFile } from 'node:fs/promises';
     import { spawnSync } from 'node:child_process';
     const password = (await readFile('/run/cerebro-secrets/minio-password','utf8')).trim();
@@ -266,10 +271,25 @@ export const controlReportQueue = async (operation: "pause" | "resume") => {
     process.stderr.write(redact(result.stderr ?? ''));
     process.exitCode = result.error || result.signal ? 1 : result.status ?? 1;
   `,
-    operation
+          operation
+        );
+        return JSON.parse(output.stdout);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message.includes("409 Conflict") &&
+          error.message.includes(
+            "peer request targets a different node session"
+          )
+        ) {
+          return;
+        }
+        throw error;
+      }
+    },
+    (value) => value !== undefined,
+    30_000
   );
-  return JSON.parse(output.stdout);
-};
 export const configure = async () => {
   await fixture.container("fixture");
   const published = await Promise.all(
@@ -318,7 +338,7 @@ export const configure = async () => {
     }),
     JSON.stringify({ leadAgentId: lead.agentId, workerAgentId: worker.agentId })
   );
-  await compose("up", "--no-deps", "--force-recreate", "--wait", "bootstrap");
+  await compose("run", "--no-deps", "--rm", "bootstrap");
   await compose("restart", "celld");
   await ready();
   await waitForFixture(

@@ -5,8 +5,12 @@ import { Effect, Schema } from "effect";
 
 import { Conflict, Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
-import { TeamReportDeliverySchema } from "../../packages/contracts/src/work.ts";
+import {
+  TeamReportDeliverySchema,
+  WorkAdmissionSchema,
+} from "../../packages/contracts/src/work.ts";
 import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
+import { WorkDocuments } from "../../packages/runtime/src/coordinator-ledger.ts";
 import { createCoordinatorReport } from "../../packages/runtime/src/coordinator-report.ts";
 import { createCoordinatorSource } from "../../packages/runtime/src/coordinator-source.ts";
 import {
@@ -83,8 +87,8 @@ const subject = async () => {
   const route = createCoordinatorSource(ports);
   const record = await fixture.work("a");
   const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema)({
+    version: 2,
     sourceEventAddress: record.admission.sourceEventAddress,
-    sourceSlackThread: record.admission.sourceSlackThread,
     report: {
       id: `report:${record.admission.key.workId}`,
       key: record.admission.key,
@@ -242,9 +246,9 @@ test("stop saves cancellation before late reports, and wrong sources or revoked 
   try {
     const wrong = {
       ...f.delivery,
-      sourceSlackThread: {
-        ...f.delivery.sourceSlackThread,
-        channelId: "D-other",
+      sourceEventAddress: {
+        ...f.delivery.sourceEventAddress,
+        sessionId: id.session("other"),
       },
     };
     await assert.rejects(
@@ -277,6 +281,129 @@ test("stop saves cancellation before late reports, and wrong sources or revoked 
     await assert.rejects(
       f.receive(f.delivery, actor),
       (error: unknown) => error instanceof Denied
+    );
+  } finally {
+    await f.fixture.close();
+  }
+});
+
+test("report admission rejects format, owner, organization, source, and session changes before import", async () => {
+  const f = await subject();
+  try {
+    const before = await f.messages();
+    const { report, sourceEventAddress } = f.delivery;
+    const invalid = [
+      { report, sourceEventAddress, sourceSlackThread: f.source.thread },
+      { ...f.delivery, sourceSlackThread: f.source.thread },
+      {
+        ...f.delivery,
+        report: {
+          ...report,
+          key: { ...report.key, ownerPrincipalId: "other-owner" },
+        },
+      },
+      {
+        ...f.delivery,
+        report: {
+          ...report,
+          key: { ...report.key, organizationId: "other-org" },
+        },
+      },
+      {
+        ...f.delivery,
+        sourceEventAddress: {
+          ...sourceEventAddress,
+          conversationId: "other-source",
+        },
+      },
+      {
+        ...f.delivery,
+        sourceEventAddress: { ...sourceEventAddress, agentId: "other-agent" },
+      },
+      {
+        ...f.delivery,
+        sourceEventAddress: {
+          ...sourceEventAddress,
+          sessionId: "other-session",
+        },
+      },
+    ];
+    await Promise.all(
+      invalid.map((delivery) => assert.rejects(f.receive(delivery, actor)))
+    );
+    assert.deepEqual(await f.messages(), before);
+    assert.deepEqual(
+      await readImportedContent(f.fixture.pi(), f.source.native.id),
+      { sourceIds: [], toolIds: [] }
+    );
+    const record = await f.fixture.work("a");
+    assert.equal(record.reportId, null);
+  } finally {
+    await f.fixture.close();
+  }
+});
+
+test("a retained legacy work requires its legacy report and exact saved thread before receipt replay", async () => {
+  const f = await subject();
+  try {
+    const record = await f.fixture.work("a");
+    assert.ok("version" in record.admission);
+    const { version, ...fields } = record.admission;
+    assert.equal(version, 2);
+    const legacy = Schema.decodeUnknownSync(WorkAdmissionSchema, {
+      onExcessProperty: "error",
+    })({ ...fields, sourceSlackThread: f.source.thread });
+    await f.fixture.pi().commit(async (tx) => {
+      const document = await tx.doc(
+        WorkDocuments,
+        record.admission.key.workId,
+        null
+      );
+      assert.ok(document.record);
+      document.record.admission = legacy;
+    }, context);
+    await assert.rejects(
+      f.receive(f.delivery, actor),
+      (error: unknown) => error instanceof Denied
+    );
+    const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
+      onExcessProperty: "error",
+    })({
+      report: f.delivery.report,
+      sourceEventAddress: legacy.sourceEventAddress,
+      sourceSlackThread: f.source.thread,
+    });
+    assert.ok("sourceSlackThread" in delivery);
+    const changed = {
+      ...delivery,
+      sourceSlackThread: {
+        ...delivery.sourceSlackThread,
+        rootTimestamp: "1800000099.000001",
+      },
+    };
+    await assert.rejects(
+      f.receive(changed, actor),
+      (error: unknown) => error instanceof Denied
+    );
+    const first = await f.receive(delivery, actor);
+    const replay = await f.receive(delivery, actor);
+    assert.equal(first.accepted, true);
+    assert.equal(replay.accepted, true);
+    await assert.rejects(
+      f.receive(changed, actor),
+      (error: unknown) => error instanceof Denied
+    );
+    await assert.rejects(
+      f.receive(f.delivery, actor),
+      (error: unknown) => error instanceof Denied
+    );
+    const messages = await f.messages();
+    assert.equal(
+      messages.filter(
+        (message) =>
+          message.role === "assistant" && message.text === "Result based on B."
+      ).length,
+      1
     );
   } finally {
     await f.fixture.close();

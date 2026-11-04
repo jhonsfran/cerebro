@@ -22,6 +22,10 @@ import type { WorkerEnv } from "./bindings";
 import { slackSettings } from "./channels";
 import { runtimeConfiguration } from "./config";
 import { resolveSessionAddress } from "./session/agent";
+import {
+  isCoordinatorConversation,
+  requireLegacySourceMatch,
+} from "./session/coordination";
 import { createExecutionComposition } from "./session/execution";
 import { authenticateSessionRequest } from "./session/proof";
 
@@ -79,20 +83,14 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
     );
     if (
       !config.coordination ||
-      !slack ||
-      conversation.kind !== "slack" ||
-      conversation.workspaceId !== slack.workspaceId ||
-      conversation.agentId !== slack.agentId ||
-      conversation.channelId !== command.work.sourceSlackThread.channelId ||
-      conversation.rootTimestamp !==
-        command.work.sourceSlackThread.rootTimestamp ||
-      conversation.workspaceId !== command.work.sourceSlackThread.workspaceId
+      !isCoordinatorConversation(conversation, slack)
     ) {
       throw new Denied({
         code: "revoked",
-        reason: "The Slack team source is no longer configured.",
+        reason: "The team source is no longer configured.",
       });
     }
+    requireLegacySourceMatch(command.work, conversation);
     return command;
   }
 

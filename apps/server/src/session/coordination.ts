@@ -11,7 +11,11 @@ import type {
   AgentDefinition,
 } from "@cerebro/contracts/session";
 import { SlackThreadSchema } from "@cerebro/contracts/work";
-import type { CoordinationProfile } from "@cerebro/contracts/work";
+import type {
+  CoordinationProfile,
+  WorkAdmission,
+  TeamReportDelivery,
+} from "@cerebro/contracts/work";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import type { channelConversation } from "@cerebro/db/schema/agents";
@@ -20,6 +24,59 @@ import { Effect, Schema } from "effect";
 
 import { createCurrentAuthority } from "../access";
 import type { WorkerEnv } from "../bindings";
+
+type ConversationRow = typeof channelConversation.$inferSelect;
+
+export const isCoordinatorConversation = (
+  conversation: ConversationRow,
+  slack: SlackConfiguration | undefined
+): boolean => {
+  switch (conversation.kind) {
+    case "web": {
+      return true;
+    }
+    case "slack": {
+      return Boolean(
+        slack &&
+        conversation.agentId === slack.agentId &&
+        conversation.workspaceId === slack.workspaceId &&
+        Schema.is(SlackThreadSchema)({
+          channelId: conversation.channelId,
+          workspaceId: conversation.workspaceId,
+          rootTimestamp: conversation.rootTimestamp,
+        })
+      );
+    }
+    default: {
+      const exhaustive: never = conversation.kind;
+      throw new Denied({
+        code: "revoked",
+        reason: `The conversation kind ${exhaustive} does not support coordination.`,
+      });
+    }
+  }
+};
+
+export const requireLegacySourceMatch = (
+  value: WorkAdmission | TeamReportDelivery,
+  conversation: ConversationRow
+): void => {
+  if (!("sourceSlackThread" in value)) {
+    return;
+  }
+  const thread = value.sourceSlackThread;
+  if (
+    conversation.kind !== "slack" ||
+    conversation.channelId !== thread.channelId ||
+    conversation.workspaceId !== thread.workspaceId ||
+    conversation.rootTimestamp !== thread.rootTimestamp
+  ) {
+    throw new Denied({
+      code: "unauthorized",
+      reason: "The retained team source does not match this conversation.",
+    });
+  }
+};
 
 export const createCoordinatorServices = (options: {
   readonly env: WorkerEnv;
@@ -33,26 +90,14 @@ export const createCoordinatorServices = (options: {
   readonly ownerContext: () => Effect.Effect<ExecutionContext, ContractFailure>;
 }): CoordinationServices | undefined => {
   const { profile, conversation, slack, address } = options;
-  if (
-    !profile ||
-    !slack ||
-    conversation.kind !== "slack" ||
-    conversation.agentId !== slack.agentId ||
-    conversation.workspaceId !== slack.workspaceId
-  ) {
+  if (!profile || !isCoordinatorConversation(conversation, slack)) {
     return;
   }
   const ownerPrincipalId = id.principal(conversation.ownerPrincipalId);
-  const thread = Schema.decodeUnknownSync(SlackThreadSchema)({
-    channelId: conversation.channelId,
-    workspaceId: conversation.workspaceId,
-    rootTimestamp: conversation.rootTimestamp,
-  });
   return {
     ownerPrincipalId,
     contentDependencies: options.contentDependencies,
     profile,
-    thread,
     sendCommand: async (command) => {
       assertQueuePayloadSize(command);
       await options.env.TEAM_COMMANDS.send(command, { contentType: "json" });

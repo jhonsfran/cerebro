@@ -7,8 +7,8 @@ import { test } from "node:test";
 import { Schema } from "effect";
 
 import {
-  TeamReportDeliverySchema,
   WorkReportSchema,
+  TeamReportDeliverySchema,
 } from "../../packages/contracts/src/work.ts";
 import type { TeamReportDelivery } from "../../packages/contracts/src/work.ts";
 import {
@@ -79,9 +79,9 @@ test("terminal report and outbox commit together, and an uncertain send retries 
               throw new Error("Preparation failed.");
             }
             return Schema.decodeUnknownSync(TeamReportDeliverySchema)({
+              version: 2,
               report: value,
               sourceEventAddress: work.sourceEventAddress,
-              sourceSlackThread: work.sourceSlackThread,
             });
           },
           send: (delivery) => {

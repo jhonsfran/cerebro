@@ -56,8 +56,11 @@ export const createCoordinatorDispatch = (options: {
     version: 1,
     initial: () => ({ attempt: 0, phase: "send" }),
     abort: async (task, runtime, context) => {
+      const command = Schema.decodeUnknownSync(TeamCommandSchema, {
+        onExcessProperty: "error",
+      })(task.input);
       await runtime.commit(async (tx) => {
-        await clearPending(tx, task.input);
+        await clearPending(tx, command);
         return {
           status: "terminal",
           outcome: { status: "aborted", reason: "cancelled" },
@@ -79,7 +82,9 @@ export const createCoordinatorDispatch = (options: {
         );
       },
       send: async (task, runtime, context) => {
-        const command = Schema.decodeUnknownSync(TeamCommandSchema)(task.input);
+        const command = Schema.decodeUnknownSync(TeamCommandSchema, {
+          onExcessProperty: "error",
+        })(task.input);
         try {
           if (runtime.conversationId !== options.nativeId) {
             throw new Denied({

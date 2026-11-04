@@ -16,7 +16,6 @@ import {
 import type {
   CoordinationProfile,
   RolePin,
-  SlackThread,
   TeamCommand,
 } from "@cerebro/contracts/work";
 import { Type } from "@earendil-works/pi-ai";
@@ -60,7 +59,6 @@ import type { MetadataTransaction } from "./session-agent.ts";
 
 export interface CoordinationServices {
   readonly ownerPrincipalId: PrincipalId;
-  readonly thread: SlackThread;
   readonly profile: CoordinationProfile;
   readonly resolveRolePins: () => Promise<{
     readonly lead: RolePin;
@@ -132,7 +130,6 @@ export const createCoordinatorWork = (options: {
     return {
       address: options.address,
       ownerPrincipalId: options.services.ownerPrincipalId,
-      thread: options.services.thread,
     };
   };
   const requireCaller = async (api: ToolExecutionApi, signal?: AbortSignal) => {
@@ -185,7 +182,9 @@ export const createCoordinatorWork = (options: {
         reason: "The team command ID names another input.",
       });
     }
-    const saved = Schema.decodeUnknownSync(TeamCommandSchema)(task.input);
+    const saved = Schema.decodeUnknownSync(TeamCommandSchema, {
+      onExcessProperty: "error",
+    })(task.input);
     if ((await coordinatorOperationKey(JSON.stringify(saved))) !== digest) {
       throw new InvalidInput({ reason: "The saved team command changed." });
     }
@@ -335,7 +334,10 @@ export const createCoordinatorWork = (options: {
           });
         }
         const admittedAt = now();
-        const admission = Schema.decodeUnknownSync(WorkAdmissionSchema)({
+        const admission = Schema.decodeUnknownSync(WorkAdmissionSchema, {
+          onExcessProperty: "error",
+        })({
+          version: 2,
           admittedAt,
           contentDependencies,
           deadlineAt: admittedAt + services.profile.timeoutMs,
@@ -354,7 +356,6 @@ export const createCoordinatorWork = (options: {
             timeoutMs: services.profile.timeoutMs,
           },
           sourceEventAddress: source.address,
-          sourceSlackThread: source.thread,
         });
         const record: CoordinatorWorkRecord = {
           admission,
@@ -364,7 +365,9 @@ export const createCoordinatorWork = (options: {
         };
         const document = await tx.doc(WorkDocuments, candidate, null);
         document.record = record;
-        const command = Schema.decodeUnknownSync(TeamCommandSchema)({
+        const command = Schema.decodeUnknownSync(TeamCommandSchema, {
+          onExcessProperty: "error",
+        })({
           id: `start:${candidate}`,
           kind: "start",
           work: admission,
@@ -421,7 +424,9 @@ export const createCoordinatorWork = (options: {
     if (receipt.receipt) {
       const task = await tx.task(receipt.receipt.taskId);
       const saved = task
-        ? Schema.decodeUnknownSync(TeamCommandSchema)(task.input)
+        ? Schema.decodeUnknownSync(TeamCommandSchema, {
+            onExcessProperty: "error",
+          })(task.input)
         : undefined;
       if (
         !saved ||
@@ -436,7 +441,9 @@ export const createCoordinatorWork = (options: {
       await commandReceipt(tx, saved);
       return { ...publicWork(record), accepted: false };
     }
-    const command = Schema.decodeUnknownSync(TeamCommandSchema)({
+    const command = Schema.decodeUnknownSync(TeamCommandSchema, {
+      onExcessProperty: "error",
+    })({
       id: commandId,
       work: record.admission,
       ...input,
@@ -477,7 +484,7 @@ export const createCoordinatorWork = (options: {
           callers: ["model"],
           name: "get_work",
           description:
-            "Read the saved status of work belonging to this Slack thread.",
+            "Read the saved status of work belonging to this conversation.",
           parameters: Type.Object({
             workId: Type.String({ minLength: 1, maxLength: 512 }),
           }),
@@ -498,7 +505,7 @@ export const createCoordinatorWork = (options: {
           callers: ["model"],
           name: "message_team",
           description:
-            "Send a bounded update to this thread's active team without waiting for its result.",
+            "Send a bounded update to this conversation's active team without waiting for its result.",
           parameters: Type.Object({
             workId: Type.String({ minLength: 1, maxLength: 512 }),
             text: Type.String({ minLength: 1, maxLength: 16_000 }),
@@ -537,7 +544,7 @@ export const createCoordinatorWork = (options: {
           callers: ["model"],
           name: "stop_work",
           description:
-            "Persist cancellation for this thread's team and dispatch it durably. Late starts and reports cannot revive cancelled work.",
+            "Persist cancellation for this conversation's team and dispatch it durably. Late starts and reports cannot revive cancelled work.",
           parameters: Type.Object({
             workId: Type.String({ minLength: 1, maxLength: 512 }),
           }),
@@ -617,7 +624,9 @@ export const createCoordinatorWork = (options: {
                 kind: "failed",
                 reason: "The team work deadline expired.",
               });
-              const command = Schema.decodeUnknownSync(TeamCommandSchema)({
+              const command = Schema.decodeUnknownSync(TeamCommandSchema, {
+                onExcessProperty: "error",
+              })({
                 kind: "cancel",
                 id: `cancel:${workId}`,
                 work: record.admission,

@@ -13,6 +13,7 @@ import type {
   ContentDependencies,
 } from "@cerebro/contracts/session";
 import { ConversationForkOrigin } from "@cerebro/contracts/session-service";
+import { TeamReportDeliverySchema } from "@cerebro/contracts/work";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { channelConversation } from "@cerebro/db/schema/agents";
@@ -28,7 +29,10 @@ import { z } from "zod";
 import type { WorkerEnv } from "../bindings";
 import { slackSettings } from "../channels";
 import { runtimeConfiguration } from "../config";
-import { createCoordinatorServices } from "./coordination";
+import {
+  createCoordinatorServices,
+  requireLegacySourceMatch,
+} from "./coordination";
 import { createExecutionComposition } from "./execution";
 import { authenticateSessionRequest } from "./proof";
 import type { SessionIdentity } from "./proof";
@@ -241,7 +245,19 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
           identity
         )
       );
-      yield* resolveSessionAddress(this.env, resolved.address, identity);
+      const { conversation } = yield* resolveSessionAddress(
+        this.env,
+        resolved.address,
+        identity
+      );
+      if (new URL(request.url).pathname === "/team-report") {
+        yield* tryAdapter(async () => {
+          const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
+            onExcessProperty: "error",
+          })(await request.clone().json());
+          requireLegacySourceMatch(delivery, conversation);
+        });
+      }
       return resolved;
     });
   }

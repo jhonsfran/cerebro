@@ -69,9 +69,9 @@ export const createTeamReportOutbox = (options: {
         );
       },
       send: async (current, runtime, context) => {
-        const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema)(
-          current.input
-        );
+        const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
+          onExcessProperty: "error",
+        })(current.input);
         const outbox = await options.pi.snapshot(TeamReportOutbox, context);
         if (
           outbox?.taskId !== runtime.taskId ||
@@ -126,7 +126,9 @@ export const createTeamReportOutbox = (options: {
   };
   return {
     enqueueIn: async (tx: Tx, report: WorkReport): Promise<void> => {
-      const delivery = options.transport.prepare(report);
+      const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
+        onExcessProperty: "error",
+      })(options.transport.prepare(report));
       const digest = await digestToolArguments(delivery);
       const outbox = await tx.doc(TeamReportOutbox);
       if (outbox.taskId !== null) {

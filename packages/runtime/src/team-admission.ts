@@ -33,15 +33,19 @@ export const createTeamAdmission = (options: {
     name: "cerebro.team-admission",
     version: 1,
     initial: () => ({ phase: "submit", attempt: 0 }),
-    abort: (current, runtime, context) =>
-      runtime.commit(async (tx) => {
+    abort: (current, runtime, context) => {
+      const command = Schema.decodeUnknownSync(TeamCommandSchema, {
+        onExcessProperty: "error",
+      })(current.input);
+      return runtime.commit(async (tx) => {
         const document = await tx.doc(TeamState);
-        Reflect.deleteProperty(document.pending, current.input.id);
+        Reflect.deleteProperty(document.pending, command.id);
         return {
           status: "terminal",
           outcome: { status: "aborted", reason: "cancelled" },
         };
-      }, context),
+      }, context);
+    },
     phases: {
       retry: async (current, runtime, context) => {
         await runtime.sleep(current.state.checkpoint.until, context);
@@ -57,9 +61,9 @@ export const createTeamAdmission = (options: {
         );
       },
       submit: async (current, runtime, context) => {
-        const command = Schema.decodeUnknownSync(TeamCommandSchema)(
-          current.input
-        );
+        const command = Schema.decodeUnknownSync(TeamCommandSchema, {
+          onExcessProperty: "error",
+        })(current.input);
         const state = await pi.snapshot(TeamState, context);
         let delivered = false;
         try {

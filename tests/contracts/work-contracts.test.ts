@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 
 import { Schema } from "effect";
@@ -6,6 +7,7 @@ import { Schema } from "effect";
 import {
   TeamCommandReceiptSchema,
   TeamCommandSchema,
+  TeamReportDeliverySchema,
   WorkAdmissionSchema,
   WorkReportSchema,
   WorkStatusSchema,
@@ -38,6 +40,92 @@ const admission = () => ({
     workspaceId: "T123",
   },
   worker: { agentId: "worker-A", agentVersion: 7 },
+});
+
+test("version 2 work and reports use an exact canonical source without Slack", () => {
+  const { sourceSlackThread, ...fields } = admission();
+  const work = { version: 2, ...fields };
+  const decode = Schema.decodeUnknownSync(WorkAdmissionSchema, {
+    onExcessProperty: "error",
+  });
+  assert.deepEqual(decode(work), work);
+  const report = {
+    contentDependencies: { sourceIds: [], toolIds: [] },
+    id: "report-A",
+    key: work.key,
+    kind: "completed",
+    text: "Result.",
+  };
+  const delivery = {
+    version: 2,
+    report,
+    sourceEventAddress: work.sourceEventAddress,
+  };
+  const decodeReport = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
+    onExcessProperty: "error",
+  });
+  assert.deepEqual(decodeReport(delivery), delivery);
+  for (const changed of [
+    { ...work, version: 3 },
+    { ...work, version: undefined },
+    { ...work, sourceSlackThread },
+    { ...work, unexpected: true },
+    { ...admission(), sourceSlackThread: { channelId: "D123" } },
+    { ...admission(), version: 2 },
+  ]) {
+    assert.throws(() => decode(changed));
+  }
+  for (const changed of [
+    { ...delivery, version: 3 },
+    { ...delivery, version: undefined },
+    { ...delivery, sourceSlackThread },
+    { ...delivery, unexpected: true },
+    {
+      report,
+      sourceEventAddress: work.sourceEventAddress,
+      sourceSlackThread: { channelId: "D123" },
+    },
+  ]) {
+    assert.throws(() => decodeReport(changed));
+  }
+});
+
+test("legacy command JSON and old stringify digests retain their field order", () => {
+  const work = admission();
+  const cases = [
+    {
+      command: { id: "start-A", kind: "start", work },
+      digest:
+        "5c01c90edd222791ee32f193200db5d5e2a0c2d3b91572638a97391cdd5eed71",
+    },
+    {
+      command: {
+        id: "input-A",
+        kind: "input",
+        contentDependencies: { sourceIds: [], toolIds: [] },
+        text: "Include the outage.",
+        work,
+      },
+      digest:
+        "aa1008cc55f03bc0c1e0cc850ec6a6258f3c3acc8e2490c7eeff48c8113ad28d",
+    },
+    {
+      command: { id: "cancel-A", kind: "cancel", work },
+      digest:
+        "ce06c5028c5e5d6912c4fce9fcd1438204c2d475b7342721939942b9ab38b399",
+    },
+  ];
+  for (const { command, digest } of cases) {
+    const json = JSON.stringify(command);
+    const saved = Schema.decodeUnknownSync(TeamCommandSchema, {
+      onExcessProperty: "error",
+    })(JSON.parse(json));
+    assert.equal(JSON.stringify(saved), json);
+    assert.equal(
+      createHash("sha256").update(JSON.stringify(saved)).digest("hex"),
+      digest
+    );
+  }
 });
 
 test("work admission preserves public source identity and published role pins", () => {

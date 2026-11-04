@@ -80,6 +80,43 @@ test("valid reports with oversized UTF-8 provenance get a stable constant transf
   assert.equal(cancelled.report.kind, "cancelled");
 });
 
+test("new canonical reports and size fallbacks preserve version 2 without Slack metadata", () => {
+  const legacy = work("org", "owner");
+  assert.ok("sourceSlackThread" in legacy);
+  const { sourceSlackThread, ...fields } = legacy;
+  assert.equal(sourceSlackThread.workspaceId, "T");
+  const admission = Schema.decodeUnknownSync(WorkAdmissionSchema, {
+    onExcessProperty: "error",
+  })({ version: 2, ...fields });
+  const report = Schema.decodeUnknownSync(WorkReportSchema)({
+    id: "report:report-work",
+    key: admission.key,
+    kind: "completed",
+    text: "Result.",
+    contentDependencies: { sourceIds: [], toolIds: [] },
+  });
+  const delivery = prepareTeamReport(admission, report);
+  assert.ok("version" in delivery);
+  assert.equal(delivery.version, 2);
+  assert.equal("sourceSlackThread" in delivery, false);
+  const oversized = {
+    ...report,
+    contentDependencies: {
+      sourceIds: Array.from(
+        { length: 140 },
+        (_, index) => `${"é".repeat(500)}${index}`
+      ),
+      toolIds: [],
+    },
+  };
+  const fallback = prepareTeamReport(admission, oversized);
+  assert.ok("version" in fallback);
+  assert.equal(fallback.version, 2);
+  assert.equal("sourceSlackThread" in fallback, false);
+  assert.equal(fallback.report.kind, "failed");
+  assert.deepEqual(prepareTeamReport(admission, oversized), fallback);
+});
+
 test("the report consumer authenticates the original source and ACKs only after its durable notification receipt", async () => {
   const app = await createTestProduct();
   const installed = await app.install();

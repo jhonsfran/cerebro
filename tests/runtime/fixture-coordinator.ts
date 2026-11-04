@@ -11,7 +11,6 @@ import { id } from "../../packages/contracts/src/identity.ts";
 import type { ContentDependencies } from "../../packages/contracts/src/session.ts";
 import {
   CoordinationProfileSchema,
-  SlackThreadSchema,
   TeamReportDeliverySchema,
   workCellName,
 } from "../../packages/contracts/src/work.ts";
@@ -140,11 +139,6 @@ export class CoordinatorFixture extends SessionAgent {
           },
           coordination: {
             ownerPrincipalId: id.principal(`user:${address.organizationId}`),
-            thread: Schema.decodeUnknownSync(SlackThreadSchema)({
-              channelId: "D-source",
-              workspaceId: "T-source",
-              rootTimestamp: "1800000000.000001",
-            }),
             profile: Schema.decodeUnknownSync(CoordinationProfileSchema)({
               leadAgentId: "lead",
               workerAgentId: "worker",

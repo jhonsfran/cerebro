@@ -5,6 +5,7 @@ import {
 } from "@cerebro/contracts/failures";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import type { WorkAdmission, TeamCommand } from "@cerebro/contracts/work";
+import { WorkAdmissionSchema } from "@cerebro/contracts/work";
 import { createModels } from "@earendil-works/pi-ai/models";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
 import { Harness, createRegistry } from "@earendil-works/pi-durable";
@@ -80,7 +81,12 @@ export abstract class TeamAgent<
       let work = this.incoming;
       try {
         const state = await pi.snapshot(TeamState, context);
-        work = state?.admission ?? this.incoming;
+        const retained = state?.admission ?? this.incoming;
+        work = retained
+          ? Schema.decodeUnknownSync(WorkAdmissionSchema, {
+              onExcessProperty: "error",
+            })(retained)
+          : undefined;
         if (work) {
           const outbox = await this.ensureReportOutbox(work);
           await (state?.report || work.deadlineAt <= Date.now()

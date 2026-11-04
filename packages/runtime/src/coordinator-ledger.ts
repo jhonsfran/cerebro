@@ -3,10 +3,10 @@ import { Conflict, Denied, NotFound } from "@cerebro/contracts/failures";
 import type { PrincipalId } from "@cerebro/contracts/identity";
 import {
   WorkCommandIdSchema,
+  WorkAdmissionSchema,
   transitionWorkStatus,
 } from "@cerebro/contracts/work";
 import type {
-  SlackThread,
   WorkAdmission,
   WorkReport,
   WorkStatus,
@@ -31,7 +31,6 @@ import { piContext } from "./pi-harness.ts";
 export interface CoordinationBinding {
   readonly address: EventAddress;
   readonly ownerPrincipalId: PrincipalId;
-  readonly thread: SlackThread;
 }
 export interface CoordinatorCommandReceipt extends JsonObject {
   taskId: TaskId;
@@ -156,18 +155,17 @@ export const requireWorkSource = (
   record: CoordinatorWorkRecord,
   binding: CoordinationBinding
 ): void => {
-  const { admission } = record;
+  const admission = Schema.decodeUnknownSync(WorkAdmissionSchema, {
+    onExcessProperty: "error",
+  })(record.admission);
   if (
     admission.key.organizationId !== binding.address.organizationId ||
     admission.key.ownerPrincipalId !== binding.ownerPrincipalId ||
-    !sameWorkSource(admission.sourceEventAddress, binding.address) ||
-    admission.sourceSlackThread.channelId !== binding.thread.channelId ||
-    admission.sourceSlackThread.workspaceId !== binding.thread.workspaceId ||
-    admission.sourceSlackThread.rootTimestamp !== binding.thread.rootTimestamp
+    !sameWorkSource(admission.sourceEventAddress, binding.address)
   ) {
     throw new Denied({
       code: "unauthorized",
-      reason: "This work belongs to another Slack source.",
+      reason: "This work belongs to another conversation.",
     });
   }
 };

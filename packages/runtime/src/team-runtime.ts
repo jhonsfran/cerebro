@@ -6,6 +6,7 @@ import {
 import {
   TeamCommandSchema,
   TeamCommandReceiptSchema,
+  WorkAdmissionSchema,
   workStartOperationId,
 } from "@cerebro/contracts/work";
 import type { WorkAdmission, WorkReport } from "@cerebro/contracts/work";
@@ -53,7 +54,10 @@ export const createTeamRuntime = async (options: {
   readonly persistReportIn: (tx: Tx, report: WorkReport) => Promise<void>;
   readonly emitReport?: (report: WorkReport) => Promise<void>;
 }) => {
-  const { pi, work } = options;
+  const { pi } = options;
+  const work = Schema.decodeUnknownSync(WorkAdmissionSchema, {
+    onExcessProperty: "error",
+  })(options.work);
   const now = options.now ?? Date.now;
   if (options.configurations.length !== 1 + work.limits.maxWorkers) {
     throw new InvalidInput({
@@ -114,6 +118,9 @@ export const createTeamRuntime = async (options: {
   };
   const restore = async () => {
     const state = await pi.snapshot(TeamState, piContext());
+    if (state) {
+      requireTeamAdmission(state, work);
+    }
     if (state?.lead) {
       await pi.commit(async (tx) => {
         const ids = [

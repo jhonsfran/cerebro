@@ -25,6 +25,7 @@ import {
   queue,
   ready,
   send,
+  slack,
   snapshot,
   summary,
   wireModels,
@@ -456,15 +457,20 @@ test(
             completedCalls(before, wireModels.worker).length + 2,
         60_000
       );
+      const sourceConversationId = await fixture.sql(
+        `SELECT conversation_id FROM channel_conversation WHERE workspace_id=${literal(slack.workspaceId)} AND root_timestamp=${literal(thread)}`
+      );
+      assert.ok(sourceConversationId);
       const waiting = await waitForFixture(
         () => queue("peek", "cerebro-team-reports", 10),
-        (value) => containsEvent(value, thread),
+        (value) => containsEvent(value, sourceConversationId),
         30_000
       );
       const report = queueBodies(waiting)
         .map((body) => Schema.decodeUnknownSync(TeamReportDeliverySchema)(body))
         .find(
-          (delivery) => delivery.sourceSlackThread.rootTimestamp === thread
+          (delivery) =>
+            delivery.sourceEventAddress.conversationId === sourceConversationId
         );
       assert.ok(report);
       assert.equal(report.report.kind, "completed");
@@ -477,7 +483,7 @@ test(
             await delay(1000);
             return await queue("peek", "cerebro-team-reports-dead-letter", 10);
           },
-          (value) => containsEvent(value, thread),
+          (value) => containsEvent(value, sourceConversationId),
           180_000
         );
         const blocked = await observed();
