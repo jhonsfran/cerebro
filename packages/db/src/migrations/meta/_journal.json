@@ -127,6 +127,13 @@
       "when": 1793765437450,
       "tag": "0017_connector_read_tools",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793771998985,
+      "tag": "0018_slack_event_receipt",
+      "breakpoints": true
     }
   ]
 }

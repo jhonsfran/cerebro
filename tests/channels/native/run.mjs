@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
@@ -61,6 +62,20 @@ for (const [index, file] of files.entries()) {
 }
 const sourceIdentity = `${revision.stdout.trim()}:sha256:${hash.digest("hex")}`;
 const sourceCheckoutDirty = Boolean(status.stdout.trim());
+const available = [
+  "web-coordinator",
+  "web-coordinator-controls",
+  "web-coordinator-authority",
+  "product",
+  "slack-events",
+  "coordinator",
+];
+const selected = process.argv.slice(2);
+assert.ok(
+  selected.every((name) => available.includes(name)),
+  "Unknown native test group."
+);
+const groups = selected.length > 0 ? selected : available;
 const boot = await bootApplication("channels-native");
 const fixture = applicationFixture(boot);
 const owner = await fixture.signup("Native channel owner");
@@ -78,7 +93,7 @@ await writeFile(
   { mode: 0o600 }
 );
 let passed = false;
-try {
+const runGroup = async (name) => {
   const child = spawn(
     "rtk",
     [
@@ -86,7 +101,10 @@ try {
       process.execPath,
       "--test",
       "--test-concurrency=1",
-      "tests/channels/native/product.test.ts",
+      ...(process.env.CHANNEL_NATIVE_TEST_PATTERN
+        ? ["--test-name-pattern", process.env.CHANNEL_NATIVE_TEST_PATTERN]
+        : []),
+      `tests/channels/native/${name}.test.ts`,
     ],
     {
       cwd: root,
@@ -95,8 +113,20 @@ try {
     }
   );
   const [code] = await once(child, "exit");
-  passed = code === 0;
-  process.exitCode = code ?? 1;
+  if (code !== 0) {
+    process.exitCode = code ?? 1;
+    return false;
+  }
+  return true;
+};
+try {
+  const runRemaining = async ([name, ...remaining]) => {
+    if (!name) {
+      return true;
+    }
+    return (await runGroup(name)) && (await runRemaining(remaining));
+  };
+  passed = await runRemaining(groups);
   await writeFile(
     path.join(directory, "channel-native-result.json"),
     `${JSON.stringify({ fixtureId: boot.fixtureId, passed, sourceCheckoutDirty, sourceIdentity }, null, 2)}\n`

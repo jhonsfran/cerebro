@@ -9,126 +9,12 @@ import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { AgentDefinition } from "@cerebro/contracts/session";
 import { withDatabase } from "@cerebro/db";
+import { createSourceDependencyStore } from "@cerebro/runtime/content-dependency-store";
 import type { MetadataTransaction } from "@cerebro/runtime/session-agent";
 import { Context, Effect, Layer } from "effect";
 
 import { checkContentDependencies, createMemoryServices } from "../access";
 import type { WorkerEnv } from "../bindings";
-
-export const createSourceDependencyStore = (
-  storage: DurableObjectStorage,
-  sessionId: EventAddress["sessionId"],
-  metadata: MetadataTransaction
-) => {
-  storage.sql.exec(
-    "CREATE TABLE IF NOT EXISTS cerebro_content_source (session_id TEXT NOT NULL, source_id TEXT NOT NULL, PRIMARY KEY(session_id, source_id))"
-  );
-  storage.sql.exec(
-    "CREATE TABLE IF NOT EXISTS cerebro_content_tool (session_id TEXT NOT NULL, tool_id TEXT NOT NULL, PRIMARY KEY(session_id, tool_id))"
-  );
-  storage.sql.exec(
-    "CREATE TABLE IF NOT EXISTS cerebro_content_chat (session_id TEXT NOT NULL, source_session_id TEXT NOT NULL, organization_id TEXT NOT NULL, agent_id TEXT NOT NULL, conversation_id TEXT NOT NULL, PRIMARY KEY(session_id, source_session_id))"
-  );
-  return {
-    addTool: (toolId: string) =>
-      metadata(() => {
-        storage.sql.exec(
-          "INSERT OR IGNORE INTO cerebro_content_tool VALUES (?, ?)",
-          sessionId,
-          toolId
-        );
-      }),
-    inherit: (
-      source: EventAddress,
-      toolIds: readonly string[],
-      history: boolean
-    ): void => {
-      storage.sql.exec(
-        "INSERT OR IGNORE INTO cerebro_content_source SELECT ?, source_id FROM cerebro_content_source WHERE session_id=?",
-        sessionId,
-        source.sessionId
-      );
-      storage.sql.exec(
-        "INSERT OR IGNORE INTO cerebro_content_tool SELECT ?, tool_id FROM cerebro_content_tool WHERE session_id=?",
-        sessionId,
-        source.sessionId
-      );
-      for (const toolId of toolIds) {
-        storage.sql.exec(
-          "INSERT OR IGNORE INTO cerebro_content_tool VALUES (?, ?)",
-          sessionId,
-          toolId
-        );
-      }
-      storage.sql.exec(
-        "INSERT OR IGNORE INTO cerebro_content_chat SELECT ?, source_session_id, organization_id, agent_id, conversation_id FROM cerebro_content_chat WHERE session_id=? AND source_session_id<>?",
-        sessionId,
-        source.sessionId,
-        sessionId
-      );
-      if (history && source.sessionId !== sessionId) {
-        storage.sql.exec(
-          "INSERT OR IGNORE INTO cerebro_content_chat VALUES (?, ?, ?, ?, ?)",
-          sessionId,
-          source.sessionId,
-          source.organizationId,
-          source.agentId,
-          source.conversationId
-        );
-      }
-    },
-    tools: () =>
-      metadata(() =>
-        storage.sql
-          .exec<{ tool_id: string }>(
-            "SELECT tool_id FROM cerebro_content_tool WHERE session_id=? ORDER BY tool_id",
-            sessionId
-          )
-          .toArray()
-          .map((row) => id.tool(row.tool_id))
-      ),
-    history: () =>
-      metadata(() =>
-        storage.sql
-          .exec<{
-            source_session_id: string;
-            organization_id: string;
-            agent_id: string;
-            conversation_id: string;
-          }>(
-            "SELECT * FROM cerebro_content_chat WHERE session_id=? ORDER BY source_session_id",
-            sessionId
-          )
-          .toArray()
-          .map((row): EventAddress => ({
-            organizationId: id.organization(row.organization_id),
-            agentId: id.agent(row.agent_id),
-            conversationId: id.conversation(row.conversation_id),
-            sessionId: id.session(row.source_session_id),
-          }))
-      ),
-    add: (sourceIds: readonly string[]): Promise<void> =>
-      metadata(() => {
-        for (const sourceId of sourceIds) {
-          storage.sql.exec(
-            "INSERT OR IGNORE INTO cerebro_content_source VALUES (?, ?)",
-            sessionId,
-            sourceId
-          );
-        }
-      }),
-    all: () =>
-      metadata(() =>
-        storage.sql
-          .exec<{ source_id: string }>(
-            "SELECT source_id FROM cerebro_content_source WHERE session_id=? ORDER BY source_id",
-            sessionId
-          )
-          .toArray()
-          .map((row) => id.source(row.source_id))
-      ),
-  };
-};
 
 export const createRuntimeContent = (
   env: WorkerEnv,
@@ -136,12 +22,14 @@ export const createRuntimeContent = (
   address: EventAddress,
   agent: AgentDefinition,
   authority: AuthorityService,
-  metadata: MetadataTransaction
+  metadata: MetadataTransaction,
+  bounded = false
 ) => {
   const sources = createSourceDependencyStore(
     storage,
     address.sessionId,
-    metadata
+    metadata,
+    bounded
   );
   const dependencies = async () => ({
     sourceIds: await sources.all(),
@@ -149,6 +37,7 @@ export const createRuntimeContent = (
   });
   return {
     dependencies,
+    importDependencies: sources.importDependencies,
     historyDependencies: sources.history,
     inheritDependencies: sources.inherit,
     recordTool: sources.addTool,
@@ -226,7 +115,8 @@ export const sessionContentLayer = (
   storage: DurableObjectStorage,
   address: EventAddress,
   agent: AgentDefinition,
-  metadata: MetadataTransaction
+  metadata: MetadataTransaction,
+  bounded = false
 ) =>
   Layer.effect(
     SessionContent,
@@ -244,7 +134,8 @@ export const sessionContentLayer = (
             address,
             agent,
             authority,
-            metadata
+            metadata,
+            bounded
           ),
       });
     })

@@ -39,6 +39,10 @@ The default model is GPT-6 Luna on OpenRouter (`openrouter/openai/gpt-6-luna`). 
 
 `pnpm start` writes the model settings into `runtime.json` on every start. After you edit `.env`, run `pnpm start` again. Existing agents keep their old model until you select the new one in the agent editor.
 
+## Use background agent teams
+
+Web chat and Slack can use a coordinator that starts independent teams. Publish coordinator, lead, and worker agents with the models each role needs, then enable the coordination profile. Web chat needs no Slack setup. See [Run agent teams from web chat](docs/operations/agent-teams.md) and the [cell diagram and code](docs/architecture/slack-coordinator.md).
+
 ## Commands
 
 | Command | What it does |
@@ -81,5 +85,6 @@ After `pnpm install`, Husky runs both checks before each local commit. Ultracite
 - [How Cerebro fits together](docs/architecture/overview.md)
 - [How to run Cerebro in production](docs/operations/production.md)
 - [How to connect Slack](docs/operations/slack.md)
+- [Run agent teams from web chat](docs/operations/agent-teams.md)
 - [How to back up and restore a stack](docs/operations/backup.md)
 - [Runtime configuration reference](docs/reference/runtime-configuration.md)

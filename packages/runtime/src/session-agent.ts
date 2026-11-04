@@ -49,6 +49,8 @@ import { searchConversationHistory } from "./conversation-history.ts";
 import { ReminderPayload } from "./conversation-reminders.ts";
 import { ConversationScope } from "./conversation-scope.ts";
 import type { SearchResult } from "./conversation-work.ts";
+import type { CoordinationServices } from "./coordinator-work.ts";
+import { readImportedContent } from "./imported-content.ts";
 import { piContext, snapshotToolIds } from "./pi-harness.ts";
 import type { ControlledProviderConfiguration } from "./pi-provider.ts";
 import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
@@ -59,12 +61,19 @@ export type MetadataTransaction = <A>(
 ) => Promise<A>;
 export interface SessionHostConfiguration {
   readonly address: EventAddress;
+  readonly coordination?: CoordinationServices;
   readonly origin?: {
     readonly address: EventAddress;
     readonly entryId: string;
     readonly agentVersion: number;
   };
   readonly contentDependencies?: () => Promise<ContentDependencies>;
+  readonly importDependencies?: (dependencies: ContentDependencies) => void;
+  readonly checkImportedDependencies?: (
+    context: ExecutionContext,
+    dependencies: ContentDependencies,
+    options: ReadOptions
+  ) => Effect.Effect<void, ContractFailure>;
   readonly inheritDependencies?: (
     source: EventAddress,
     toolIds: readonly string[],
@@ -234,7 +243,8 @@ export class SessionAgent<
   // oxlint-disable-next-line class-methods-use-this -- Server and fixture subclasses supply immutable per-conversation services.
   protected configure(
     _address: EventAddress,
-    _metadata: MetadataTransaction
+    _metadata: MetadataTransaction,
+    _importedDependencies: () => Promise<ContentDependencies>
   ): Effect.Effect<SessionHostConfiguration, ContractFailure> {
     return Effect.fail(
       new Unavailable({
@@ -289,10 +299,15 @@ export class SessionAgent<
     binding?: ConversationBinding,
     ancestors: ReadonlySet<string> = new Set()
   ): Promise<ConversationScope> {
+    let importedNativeId = binding?.nativeId;
     const metadata: MetadataTransaction = (operation) =>
       host.pi.commit(operation, piContext());
     const configuration = await metadata(() =>
-      run(this.configure(address, metadata))
+      run(
+        this.configure(address, metadata, () =>
+          readImportedContent(host.pi, importedNativeId)
+        )
+      )
     );
     const originKey = configuration.origin
       ? JSON.stringify([
@@ -336,7 +351,11 @@ export class SessionAgent<
             piContext()
           ),
         storage: this.ctx.storage,
-        waitUntil: (promise) => this.ctx.waitUntil(promise),
+        waitUntil: (promise) => {
+          if (!this.lifecycle.trackAlarmWork(promise)) {
+            this.ctx.waitUntil(promise);
+          }
+        },
       },
       async ({ agent, extensions, provider }) => {
         for (const extension of extensions) {
@@ -393,6 +412,7 @@ export class SessionAgent<
             return created.id;
           }, piContext()));
         const native = await host.pi.conversation(nativeId, piContext());
+        importedNativeId = nativeId;
         if (!native) {
           throw new NotFound({ resource: "Native conversation" });
         }
@@ -537,6 +557,7 @@ export class SessionAgent<
         "cerebro-child",
         "cerebro-reminder",
         "cerebro-compact",
+        "cerebro-coordination",
       ].includes(job.fn)
     ) {
       return;
@@ -550,6 +571,9 @@ export class SessionAgent<
       const binding = bindings?.conversations[sessionId];
       if (binding) {
         const scope = await this.scope(binding.address);
+        if (job.fn === "cerebro-coordination") {
+          return await scope.coordination.wake();
+        }
         if (job.fn === "cerebro-child") {
           const payload = Schema.decodeUnknownSync(childPayload)(job.payload);
           await scope.work.stop(payload.childId);

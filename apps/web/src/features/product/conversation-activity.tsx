@@ -34,6 +34,7 @@ import { Textarea } from "@cerebro/ui/components/textarea";
 import { Activity } from "lucide-react";
 import { useId, useRef, useState } from "react";
 
+import { BackgroundWork } from "./background-work";
 import { ConversationTranscript } from "./conversation-transcript";
 import { Disclosure } from "./disclosure";
 import { ErrorAlert } from "./feedback";
@@ -321,6 +322,14 @@ export const ConversationActivity = ({
       className="conversation-activity mx-auto flex w-full max-w-(--measure-chat) flex-col gap-2 px-4 pb-2"
       aria-label="Conversation activity"
     >
+      {activity.backgroundWork ? (
+        <BackgroundWork
+          key={activity.backgroundWork.workId}
+          work={activity.backgroundWork}
+          disabled={disabled}
+          control={control}
+        />
+      ) : null}
       {origin ? (
         <p className="text-muted-foreground text-xs">
           Forked from{" "}

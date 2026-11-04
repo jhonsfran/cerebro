@@ -79,6 +79,12 @@ export const channelLinkEvent = pgTable("channel_link_event", {
   eventKey: text("event_key").primaryKey(),
   principalId: text("principal_id").notNull(),
 });
+export const channelSlackEventReceipt = pgTable("channel_slack_event_receipt", {
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  decision: jsonb("decision").$type<unknown>().notNull(),
+  digest: text("digest").notNull(),
+  eventKey: text("event_key").primaryKey(),
+});
 export const agentSchema = {
   agent,
   agentPublishOperation,
@@ -86,5 +92,6 @@ export const agentSchema = {
   channelConversation,
   channelEffect,
   channelLinkEvent,
+  channelSlackEventReceipt,
   installationSetup,
 };

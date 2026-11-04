@@ -2,7 +2,7 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 
-import { createSourceDependencyStore } from "../../apps/server/src/session/content.ts";
+import { createSourceDependencyStore } from "../../packages/runtime/src/content-dependency-store.ts";
 
 const storageFor = (database) => ({
   sql: {

@@ -1,4 +1,6 @@
 import { createAuth } from "@cerebro/auth";
+import { assertQueuePayloadSize } from "@cerebro/channels/queue-payload";
+import type { SlackQueueDelivery } from "@cerebro/channels/slack-events";
 import type { ExecutionContext } from "@cerebro/contracts";
 import type { ChatClient } from "@cerebro/contracts/session-service";
 import type { Database } from "@cerebro/db";
@@ -69,6 +71,10 @@ export const createChannelOptions = (env: WorkerEnv) => {
       };
     },
     connectors: createConnectorAdmin(env),
+    enqueueSlackEvent: async (delivery: SlackQueueDelivery) => {
+      assertQueuePayloadSize(delivery);
+      await env.SLACK_EVENTS.send(delivery, { contentType: "json" });
+    },
     getUser: async (request: Request, database: Database) => {
       const session = await createAuth(env, database).api.getSession({
         headers: request.headers,

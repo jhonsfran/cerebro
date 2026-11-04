@@ -164,8 +164,7 @@ test("Slack linking, event replay, and thread sessions persist in PostgreSQL", a
     assert.equal(conversations.length, 1);
   });
   const changed = await send(event("message-one", "Changed text"));
-  assert.equal(changed.status, 200);
-  assert.equal(object(object(await changed.json()).receipt).accepted, false);
+  assert.equal(changed.status, 409);
   const forged = await send(message, {
     ...headers,
     "x-slack-signature": `v0=${"0".repeat(64)}`,
@@ -240,9 +239,8 @@ test("Slack answers unlinked people, bad link codes, and channel mentions with a
   assert.equal(slack.calls.length, 3);
 });
 
-test("Slack events are acknowledged before the work runs", async () => {
-  const { app, code, configuration, principalId, send, slack } =
-    await linkedProduct();
+test("Slack adapters without a queue await admission even when background work is available", async () => {
+  const { app, code, configuration, principalId, send } = await linkedProduct();
   await send(event("link", `link ${code}`));
   const pending: Promise<unknown>[] = [];
   const background = {
@@ -250,24 +248,27 @@ test("Slack events are acknowledged before the work runs", async () => {
       pending.push(promise);
     },
   };
-  const message = event("background", "Answer later.");
-  const raw = JSON.stringify(message);
-  const response = await app.handler(
-    new Request("http://cerebro.test/api/channels/slack/events", {
-      body: raw,
-      headers: {
-        "Content-Type": "application/json",
-        ...(await signSlackRaw(raw, configuration.signingSecret)),
-      },
-      method: "POST",
-    }),
-    background
+  const submit = async (body: unknown) => {
+    const raw = JSON.stringify(body);
+    return await app.handler(
+      new Request("http://cerebro.test/api/channels/slack/events", {
+        body: raw,
+        headers: {
+          "Content-Type": "application/json",
+          ...(await signSlackRaw(raw, configuration.signingSecret)),
+        },
+        method: "POST",
+      }),
+      background
+    );
+  };
+  const response = await submit(
+    event("foreground", "Admit before responding.")
   );
   assert.equal(response.status, 200);
-  assert.deepEqual(object(await response.json()), { ok: true });
-  await Promise.all(pending);
+  assert.equal(object(await response.json()).accepted, true);
   assert.equal(fixtureSubmissionCount(), 1);
-  // A failure after the acknowledgement is reported in the thread.
+  assert.equal(pending.length, 0);
   await app.options.withDatabase((db) =>
     createIdentityRepository(db).setManualGrant(
       app.options.organizationId,
@@ -280,24 +281,10 @@ test("Slack events are acknowledged before the work runs", async () => {
       false
     )
   );
-  const failing = event("failing", "This cannot start.");
-  const failingRaw = JSON.stringify(failing);
-  await app.handler(
-    new Request("http://cerebro.test/api/channels/slack/events", {
-      body: failingRaw,
-      headers: {
-        "Content-Type": "application/json",
-        ...(await signSlackRaw(failingRaw, configuration.signingSecret)),
-      },
-      method: "POST",
-    }),
-    background
-  );
-  await Promise.all(pending);
-  assert.equal(
-    slack.calls.at(-1)?.body.text,
-    "Sorry, I could not start on that. Please send it again."
-  );
+  const denied = await submit(event("denied-foreground", "This cannot start."));
+  assert.equal(denied.status, 403);
+  assert.equal(fixtureSubmissionCount(), 1);
+  assert.equal(pending.length, 0);
 });
 
 test("a Slack button decides an approval as the linked person", async () => {

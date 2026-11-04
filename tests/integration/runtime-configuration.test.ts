@@ -65,6 +65,59 @@ const configured = () => ({
 const parse = (value: unknown) =>
   parseRuntimeConfiguration(JSON.stringify(value), "production");
 
+test("coordination is disabled without a profile and loads published role IDs with bounded defaults", () => {
+  assert.equal(parse(configured()).coordination, undefined);
+  const profile = parse({
+    ...configured(),
+    coordination: { leadAgentId: "lead-A", workerAgentId: "worker-A" },
+  }).coordination;
+  assert.deepEqual(profile, {
+    leadAgentId: "lead-A",
+    maxTeams: 2,
+    maxTurns: 8,
+    maxWorkers: 2,
+    timeoutMs: 600_000,
+    workerAgentId: "worker-A",
+  });
+  assert.deepEqual(
+    workerConfiguration(parse({ ...configured(), coordination: profile }))
+      .coordination,
+    profile
+  );
+});
+
+test("coordination permits smaller limits and rejects model overrides and invalid role profiles", () => {
+  const coordination = {
+    leadAgentId: "lead-A",
+    maxTeams: 1,
+    maxTurns: 3,
+    maxWorkers: 1,
+    timeoutMs: 5000,
+    workerAgentId: "worker-A",
+  };
+  assert.deepEqual(
+    parse({ ...configured(), coordination }).coordination,
+    coordination
+  );
+  for (const changed of [
+    { leadAgentId: "" },
+    { workerAgentId: " worker-A" },
+    { maxTeams: 0 },
+    { maxTeams: 3 },
+    { maxWorkers: 3 },
+    { maxTurns: 9 },
+    { maxTurns: 1.5 },
+    { timeoutMs: 999 },
+    { timeoutMs: 600_001 },
+    { leadModel: "company/model" },
+    { workerModel: "company/model" },
+  ]) {
+    assert.throws(() =>
+      parse({ ...configured(), coordination: { ...coordination, ...changed } })
+    );
+  }
+});
+
 test("production accepts bounded ports and registers connector credentials for redaction", () => {
   const result = parse(configured());
   assert.equal(result.models[0].id, "company/model");
@@ -120,7 +173,7 @@ test("MCP connectors are validated and the old mcp-read kind still loads", () =>
     connectors: [{ id: "crm", url: "https://crm.example.test/mcp" }],
   };
   assert.deepEqual(parse(withConnector).connectors, [
-    { id: "crm", url: "https://crm.example.test/mcp" },
+    { id: "crm", readTools: [], url: "https://crm.example.test/mcp" },
   ]);
   assert.throws(() =>
     parse({

@@ -5,6 +5,8 @@ import type { TestEnvironment } from "./environment.ts";
 export { AuditSink } from "./audit-sink.ts";
 export { SessionAgent } from "./fixture-session.ts";
 export { StorageConformance } from "./storage-fixture.ts";
+export { TeamFixture } from "./fixture-team.ts";
+export { CoordinatorFixture } from "./fixture-coordinator.ts";
 
 const routingSchema = z
   .object({
@@ -23,6 +25,15 @@ export default {
     const path = new URL(request.url).pathname;
     if (path === "/health") {
       return Response.json({ ok: true });
+    }
+    if (path.startsWith("/team/")) {
+      const name = request.headers.get("x-team-name");
+      if (!name) {
+        return new Response(null, { status: 400 });
+      }
+      return await env.TEAM.get(env.TEAM.idFromName(name)).fetch(
+        new Request(`https://team.internal/${path.slice(6)}`, request)
+      );
     }
     if (path === "/conformance/storage" && request.method === "POST") {
       const namespace = env.STORAGE_CONFORMANCE;
@@ -46,7 +57,10 @@ export default {
       );
       return Response.json({ statuses });
     }
-    if (request.method !== "POST" || !path.startsWith("/runtime/")) {
+    if (
+      request.method !== "POST" ||
+      (!path.startsWith("/runtime/") && !path.startsWith("/coord/"))
+    ) {
       return new Response(null, { status: 404 });
     }
     const input = routingSchema.safeParse(await request.json());
@@ -61,22 +75,23 @@ export default {
       address.organizationId,
       input.data.ownerPrincipalId ?? `user:${address.organizationId}`,
     ]);
-    const session = env.SESSION.get(env.SESSION.idFromName(name));
+    const namespace = path.startsWith("/coord/")
+      ? env.COORDINATOR
+      : env.SESSION;
+    const session = namespace.get(namespace.idFromName(name));
+    const prefix = path.startsWith("/coord/") ? "/coord/" : "/runtime/";
     return await session.fetch(
-      new Request(
-        `https://session.internal/${path.slice("/runtime/".length)}`,
-        {
-          body: JSON.stringify(input.data),
-          headers: {
-            "Content-Type": "application/json",
-            "x-fixture-principal":
-              request.headers.get("x-fixture-principal") ??
-              input.data.ownerPrincipalId ??
-              `user:${address.organizationId}`,
-          },
-          method: "POST",
-        }
-      )
+      new Request(`https://session.internal/${path.slice(prefix.length)}`, {
+        body: JSON.stringify(input.data),
+        headers: {
+          "Content-Type": "application/json",
+          "x-fixture-principal":
+            request.headers.get("x-fixture-principal") ??
+            input.data.ownerPrincipalId ??
+            `user:${address.organizationId}`,
+        },
+        method: "POST",
+      })
     );
   },
 };

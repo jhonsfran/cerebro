@@ -3,13 +3,11 @@ import {
   Denied,
   InvalidInput,
   NotFound,
-  Unavailable,
   failureToHttp,
   toContractFailure,
 } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
-import type { ReadOptions } from "@cerebro/contracts/port";
 import type {
   ChatActivity,
   ChatControl as ChatControlValue,
@@ -17,6 +15,7 @@ import type {
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
 import { ChatControl } from "@cerebro/contracts/session-service";
+import { TeamReportDeliverySchema } from "@cerebro/contracts/work";
 import { isInternalToolName } from "@cerebro/tools/tool-names";
 import type { Provider } from "@earendil-works/pi-ai/models";
 import { LiveDoc } from "@earendil-works/pi-durable";
@@ -31,27 +30,24 @@ import type { PiHarness } from "agents/harness/pi";
 import type { LifecycleJobs } from "agents/lifecycle";
 import { Effect, Result, Schema } from "effect";
 
-import { createApprovalStore } from "./approval-store.ts";
 import { companySkillsExtension } from "./company-skills.ts";
 import { createConversationCompaction } from "./conversation-compaction.ts";
 import { conversationProvider } from "./conversation-provider.ts";
 import { createConversationReminders } from "./conversation-reminders.ts";
+import { createConversationResources } from "./conversation-resources.ts";
 import { createConversationWork } from "./conversation-work.ts";
 import type { SearchResult } from "./conversation-work.ts";
+import { createCoordinatorReport } from "./coordinator-report.ts";
+import { createCoordinatorSource } from "./coordinator-source.ts";
+import { createCoordinatorWork } from "./coordinator-work.ts";
 import { createGenerativeUiTool } from "./generative-ui-tool.ts";
 import { chatSnapshot, piContext, snapshotToolIds } from "./pi-harness.ts";
-import { createControlledProvider } from "./pi-provider.ts";
-import { createPiTools } from "./pi-tools.ts";
 import { createRunLimits } from "./run-limits.ts";
 import type {
   MetadataTransaction,
   SessionHostConfiguration,
 } from "./session-agent.ts";
 
-const options = (signal?: AbortSignal): ReadOptions => ({
-  deadlineAt: Date.now() + 30_000,
-  signal,
-});
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
 ): Promise<A> => {
@@ -69,149 +65,6 @@ const decisionSchema = Schema.Struct({
   approvalId: Schema.NonEmptyString,
   decision: Schema.Literals(["allow", "deny"]),
 });
-type ChatOperation = "read" | "send" | "stop" | "allow" | "deny";
-const operationAction = {
-  allow: "approve",
-  deny: "approve",
-  read: "read",
-  send: "execute",
-  stop: "execute",
-} as const;
-
-const createResources = (
-  configuration: SessionHostConfiguration,
-  storage: DurableObjectStorage,
-  metadata: MetadataTransaction
-) => {
-  const approvals = createApprovalStore(
-    storage,
-    configuration.address.sessionId
-  );
-  const authorize = async (
-    context: ExecutionContext,
-    operation: ChatOperation,
-    signal?: AbortSignal,
-    toolIds: readonly string[] = []
-  ): Promise<void> => {
-    await run(
-      configuration.authority.require(
-        {
-          action: operationAction[operation],
-          address: configuration.address,
-          context,
-          model: operation === "send" ? configuration.agent.model : undefined,
-          pinnedAgent: configuration.agent,
-          resource: {
-            id: configuration.agent.agentId,
-            kind: "agent",
-            organizationId: configuration.address.organizationId,
-          },
-        },
-        options(signal)
-      )
-    );
-    if (operation === "read" || operation === "send" || operation === "allow") {
-      await run(
-        configuration.checkDependencies(
-          context,
-          { sourceIds: [], toolIds },
-          options(signal)
-        )
-      );
-    }
-  };
-  const provider = createControlledProvider({
-    ...configuration.provider,
-    ...(configuration.prepareInput
-      ? {
-          prepareContext: (context, readOptions) =>
-            Effect.gen(function* prepareCurrentContext() {
-              const { prepareInput } = configuration;
-              if (!prepareInput) {
-                return context;
-              }
-              const index = context.messages.findLastIndex(
-                (message) => message.role === "user"
-              );
-              const message = context.messages[index];
-              if (message?.role !== "user") {
-                return context;
-              }
-              const inputText =
-                typeof message.content === "string"
-                  ? message.content
-                  : message.content
-                      .filter((block) => block.type === "text")
-                      .map((block) => block.text)
-                      .join("");
-              if (!inputText) {
-                return context;
-              }
-              const owner = yield* configuration.ownerContext();
-              const text = yield* prepareInput(inputText, owner);
-              if (readOptions.signal?.aborted) {
-                return yield* Effect.fail(
-                  new Unavailable({
-                    reason: "Model context preparation was interrupted.",
-                  })
-                );
-              }
-              return {
-                ...context,
-                messages: context.messages.map((value, position) =>
-                  position === index ? { ...message, content: text } : value
-                ),
-              };
-            }),
-        }
-      : {}),
-    authorize: (readOptions) =>
-      Effect.gen(function* currentModelAuthority() {
-        const context = yield* configuration.ownerContext();
-        yield* configuration.authority.require(
-          {
-            action: "execute",
-            address: configuration.address,
-            context,
-            model: configuration.agent.model,
-            pinnedAgent: configuration.agent,
-            resource: {
-              id: configuration.agent.agentId,
-              kind: "agent",
-              organizationId: configuration.address.organizationId,
-            },
-          },
-          readOptions
-        );
-        yield* configuration.checkDependencies(
-          context,
-          { sourceIds: [], toolIds: [] },
-          readOptions
-        );
-      }),
-  });
-  const tools = createPiTools({
-    address: configuration.address,
-    agent: configuration.agent,
-    approvals,
-    audit: configuration.audit,
-    authority: configuration.authority,
-    checkDependencies: configuration.checkDependencies,
-    deadlineMs: configuration.provider.deadlineMs,
-    dependencies: configuration.toolDependencies,
-    executor: configuration.executor,
-    metadata,
-    ownerContext: configuration.ownerContext,
-    persist: () =>
-      Effect.tryPromise({
-        catch: () =>
-          new Unavailable({ reason: "Native tool dispatch flush failed." }),
-        try: () => storage.sync(),
-      }),
-    tools: configuration.tools,
-  });
-  return { approvals, authorize, configuration, provider, tools };
-};
 
 interface ConversationScopeServices {
   readonly jobs: LifecycleJobs;
@@ -237,20 +90,24 @@ export interface ConversationRegistration {
 }
 
 export class ConversationScope {
-  readonly runtime: ReturnType<typeof createResources>;
+  readonly runtime: ReturnType<typeof createConversationResources>;
   readonly native: Conversation;
   private readonly services: ConversationScopeServices;
   readonly work: ReturnType<typeof createConversationWork>;
   readonly reminders: ReturnType<typeof createConversationReminders>;
   readonly compaction: ReturnType<typeof createConversationCompaction>;
+  readonly coordination: ReturnType<typeof createCoordinatorWork>;
+  readonly routeHuman: ReturnType<typeof createCoordinatorSource>;
+  readonly receiveReport: ReturnType<typeof createCoordinatorReport>;
 
   private constructor(
-    runtime: ReturnType<typeof createResources>,
+    runtime: ReturnType<typeof createConversationResources>,
     native: Conversation,
     services: ConversationScopeServices,
     work: ReturnType<typeof createConversationWork>,
     reminders: ReturnType<typeof createConversationReminders>,
-    compaction: ReturnType<typeof createConversationCompaction>
+    compaction: ReturnType<typeof createConversationCompaction>,
+    coordination: ReturnType<typeof createCoordinatorWork>
   ) {
     this.runtime = runtime;
     this.native = native;
@@ -258,6 +115,19 @@ export class ConversationScope {
     this.work = work;
     this.reminders = reminders;
     this.compaction = compaction;
+    this.coordination = coordination;
+    const source = {
+      pi: services.pi,
+      native,
+      runtime,
+      coordination,
+      notify: () => this.scheduleNotify(),
+    };
+    this.routeHuman = createCoordinatorSource(source);
+    this.receiveReport = createCoordinatorReport({
+      ...source,
+      persist: () => services.storage.sync(),
+    });
   }
 
   static async open(
@@ -266,7 +136,11 @@ export class ConversationScope {
     bind: (registration: ConversationRegistration) => Promise<Conversation>
   ): Promise<ConversationScope> {
     const runtime = await services.metadata(() =>
-      createResources(configuration, services.storage, services.metadata)
+      createConversationResources(
+        configuration,
+        services.storage,
+        services.metadata
+      )
     );
     const extensions: Extension[] = [
       {
@@ -349,25 +223,45 @@ export class ConversationScope {
       sessionId: configuration.address.sessionId,
       waitUntil: services.waitUntil,
     });
+    const coordination = createCoordinatorWork({
+      address: configuration.address,
+      authorize: async (signal) =>
+        runtime.authorize(
+          await run(configuration.ownerContext()),
+          "coordinate",
+          signal
+        ),
+      jobs: services.jobs,
+      metadata: services.metadata,
+      nativeId: native.id,
+      persist: () => services.storage.sync(),
+      pi: services.pi,
+      services: configuration.coordination,
+      waitUntil: services.waitUntil,
+    });
     const scope = new ConversationScope(
       runtime,
       native,
       services,
       work,
       reminders,
-      compaction
+      compaction,
+      coordination
     );
     services.install({
       name: `cerebro-tools:${configuration.address.sessionId}`,
       hooks: [...scope.work.hooks, ...createRunLimits({ pi: services.pi })],
+      tasks: scope.coordination.tasks,
       tools: [
         ...runtime.tools,
         ...scope.work.tools,
         ...scope.reminders.tools,
+        ...scope.coordination.tools,
         createGenerativeUiTool({ authorize }),
       ],
     });
     await scope.reminders.restore();
+    await scope.coordination.restore();
     if (configuration.notify) {
       const watch = await native.watch(piContext());
       watch.start(() => scope.scheduleNotify());
@@ -399,17 +293,20 @@ export class ConversationScope {
       () => runtime.approvals.all(),
       piContext()
     );
-    const [children, known, reminders, inspection, live] = await Promise.all([
-      this.work.children(),
-      this.work.known(),
-      this.reminders.list(),
-      pi.inspect(piContext()),
-      pi.snapshot(LiveDoc, this.native.id, piContext()),
-    ]);
+    const [children, known, reminders, inspection, live, backgroundWork] =
+      await Promise.all([
+        this.work.children(),
+        this.work.known(),
+        this.reminders.list(),
+        pi.inspect(piContext()),
+        pi.snapshot(LiveDoc, this.native.id, piContext()),
+        this.coordination.current(),
+      ]);
     const childrenByNativeId = new Map(
       known.map((child) => [child.nativeId, child])
     );
     const activity: ChatActivity = {
+      ...(backgroundWork ? { backgroundWork } : {}),
       children,
       reminders,
       compactions: (live?.compactions ?? []).map((compaction) => ({
@@ -492,6 +389,11 @@ export class ConversationScope {
     context: ExecutionContext,
     signal?: AbortSignal
   ) {
+    if (command.kind === "stop-work") {
+      await this.runtime.authorize(context, "coordinate", signal);
+      await this.coordination.cancel({ ...command, signal });
+      return { id: command.workId, kind: command.kind };
+    }
     await this.runtime.authorize(
       context,
       command.kind === "stop-child" || command.kind === "cancel-schedule"
@@ -694,6 +596,14 @@ export class ConversationScope {
       } catch {
         throw new InvalidInput({ reason: "Invalid chat command JSON." });
       }
+      if (path === "/team-report") {
+        const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
+          onExcessProperty: "error",
+        })(body);
+        return Response.json(
+          await this.receiveReport(delivery, context, request.signal)
+        );
+      }
       if (path === "/send") {
         const command = await run(
           Schema.decodeUnknownEffect(sendSchema)(body).pipe(
@@ -703,7 +613,25 @@ export class ConversationScope {
             )
           )
         );
+        if (
+          await this.routeHuman(
+            command.operationId,
+            command.text,
+            context,
+            request.signal
+          )
+        ) {
+          return Response.json({
+            status: "ok",
+            value: {
+              accepted: true,
+              operationId: command.operationId,
+              session: String(this.native.id),
+            },
+          });
+        }
         await runtime.authorize(context, "send", request.signal);
+        await this.coordination.rememberHumanOperation(command.operationId);
         const receipt = await this.services.harness.submit(command.text, {
           session: String(this.native.id),
           operationId: command.operationId,

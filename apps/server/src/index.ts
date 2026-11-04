@@ -4,13 +4,17 @@ import { cors } from "hono/cors";
 
 import { assertWorkerEnv } from "./bindings";
 import type { WorkerEnv } from "./bindings";
+import { consumeSlackEvents } from "./events";
 import { logRequest, requestRoute } from "./log";
 import { apiRoutes } from "./routes/api";
 import { authRoutes } from "./routes/auth";
 import { healthRoutes } from "./routes/health";
+import { consumeTeamCommands } from "./team-events";
+import { consumeTeamReports } from "./team-reports";
 
 export { AuditSink } from "./audit-sink";
 export { IdentityAgent } from "./session/agent";
+export { TeamAgent } from "./team-agent";
 export { SessionAgent } from "./session/retired-agent";
 
 const app = new Hono<{ Bindings: WorkerEnv }>();
@@ -66,4 +70,14 @@ app.route("/", healthRoutes);
 app.route("/", authRoutes);
 app.route("/", apiRoutes);
 
-export default app;
+export default Object.assign(app, {
+  queue: (batch: MessageBatch<unknown>, env: WorkerEnv) => {
+    if (batch.queue === "cerebro-team-commands") {
+      return consumeTeamCommands(batch, env);
+    }
+    if (batch.queue === "cerebro-team-reports") {
+      return consumeTeamReports(batch, env);
+    }
+    return consumeSlackEvents(batch, env);
+  },
+}) satisfies ExportedHandler<WorkerEnv>;

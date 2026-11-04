@@ -38,7 +38,7 @@ const platformImports = registerHooks({
 const { openPiSessionStore } =
   await import("../../packages/runtime/node_modules/agents/dist/harness/pi/index.js");
 const { createSourceDependencyStore } =
-  await import("../../apps/server/src/session/content.ts");
+  await import("../../packages/runtime/src/content-dependency-store.ts");
 platformImports.deregister();
 
 const addressFor = (name: string) => ({

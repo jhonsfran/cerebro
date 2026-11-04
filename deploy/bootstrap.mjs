@@ -295,7 +295,10 @@ const config = {
   compatibility_date: "2026-09-28",
   compatibility_flags: ["nodejs_compat"],
   durable_objects: {
-    bindings: [{ class_name: "IdentityAgent", name: "SESSION" }],
+    bindings: [
+      { class_name: "IdentityAgent", name: "SESSION" },
+      { class_name: "TeamAgent", name: "TEAM" },
+    ],
   },
   main: "apps/server/src/index.ts",
   // Applied migration tags are history. celld cannot delete classes, so the
@@ -306,8 +309,39 @@ const config = {
     { new_sqlite_classes: ["ChannelDispatcher"], tag: "v2" },
     { new_sqlite_classes: ["SessionAgent", "GatewayJournal"], tag: "v3" },
     { new_sqlite_classes: ["IdentityAgent"], tag: "v4" },
+    { new_sqlite_classes: ["TeamAgent"], tag: "v5" },
   ],
   name: "cerebro-api",
+  queues: {
+    consumers: [
+      {
+        dead_letter_queue: "cerebro-team-reports-dead-letter",
+        max_batch_size: 5,
+        max_batch_timeout: 1,
+        max_retries: 5,
+        queue: "cerebro-team-reports",
+      },
+      {
+        dead_letter_queue: "cerebro-team-commands-dead-letter",
+        max_batch_size: 5,
+        max_batch_timeout: 1,
+        max_retries: 5,
+        queue: "cerebro-team-commands",
+      },
+      {
+        dead_letter_queue: "cerebro-slack-events-dead-letter",
+        max_batch_size: 5,
+        max_batch_timeout: 1,
+        max_retries: 5,
+        queue: "cerebro-slack-events",
+      },
+    ],
+    producers: [
+      { binding: "SLACK_EVENTS", queue: "cerebro-slack-events" },
+      { binding: "TEAM_COMMANDS", queue: "cerebro-team-commands" },
+      { binding: "TEAM_REPORTS", queue: "cerebro-team-reports" },
+    ],
+  },
   services: [
     { binding: "AUDIT_SINK", entrypoint: "AuditSink", service: "cerebro-api" },
   ],

@@ -14,6 +14,7 @@ Unknown fields are rejected.
 | `models` | array of [models](#models) | yes | At least one. Model IDs are unique. |
 | `tools` | array of [tools](#tools) | yes | The catalog tools this file owns. Each start replaces them, so removing a tool here removes it from the catalog. Conversations started after the change see it. An empty array removes them all. |
 | `connectors` | array of [MCP connectors](#mcp-connectors) | no | MCP servers whose tools bootstrap discovers into the catalog. |
+| `coordination` | [coordination profile](#coordination) | no | Published lead and worker agents and limits for conversation background teams. |
 | `artifacts` | object | yes | `endpoint`, `bucket`, `accessKeyId`, `secretAccessKey`, and `region` of the artifact MinIO or S3 store. |
 | `gatewaySigningKey` | string | yes | At least 32 characters. Signs requests from the API to session objects. |
 | `retrievalMode` | `"full-text"` | yes | The only supported value. |
@@ -41,6 +42,40 @@ Pi owns run execution. The old `maxRequestsPerRun` field never limited requests.
 | `maxResponseBytes` | integer | Upper bound for one response. |
 
 Integer limits are positive and at most 1,048,576.
+
+## Coordination
+
+Omit `coordination` to keep ordinary conversations without background team tools. To enable teams, publish the lead and worker agents, then add their IDs. For web chat, the agent selected in the conversation is the coordinator. For Slack, set `slack.agentId` in `channels.json` to that agent. Each role selects its model through its own published definition. Web teams need no Slack configuration or account link.
+
+For local use, supply a complete custom `runtime.json` with all required models. In a Compose override, set `services.secrets-init.environment.CEREBRO_MODEL` to an explicit empty string. Apply that override on later starts. An unset or empty host variable is insufficient because the base Compose file supplies a default. Without the override, the generator replaces custom models and the coordination profile.
+
+```json
+{
+  "coordination": {
+    "leadAgentId": "<PUBLISHED_LEAD_AGENT_ID>",
+    "workerAgentId": "<PUBLISHED_WORKER_AGENT_ID>",
+    "maxTeams": 2,
+    "maxWorkers": 2,
+    "maxTurns": 8,
+    "timeoutMs": 600000
+  }
+}
+```
+
+| Field | Required | Default | Range or meaning |
+| --- | --- | --- | --- |
+| `leadAgentId` | yes | none | Published agent that coordinates private team work. |
+| `workerAgentId` | yes | none | Published agent used for worker conversations. |
+| `maxTeams` | no | 2 | 1–2 active teams across all web and Slack conversations for one organization and person. |
+| `maxWorkers` | no | 2 | 1–2 worker conversations in total per team. |
+| `maxTurns` | no | 8 | 1–8 model request reservations shared by the lead and all workers, including retries and compaction. |
+| `timeoutMs` | no | 600000 | 1000–600000 milliseconds from work admission. A restart does not extend it. |
+
+Each work item saves its role versions and limits at admission. Current permissions still apply. Removing a required capability can stop existing work. A worker needs its own grants for the content it receives; the lead's grants are not inherited.
+
+The shared request budget is saved before model dispatch. A reservation can remain used if a request is then denied. A crash can repeat an in-flight provider request, and the repeated request uses another reservation. The configured provider prices are zero, so this limit is not a monetary spend ceiling.
+
+See [coordinator cells](../architecture/slack-coordinator.md) for execution, [web teams](../operations/agent-teams.md) for setup, and [Slack operations](../operations/slack.md) for channel setup and queue replay.
 
 ## Tools
 

@@ -1,4 +1,8 @@
+import type { SlackQueueDelivery } from "@cerebro/channels/slack-events";
+import type { TeamCommand, TeamReportDelivery } from "@cerebro/contracts/work";
+
 import type { IdentityAgent } from "./session/agent";
+import type { TeamAgent } from "./team-agent";
 
 export interface WorkerEnv {
   readonly [binding: string]: unknown;
@@ -10,7 +14,11 @@ export interface WorkerEnv {
   DEPLOY_MODE: "local" | "production";
   CHANNEL_ORGANIZATION_ID?: string;
   SLACK_CHANNEL_JSON?: string;
+  SLACK_EVENTS: Queue<SlackQueueDelivery>;
+  TEAM_COMMANDS: Queue<TeamCommand>;
+  TEAM_REPORTS: Queue<TeamReportDelivery>;
   SESSION: DurableObjectNamespace<IdentityAgent>;
+  TEAM: DurableObjectNamespace<TeamAgent>;
   AUDIT_SINK: Fetcher;
   ACCOUNT_KEY: string;
   RUNTIME_CONFIG_JSON: string;
@@ -28,6 +36,9 @@ export const assertWorkerEnv = (env: WorkerEnv): void => {
   }
   if (!["local", "production"].includes(env.DEPLOY_MODE)) {
     throw new Error("Invalid deployment mode");
+  }
+  if (env.SLACK_CHANNEL_JSON && !env.SLACK_EVENTS) {
+    throw new Error("The Slack event queue binding is missing");
   }
   if (
     env.DEPLOY_MODE === "production" &&

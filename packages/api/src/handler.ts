@@ -1,11 +1,10 @@
 /* oxlint-disable no-await-in-loop -- Each body chunk must pass the byte limit before the reader requests another chunk. */
 import {
-  START_FAILED,
   receiveSlackEvent,
   receiveSlackInteraction,
   verifySlackRequest,
 } from "@cerebro/channels/slack";
-import { createSlackApi } from "@cerebro/channels/slack-api";
+import { normalizeSlackDelivery } from "@cerebro/channels/slack-events";
 import { ChannelError } from "@cerebro/channels/types";
 import type { ProductHandlerOptions } from "@cerebro/channels/types";
 import { failureToHttp, isContractFailure } from "@cerebro/contracts/failures";
@@ -77,16 +76,6 @@ const readBody = async (request: Request): Promise<string> => {
 const json = (value: unknown, status = 200) =>
   Response.json(value, { headers: { "Cache-Control": "no-store" }, status });
 
-const slackEventSchema = z.object({
-  event: z
-    .object({
-      channel: z.string().optional(),
-      thread_ts: z.string().optional(),
-      ts: z.string().optional(),
-    })
-    .optional(),
-});
-
 const verifiedSlack = async (
   options: ProductHandlerOptions,
   request: Request,
@@ -118,13 +107,10 @@ const parseJson = (raw: string): unknown => {
   }
 };
 
-// Slack retries an event that is not acknowledged within three seconds, so the
-// work runs after the response when the host allows it.
 const receiveSlack = async (
   options: ProductHandlerOptions,
   request: Request,
-  raw: string,
-  background?: BackgroundWork
+  raw: string
 ): Promise<Response> => {
   const slack = await verifiedSlack(options, request, raw);
   const body = parseJson(raw);
@@ -138,29 +124,22 @@ const receiveSlack = async (
     return json({ challenge: challenge.data.challenge });
   }
   const retry = request.headers.has("x-slack-retry-num");
-  const receive = () =>
-    options.withDatabase((database) =>
-      receiveSlackEvent(database, options, body, slack, retry)
-    );
-  if (!background) {
-    return json(await receive());
+  const delivery = normalizeSlackDelivery({
+    configuration: slack,
+    organizationId: options.organizationId,
+    payload: body,
+    receivedAt: options.now?.() ?? Date.now(),
+    sourceRetry: retry,
+  });
+  if (options.enqueueSlackEvent) {
+    await options.enqueueSlackEvent(delivery);
+    return json({ ok: true });
   }
-  const work = async () => {
-    try {
-      await receive();
-    } catch {
-      const event = slackEventSchema.safeParse(body).data?.event;
-      if (event?.channel && !retry) {
-        await createSlackApi(slack, options.fetch).send({
-          channel: event.channel,
-          text: START_FAILED,
-          threadTs: event.thread_ts ?? event.ts,
-        });
-      }
-    }
-  };
-  background.waitUntil(work());
-  return json({ ok: true });
+  return json(
+    await options.withDatabase((database) =>
+      receiveSlackEvent(database, options, body, slack, retry)
+    )
+  );
 };
 
 const receiveSlackAction = async (
@@ -233,7 +212,7 @@ export const createApiHandler = (
           ? await readBody(request)
           : undefined;
       if (url.pathname === SLACK_EVENTS_PATH && request.method === "POST") {
-        return await receiveSlack(options, request, raw ?? "", background);
+        return await receiveSlack(options, request, raw ?? "");
       }
       if (
         url.pathname === SLACK_INTERACTIONS_PATH &&

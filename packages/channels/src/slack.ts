@@ -1,15 +1,17 @@
 import type { Database } from "@cerebro/db";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
-import {
-  channelConversation,
-  channelLinkEvent,
-} from "@cerebro/db/schema/agents";
+import { channelLinkEvent } from "@cerebro/db/schema/agents";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { contextByPrincipal, digest } from "./security";
 import { createChannelService } from "./service";
 import { createSlackApi } from "./slack-api";
+import {
+  readSlackEventTarget,
+  resolveSlackEventDecision,
+} from "./slack-event-receipts";
+import { parseSlackCallback, parseSlackQueueDelivery } from "./slack-events";
 import { APPROVE_ACTION, DENY_ACTION } from "./slack-replies";
 import { ChannelError } from "./types";
 import type { ChannelOptions, SlackConfiguration } from "./types";
@@ -25,25 +27,7 @@ export const START_FAILED =
   "Sorry, I could not start on that. Please send it again.";
 
 const TIMESTAMP_WINDOW_SECONDS = 300;
-const LINK_COMMAND = /^(?:link|\/link)\s+(?<code>[a-f0-9]{64})$/iu;
 const SIGNATURE = /^v0=(?<signature>[a-f0-9]{64})$/u;
-const callbackSchema = z.object({
-  api_app_id: z.string().min(1),
-  event: z.object({
-    bot_id: z.string().optional(),
-    channel: z.string().optional(),
-    channel_type: z.string().optional(),
-    subtype: z.string().optional(),
-    text: z.string().max(16_000).optional(),
-    thread_ts: z.string().optional(),
-    ts: z.string().optional(),
-    type: z.string(),
-    user: z.string().optional(),
-  }),
-  event_id: z.string().min(1),
-  team_id: z.string().min(1),
-  type: z.literal("event_callback"),
-});
 
 export const verifySlackRequest = async (
   rawBody: string,
@@ -163,67 +147,6 @@ const consumeLinkCode = async (
   });
 };
 
-type SlackEvent = z.infer<typeof callbackSchema>["event"];
-interface DirectMessage {
-  readonly channel: string;
-  readonly text: string;
-  readonly ts: string;
-  readonly threadTs?: string;
-  readonly user: string;
-}
-
-const directMessage = (event: SlackEvent): DirectMessage | undefined => {
-  const { channel, text, ts, user } = event;
-  if (
-    event.type !== "message" ||
-    event.channel_type !== "im" ||
-    !user ||
-    !channel?.startsWith("D") ||
-    !ts ||
-    !text
-  ) {
-    return;
-  }
-  return { channel, text, threadTs: event.thread_ts, ts, user };
-};
-
-const bindConversation = async (
-  database: Database,
-  options: ChannelOptions,
-  configuration: SlackConfiguration,
-  message: DirectMessage,
-  principalId: string
-) => {
-  const rootTimestamp = message.threadTs ?? message.ts;
-  const bindingKey = `pi-identity-v1:slack:${await digest({ agentId: configuration.agentId, channelId: message.channel, organizationId: options.organizationId, principalId, rootTimestamp, userId: message.user, workspaceId: configuration.workspaceId })}`;
-  const conversationId = `conversation:${await digest(bindingKey)}`;
-  await database
-    .insert(channelConversation)
-    .values({
-      agentId: configuration.agentId,
-      bindingKey,
-      channelId: message.channel,
-      conversationId,
-      engine: "pi-identity-v1",
-      kind: "slack",
-      organizationId: options.organizationId,
-      ownerPrincipalId: principalId,
-      rootTimestamp,
-      sessionId: `session:${await digest({ agentId: configuration.agentId, conversationId, organizationId: options.organizationId })}`,
-      slackUserId: message.user,
-      workspaceId: configuration.workspaceId,
-    })
-    .onConflictDoNothing();
-  const [conversation] = await database
-    .select()
-    .from(channelConversation)
-    .where(eq(channelConversation.conversationId, conversationId));
-  if (!conversation) {
-    throw new Error("The Slack conversation insert returned no binding.");
-  }
-  return conversation;
-};
-
 export const receiveSlackEvent = async (
   database: Database,
   options: ChannelOptions,
@@ -231,94 +154,113 @@ export const receiveSlackEvent = async (
   configuration: SlackConfiguration,
   retry = false
 ) => {
-  const parsed = callbackSchema.safeParse(payload);
-  if (!parsed.success) {
-    throw new ChannelError(422, "invalid-input", "The Slack event is invalid.");
-  }
-  const callback = parsed.data;
-  if (
-    callback.team_id !== configuration.workspaceId ||
-    callback.api_app_id !== configuration.appId
-  ) {
-    throw new ChannelError(
-      403,
-      "forbidden",
-      "The Slack workspace or app is not configured."
-    );
-  }
+  const callback = parseSlackCallback(payload, configuration);
   const { event } = callback;
+  const { created, decision, eventKey, input } =
+    await resolveSlackEventDecision(database, options, configuration, callback);
   const slack = createSlackApi(configuration, options.fetch);
-  if (event.bot_id || event.subtype) {
-    return { ignored: true };
-  }
-  if (event.type === "app_mention") {
-    if (!retry && event.channel && event.user) {
-      await slack.sendEphemeral({
-        channel: event.channel,
-        text: DIRECT_MESSAGES_ONLY,
-        user: event.user,
-      });
-    }
-    return { ignored: true };
-  }
-  const message = directMessage(event);
-  if (!message) {
-    return { ignored: true };
-  }
-  // A retried event already got its hint; only idempotent work runs again.
-  const reply = async (text: string) => {
-    if (!retry) {
-      await slack.send({
-        channel: message.channel,
-        text,
-        threadTs: message.threadTs ?? message.ts,
-      });
-    }
-  };
-  const eventKey = `slack:${options.organizationId}:${configuration.appId}:${configuration.workspaceId}:${callback.event_id}`;
-  const linkCommand = message.text.match(LINK_COMMAND);
-  if (linkCommand?.groups?.code) {
+  if (input.kind === "link") {
     const outcome = await consumeLinkCode(database, options, configuration, {
-      code: linkCommand.groups.code,
+      code: input.code,
       eventKey,
-      slackUserId: message.user,
+      slackUserId: input.message.user,
     });
-    if (!outcome.replayed) {
-      await reply(outcome.linked ? LINKED : LINK_INVALID);
+    if (!retry && !outcome.replayed) {
+      await slack.send({
+        channel: input.message.channel,
+        text: outcome.linked ? LINKED : LINK_INVALID,
+        threadTs: input.message.threadTs ?? input.message.ts,
+      });
     }
     return outcome;
   }
-  const link = await createIdentityRepository(database).resolveSlackLink(
-    configuration.workspaceId,
-    message.user
-  );
-  if (!link || link.organizationId !== options.organizationId) {
-    await reply(LINK_HINT);
-    return { linked: false };
+  if (decision.kind === "ignored") {
+    if (created && !retry) {
+      if (decision.reason === "mention" && event.channel && event.user) {
+        await slack.sendEphemeral({
+          channel: event.channel,
+          text: DIRECT_MESSAGES_ONLY,
+          user: event.user,
+        });
+      }
+      if (decision.reason === "unlinked" && input.kind === "message") {
+        await slack.send({
+          channel: input.message.channel,
+          text: LINK_HINT,
+          threadTs: input.message.threadTs ?? input.message.ts,
+        });
+      }
+    }
+    return decision.reason === "unlinked"
+      ? { linked: false }
+      : { ignored: true };
   }
-  const context = await contextByPrincipal(
-    database,
-    options.organizationId,
-    link.principalId
-  );
-  const conversation = await bindConversation(
+  if (input.kind !== "message") {
+    throw new ChannelError(
+      503,
+      "unavailable",
+      "The saved Slack event decision does not match its input."
+    );
+  }
+  const conversation = await readSlackEventTarget(
     database,
     options,
     configuration,
-    message,
-    link.principalId
+    decision,
+    input.message
+  );
+  const context = await contextByPrincipal(
+    database,
+    options.organizationId,
+    decision.ownerPrincipalId
   );
   const receipt = await createChannelService(database, options).admit(
     conversation,
     context,
     eventKey,
-    message.text
+    input.message.text
   );
   return {
     accepted: true,
     conversationId: conversation.conversationId,
     receipt,
   };
+};
+
+export const receiveQueuedSlackEvent = async (
+  database: Database,
+  options: ChannelOptions,
+  payload: unknown,
+  redelivery = false
+) => {
+  const delivery = parseSlackQueueDelivery(payload);
+  const { slack } = options;
+  if (
+    !slack ||
+    delivery.organizationId !== options.organizationId ||
+    delivery.appId !== slack.appId ||
+    delivery.workspaceId !== slack.workspaceId ||
+    delivery.agentId !== slack.agentId
+  ) {
+    throw new ChannelError(
+      403,
+      "forbidden",
+      "The saved Slack delivery no longer matches its configuration."
+    );
+  }
+  return await receiveSlackEvent(
+    database,
+    options,
+    {
+      api_app_id: delivery.appId,
+      event: delivery.event,
+      event_id: delivery.eventId,
+      team_id: delivery.workspaceId,
+      type: "event_callback",
+    },
+    slack,
+    delivery.sourceRetry || redelivery
+  );
 };
 
 const interactionSchema = z.object({

@@ -70,6 +70,7 @@ export interface PiToolConfiguration {
   readonly persist: () => Effect.Effect<void, ContractFailure>;
   readonly metadata: MetadataTransaction;
   readonly deadlineMs: number;
+  readonly deadlineAt?: number;
   readonly audit: (
     event: ToolAuditEvent
   ) => Effect.Effect<void, ContractFailure>;
@@ -151,8 +152,19 @@ export const createPiTools = (
       description: registered.description,
       execute: async (args, api, context) => {
         const window = () => ({
-          deadlineAt: Date.now() + configuration.deadlineMs,
-          signal: context.abortSignal,
+          deadlineAt: Math.min(
+            Date.now() + configuration.deadlineMs,
+            configuration.deadlineAt ?? Number.MAX_SAFE_INTEGER
+          ),
+          signal:
+            configuration.deadlineAt === undefined
+              ? context.abortSignal
+              : AbortSignal.any([
+                  ...(context.abortSignal ? [context.abortSignal] : []),
+                  AbortSignal.timeout(
+                    Math.max(0, configuration.deadlineAt - Date.now())
+                  ),
+                ]),
         });
         let options = window();
         let dispatched = false;

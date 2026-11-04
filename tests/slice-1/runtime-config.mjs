@@ -40,6 +40,17 @@ const configuration = {
   gatewaySigningKey: minioPassword,
   mode: "local",
   models: [
+    ...["coordinator", "lead", "worker"].map((role) => ({
+      apiKey: "fixture-model-key",
+      baseUrl: "http://fixture:8090/v1",
+      deadlineMs: 60_000,
+      id: `fixture/slack-${role}`,
+      maxInputBytes: 131_072,
+      maxOutputTokens: 2048,
+      maxResponseBytes: 1_048_576,
+      model: `slack-${role}`,
+      provider: "fixture",
+    })),
     {
       apiKey: "fixture-model-key",
       baseUrl: "http://fixture:8090/v1",
