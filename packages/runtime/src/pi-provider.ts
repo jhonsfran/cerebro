@@ -27,6 +27,7 @@ export interface ControlledProviderConfiguration {
     options: ReadOptions
   ) => Effect.Effect<TranscriptContext, ContractFailure>;
   readonly deadlineMs: number;
+  readonly deadlineAt?: number;
   readonly maxInputBytes: number;
   readonly maxResponseBytes: number;
   readonly fetch?: typeof globalThis.fetch;
@@ -38,6 +39,23 @@ export interface ControlledProviderConfiguration {
 export const createControlledProvider = (
   configuration: ControlledProviderConfiguration
 ): Provider => {
+  const deadline = () =>
+    Math.min(
+      Date.now() + configuration.deadlineMs,
+      configuration.deadlineAt ?? Number.MAX_SAFE_INTEGER
+    );
+  const requireDispatch = (signal?: AbortSignal | null): void => {
+    signal?.throwIfAborted();
+    if (
+      configuration.deadlineAt !== undefined &&
+      configuration.deadlineAt <= Date.now()
+    ) {
+      throw new Denied({
+        code: "revoked",
+        reason: "The model execution deadline expired.",
+      });
+    }
+  };
   if (
     [configuration.maxInputBytes, configuration.maxResponseBytes].some(
       (limit) => !Number.isSafeInteger(limit) || limit < 1
@@ -47,6 +65,14 @@ export const createControlledProvider = (
       "Positive model input and response byte limits are required"
     );
   }
+  const runGuard = async (
+    guard: ControlledProviderConfiguration["beforeFetch"],
+    options: ReadOptions
+  ): Promise<void> => {
+    if (guard) {
+      await Effect.runPromise(guard(options), { signal: options.signal });
+    }
+  };
   const physicalFetch: typeof globalThis.fetch = async (input, init) => {
     const body = init?.body;
     if (
@@ -70,21 +96,19 @@ export const createControlledProvider = (
     const signal =
       init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const options = {
-      deadlineAt: Date.now() + configuration.deadlineMs,
+      deadlineAt: deadline(),
       signal: signal ?? undefined,
     };
-    if (configuration.beforeFetch) {
-      await Effect.runPromise(configuration.beforeFetch(options), {
-        signal: signal ?? undefined,
-      });
-    }
+    requireDispatch(signal);
+    await runGuard(configuration.beforeFetch, options);
     await Effect.runPromise(
       configuration.authorize({
-        deadlineAt: Date.now() + configuration.deadlineMs,
+        deadlineAt: deadline(),
         signal: signal ?? undefined,
       }),
       { signal: signal ?? undefined }
     );
+    requireDispatch(signal);
     const response = await (configuration.fetch ?? globalThis.fetch)(
       input,
       init
@@ -102,7 +126,7 @@ export const createControlledProvider = (
   ): AssistantMessageEventStream => {
     const stream = createAssistantMessageEventStream();
     const signal = AbortSignal.any([
-      AbortSignal.timeout(configuration.deadlineMs),
+      AbortSignal.timeout(Math.max(0, deadline() - Date.now())),
       ...(options?.signal ? [options.signal] : []),
     ]);
     let source: AssistantMessageEventStream | undefined;
@@ -143,6 +167,7 @@ export const createControlledProvider = (
     signal.addEventListener("abort", onAbort, { once: true });
     const pump = async () => {
       try {
+        requireDispatch(signal);
         if (
           model.id !== configuration.model.id ||
           model.provider !== configuration.model.provider
@@ -154,7 +179,7 @@ export const createControlledProvider = (
         }
         await Effect.runPromise(
           configuration.authorize({
-            deadlineAt: Date.now() + configuration.deadlineMs,
+            deadlineAt: deadline(),
             signal,
           }),
           { signal }
@@ -162,13 +187,14 @@ export const createControlledProvider = (
         const prepared = configuration.prepareContext
           ? await Effect.runPromise(
               configuration.prepareContext(context, {
-                deadlineAt: Date.now() + configuration.deadlineMs,
+                deadlineAt: deadline(),
                 signal,
               }),
               { signal }
             )
           : context;
         signal.throwIfAborted();
+        requireDispatch(signal);
         source = dispatch(prepared, signal);
         for await (const event of source) {
           stream.push(event);

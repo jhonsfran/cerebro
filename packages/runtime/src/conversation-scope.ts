@@ -215,6 +215,7 @@ export class ConversationScope {
       persist: () => services.storage.sync(),
       pi: services.pi,
       services: configuration.coordination,
+      waitUntil: services.waitUntil,
     });
     const scope = new ConversationScope(
       runtime,

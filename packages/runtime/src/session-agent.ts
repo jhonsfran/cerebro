@@ -67,6 +67,7 @@ export interface SessionHostConfiguration {
     readonly agentVersion: number;
   };
   readonly contentDependencies?: () => Promise<ContentDependencies>;
+  readonly importDependencies?: (dependencies: ContentDependencies) => void;
   readonly inheritDependencies?: (
     source: EventAddress,
     toolIds: readonly string[],
@@ -338,7 +339,11 @@ export class SessionAgent<
             piContext()
           ),
         storage: this.ctx.storage,
-        waitUntil: (promise) => this.ctx.waitUntil(promise),
+        waitUntil: (promise) => {
+          if (!this.lifecycle.trackAlarmWork(promise)) {
+            this.ctx.waitUntil(promise);
+          }
+        },
       },
       async ({ agent, extensions, provider }) => {
         for (const extension of extensions) {

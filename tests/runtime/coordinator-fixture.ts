@@ -82,6 +82,7 @@ export const setup = async (timeoutMs = 600_000) => {
   const nativeIds = new Map<string, ConversationId>();
   const calls: TeamCommand[] = [];
   const delivered: TeamCommand[] = [];
+  const progress: Promise<unknown>[] = [];
   let pinVersion = 1;
   let clock = Date.now();
   let failures = 0;
@@ -164,6 +165,9 @@ export const setup = async (timeoutMs = 600_000) => {
           jobs: queued.jobs,
           metadata: (operation) => pi.commit(operation, context),
           persist: () => Promise.resolve(),
+          waitUntil: (promise) => {
+            progress.push(promise.catch((error: unknown) => error));
+          },
           now: () => clock,
           pi,
           services: {
@@ -370,6 +374,7 @@ export const setup = async (timeoutMs = 600_000) => {
     close: async () => {
       held?.resolve(true);
       await host.pi.close(context);
+      await Promise.all(progress);
       await rm(directory, { recursive: true });
     },
   };

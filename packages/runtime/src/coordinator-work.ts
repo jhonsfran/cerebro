@@ -53,6 +53,7 @@ import type {
   CoordinationBinding,
   CoordinatorWorkRecord,
 } from "./coordinator-ledger.ts";
+import { trackNativeProgress } from "./native-progress.ts";
 import { piContext } from "./pi-harness.ts";
 import type { MetadataTransaction } from "./session-agent.ts";
 
@@ -97,6 +98,7 @@ export const createCoordinatorWork = (options: {
   readonly services?: CoordinationServices;
   readonly pi: Harness;
   readonly jobs: LifecycleJobs;
+  readonly waitUntil: (promise: Promise<unknown>) => void;
   readonly metadata: MetadataTransaction;
   readonly authorize: (signal?: AbortSignal) => Promise<void>;
   readonly persist: () => Promise<void>;
@@ -117,16 +119,6 @@ export const createCoordinatorWork = (options: {
       thread: options.services.thread,
     };
   };
-  const admissions = createCoordinatorAdmissions({
-    pi: options.pi,
-    nativeId: options.nativeId,
-    sessionId: options.address.sessionId,
-    jobs: options.jobs,
-    metadata: options.metadata,
-    persist: options.persist,
-    now,
-    timeoutMs: options.services?.profile.timeoutMs ?? 600_000,
-  });
   const requireCaller = async (api: ToolExecutionApi, signal?: AbortSignal) => {
     if (api.conversationId !== options.nativeId) {
       throw new Denied({
@@ -221,7 +213,7 @@ export const createCoordinatorWork = (options: {
     record.pendingCommands[command.id] = receipt;
     return taskId;
   };
-  const pendingDispatch = (): Promise<boolean> =>
+  const pendingDispatches = () =>
     options.pi.commit(async (tx) => {
       const states: ("pending" | "running" | "waiting" | "completing")[] = [
         "pending",
@@ -238,12 +230,33 @@ export const createCoordinatorWork = (options: {
               kind: dispatch.definition.name,
               status,
             },
-            1
+            16
           )
         )
       );
-      return pages.some((page) => page.items.length > 0);
+      return pages.flatMap((page) => page.items.map((task) => task.id));
     }, piContext());
+  const holdDispatches = async (): Promise<void> => {
+    trackNativeProgress(
+      options.pi,
+      { tasks: await pendingDispatches() },
+      options.waitUntil
+    );
+  };
+
+  const admissions = createCoordinatorAdmissions({
+    pi: options.pi,
+    nativeId: options.nativeId,
+    sessionId: options.address.sessionId,
+    jobs: options.jobs,
+    metadata: options.metadata,
+    persist: async () => {
+      await options.persist();
+      await holdDispatches();
+    },
+    now,
+    timeoutMs: options.services?.profile.timeoutMs ?? 600_000,
+  });
 
   const start = async (
     goal: string,
@@ -546,12 +559,14 @@ export const createCoordinatorWork = (options: {
     },
     restore: async (): Promise<void> => {
       const current = await records();
+      const pending = await pendingDispatches();
       if (
         current.length > 0 ||
-        (await pendingDispatch()) ||
+        pending.length > 0 ||
         (await admissions.pending())
       ) {
         await admissions.ensureWake();
+        await holdDispatches();
       }
     },
     wake: async (): Promise<LifecycleJobOutcome> => {
@@ -583,7 +598,9 @@ export const createCoordinatorWork = (options: {
         );
       }, piContext());
       options.pi.resume();
-      if ((await pendingDispatch()) || (await admissions.pending())) {
+      await holdDispatches();
+      const pending = await pendingDispatches();
+      if (pending.length > 0 || (await admissions.pending())) {
         return { rescheduleAt: now() + HEARTBEAT_MS };
       }
       const current = await records();

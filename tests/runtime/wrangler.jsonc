@@ -13,11 +13,15 @@
     "bindings": [
       { "name": "SESSION", "class_name": "SessionAgent" },
       { "name": "STORAGE_CONFORMANCE", "class_name": "StorageConformance" },
+      { "name": "TEAM", "class_name": "TeamFixture" },
+      { "name": "COORDINATOR", "class_name": "CoordinatorFixture" },
     ],
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["SessionAgent"] },
     { "tag": "v2", "new_sqlite_classes": ["StorageConformance"] },
+    { "tag": "v3", "new_sqlite_classes": ["TeamFixture"] },
+    { "tag": "v4", "new_sqlite_classes": ["CoordinatorFixture"] },
   ],
   "services": [
     {

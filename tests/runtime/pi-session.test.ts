@@ -13,6 +13,93 @@ import {
 } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import { createControlledProvider } from "../../packages/runtime/src/pi-provider.ts";
 
+test("an expired absolute deadline blocks vendor dispatch even before the zero-delay abort fires", async () => {
+  const faux = fauxProvider();
+  const model = faux.getModel();
+  let dispatches = 0;
+  const provider = createControlledProvider({
+    authorize: () => Effect.void,
+    deadlineAt: Date.now() - 1,
+    deadlineMs: 30_000,
+    maxInputBytes: 100_000,
+    maxResponseBytes: 100_000,
+    model,
+    provider: {
+      ...faux.provider,
+      streamSimple: (...args) => {
+        dispatches += 1;
+        return faux.provider.streamSimple(...args);
+      },
+    },
+  });
+  const result = await provider
+    .streamSimple(model, normalizeContext({ messages: [] }))
+    .result();
+  assert.equal(dispatches, 0);
+  assert.equal(result.stopReason, "error");
+});
+
+test("authority revoked during a durable reservation prevents the physical model request", async () => {
+  const faux = fauxProvider();
+  const model = faux.getModel();
+  let allowed = true;
+  let reservations = 0;
+  let physicalSends = 0;
+  const controlled = createControlledProvider({
+    model,
+    authorize: () =>
+      allowed
+        ? Effect.void
+        : Effect.fail(
+            new Denied({
+              code: "revoked",
+              reason: "Current access was revoked.",
+            })
+          ),
+    beforeFetch: () =>
+      Effect.sync(() => {
+        reservations += 1;
+        allowed = false;
+      }),
+    deadlineMs: 1000,
+    maxInputBytes: 100_000,
+    maxResponseBytes: 100_000,
+    fetch: () => {
+      physicalSends += 1;
+      return Promise.resolve(new Response("fixture"));
+    },
+    provider: {
+      ...faux.provider,
+      streamSimple: (_value, _transcript, options) => {
+        const stream = createAssistantMessageEventStream();
+        const dispatch = async () => {
+          try {
+            assert.ok(options?.fetch);
+            await options.fetch("https://fixture.invalid/model", {
+              method: "POST",
+              body: "{}",
+              signal: options.signal,
+            });
+            stream.end(fauxAssistantMessage("Unexpected request."));
+          } catch {
+            const error = fauxAssistantMessage("", { stopReason: "error" });
+            stream.push({ type: "error", reason: "error", error });
+            stream.end(error);
+          }
+        };
+        void dispatch();
+        return stream;
+      },
+    },
+  });
+  const result = await controlled
+    .streamSimple(model, normalizeContext({ messages: [] }))
+    .result();
+  assert.equal(reservations, 1);
+  assert.equal(physicalSends, 0);
+  assert.equal(result.stopReason, "error");
+});
+
 test("provider guard checks every physical HTTP call, including retries, before dispatch", async () => {
   const faux = fauxProvider();
   const model = faux.getModel();

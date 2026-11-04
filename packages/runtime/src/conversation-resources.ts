@@ -154,6 +154,7 @@ export const createConversationResources = (
     authority: configuration.authority,
     checkDependencies: configuration.checkDependencies,
     deadlineMs: configuration.provider.deadlineMs,
+    deadlineAt: configuration.provider.deadlineAt,
     dependencies: configuration.toolDependencies,
     executor: configuration.executor,
     metadata,

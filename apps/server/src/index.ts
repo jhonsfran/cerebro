@@ -9,9 +9,11 @@ import { logRequest, requestRoute } from "./log";
 import { apiRoutes } from "./routes/api";
 import { authRoutes } from "./routes/auth";
 import { healthRoutes } from "./routes/health";
+import { consumeTeamCommands } from "./team-events";
 
 export { AuditSink } from "./audit-sink";
 export { IdentityAgent } from "./session/agent";
+export { TeamAgent } from "./team-agent";
 export { SessionAgent } from "./session/retired-agent";
 
 const app = new Hono<{ Bindings: WorkerEnv }>();
@@ -68,5 +70,8 @@ app.route("/", authRoutes);
 app.route("/", apiRoutes);
 
 export default Object.assign(app, {
-  queue: consumeSlackEvents,
+  queue: (batch: MessageBatch<unknown>, env: WorkerEnv) =>
+    batch.queue === "cerebro-team-commands"
+      ? consumeTeamCommands(batch, env)
+      : consumeSlackEvents(batch, env),
 }) satisfies ExportedHandler<WorkerEnv>;
