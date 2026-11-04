@@ -22,6 +22,7 @@ import { findSealedAccount } from "@cerebro/db/repositories/accounts";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { listSkills } from "@cerebro/db/repositories/skills";
 import { channelConversation } from "@cerebro/db/schema/agents";
+import { sendToAuditSink } from "@cerebro/runtime/audit-sink";
 import { SessionAgent as SessionHost } from "@cerebro/runtime/session-agent";
 import type {
   MetadataTransaction,
@@ -436,6 +437,7 @@ export const createRuntimeComposition = (
           }
         : {}),
       agent,
+      audit: sendToAuditSink(env.AUDIT_SINK),
       authority,
       checkDependencies: dependencies,
       executor,

@@ -3,7 +3,14 @@ import { listMcpTools } from "@cerebro/tools/mcp";
 import type { McpTool } from "@cerebro/tools/mcp";
 
 import { createCatalogRegistry, parseCatalogTool } from "./config.ts";
-import type { CatalogTool, McpConnector } from "./config.ts";
+import type { CatalogTool } from "./config.ts";
+
+// The read list is the connector owner's, never the server's annotations.
+export interface McpConnector {
+  readonly id: string;
+  readonly url: string;
+  readonly readTools: readonly string[];
+}
 
 const MAX_INPUT_BYTES = 65_536;
 const MAX_OUTPUT_BYTES = 262_144;
@@ -12,14 +19,15 @@ const MAX_OUTPUT_BYTES = 262_144;
 const toolId = (connectorId: string, name: string): string =>
   `${connectorId}_${name}`.replaceAll(/[^A-Za-z0-9_-]/gu, "_").slice(0, 64);
 
-// Only a tool the server marks read-only is a read. Every other tool is a write
-// and needs approval. The version changes whenever the server's description of
-// the tool changes, which invalidates pending approvals for it.
+// Only a tool the connector owner lists in readTools is a read. Every other tool
+// is a write and needs approval, because annotations come from the server and
+// never decide a safety property. The version changes whenever the server's
+// description of the tool changes, which invalidates pending approvals for it.
 export const catalogToolFromMcp = async (
   connector: McpConnector,
   tool: McpTool
 ): Promise<CatalogTool> => {
-  const effect = tool.annotations?.readOnlyHint === true ? "read" : "write";
+  const effect = connector.readTools.includes(tool.name) ? "read" : "write";
   return parseCatalogTool({
     connectorId: connector.id,
     description: tool.description ?? tool.title ?? tool.name,
@@ -30,10 +38,7 @@ export const catalogToolFromMcp = async (
     maxOutputBytes: MAX_OUTPUT_BYTES,
     outputSchema: tool.outputSchema ?? {},
     requiresApproval: effect === "write",
-    retryMode:
-      effect === "read" || tool.annotations?.idempotentHint === true
-        ? "idempotent"
-        : "at-most-once",
+    retryMode: effect === "read" ? "idempotent" : "at-most-once",
     target: { kind: "mcp", method: tool.name, url: connector.url },
     version: await digestToolArguments({
       annotations: tool.annotations ?? null,

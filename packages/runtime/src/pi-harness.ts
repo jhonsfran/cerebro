@@ -12,7 +12,11 @@ import {
 } from "@cerebro/generative-ui/presentation";
 import { isInternalToolName } from "@cerebro/tools/tool-names";
 import type { Message } from "@earendil-works/pi-ai";
-import type { ConversationView, Harness } from "@earendil-works/pi-durable";
+import type {
+  ConversationView,
+  Harness,
+  TaskId,
+} from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 export const snapshotToolIds = (snapshot: ChatSnapshot): readonly string[] => [
@@ -38,6 +42,27 @@ export const piContext = (signal?: AbortSignal): PiContext =>
     // oxlint-disable-next-line no-useless-undefined -- A missing Chord context key has an undefined value.
     value: () => undefined,
   });
+
+export const abortOwnTask = async (
+  pi: Harness,
+  taskId: TaskId,
+  context: PiContext
+): Promise<void> => {
+  const signal = context.abortSignal;
+  if (!signal) {
+    throw new Error("The task invocation has no cancellation signal.");
+  }
+  const interrupted = Promise.withResolvers<boolean>();
+  if (signal.aborted) {
+    interrupted.resolve(true);
+  } else {
+    signal.addEventListener("abort", () => interrupted.resolve(true), {
+      once: true,
+    });
+  }
+  // abortTask joins the invocation, so join its signal here instead of waiting for ourselves.
+  await Promise.race([pi.abortTask(taskId, piContext()), interrupted.promise]);
+};
 
 const partialBlock = Schema.Union([
   Schema.Struct({ text: Schema.String, type: Schema.Literal("text") }),

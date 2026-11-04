@@ -120,6 +120,13 @@
       "when": 1792627200000,
       "tag": "0016_conversation_forks",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793765437450,
+      "tag": "0017_connector_read_tools",
+      "breakpoints": true
     }
   ]
 }

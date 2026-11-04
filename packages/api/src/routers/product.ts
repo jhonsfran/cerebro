@@ -65,12 +65,15 @@ const skillName = z
   .string()
   .max(64)
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u);
+// MCP tool names the administrator confirms run without approval.
+const readTools = z.array(z.string().min(1).max(128)).max(256).default([]);
 const connectorInput = z.object({
   headers: z
     .record(z.string().min(1).max(128), z.string().min(1).max(4096))
     .refine((value) => Object.keys(value).length <= 16)
     .default({}),
   id: identifier,
+  readTools,
   url: z.string().min(1).max(2048),
 });
 
@@ -304,6 +307,19 @@ export const productRouter = {
         input.principalId,
         [...new Set(input.actions)],
         input.operationId
+      )
+    ),
+  setConnectorReadTools: product
+    .route({
+      method: "PUT",
+      path: "/product/connectors/{connectorId}/read-tools",
+    })
+    .input(connectorId.extend({ readTools }))
+    .handler(({ context, input }) =>
+      context.service.setConnectorReadTools(
+        context.userId,
+        input.connectorId,
+        input.readTools
       )
     ),
   setup: product

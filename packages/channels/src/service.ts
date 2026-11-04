@@ -16,6 +16,7 @@ import {
 } from "@cerebro/db/repositories/skills";
 import type { SkillRecord } from "@cerebro/db/repositories/skills";
 import { channelEffect, installationSetup } from "@cerebro/db/schema/agents";
+import { user } from "@cerebro/db/schema/auth";
 import { organization } from "@cerebro/db/schema/core";
 import {
   identityGrant,
@@ -115,6 +116,20 @@ export const createChannelService = (
       options.organizationId,
       principalId,
       connectorId
+    );
+  };
+  const setConnectorReadTools = async (
+    userId: string,
+    connectorId: string,
+    readTools: readonly string[]
+  ) => {
+    const { admin, principalId } = await connectorAdmin(userId);
+    return await admin.setReadTools(
+      database,
+      options.organizationId,
+      principalId,
+      connectorId,
+      readTools
     );
   };
   const removeConnector = async (userId: string, connectorId: string) => {
@@ -460,12 +475,18 @@ export const createChannelService = (
     const access: {
       principalId: string;
       name: string;
+      email: string | null;
       actions: AccessAction[];
     }[] = [];
     if (canManage) {
       const principals = await database
-        .select()
+        .select({
+          email: user.email,
+          id: identityPrincipal.id,
+          name: user.name,
+        })
         .from(identityPrincipal)
+        .leftJoin(user, eq(identityPrincipal.betterAuthUserId, user.id))
         .where(eq(identityPrincipal.organizationId, options.organizationId));
       const grants = await database
         .select()
@@ -491,7 +512,8 @@ export const createChannelService = (
         }
         access.push({
           actions,
-          name: principal.betterAuthUserId ?? principal.id,
+          email: principal.email,
+          name: principal.name?.trim() || principal.email || principal.id,
           principalId: principal.id,
         });
       }
@@ -598,6 +620,7 @@ export const createChannelService = (
     refreshConnector,
     removeConnector,
     setAccess,
+    setConnectorReadTools,
     setup,
   };
 };

@@ -454,18 +454,27 @@ test("an MCP tool error is never reported as a successful result", async () => {
   assert.deepEqual(result, { status: "UnknownOutcome" });
 });
 
-test("discovery makes only read-only MCP tools reads and skips tools the registry cannot load", async () => {
+test("discovery makes only the owner's read tools reads, ignores server hints, and skips tools the registry cannot load", async () => {
   const listed = [
     {
-      annotations: { readOnlyHint: true },
+      annotations: { idempotentHint: true, readOnlyHint: true },
       inputSchema: { type: "object" },
       name: "lookup",
     },
-    { inputSchema: { type: "object" }, name: "archive.record" },
+    { inputSchema: { type: "object" }, name: "search" },
+    {
+      annotations: { idempotentHint: true },
+      inputSchema: { type: "object" },
+      name: "archive.record",
+    },
     { inputSchema: { type: "object" }, name: "archive_record" },
   ];
   const { skipped, tools } = await discoverMcpTools(
-    { id: "crm", url: "https://crm.example.test/mcp" },
+    {
+      id: "crm",
+      readTools: ["search", "not-listed"],
+      url: "https://crm.example.test/mcp",
+    },
     {},
     "production",
     async (_target, init) => {
@@ -481,10 +490,16 @@ test("discovery makes only read-only MCP tools reads and skips tools the registr
     }
   );
   assert.deepEqual(
-    tools.map((tool) => [tool.id, tool.effect, tool.requiresApproval]),
+    tools.map((tool) => [
+      tool.id,
+      tool.effect,
+      tool.requiresApproval,
+      tool.retryMode,
+    ]),
     [
-      ["crm_lookup", "read", false],
-      ["crm_archive_record", "write", true],
+      ["crm_lookup", "write", true, "at-most-once"],
+      ["crm_search", "read", false, "idempotent"],
+      ["crm_archive_record", "write", true, "at-most-once"],
     ]
   );
   assert.deepEqual(skipped, ["archive_record"]);

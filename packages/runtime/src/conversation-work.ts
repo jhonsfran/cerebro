@@ -21,7 +21,7 @@ import type {
   ToolRegistration,
 } from "@earendil-works/pi-durable";
 
-import { chatPresentation, piContext } from "./pi-harness.ts";
+import { abortOwnTask, chatPresentation, piContext } from "./pi-harness.ts";
 
 export interface SearchResult {
   readonly matches: readonly {
@@ -384,29 +384,7 @@ export const createConversationWork = (options: ConversationWorkOptions) => {
             child.deadlineAt <= Date.now() ||
             (await completedRounds(api.conversationId, context)) >= MAX_ROUNDS
           ) {
-            const signal = context.abortSignal;
-            if (!signal) {
-              throw new Error(
-                "The child invocation has no cancellation signal."
-              );
-            }
-            const interrupted = Promise.withResolvers<boolean>();
-            if (signal.aborted) {
-              interrupted.resolve(true);
-            } else {
-              signal.addEventListener(
-                "abort",
-                () => interrupted.resolve(true),
-                {
-                  once: true,
-                }
-              );
-            }
-            // abortTask joins the invocation, so join its signal here instead of waiting for ourselves.
-            await Promise.race([
-              options.pi.abortTask(api.taskId, piContext()),
-              interrupted.promise,
-            ]);
+            await abortOwnTask(options.pi, api.taskId, context);
             throw new Error("The child execution limit was reached.");
           }
         },

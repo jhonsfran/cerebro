@@ -76,8 +76,9 @@ Every `write` tool requires `requiresApproval: true`. Every request carries `Ide
 | `id` | string | Connector ID. Must differ from every tool's `connectorId`. |
 | `url` | URL | The Streamable HTTP endpoint. Production requires public HTTPS. |
 | `credentials` | object | Optional. `headers` and `secrets`, sealed into the connector account like tool credentials. |
+| `readTools` | string array | Optional, default `[]`. MCP tool names, as the server lists them, that run without approval. |
 
-On every start, bootstrap calls `tools/list` on each connector and replaces that connector's catalog tools. A tool ID is `<connector id>_<MCP tool name>`, with characters outside `[A-Za-z0-9_-]` replaced by `_`, up to 64 characters. A tool the server marks `readOnlyHint: true` is a read. Every other tool is a write that needs approval. Tools the registry cannot load, such as a duplicate ID, are skipped and logged. If the server cannot be reached, the connector keeps its previous tools. Removing a connector from this file removes its tools.
+On every start, bootstrap calls `tools/list` on each connector and replaces that connector's catalog tools. A tool ID is `<connector id>_<MCP tool name>`, with characters outside `[A-Za-z0-9_-]` replaced by `_`, up to 64 characters. A tool named in `readTools` is a read. Every other tool is a write that needs approval. Server annotations such as `readOnlyHint` and `idempotentHint` are ignored, because the server could mark a write read-only. A name the server does not list is ignored. Tools the registry cannot load, such as a duplicate ID, are skipped and logged. If the server cannot be reached, the connector keeps its previous tools. Removing a connector from this file removes its tools.
 
 Administrators can also add MCP connectors in the product under Connectors. Those live in PostgreSQL, not in this file, and survive restarts. A connector in this file with the same ID as one added in the product is skipped.
 
