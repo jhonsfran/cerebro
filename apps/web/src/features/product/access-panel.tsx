@@ -72,7 +72,7 @@ export const AccessPanel = ({
         <Table aria-labelledby="access-title" aria-busy={busy}>
           <TableHeader>
             <TableRow>
-              <TableHead scope="col">Company principal</TableHead>
+              <TableHead scope="col">Account</TableHead>
               {accessActions.map((action) => (
                 <TableHead
                   scope="col"
@@ -90,9 +90,11 @@ export const AccessPanel = ({
                 <TableHead scope="row" className="h-auto py-2 font-normal">
                   <span className="flex flex-col">
                     <span className="font-medium">{entry.name}</span>
-                    <span className="text-muted-foreground tabular-nums">
-                      {entry.principalId}
-                    </span>
+                    {entry.email && entry.email !== entry.name ? (
+                      <span className="text-muted-foreground">
+                        {entry.email}
+                      </span>
+                    ) : null}
                   </span>
                 </TableHead>
                 {accessActions.map((action) => (

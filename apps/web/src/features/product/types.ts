@@ -52,6 +52,7 @@ export const agentDetailSchema = z.object({
   access: z.array(
     z.object({
       actions: z.array(actionSchema),
+      email: z.string().nullable(),
       name: z.string(),
       principalId: z.string(),
     })
