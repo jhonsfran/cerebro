@@ -4,6 +4,7 @@ import { cors } from "hono/cors";
 
 import { assertWorkerEnv } from "./bindings";
 import type { WorkerEnv } from "./bindings";
+import { consumeSlackEvents } from "./events";
 import { logRequest, requestRoute } from "./log";
 import { apiRoutes } from "./routes/api";
 import { authRoutes } from "./routes/auth";
@@ -66,4 +67,6 @@ app.route("/", healthRoutes);
 app.route("/", authRoutes);
 app.route("/", apiRoutes);
 
-export default app;
+export default Object.assign(app, {
+  queue: consumeSlackEvents,
+}) satisfies ExportedHandler<WorkerEnv>;

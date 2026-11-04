@@ -308,6 +308,18 @@ const config = {
     { new_sqlite_classes: ["IdentityAgent"], tag: "v4" },
   ],
   name: "cerebro-api",
+  queues: {
+    consumers: [
+      {
+        dead_letter_queue: "cerebro-slack-events-dead-letter",
+        max_batch_size: 5,
+        max_batch_timeout: 1,
+        max_retries: 5,
+        queue: "cerebro-slack-events",
+      },
+    ],
+    producers: [{ binding: "SLACK_EVENTS", queue: "cerebro-slack-events" }],
+  },
   services: [
     { binding: "AUDIT_SINK", entrypoint: "AuditSink", service: "cerebro-api" },
   ],

@@ -1,3 +1,5 @@
+import type { SlackQueueDelivery } from "@cerebro/channels/slack-events";
+
 import type { IdentityAgent } from "./session/agent";
 
 export interface WorkerEnv {
@@ -10,6 +12,7 @@ export interface WorkerEnv {
   DEPLOY_MODE: "local" | "production";
   CHANNEL_ORGANIZATION_ID?: string;
   SLACK_CHANNEL_JSON?: string;
+  SLACK_EVENTS: Queue<SlackQueueDelivery>;
   SESSION: DurableObjectNamespace<IdentityAgent>;
   AUDIT_SINK: Fetcher;
   ACCOUNT_KEY: string;
@@ -28,6 +31,9 @@ export const assertWorkerEnv = (env: WorkerEnv): void => {
   }
   if (!["local", "production"].includes(env.DEPLOY_MODE)) {
     throw new Error("Invalid deployment mode");
+  }
+  if (env.SLACK_CHANNEL_JSON && !env.SLACK_EVENTS) {
+    throw new Error("The Slack event queue binding is missing");
   }
   if (
     env.DEPLOY_MODE === "production" &&

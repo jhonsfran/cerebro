@@ -57,7 +57,7 @@ flowchart TD
 ## Delivery chunks
 
 - [x] **1. Shared runtime and contracts.** Extract guarded conversation resources without changing behavior. Add schema-derived work, role, command, receipt, report, and profile contracts. Verify contracts, configuration, existing provider behavior, types, and lint.
-- [ ] **2. Durable Slack intake.** Add queue-before-acknowledgement, deterministic filtering, linked-user resolution, original event identity, and dead-letter handling. Verify rejected inputs make zero model calls and queue failures do not receive successful acknowledgements.
+- [x] **2. Durable Slack intake.** Add queue-before-acknowledgement, deterministic filtering, linked-user resolution, original event identity, and dead-letter handling. Verify rejected inputs make zero model calls and queue failures do not receive successful acknowledgements. Save immutable routing or ignored decisions before delivery. The dead-letter queue retains failures until the operations path in chunk 6.
 - [ ] **3. Coordinator work.** Add the shared work and thread index, identity-wide admission slots, and coordinator start/status/input/stop tools backed by durable dispatch tasks. Verify replay reuses work and chat stays responsive in each existing Slack conversation.
 - [ ] **4. Team runtime and role composition.** Add TeamAgent, private command validation, published role pins, guarded lead and worker providers, worker limits, deadline, and cancellation. Verify model traces, isolation, revocation, and restored registration.
 - [ ] **5. Thread updates and results.** Connect subscriptions, stable reports and provenance transfer, current Slack delivery, and explicit control routing. Verify duplicate and reordered delivery, cancelled work, and denied result disclosure.
