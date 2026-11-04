@@ -140,6 +140,9 @@ export const connectorListSchema = z.object({
       id: z.string(),
       source: z.enum(["admin", "runtime.json"]),
       toolCount: z.number(),
+      tools: z.array(
+        z.object({ effect: z.enum(["read", "write"]), name: z.string() })
+      ),
       url: z.string().nullable(),
     })
   ),

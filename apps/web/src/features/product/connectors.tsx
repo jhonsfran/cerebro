@@ -7,6 +7,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@cerebro/ui/components/card";
+import { Checkbox } from "@cerebro/ui/components/checkbox";
 import {
   Empty,
   EmptyDescription,
@@ -19,6 +20,8 @@ import {
   FieldDescription,
   FieldGroup,
   FieldLabel,
+  FieldLegend,
+  FieldSet,
 } from "@cerebro/ui/components/field";
 import { Input } from "@cerebro/ui/components/input";
 import {
@@ -59,6 +62,52 @@ const listConnectors = async (signal?: AbortSignal) => {
     signal ? { signal } : undefined
   );
   return value.connectors;
+};
+
+const ReadTools = ({
+  busy,
+  connector,
+  onChange,
+}: {
+  busy: boolean;
+  connector: ConnectorView;
+  onChange: (readTools: string[]) => void;
+}) => {
+  const reads = connector.tools
+    .filter((tool) => tool.effect === "read")
+    .map((tool) => tool.name);
+  return (
+    <FieldSet className="basis-full">
+      <FieldLegend variant="label">Read-only (no approval)</FieldLegend>
+      <FieldDescription>
+        Unchecked tools ask the person for approval before each call.
+      </FieldDescription>
+      <FieldGroup data-slot="checkbox-group" className="gap-2">
+        {connector.tools.map((tool) => {
+          const checkboxId = `read-tool-${connector.id}-${tool.name}`;
+          return (
+            <Field orientation="horizontal" key={tool.name}>
+              <Checkbox
+                id={checkboxId}
+                checked={tool.effect === "read"}
+                disabled={busy}
+                onCheckedChange={(checked) =>
+                  onChange(
+                    checked
+                      ? [...reads, tool.name]
+                      : reads.filter((name) => name !== tool.name)
+                  )
+                }
+              />
+              <FieldLabel htmlFor={checkboxId} className="font-mono break-all">
+                {tool.name}
+              </FieldLabel>
+            </Field>
+          );
+        })}
+      </FieldGroup>
+    </FieldSet>
+  );
 };
 
 // MCP servers whose tools agents can enable. Adding or refreshing lists the
@@ -130,6 +179,16 @@ export const ConnectorsPanel = () => {
       );
       return `Refreshed ${change.id}. ${summary(change)}`;
     });
+  const setReadTools = (connectorId: string, readTools: string[]) =>
+    run(async () => {
+      const change = await mutate(
+        productPath(`connectors/${encoded(connectorId)}/read-tools`),
+        { readTools },
+        connectorChangeSchema,
+        "PUT"
+      );
+      return `Updated ${change.id}. ${summary(change)}`;
+    });
   const remove = (connectorId: string) =>
     run(async () => {
       await mutate(
@@ -143,9 +202,8 @@ export const ConnectorsPanel = () => {
   return (
     <PageBody>
       <PageIntro id="connectors-title" title="MCP servers your agents can use">
-        Tools a server marks read-only run without approval. Every other tool
-        asks for approval before it runs. Enable tools in the agent
-        configuration.
+        Tools you mark read-only run without approval. Every other tool asks for
+        approval before it runs. Enable tools in the agent configuration.
       </PageIntro>
       {errorMessage ? <ErrorAlert>{errorMessage}</ErrorAlert> : null}
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -219,6 +277,16 @@ export const ConnectorsPanel = () => {
                         Remove
                       </Button>
                     </ItemActions>
+                  ) : null}
+                  {connector.source === "admin" &&
+                  connector.tools.length > 0 ? (
+                    <ReadTools
+                      busy={busy}
+                      connector={connector}
+                      onChange={(readTools) =>
+                        setReadTools(connector.id, readTools)
+                      }
+                    />
                   ) : null}
                 </Item>
               ))}
