@@ -5,7 +5,8 @@ import type { McpTool } from "@cerebro/tools/mcp";
 import { createCatalogRegistry, parseCatalogTool } from "./config.ts";
 import type { CatalogTool } from "./config.ts";
 
-interface McpConnector {
+// The read list is the connector owner's, never the server's annotations.
+export interface McpConnector {
   readonly id: string;
   readonly url: string;
   readonly readTools: readonly string[];

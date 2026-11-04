@@ -254,7 +254,12 @@ test("an anonymous MCP connector stores an empty account and executes", async ()
         database,
         f.organizationId,
         f.principal.id,
-        { id: "public", url: "http://fixture.invalid/mcp", headers: {} }
+        {
+          id: "public",
+          url: "http://fixture.invalid/mcp",
+          headers: {},
+          readTools: [],
+        }
       );
       assert.equal(added.toolCount, 1);
       const sealed = await findSealedAccount(
@@ -347,6 +352,7 @@ test("an administrator's read list decides which tools skip approval and survive
         id: "crm",
         url: "http://fixture.invalid/mcp",
         headers: {},
+        readTools: [],
       });
       assert.deepEqual(await tools(), [
         { effect: "write", name: "archive" },

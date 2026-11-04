@@ -51,7 +51,7 @@ export interface ConnectorInput {
   readonly id: string;
   readonly url: string;
   readonly headers: Readonly<Record<string, string>>;
-  readonly readTools?: readonly string[];
+  readonly readTools: readonly string[];
 }
 export interface ConnectorChange {
   readonly id: string;

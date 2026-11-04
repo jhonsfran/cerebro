@@ -79,9 +79,19 @@ export interface PiToolConfiguration {
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
 const DISPATCH_MEMO = "cerebro-dispatch";
 const OUTCOME_MEMO = "cerebro-outcome";
+// Bookkeeping after a call ends, such as the settled audit event, gets this
+// long whatever the request deadline left.
+const CLEANUP_MS = 30_000;
 type RecordedOutcome =
   | { readonly state: "succeeded"; readonly output: string }
   | { readonly state: "failed"; readonly reason: string };
+const toolResult = (outcome: RecordedOutcome) =>
+  outcome.state === "succeeded"
+    ? { output: [{ text: outcome.output, type: "text" as const }] }
+    : {
+        output: [{ text: outcome.reason, type: "text" as const }],
+        isError: true,
+      };
 const failureReason = (failure: ContractFailure): string =>
   "reason" in failure ? failure.reason : `${failure.resource} was not found`;
 const settledOutcome = (
@@ -204,7 +214,7 @@ export const createPiTools = (
                 reason,
               },
             },
-            { deadlineAt: Date.now() + 30_000, signal: context.abortSignal }
+            { deadlineAt: Date.now() + CLEANUP_MS, signal: context.abortSignal }
           ).pipe(Effect.ignore);
         const program = Effect.gen(function* executeControlledTool() {
           const prepared = yield* waitForCaller(
@@ -244,28 +254,19 @@ export const createPiTools = (
           const recorded = yield* vendorEffect(options, () =>
             api.memo<RecordedOutcome>(OUTCOME_MEMO, context)
           );
-          if (recorded?.state === "succeeded") {
-            yield* settle("succeeded", null);
-            return {
-              output: [{ text: recorded.output, type: "text" as const }],
-            };
-          }
-          if (recorded?.state === "failed") {
-            yield* settle("failed", recorded.reason);
-            return {
-              output: [{ text: recorded.reason, type: "text" as const }],
-              isError: true,
-            };
+          if (recorded) {
+            return recorded;
           }
           const interrupted = yield* vendorEffect(options, () =>
             api.memo<string>(DISPATCH_MEMO, context)
           );
           if (interrupted !== undefined && !registered.idempotent) {
-            yield* settle(
-              "unknown",
-              "The call was interrupted after dispatch."
+            return yield* Effect.fail(
+              new UnknownOutcome({
+                operationId,
+                reason: "The call was interrupted after dispatch.",
+              })
             );
-            return unknownResult;
           }
           const invocation: BoundInvocation = {
             agentId: configuration.agent.agentId,
@@ -437,32 +438,28 @@ export const createPiTools = (
               )
             )
           );
-          yield* vendorEffect(options, () =>
-            api.memo<RecordedOutcome>(
-              OUTCOME_MEMO,
-              {
-                output: canonicalToolArguments(execution.output),
-                state: "succeeded",
-              },
-              context
-            )
-          ).pipe(Effect.andThen(configuration.persist()), Effect.ignore);
-          yield* settle("succeeded", null);
-          return {
-            output: [
-              {
-                text: canonicalToolArguments(execution.output),
-                type: "text" as const,
-              },
-            ],
+          const succeeded: RecordedOutcome = {
+            output: canonicalToolArguments(execution.output),
+            state: "succeeded",
           };
+          yield* vendorEffect(options, () =>
+            api.memo<RecordedOutcome>(OUTCOME_MEMO, succeeded, context)
+          ).pipe(Effect.andThen(configuration.persist()), Effect.ignore);
+          return succeeded;
         });
         try {
           return await Effect.runPromise(
             program.pipe(
+              Effect.tap((outcome) =>
+                settle(
+                  outcome.state,
+                  outcome.state === "failed" ? outcome.reason : null
+                )
+              ),
               Effect.tapError((error) =>
                 settle(settledOutcome(error, dispatched), failureReason(error))
               ),
+              Effect.map(toolResult),
               Effect.catch((error) => {
                 if (error._tag === "UnknownOutcome") {
                   return Effect.succeed(unknownResult);
@@ -470,15 +467,17 @@ export const createPiTools = (
                 if (!dispatched) {
                   return Effect.fail(error);
                 }
-                return vendorEffect({ deadlineAt: Date.now() + 30_000 }, () =>
-                  api.memo<RecordedOutcome>(
-                    OUTCOME_MEMO,
-                    {
-                      reason: failureReason(error),
-                      state: "failed",
-                    },
-                    context
-                  )
+                return vendorEffect(
+                  { deadlineAt: Date.now() + CLEANUP_MS },
+                  () =>
+                    api.memo<RecordedOutcome>(
+                      OUTCOME_MEMO,
+                      {
+                        reason: failureReason(error),
+                        state: "failed",
+                      },
+                      context
+                    )
                 ).pipe(Effect.ignore, Effect.andThen(Effect.fail(error)));
               }),
               Effect.mapError((error) => new Error(failureReason(error)))

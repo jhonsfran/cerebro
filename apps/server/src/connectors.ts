@@ -23,6 +23,7 @@ import { catalogTools } from "./catalog";
 import type { CatalogTool } from "./config";
 import { productionEndpoint, withRedactions } from "./config";
 import { discoverMcpTools } from "./mcp-discovery";
+import type { McpConnector } from "./mcp-discovery";
 
 // Lowercase, digits, and hyphens. No underscore, so `<id>_<tool>` IDs from two
 // connectors can never collide.
@@ -39,11 +40,7 @@ export const createConnectorAdmin = (
   env: Pick<WorkerEnv, "ACCOUNT_KEY" | "DEPLOY_MODE">
 ): ConnectorAdmin => {
   const discover = async (
-    connector: {
-      readonly id: string;
-      readonly url: string;
-      readonly readTools: readonly string[];
-    },
+    connector: McpConnector,
     headers: Readonly<Record<string, string>>
   ) => {
     try {
@@ -60,11 +57,7 @@ export const createConnectorAdmin = (
     database: Database,
     organizationId: string,
     principalId: string,
-    connector: {
-      readonly id: string;
-      readonly url: string;
-      readonly readTools: readonly string[];
-    },
+    connector: McpConnector,
     headers: Readonly<Record<string, string>>,
     account?: { readonly id: string; readonly sealed: string }
   ): Promise<ConnectorChange> => {
@@ -165,14 +158,16 @@ export const createConnectorAdmin = (
         database,
         organizationId,
         principalId,
-        { id: input.id, readTools: input.readTools ?? [], url: url.href },
+        { id: input.id, readTools: input.readTools, url: url.href },
         input.headers,
         account
       );
     },
     list: async (database, organizationId) => {
-      const connectors = await listConnectors(database, organizationId);
-      const tools = await catalogTools(database, organizationId);
+      const [connectors, tools] = await Promise.all([
+        listConnectors(database, organizationId),
+        catalogTools(database, organizationId),
+      ]);
       return connectors.map((connector) => ({
         ...connector,
         tools: tools.flatMap((tool) =>
