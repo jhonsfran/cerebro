@@ -62,7 +62,14 @@ for (const [index, file] of files.entries()) {
 }
 const sourceIdentity = `${revision.stdout.trim()}:sha256:${hash.digest("hex")}`;
 const sourceCheckoutDirty = Boolean(status.stdout.trim());
-const available = ["web-coordinator", "product", "slack-events", "coordinator"];
+const available = [
+  "web-coordinator",
+  "web-coordinator-controls",
+  "web-coordinator-authority",
+  "product",
+  "slack-events",
+  "coordinator",
+];
 const selected = process.argv.slice(2);
 assert.ok(
   selected.every((name) => available.includes(name)),

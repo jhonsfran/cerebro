@@ -1,13 +1,203 @@
+/* oxlint-disable no-await-in-loop, unicorn/no-await-expression-member -- Dependent ledger mutations and control receipts are asserted in order. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { Denied } from "../../packages/contracts/src/failures.ts";
+import { Conflict, Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import { UserEntry } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import type { applyCoordinatorReport } from "../../packages/runtime/src/coordinator-ledger.ts";
-import { requireCoordinatorWork } from "../../packages/runtime/src/coordinator-ledger.ts";
+import {
+  requireCoordinatorWork,
+  SourceWork,
+  WorkDocuments,
+} from "../../packages/runtime/src/coordinator-ledger.ts";
 import { context, setup } from "./coordinator-fixture.ts";
 import { waitFor } from "./helpers.ts";
+
+test("the public work projection retains terminal work and targeted cancellation cannot stop its replacement", async () => {
+  const fixture = await setup();
+  try {
+    const { coordinator } = fixture.source("a");
+    assert.equal(await coordinator.current(), undefined);
+    await fixture.invoke("a", "start_team", { goal: "A." }, "start-A");
+    const first = await coordinator.current();
+    assert.ok(first);
+    assert.deepEqual(first, {
+      canCancel: true,
+      workId: (await fixture.work("a")).admission.key.workId,
+      status: { kind: "accepted" },
+      deadlineAt: fixture.now() + 600_000,
+    });
+    const stop = { workId: first.workId, operationId: "button-stop-A" };
+    assert.equal((await coordinator.cancel(stop)).accepted, true);
+    assert.equal((await coordinator.cancel(stop)).accepted, false);
+    assert.equal((await coordinator.current())?.status.kind, "cancelled");
+    await fixture.waitDispatch();
+    assert.equal(
+      fixture.delivered.filter((command) => command.kind === "cancel").length,
+      1
+    );
+    assert.equal(
+      (await fixture.report("a", "cancelled-report-A")).accepted,
+      false
+    );
+    await fixture.invoke("a", "start_team", { goal: "B." }, "start-B");
+    const second = await coordinator.current();
+    assert.ok(second);
+    assert.notEqual(second.workId, first.workId);
+    assert.equal(
+      (await coordinator.cancel({ ...stop, operationId: "stale-view-A" }))
+        .accepted,
+      false
+    );
+    assert.deepEqual(await coordinator.current(), second);
+    await assert.rejects(
+      coordinator.cancel({ ...stop, workId: second.workId }),
+      (error: unknown) =>
+        error instanceof Conflict && error.code === "digest-mismatch"
+    );
+    assert.deepEqual(await coordinator.current(), second);
+    await fixture.report("a", "completed-report-B");
+    const completed = await coordinator.current();
+    assert.equal(completed?.status.kind, "completed");
+    assert.equal(
+      (
+        await coordinator.cancel({
+          workId: second.workId,
+          operationId: "terminal-B",
+        })
+      ).accepted,
+      false
+    );
+    await fixture.reopen();
+    assert.deepEqual(
+      await fixture.source("a").coordinator.current(),
+      completed
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("projection and targeted stop reject foreign work, changed owner and source session, and current revocation", async () => {
+  const fixture = await setup();
+  try {
+    await fixture.invoke("a", "start_team", { goal: "A." }, "start-A");
+    await fixture.invoke("b", "start_team", { goal: "B." }, "start-B");
+    const source = fixture.source("a");
+    const first = await source.coordinator.current();
+    const foreign = await fixture.source("b").coordinator.current();
+    assert.ok(first && foreign);
+    await assert.rejects(
+      source.coordinator.cancel({
+        workId: foreign.workId,
+        operationId: "foreign",
+      }),
+      (error: unknown) => error instanceof Denied
+    );
+    await fixture.pi().commit(async (tx) => {
+      (await tx.doc(SourceWork, source.native.id)).workId = foreign.workId;
+    }, context);
+    await assert.rejects(
+      source.coordinator.current(),
+      (error: unknown) => error instanceof Denied
+    );
+    await fixture.pi().commit(async (tx) => {
+      (await tx.doc(SourceWork, source.native.id)).workId = first.workId;
+    }, context);
+    const original = await fixture.work("a");
+    for (const admission of [
+      {
+        ...original.admission,
+        key: {
+          ...original.admission.key,
+          ownerPrincipalId: id.principal("foreign-owner"),
+        },
+      },
+      {
+        ...original.admission,
+        sourceEventAddress: {
+          ...original.admission.sourceEventAddress,
+          sessionId: id.session("foreign-session"),
+        },
+      },
+    ]) {
+      await fixture.pi().commit(async (tx) => {
+        const document = await tx.doc(WorkDocuments, first.workId, null);
+        assert.ok(document.record);
+        document.record.admission = admission;
+      }, context);
+      await assert.rejects(
+        source.coordinator.current(),
+        (error: unknown) => error instanceof Denied
+      );
+      await assert.rejects(
+        source.coordinator.cancel({
+          workId: first.workId,
+          operationId: crypto.randomUUID(),
+        }),
+        (error: unknown) => error instanceof Denied
+      );
+    }
+    await fixture.pi().commit(async (tx) => {
+      const document = await tx.doc(WorkDocuments, first.workId, null);
+      assert.ok(document.record);
+      document.record.admission = original.admission;
+    }, context);
+    fixture.revoke("a");
+    await assert.rejects(
+      source.coordinator.cancel({
+        workId: first.workId,
+        operationId: "revoked",
+      }),
+      (error: unknown) => error instanceof Denied
+    );
+    assert.equal((await source.coordinator.current())?.status.kind, "accepted");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a failed but unacknowledged start can still dispatch one targeted cancellation", async () => {
+  const fixture = await setup();
+  try {
+    await fixture.invoke("a", "start_team", { goal: "A." }, "start-A");
+    await fixture.waitDispatch();
+    const { coordinator } = fixture.source("a");
+    const work = await coordinator.current();
+    assert.ok(work);
+    await fixture.pi().commit(async (tx) => {
+      const document = await tx.doc(WorkDocuments, work.workId, null);
+      assert.ok(document.record);
+      document.record.status = {
+        kind: "failed",
+        reason: "Command delivery is uncertain.",
+      };
+    }, context);
+    const failed = await coordinator.current();
+    assert.equal(failed?.status.kind, "failed");
+    assert.equal(failed?.canCancel, true);
+    const input = {
+      workId: work.workId,
+      operationId: "cancel-uncertain-start",
+    };
+    assert.equal((await coordinator.cancel(input)).accepted, true);
+    assert.equal((await coordinator.cancel(input)).accepted, false);
+    await fixture.waitDispatch();
+    assert.equal(
+      fixture.delivered.filter((command) => command.kind === "cancel").length,
+      1
+    );
+    assert.equal((await coordinator.current())?.canCancel, false);
+    assert.equal((await coordinator.current())?.status.kind, "cancelled");
+    assert.equal(
+      (await fixture.report("a", "late-after-uncertain-start")).accepted,
+      false
+    );
+  } finally {
+    await fixture.close();
+  }
+});
 
 test("two Slack scopes share identity slots, keep destinations across reopen, and reject foreign work", async () => {
   const fixture = await setup();

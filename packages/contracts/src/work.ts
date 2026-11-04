@@ -167,6 +167,15 @@ export const WorkStatusSchema = Schema.Union([
 ]);
 export type WorkStatus = typeof WorkStatusSchema.Type;
 
+// oxlint-disable-next-line no-redeclare -- The schema defines its corresponding TypeScript type.
+export const BackgroundWorkSnapshot = Schema.Struct({
+  workId: WorkIdSchema,
+  status: WorkStatusSchema,
+  deadlineAt: timestamp,
+  canCancel: Schema.Boolean,
+});
+export type BackgroundWorkSnapshot = typeof BackgroundWorkSnapshot.Type;
+
 const reportFields = {
   contentDependencies: BoundedContentDependenciesSchema,
   id: WorkReportIdSchema,

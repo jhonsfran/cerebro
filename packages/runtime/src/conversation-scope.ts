@@ -293,17 +293,20 @@ export class ConversationScope {
       () => runtime.approvals.all(),
       piContext()
     );
-    const [children, known, reminders, inspection, live] = await Promise.all([
-      this.work.children(),
-      this.work.known(),
-      this.reminders.list(),
-      pi.inspect(piContext()),
-      pi.snapshot(LiveDoc, this.native.id, piContext()),
-    ]);
+    const [children, known, reminders, inspection, live, backgroundWork] =
+      await Promise.all([
+        this.work.children(),
+        this.work.known(),
+        this.reminders.list(),
+        pi.inspect(piContext()),
+        pi.snapshot(LiveDoc, this.native.id, piContext()),
+        this.coordination.current(),
+      ]);
     const childrenByNativeId = new Map(
       known.map((child) => [child.nativeId, child])
     );
     const activity: ChatActivity = {
+      ...(backgroundWork ? { backgroundWork } : {}),
       children,
       reminders,
       compactions: (live?.compactions ?? []).map((compaction) => ({
@@ -386,6 +389,11 @@ export class ConversationScope {
     context: ExecutionContext,
     signal?: AbortSignal
   ) {
+    if (command.kind === "stop-work") {
+      await this.runtime.authorize(context, "coordinate", signal);
+      await this.coordination.cancel({ ...command, signal });
+      return { id: command.workId, kind: command.kind };
+    }
     await this.runtime.authorize(
       context,
       command.kind === "stop-child" || command.kind === "cancel-schedule"

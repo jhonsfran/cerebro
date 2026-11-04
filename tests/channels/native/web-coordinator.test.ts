@@ -1,13 +1,10 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Native frame reads, controls, and crash checkpoints require ordered effects. */
 import assert from "node:assert/strict";
 import { before as beforeAll, test } from "node:test";
 
 import { Schema } from "effect";
 import { z } from "zod";
 
-import {
-  ChatReceipt,
-  ChatSnapshot,
-} from "../../../packages/contracts/src/session-service.ts";
 import { TeamReportDeliverySchema } from "../../../packages/contracts/src/work.ts";
 import { waitForFixture } from "../../slice-1/application.ts";
 import {
@@ -18,6 +15,7 @@ import {
   queueBodies,
   compose,
   drained,
+  docker,
   evidence,
   fixture,
   literal,
@@ -27,51 +25,29 @@ import {
   summary,
   wireModels,
 } from "./team-support.ts";
+import {
+  setupWebTeam,
+  conversationSchema,
+  viewSchema,
+  receiptSchema,
+  marker,
+  coordinatorTools,
+  roles,
+  noSlack,
+  createConversation,
+  read,
+  sendMessage,
+  heldAcceptance,
+  matchingReport,
+  waitReport,
+} from "./web-team-support.ts";
 
-const publishedSchema = z.object({ agentId: z.string(), version: z.number() });
-const conversationSchema = z.object({
-  agentId: z.string(),
-  conversationId: z.string(),
-  sessionId: z.string(),
-});
-const viewSchema = conversationSchema.extend({
-  snapshot: z
-    .unknown()
-    .transform((value) => Schema.decodeUnknownSync(ChatSnapshot)(value)),
-});
-const receiptSchema = z.object({
-  receipt: z
-    .unknown()
-    .transform((value) => Schema.decodeUnknownSync(ChatReceipt)(value)),
-});
-let roles: {
-  coordinator: z.infer<typeof publishedSchema>;
-  lead: z.infer<typeof publishedSchema>;
-  worker: z.infer<typeof publishedSchema>;
-};
+beforeAll(setupWebTeam, { timeout: 180_000 });
 
-beforeAll(
+test(
+  "a profile-free web conversation remains ordinary chat without background state or team tools",
+  { timeout: 180_000 },
   async () => {
-    const published = await Promise.all(
-      Object.keys(wireModels).map((role) =>
-        fixture.json(
-          "/api/product/agents",
-          metadata.owner.cookie,
-          publishedSchema,
-          {
-            operationId: crypto.randomUUID(),
-            name: `Web ${role}`,
-            model: `fixture/slack-${role}`,
-            instructions: "Use the supplied bounded team tools.",
-            enabledToolIds: [],
-            grants: [],
-          }
-        )
-      )
-    );
-    const [coordinator, lead, worker] = published;
-    assert.ok(coordinator && lead && worker);
-    roles = { coordinator, lead, worker };
     await compose(
       "run",
       "--no-deps",
@@ -80,62 +56,71 @@ beforeAll(
       "node",
       "--input-type=module",
       "-e",
-      "import {readFile,writeFile,rename} from 'node:fs/promises'; const p='/run/cerebro-secrets/'; const c=JSON.parse(await readFile(p+'runtime.json','utf8')); c.coordination=JSON.parse(process.argv[1]); await writeFile(p+'runtime.json.next',JSON.stringify(c),{mode:0o600}); await rename(p+'runtime.json.next',p+'runtime.json'); let channels={}; try { channels=JSON.parse(await readFile(p+'channels.json','utf8')); } catch(e) { if(e.code!=='ENOENT') throw e; } process.stdout.write(JSON.stringify({slackConfigured:Boolean(channels.slack)}));",
-      JSON.stringify({
-        leadAgentId: lead.agentId,
-        workerAgentId: worker.agentId,
-      })
+      "import {readFile,writeFile} from 'node:fs/promises'; const p='/run/cerebro-secrets/runtime.json'; const c=JSON.parse(await readFile(p,'utf8')); delete c.coordination; await writeFile(p,JSON.stringify(c),{mode:0o600});"
     );
     await compose("run", "--no-deps", "--rm", "bootstrap");
     await compose("restart", "celld");
     await ready();
-    await fixture.controls({
-      arm: null,
-      delayMs: 0,
-      failFirst: false,
-      models: {},
-      release: true,
-    });
-  },
-  { timeout: 180_000 }
+    try {
+      await noSlack();
+      const { conversation, route } = await createConversation();
+      const before = await observed();
+      await sendMessage(route, {
+        operationId: crypto.randomUUID(),
+        text: marker,
+      });
+      const completed = await waitForFixture(
+        observed,
+        (value) =>
+          value.model.length === before.model.length + 1 &&
+          value.model.at(-1)?.completedAt !== undefined
+      );
+      const view = await waitForFixture(
+        () => read(route),
+        (value) =>
+          !value.snapshot.busy &&
+          value.snapshot.messages.some((entry) => entry.role === "assistant")
+      );
+      assert.equal(view.snapshot.activity?.backgroundWork, undefined);
+      assert.equal(
+        view.snapshot.tools.some((tool) =>
+          coordinatorTools.includes(tool.toolName)
+        ),
+        false
+      );
+      assert.ok(
+        coordinatorTools.every(
+          (tool) => !completed.model.at(-1)?.toolNames.includes(tool)
+        )
+      );
+      assert.equal(completed.slack.calls.length, 0);
+      await evidence("web-team-native-profile-absent", {
+        conversation,
+        before,
+        completed,
+        view,
+      });
+    } finally {
+      await compose(
+        "run",
+        "--no-deps",
+        "--rm",
+        "test-config",
+        "node",
+        "--input-type=module",
+        "-e",
+        "import {readFile,writeFile} from 'node:fs/promises'; const p='/run/cerebro-secrets/runtime.json'; const c=JSON.parse(await readFile(p,'utf8')); c.coordination=JSON.parse(process.argv[1]); await writeFile(p,JSON.stringify(c),{mode:0o600});",
+        JSON.stringify({
+          leadAgentId: roles().lead.agentId,
+          workerAgentId: roles().worker.agentId,
+        })
+      );
+      await compose("run", "--no-deps", "--rm", "bootstrap");
+      await compose("restart", "celld");
+      await ready();
+    }
+  }
 );
-
-const noSlack = async () => {
-  const configuration = await compose(
-    "run",
-    "--no-deps",
-    "--rm",
-    "test-config",
-    "node",
-    "--input-type=module",
-    "-e",
-    "import {readFile} from 'node:fs/promises'; let c={}; try { c=JSON.parse(await readFile('/run/cerebro-secrets/channels.json','utf8')); } catch(e) { if(e.code!=='ENOENT') throw e; } process.stdout.write(JSON.stringify({slackConfigured:Boolean(c.slack)}));"
-  );
-  const counts = await fixture.sql(
-    "SELECT json_build_object('links',(SELECT count(*) FROM identity_slack_link),'challenges',(SELECT count(*) FROM identity_slack_link_challenge),'slackConversations',(SELECT count(*) FROM channel_conversation WHERE kind='slack'),'slackAccounts',(SELECT count(*) FROM connector_account WHERE id ILIKE '%slack%' OR label ILIKE '%slack%'))"
-  );
-  const value = {
-    ...z
-      .object({ slackConfigured: z.boolean() })
-      .parse(JSON.parse(configuration.stdout)),
-    ...z
-      .object({
-        links: z.number(),
-        challenges: z.number(),
-        slackConversations: z.number(),
-        slackAccounts: z.number(),
-      })
-      .parse(JSON.parse(counts)),
-  };
-  assert.deepEqual(value, {
-    slackConfigured: false,
-    links: 0,
-    challenges: 0,
-    slackConversations: 0,
-    slackAccounts: 0,
-  });
-  return value;
-};
 
 test(
   "no-Slack web input starts private roles and imports one canonical result before the first product read",
@@ -149,7 +134,7 @@ test(
         metadata.owner.cookie,
         conversationSchema,
         {
-          agentId: roles.coordinator.agentId,
+          agentId: roles().coordinator.agentId,
           operationId: crypto.randomUUID(),
         }
       );
@@ -219,7 +204,11 @@ test(
       const reportQueue = await drained("cerebro-team-reports");
       const firstConversationReadAt = Date.now();
       const view = await fixture.json(route, metadata.owner.cookie, viewSchema);
-      assert.equal(view.agentId, roles.coordinator.agentId);
+      assert.equal(
+        view.snapshot.activity?.backgroundWork?.status.kind,
+        "completed"
+      );
+      assert.equal(view.agentId, roles().coordinator.agentId);
       assert.equal(view.conversationId, conversation.conversationId);
       assert.equal(view.sessionId, conversation.sessionId);
       assert.deepEqual(view.snapshot.address, {
@@ -251,12 +240,6 @@ test(
         1
       );
       const calls = completed.model.slice(before.model.length);
-      const coordinatorTools = [
-        "start_team",
-        "get_work",
-        "message_team",
-        "stop_work",
-      ];
       for (const call of calls) {
         assert.ok(
           call.completedAt !== undefined &&
@@ -279,7 +262,7 @@ test(
       }
       assert.equal(completed.slack.calls.length, 0);
       const publicRoles = await fixture.sql(
-        `SELECT count(*) FROM channel_conversation WHERE agent_id IN (${literal(roles.lead.agentId)},${literal(roles.worker.agentId)})`
+        `SELECT count(*) FROM channel_conversation WHERE agent_id IN (${literal(roles().lead.agentId)},${literal(roles().worker.agentId)})`
       );
       assert.equal(publicRoles, "0");
       const source = await fixture.sql(
@@ -322,7 +305,7 @@ test(
           apiUrl: boot.apiUrl,
           webUrl: boot.webUrl,
         },
-        roles,
+        roles: roles(),
         conversation,
         input,
         sourceConfiguration,
@@ -343,6 +326,130 @@ test(
         repeated,
       });
     } finally {
+      await controlReportQueue("resume");
+    }
+  }
+);
+
+test(
+  "a no-reader SIGKILL recovers private web work on the same volume and delivers its report before the first read",
+  { timeout: 180_000 },
+  async () => {
+    await noSlack();
+    await controlReportQueue("pause");
+    await fixture.controls({
+      models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+    });
+    try {
+      const { conversation, route } = await createConversation();
+      const input = { operationId: crypto.randomUUID(), text: marker };
+      const before = await observed();
+      await sendMessage(route, input);
+      const held = await heldAcceptance(before);
+      const celld = await fixture.container("celld");
+      const identity = z
+        .array(
+          z.object({
+            Id: z.string(),
+            Config: z.object({ Labels: z.record(z.string(), z.string()) }),
+            Mounts: z.array(
+              z.object({ Source: z.string(), Destination: z.string() })
+            ),
+          })
+        )
+        .parse(JSON.parse((await docker("inspect", celld)).stdout));
+      const killedAt = Date.now();
+      await docker("kill", "--signal", "KILL", celld);
+      await compose("up", "--no-deps", "-d", "--wait", "celld");
+      await ready();
+      assert.equal(await fixture.container("celld"), celld);
+      await fixture.controls({ models: {}, release: true });
+      const completed = await waitForFixture(
+        observed,
+        (value) =>
+          completedCalls(value, wireModels.lead).length >=
+            completedCalls(before, wireModels.lead).length + 2 &&
+          completedCalls(value, wireModels.worker).length ===
+            completedCalls(before, wireModels.worker).length + 2,
+        90_000
+      );
+      const externalCompletionAt = Date.now();
+      const waiting = await waitReport(
+        "cerebro-team-reports",
+        conversation.conversationId
+      );
+      const report = matchingReport(waiting, conversation.conversationId);
+      assert.equal(report?.report.kind, "completed");
+      await controlReportQueue("resume");
+      const reportQueue = await drained("cerebro-team-reports");
+      const firstConversationReadAt = Date.now();
+      assert.ok(
+        killedAt < externalCompletionAt &&
+          externalCompletionAt <= firstConversationReadAt
+      );
+      const view = await read(route);
+      assert.equal(
+        view.snapshot.tools.filter((tool) => tool.toolName === "start_team")
+          .length,
+        1
+      );
+      assert.equal(
+        view.snapshot.messages.filter(
+          (entry) => entry.text === marker && entry.role === "user"
+        ).length,
+        1
+      );
+      assert.equal(
+        view.snapshot.messages.filter(
+          (entry) => entry.text === summary && entry.role === "assistant"
+        ).length,
+        1
+      );
+      assert.equal(
+        view.snapshot.activity?.backgroundWork?.status.kind,
+        "completed"
+      );
+      const attempts = completed.model.slice(before.model.length);
+      assert.equal(
+        attempts.filter((call) => call.model === wireModels.coordinator).length,
+        2
+      );
+      assert.ok(
+        attempts.filter((call) => call.model !== wireModels.coordinator)
+          .length <= 8
+      );
+      assert.ok(
+        attempts.every(
+          (call) =>
+            call.completedAt === undefined ||
+            call.completedAt <= externalCompletionAt
+        )
+      );
+      assert.equal(completed.slack.calls.length, 0);
+      await sendMessage(route, input);
+      assert.deepEqual(await read(route), view);
+      assert.deepEqual(await read(route), view);
+      const replay = await observed();
+      assert.equal(replay.model.length, completed.model.length);
+      await evidence("web-team-native-recovery", {
+        conversation,
+        input,
+        before,
+        held,
+        celld,
+        identity,
+        killedAt,
+        externalCompletionAt,
+        completed,
+        waiting,
+        report,
+        reportQueue,
+        firstConversationReadAt,
+        view,
+        replay,
+      });
+    } finally {
+      await fixture.controls({ models: {}, release: true });
       await controlReportQueue("resume");
     }
   }

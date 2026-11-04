@@ -64,6 +64,8 @@ The session journals Slack writes. It edits a known message on replay. If a post
 
 ## Enable background teams
 
+The same coordinator and team runtime also supports [ordinary web chat](agent-teams.md). Slack adds event intake, account linking, and replies to the original DM thread.
+
 Publish coordinator, lead, and worker agents with the models and grants each role needs. Set `channels.json`'s `agentId` to the coordinator. Add the optional [coordination profile](../reference/runtime-configuration.md#coordination) to `runtime.json`, then run bootstrap again.
 
 The coordinator gets `start_team`, `get_work`, `message_team`, and `stop_work`. The lead gets `delegate_worker`. Team tools are read-only. The source conversation delivers the result to the original Slack thread.

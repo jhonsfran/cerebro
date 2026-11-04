@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { Schema } from "effect";
 import { z } from "zod";
 
+import { ChatSnapshot } from "../../../packages/contracts/src/session-service.ts";
 import { TeamReportDeliverySchema } from "../../../packages/contracts/src/work.ts";
 import { waitForFixture } from "../../slice-1/application.ts";
 import {
@@ -39,6 +40,11 @@ beforeAll(
   { timeout: 180_000 }
 );
 const marker = "SLACK_TEAM_FIXTURE run both worker checks.";
+const sendWeb = (route: string, text = marker) =>
+  fixture.json(`${route}/messages`, metadata.owner.cookie, z.unknown(), {
+    operationId: crypto.randomUUID(),
+    text,
+  });
 const startCount = (value: Awaited<ReturnType<typeof snapshot>>) =>
   value.snapshot.tools.filter((tool) => tool.toolName === "start_team");
 
@@ -536,6 +542,159 @@ test(
         view,
       });
     } finally {
+      await controlReportQueue("resume");
+    }
+  }
+);
+
+test(
+  "concurrent web and Slack work share the same two-team identity limit",
+  { timeout: 180_000 },
+  async () => {
+    const conversationSchema = z.object({
+      agentId: z.string(),
+      conversationId: z.string(),
+      sessionId: z.string(),
+    });
+    const viewSchema = z.object({
+      snapshot: z
+        .unknown()
+        .transform((value) => Schema.decodeUnknownSync(ChatSnapshot)(value)),
+    });
+    const createWeb = async () => {
+      const value = await fixture.json(
+        "/api/product/conversations",
+        metadata.owner.cookie,
+        conversationSchema,
+        { agentId: roles.coordinator.agentId, operationId: crypto.randomUUID() }
+      );
+      return {
+        ...value,
+        route: `/api/product/conversations/${encodeURIComponent(value.conversationId)}`,
+      };
+    };
+    const view = (route: string) =>
+      fixture.json(route, metadata.owner.cookie, viewSchema);
+    const thread = "1800000900.000001";
+    await fixture.controls({
+      models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+    });
+    const before = await observed();
+    const first = await createWeb();
+    const third = await createWeb();
+    try {
+      await Promise.all([
+        sendWeb(first.route),
+        send(event("mixed-team-start", marker, thread)),
+      ]);
+      const admitted = await waitForFixture(
+        observed,
+        (value) =>
+          value.held === 2 &&
+          completedCalls(value, wireModels.coordinator).length ===
+            completedCalls(before, wireModels.coordinator).length + 4,
+        60_000
+      );
+      const firstView = await view(first.route);
+      const firstWork = firstView.snapshot.activity?.backgroundWork;
+      assert.ok(firstWork?.canCancel);
+      const slackConversationId = await fixture.sql(
+        `SELECT conversation_id FROM channel_conversation WHERE workspace_id=${literal(slack.workspaceId)} AND root_timestamp=${literal(thread)}`
+      );
+      assert.ok(slackConversationId);
+      await sendWeb(third.route);
+      const rejected = await waitForFixture(
+        () => view(third.route),
+        (value) =>
+          !value.snapshot.busy &&
+          value.snapshot.tools.some((tool) => tool.toolName === "start_team")
+      );
+      const failure = rejected.snapshot.tools.find(
+        (tool) => tool.toolName === "start_team"
+      );
+      assert.equal(failure?.state, "failed");
+      assert.match(failure?.output ?? "", /maximum active teams/u);
+      assert.equal(rejected.snapshot.activity?.backgroundWork, undefined);
+      const full = await observed();
+      assert.equal(
+        full.model.filter((call) => call.model === wireModels.lead).length,
+        admitted.model.filter((call) => call.model === wireModels.lead).length
+      );
+      await controlReportQueue("pause");
+      await fixture.json(
+        `${first.route}/control`,
+        metadata.owner.cookie,
+        z.unknown(),
+        {
+          kind: "stop-work",
+          workId: firstWork.workId,
+          operationId: crypto.randomUUID(),
+        }
+      );
+      await send(event("mixed-team-stop", "stop", "1800000901.000001", thread));
+      await fixture.controls({ models: {}, release: true });
+      const reports = await waitForFixture(
+        () => queue("peek", "cerebro-team-reports", 10),
+        (value) => {
+          const sources = new Set(
+            queueBodies(value).map(
+              (body) =>
+                Schema.decodeUnknownSync(TeamReportDeliverySchema)(body)
+                  .sourceEventAddress.conversationId
+            )
+          );
+          return (
+            sources.has(first.conversationId) &&
+            sources.has(slackConversationId)
+          );
+        },
+        60_000
+      );
+      await controlReportQueue("resume");
+      await drained("cerebro-team-reports");
+      const replacement = await createWeb();
+      const replacementBefore = await observed();
+      await sendWeb(replacement.route);
+      const completed = await waitForFixture(
+        () => view(replacement.route),
+        (value) =>
+          value.snapshot.activity?.backgroundWork?.status.kind === "completed",
+        60_000
+      );
+      assert.equal(
+        completed.snapshot.tools.filter(
+          (tool) => tool.toolName === "start_team" && tool.state === "succeeded"
+        ).length,
+        1
+      );
+      assert.equal(
+        completed.snapshot.messages.filter((entry) => entry.text === summary)
+          .length,
+        1
+      );
+      const final = await observed();
+      assert.equal(
+        completedCalls(final, wireModels.lead).length,
+        completedCalls(replacementBefore, wireModels.lead).length + 2
+      );
+      await evidence("web-slack-native-shared-cap", {
+        first,
+        third,
+        thread,
+        before,
+        admitted,
+        firstView,
+        slackConversationId,
+        rejected,
+        full,
+        reports,
+        replacement,
+        replacementBefore,
+        completed,
+        final,
+      });
+    } finally {
+      await fixture.controls({ models: {}, release: true });
       await controlReportQueue("resume");
     }
   }

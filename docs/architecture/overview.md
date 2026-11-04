@@ -29,11 +29,11 @@ History search uses a child with only `search_conversations`. It scans bound pro
 
 Source and provenance copies are conservative. They include all recorded parent dependencies. Their SQL operations use Pi's mutation queue, but commit before Pi's physical storage transaction. A failed native fork can therefore leave extra dependency rows. Retry converges on one native branch and retains those rows.
 
-## Slack background teams
+## Background agent teams
 
-An optional coordination profile gives Slack conversations tools to start independent teams. Existing thread conversations share one identity-wide active-work index. Each work ID selects a private TeamAgent cell with a lead and at most two worker conversations. Published agents select each role's model and grants. Team tools are read-only, and results return through the source conversation after current access checks.
+An optional coordination profile gives web and Slack conversations tools to start independent teams. Each conversation keeps its history and work pointer, and all conversations share one identity-wide active-work index. Each work ID selects a private TeamAgent cell with a lead and at most two worker conversations. Published agents select each role's model and grants. Team tools are read-only. Results enter the original conversation after current access checks, then reach web observers and the configured Slack notifier.
 
-Durable queues transport Slack events, team commands, and reports. Pi remains the execution engine in each cell. See the [cell diagram and code](slack-coordinator.md) for placement, limits, controls, and recovery.
+Durable queues transport Slack events, team commands, and reports. Web prompts use the existing authenticated conversation API. Pi remains the execution engine in each cell. Public background state and its cancellation control stay separate from foreground generation. See the [cell diagram and code](slack-coordinator.md) for placement, limits, controls, and recovery.
 
 ## Reminders and context summaries
 

@@ -65,8 +65,8 @@ rtk proxy pnpm check
 
 Primary files are `packages/contracts/src/session-service.ts`, coordinator work and conversation scope modules, a focused background-work component under `apps/web/src/features/product/`, and existing chat control composition. Tests extend contracts, native runtime, native application, and web behavior coverage.
 
-- [ ] Add optional `activity.backgroundWork` derived from the current `SourceWork` pointer and its bound work document. Expose only work ID, status, and deadline. Do not read private Team transcripts or change foreground `busy`.
-- [ ] Add the bound control on the existing endpoint:
+- [x] Add optional `activity.backgroundWork` derived from the current `SourceWork` pointer and its bound work document. Expose work ID, status, deadline, and the derived cancellation capability. Do not read private Team transcripts or change foreground `busy`.
+- [x] Add the bound control on the existing endpoint:
 
   ```ts
   {
@@ -76,13 +76,13 @@ Primary files are `packages/contracts/src/session-service.ts`, coordinator work 
   }
   ```
 
-- [ ] Authorize with the existing coordinate permission. Bind the operation ID to its structured target and cancel through the existing durable command transition. Reject another source's work and same-operation/different-target replay. Cancelling completed work A must not affect replacement work B.
-- [ ] Show background status and an explicit `Stop background work` action while accepted or running. Use the existing mutation/error handling and stable operation IDs. Keep the composer available and foreground Stop unchanged.
-- [ ] Test authorized snapshot observation after foreground completion, direct controls and updates, receipt confirmation, stale cancellation, access denial, duplicate reports, and mixed web/Slack caps.
-- [ ] Extend the actual native application runner with no-Slack web completion, no-reader SIGKILL recovery, current-access report denial and authorized replay, and profile-absent ordinary chat. Observe the external model fixture and drained report queue before the first conversation read.
-- [ ] Drive a fresh labelled browser stack. Send through the visible composer, observe the asynchronous result without reload, reload the same conversation, then send status and an update and click the explicit background stop action. Confirm separate foreground Stop still works. Retain screenshots, DOM, model traces, and persistence evidence. Clean only the owned stack.
-- [ ] Update architecture and runtime setup docs for both entry points. Correct local profile preservation with an explicit Compose override `CEREBRO_MODEL: ""`. Preserve the original Slack plan as history.
-- [ ] Run the full relevant gates and fresh thermo/comment reviews. Inspect results and fix accepted findings before the second commit.
+- [x] Authorize with the existing coordinate permission. Bind the operation ID to its structured target and cancel through the existing durable command transition. Reject another source's work and same-operation/different-target replay. Cancelling completed work A must not affect replacement work B.
+- [x] Show background status and an explicit `Stop background work` action when the server allows cancellation. This includes failed work whose command delivery is uncertain. Use the existing mutation/error handling and stable operation IDs. Keep the composer available and foreground Stop unchanged.
+- [x] Test authorized snapshot observation after foreground completion, direct controls and updates, receipt confirmation, stale cancellation, access denial, duplicate reports, and mixed web/Slack caps.
+- [x] Extend the actual native application runner with no-Slack web completion, no-reader SIGKILL recovery, current-access report denial and authorized replay, and profile-absent ordinary chat. Observe the external model fixture and drained report queue before the first conversation read.
+- [x] Drive a fresh labelled browser stack. Send through the visible composer, observe the asynchronous result without reload, reload the same conversation, then send status and an update and click the explicit background stop action. Confirm separate foreground Stop still works. Retain screenshots, DOM, model traces, and persistence evidence. Clean only the owned stack.
+- [x] Update architecture and runtime setup docs for both entry points. Correct local profile preservation with an explicit Compose override `CEREBRO_MODEL: ""`. Preserve the original Slack plan as history.
+- [x] Run the full relevant gates and fresh thermo/comment reviews. Inspect results and fix accepted findings before the second commit.
 
 Final gate commands include:
 

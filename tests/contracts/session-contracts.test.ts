@@ -17,6 +17,8 @@ import {
 import { id } from "../../packages/contracts/src/identity.ts";
 import {
   ChatSnapshot,
+  ChatControl,
+  ChatControlReceipt,
   ChatDecisionReceipt,
   ChatObservation,
   ChatReceipt,
@@ -36,6 +38,74 @@ import {
   unknownOutcomeInvocation,
   userEvent,
 } from "../support/fixtures.ts";
+
+test("background work snapshots and targeted stop controls survive strict JSON transport", () => {
+  const work = {
+    canCancel: true,
+    workId: "work-A",
+    status: { kind: "running" },
+    deadlineAt: 1_800_000_600_000,
+  };
+  const snapshot = {
+    address: userEvent,
+    agentVersion: 1,
+    approvals: [],
+    busy: false,
+    messages: [],
+    queuedInputs: [],
+    tools: [],
+    activity: {
+      backgroundWork: work,
+      children: [],
+      compactions: [],
+      reminders: [],
+      tasks: [],
+    },
+  };
+  const transported = JSON.stringify(snapshot);
+  const decoded = Schema.decodeUnknownSync(ChatSnapshot)(
+    JSON.parse(transported)
+  );
+  assert.deepEqual(decoded.activity?.backgroundWork, work);
+  assert.equal(decoded.busy, false);
+  const stop = { kind: "stop-work", workId: "work-A", operationId: "stop-A" };
+  assert.deepEqual(
+    Schema.decodeUnknownSync(ChatControl, { onExcessProperty: "error" })(stop),
+    stop
+  );
+  assert.deepEqual(
+    Schema.decodeUnknownSync(ChatControlReceipt)({
+      kind: "stop-work",
+      id: "work-A",
+    }),
+    { kind: "stop-work", id: "work-A" }
+  );
+  for (const changed of [
+    { ...stop, workId: "" },
+    { ...stop, operationId: "" },
+    { kind: "stop-work", workId: "work-A" },
+    { ...stop, ownerPrincipalId: "other-owner" },
+  ]) {
+    assert.throws(() =>
+      Schema.decodeUnknownSync(ChatControl, { onExcessProperty: "error" })(
+        changed
+      )
+    );
+  }
+  for (const changed of [
+    { ...work, deadlineAt: Number.POSITIVE_INFINITY },
+    { ...work, deadlineAt: 0 },
+    { ...work, status: { kind: "invented" } },
+    { ...work, workId: "other work " },
+  ]) {
+    assert.throws(() =>
+      Schema.decodeUnknownSync(ChatSnapshot)({
+        ...snapshot,
+        activity: { ...snapshot.activity, backgroundWork: changed },
+      })
+    );
+  }
+});
 
 const now = 1_800_000_000_000;
 const invocation: BoundInvocation = {

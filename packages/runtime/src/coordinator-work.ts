@@ -1,7 +1,9 @@
 import type { EventAddress } from "@cerebro/contracts/events";
 import {
+  Conflict,
   Denied,
   InvalidInput,
+  NotFound,
   failureToHttp,
   toContractFailure,
 } from "@cerebro/contracts/failures";
@@ -14,9 +16,11 @@ import {
   transitionWorkStatus,
 } from "@cerebro/contracts/work";
 import type {
+  BackgroundWorkSnapshot,
   CoordinationProfile,
   RolePin,
   TeamCommand,
+  WorkId,
 } from "@cerebro/contracts/work";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
@@ -46,6 +50,7 @@ import {
   pruneWorkIndex,
   requireCoordinatorWork,
   requireWorkIdentity,
+  requireWorkSource,
   sameWorkSource,
   workHoldsSlot,
 } from "./coordinator-ledger.ts";
@@ -83,11 +88,13 @@ const matchesCommandInput = (
     input.kind !== "input" ||
     saved.text === input.text);
 const HEARTBEAT_MS = 5000;
-const publicWork = (record: CoordinatorWorkRecord) => ({
-  workId: record.admission.key.workId,
-  status: { ...record.status },
-  deadlineAt: record.admission.deadlineAt,
-});
+const acceptsCommands = (record: CoordinatorWorkRecord): boolean =>
+  record.reportId === null &&
+  (record.status.kind === "accepted" || record.status.kind === "running");
+const canCancelWork = (record: CoordinatorWorkRecord, time: number): boolean =>
+  workHoldsSlot(record, time) &&
+  record.status.kind !== "cancelled" &&
+  record.status.kind !== "completed";
 
 const output = async (
   operation: () => Promise<unknown>
@@ -119,6 +126,14 @@ export const createCoordinatorWork = (options: {
   readonly now?: () => number;
 }) => {
   const now = options.now ?? Date.now;
+  const publicWork = (
+    record: CoordinatorWorkRecord
+  ): BackgroundWorkSnapshot => ({
+    workId: record.admission.key.workId,
+    status: { ...record.status },
+    deadlineAt: record.admission.deadlineAt,
+    canCancel: canCancelWork(record, now()),
+  });
 
   const binding = (): CoordinationBinding => {
     if (!options.services) {
@@ -449,17 +464,14 @@ export const createCoordinatorWork = (options: {
       ...input,
     });
     if (kind === "cancel") {
-      if (record.reportId !== null) {
+      if (!canCancelWork(record, now())) {
         return { ...publicWork(record), accepted: false };
       }
-      record.status = transitionWorkStatus(record.status, {
+      record.status = {
         kind: "cancelled",
         commandId: command.id,
-      });
-    } else if (
-      !workHoldsSlot(record, now()) ||
-      (record.status.kind !== "accepted" && record.status.kind !== "running")
-    ) {
+      };
+    } else if (!workHoldsSlot(record, now()) || !acceptsCommands(record)) {
       throw new InvalidInput({ reason: "This work no longer accepts input." });
     }
     await enqueueIn(tx, record, command);
@@ -576,6 +588,59 @@ export const createCoordinatorWork = (options: {
     tasks: [dispatch],
     admissions,
     commandIn,
+    current: async (): Promise<BackgroundWorkSnapshot | undefined> => {
+      if (!options.services) {
+        return;
+      }
+      const source = await options.pi.snapshot(
+        SourceWork,
+        options.nativeId,
+        piContext()
+      );
+      if (!source?.workId) {
+        return;
+      }
+      const document = await options.pi.snapshot(
+        WorkDocuments,
+        source.workId,
+        piContext()
+      );
+      if (!document?.record) {
+        throw new NotFound({ resource: "Team work" });
+      }
+      requireWorkSource(document.record, binding());
+      return publicWork(document.record);
+    },
+    cancel: async (input: {
+      readonly workId: WorkId;
+      readonly operationId: string;
+      readonly signal?: AbortSignal;
+    }) => {
+      binding();
+      await options.authorize(input.signal);
+      const key = await coordinatorOperationKey(input.operationId);
+      const digest = await coordinatorOperationKey(
+        JSON.stringify({ kind: "stop-work", workId: input.workId })
+      );
+      return await admissions.commit(input.operationId, async (tx) => {
+        const operation = await tx.doc(
+          SourceOperations,
+          options.nativeId,
+          key,
+          input.operationId
+        );
+        if (operation.digest !== null && operation.digest !== digest) {
+          throw new Conflict({
+            code: "digest-mismatch",
+            reason: "The source operation payload changed.",
+          });
+        }
+        operation.digest = digest;
+        return await commandIn(tx, input.workId, input.operationId, {
+          kind: "cancel",
+        });
+      });
+    },
     rememberHumanOperation: async (operationId: string): Promise<void> => {
       if (!options.services) {
         return;

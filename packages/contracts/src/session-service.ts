@@ -5,6 +5,7 @@ import type { EventAddress } from "./events.ts";
 import { UiPresentationFromUnknown } from "./generative-ui.ts";
 import type { ExecutionContext } from "./identity.ts";
 import { canonicalToolArguments } from "./tools.ts";
+import { BackgroundWorkSnapshot, WorkIdSchema } from "./work.ts";
 
 const identifier = <Name extends string>() =>
   Schema.declare<string & { readonly __brand: Name }>(
@@ -123,6 +124,7 @@ export const ChatChild = Schema.Struct({
 export type ChatChild = typeof ChatChild.Type;
 
 export const ChatActivity = Schema.Struct({
+  backgroundWork: Schema.optional(BackgroundWorkSnapshot),
   children: Schema.Array(ChatChild),
   compactionFailure: Schema.optional(Schema.String),
   compactions: Schema.Array(
@@ -156,6 +158,11 @@ export type ChatActivity = typeof ChatActivity.Type;
 
 export const ChatControl = Schema.Union([
   Schema.Struct({
+    kind: Schema.Literal("stop-work"),
+    workId: WorkIdSchema,
+    operationId: Schema.NonEmptyString,
+  }),
+  Schema.Struct({
     instructions: Schema.optional(Schema.String),
     kind: Schema.Literal("compact"),
     operationId: Schema.NonEmptyString,
@@ -180,6 +187,7 @@ export type ChatControl = typeof ChatControl.Type;
 export const ChatControlReceipt = Schema.Struct({
   id: Schema.NonEmptyString,
   kind: Schema.Literals([
+    "stop-work",
     "compact",
     "stop-child",
     "schedule",
