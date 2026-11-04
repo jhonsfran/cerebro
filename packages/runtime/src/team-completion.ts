@@ -4,7 +4,7 @@ import {
 } from "@cerebro/contracts/work";
 import type { WorkAdmission, WorkReport } from "@cerebro/contracts/work";
 import { AssistantEntry } from "@earendil-works/pi-durable";
-import type { Harness } from "@earendil-works/pi-durable";
+import type { Harness, Tx } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 import { piContext } from "./pi-harness.ts";
@@ -19,6 +19,7 @@ export const createTeamCompletion = (options: {
   readonly now: () => number;
   readonly abort: () => Promise<void>;
   readonly holdAdmissions: () => Promise<void>;
+  readonly persistReportIn?: (tx: Tx, report: WorkReport) => Promise<void>;
   readonly emitReport?: (report: WorkReport) => Promise<void>;
 }) => {
   const { pi, work, now } = options;
@@ -50,7 +51,10 @@ export const createTeamCompletion = (options: {
       }
       if (state.phase === "running") {
         state.phase =
-          bounded && text && text.length <= 16_000 && work.deadlineAt > now()
+          bounded &&
+          text.trim() &&
+          text.length <= 16_000 &&
+          work.deadlineAt > now()
             ? "completed"
             : "failed";
       }
@@ -70,6 +74,7 @@ export const createTeamCompletion = (options: {
           : { sourceIds: [], toolIds: [] },
         ...(state.phase === "cancelled" ? { kind: "cancelled" } : result),
       });
+      await options.persistReportIn?.(tx, state.report);
     }, piContext());
   };
   const finishRunning = async (state: TeamStateValue) => {

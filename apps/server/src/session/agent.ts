@@ -8,7 +8,10 @@ import {
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { ReadOptions } from "@cerebro/contracts/port";
-import type { AgentDefinition } from "@cerebro/contracts/session";
+import type {
+  AgentDefinition,
+  ContentDependencies,
+} from "@cerebro/contracts/session";
 import { ConversationForkOrigin } from "@cerebro/contracts/session-service";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
@@ -90,7 +93,8 @@ export const createRuntimeComposition = (
   storage: DurableObjectStorage,
   address: EventAddress,
   conversation: typeof channelConversation.$inferSelect,
-  metadata: MetadataTransaction
+  metadata: MetadataTransaction,
+  importedDependencies?: () => Promise<ContentDependencies>
 ): Effect.Effect<SessionHostConfiguration, ContractFailure> =>
   Effect.gen(function* composeSession() {
     const config = runtimeConfiguration(env);
@@ -169,7 +173,9 @@ export const createRuntimeComposition = (
       address,
       agent,
       ownerPrincipalId,
-      metadata
+      metadata,
+      false,
+      importedDependencies
     );
     return {
       ...execution,
@@ -242,7 +248,8 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
 
   protected override configure(
     address: EventAddress,
-    metadata: MetadataTransaction
+    metadata: MetadataTransaction,
+    importedDependencies: () => Promise<ContentDependencies>
   ) {
     return Effect.gen({ self: this }, function* configureConversation() {
       const identity = yield* resolveIdentity(this.ctx.id.name);
@@ -256,7 +263,8 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
         this.ctx.storage,
         address,
         conversation,
-        metadata
+        metadata,
+        importedDependencies
       );
     });
   }

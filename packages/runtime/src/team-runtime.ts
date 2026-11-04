@@ -15,6 +15,7 @@ import type {
   ConversationId,
   Harness,
   Registry,
+  Tx,
 } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
@@ -49,6 +50,7 @@ export const createTeamRuntime = async (options: {
     text: string,
     operationId: string
   ) => Promise<unknown>;
+  readonly persistReportIn: (tx: Tx, report: WorkReport) => Promise<void>;
   readonly emitReport?: (report: WorkReport) => Promise<void>;
 }) => {
   const { pi, work } = options;
@@ -312,6 +314,7 @@ export const createTeamRuntime = async (options: {
     now,
     abort,
     emitReport: options.emitReport,
+    persistReportIn: options.persistReportIn,
     holdAdmissions,
   });
   await restore();

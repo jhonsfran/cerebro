@@ -50,6 +50,7 @@ import { ReminderPayload } from "./conversation-reminders.ts";
 import { ConversationScope } from "./conversation-scope.ts";
 import type { SearchResult } from "./conversation-work.ts";
 import type { CoordinationServices } from "./coordinator-work.ts";
+import { readImportedContent } from "./imported-content.ts";
 import { piContext, snapshotToolIds } from "./pi-harness.ts";
 import type { ControlledProviderConfiguration } from "./pi-provider.ts";
 import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
@@ -68,6 +69,11 @@ export interface SessionHostConfiguration {
   };
   readonly contentDependencies?: () => Promise<ContentDependencies>;
   readonly importDependencies?: (dependencies: ContentDependencies) => void;
+  readonly checkImportedDependencies?: (
+    context: ExecutionContext,
+    dependencies: ContentDependencies,
+    options: ReadOptions
+  ) => Effect.Effect<void, ContractFailure>;
   readonly inheritDependencies?: (
     source: EventAddress,
     toolIds: readonly string[],
@@ -237,7 +243,8 @@ export class SessionAgent<
   // oxlint-disable-next-line class-methods-use-this -- Server and fixture subclasses supply immutable per-conversation services.
   protected configure(
     _address: EventAddress,
-    _metadata: MetadataTransaction
+    _metadata: MetadataTransaction,
+    _importedDependencies: () => Promise<ContentDependencies>
   ): Effect.Effect<SessionHostConfiguration, ContractFailure> {
     return Effect.fail(
       new Unavailable({
@@ -292,10 +299,15 @@ export class SessionAgent<
     binding?: ConversationBinding,
     ancestors: ReadonlySet<string> = new Set()
   ): Promise<ConversationScope> {
+    let importedNativeId = binding?.nativeId;
     const metadata: MetadataTransaction = (operation) =>
       host.pi.commit(operation, piContext());
     const configuration = await metadata(() =>
-      run(this.configure(address, metadata))
+      run(
+        this.configure(address, metadata, () =>
+          readImportedContent(host.pi, importedNativeId)
+        )
+      )
     );
     const originKey = configuration.origin
       ? JSON.stringify([
@@ -400,6 +412,7 @@ export class SessionAgent<
             return created.id;
           }, piContext()));
         const native = await host.pi.conversation(nativeId, piContext());
+        importedNativeId = nativeId;
         if (!native) {
           throw new NotFound({ resource: "Native conversation" });
         }

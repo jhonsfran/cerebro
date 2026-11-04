@@ -15,6 +15,7 @@ import type {
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
 import { ChatControl } from "@cerebro/contracts/session-service";
+import { TeamReportDeliverySchema } from "@cerebro/contracts/work";
 import { isInternalToolName } from "@cerebro/tools/tool-names";
 import type { Provider } from "@earendil-works/pi-ai/models";
 import { LiveDoc } from "@earendil-works/pi-durable";
@@ -36,6 +37,8 @@ import { createConversationReminders } from "./conversation-reminders.ts";
 import { createConversationResources } from "./conversation-resources.ts";
 import { createConversationWork } from "./conversation-work.ts";
 import type { SearchResult } from "./conversation-work.ts";
+import { createCoordinatorReport } from "./coordinator-report.ts";
+import { createCoordinatorSource } from "./coordinator-source.ts";
 import { createCoordinatorWork } from "./coordinator-work.ts";
 import { createGenerativeUiTool } from "./generative-ui-tool.ts";
 import { chatSnapshot, piContext, snapshotToolIds } from "./pi-harness.ts";
@@ -94,6 +97,8 @@ export class ConversationScope {
   readonly reminders: ReturnType<typeof createConversationReminders>;
   readonly compaction: ReturnType<typeof createConversationCompaction>;
   readonly coordination: ReturnType<typeof createCoordinatorWork>;
+  readonly routeHuman: ReturnType<typeof createCoordinatorSource>;
+  readonly receiveReport: ReturnType<typeof createCoordinatorReport>;
 
   private constructor(
     runtime: ReturnType<typeof createConversationResources>,
@@ -111,6 +116,18 @@ export class ConversationScope {
     this.reminders = reminders;
     this.compaction = compaction;
     this.coordination = coordination;
+    const source = {
+      pi: services.pi,
+      native,
+      runtime,
+      coordination,
+      notify: () => this.scheduleNotify(),
+    };
+    this.routeHuman = createCoordinatorSource(source);
+    this.receiveReport = createCoordinatorReport({
+      ...source,
+      persist: () => services.storage.sync(),
+    });
   }
 
   static async open(
@@ -208,7 +225,12 @@ export class ConversationScope {
     });
     const coordination = createCoordinatorWork({
       address: configuration.address,
-      authorize,
+      authorize: async (signal) =>
+        runtime.authorize(
+          await run(configuration.ownerContext()),
+          "coordinate",
+          signal
+        ),
       jobs: services.jobs,
       metadata: services.metadata,
       nativeId: native.id,
@@ -566,6 +588,14 @@ export class ConversationScope {
       } catch {
         throw new InvalidInput({ reason: "Invalid chat command JSON." });
       }
+      if (path === "/team-report") {
+        const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
+          onExcessProperty: "error",
+        })(body);
+        return Response.json(
+          await this.receiveReport(delivery, context, request.signal)
+        );
+      }
       if (path === "/send") {
         const command = await run(
           Schema.decodeUnknownEffect(sendSchema)(body).pipe(
@@ -575,6 +605,23 @@ export class ConversationScope {
             )
           )
         );
+        if (
+          await this.routeHuman(
+            command.operationId,
+            command.text,
+            context,
+            request.signal
+          )
+        ) {
+          return Response.json({
+            status: "ok",
+            value: {
+              accepted: true,
+              operationId: command.operationId,
+              session: String(this.native.id),
+            },
+          });
+        }
         await runtime.authorize(context, "send", request.signal);
         await this.coordination.rememberHumanOperation(command.operationId);
         const receipt = await this.services.harness.submit(command.text, {

@@ -93,6 +93,7 @@ try {
       "tests/channels/slack.test.ts",
       "tests/channels/slack-events.test.ts",
       "tests/channels/team-events.test.ts",
+      "tests/channels/team-reports.test.ts",
       "tests/channels/ui.test.ts",
       "tests/channels/conversation.test.ts",
       "tests/channels/delivery.test.ts",

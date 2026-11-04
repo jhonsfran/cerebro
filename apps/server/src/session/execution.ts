@@ -49,7 +49,8 @@ export const createExecutionComposition = (
   agent: AgentDefinition,
   ownerPrincipalId: string,
   metadata: MetadataTransaction,
-  readOnly = false
+  readOnly = false,
+  importedDependencies?: () => Promise<ContentDependencies>
 ) =>
   Effect.gen(function* composeExecution() {
     const config = runtimeConfiguration(env);
@@ -173,6 +174,61 @@ export const createExecutionComposition = (
       ),
       Effect.provideService(AuthorityService, authority)
     );
+    const receivingDependencies = (
+      context: ExecutionContext,
+      requested: ContentDependencies,
+      options: ReadOptions
+    ) =>
+      Effect.gen(function* receivingContent() {
+        yield* Effect.all(
+          requested.sourceIds.map((sourceId) =>
+            authority.require(
+              {
+                action: "read",
+                address,
+                context,
+                pinnedAgent: agent,
+                resource: {
+                  id: sourceId,
+                  kind: "memory",
+                  organizationId: address.organizationId,
+                },
+              },
+              options
+            )
+          )
+        );
+        yield* Effect.all(
+          requested.toolIds.map((toolId) => {
+            const registered = tools.find(
+              (tool) => tool.definition.id === toolId
+            );
+            if (!registered) {
+              return Effect.fail(
+                new Denied({
+                  code: "revoked",
+                  reason: "The receiving role cannot read this tool.",
+                })
+              );
+            }
+            return authority.require(
+              {
+                action: "read",
+                address,
+                context,
+                pinnedAgent: agent,
+                tool: registered.definition,
+                resource: {
+                  id: toolId,
+                  kind: "tool",
+                  organizationId: address.organizationId,
+                },
+              },
+              options
+            );
+          })
+        );
+      });
     const dependencies = (
       context: ExecutionContext,
       requested: ContentDependencies,
@@ -266,62 +322,30 @@ export const createExecutionComposition = (
             options
           );
         }
+        const imported = importedDependencies
+          ? yield* tryAdapter(importedDependencies)
+          : { sourceIds: [], toolIds: [] };
         const combined = {
           sourceIds: [
-            ...new Set([...requested.sourceIds, ...recorded.sourceIds]),
+            ...new Set([
+              ...requested.sourceIds,
+              ...recorded.sourceIds,
+              ...imported.sourceIds,
+            ]),
           ],
-          toolIds: [...new Set([...requested.toolIds, ...recorded.toolIds])],
+          toolIds: [
+            ...new Set([
+              ...requested.toolIds,
+              ...recorded.toolIds,
+              ...imported.toolIds,
+            ]),
+          ],
         };
-        if (readOnly) {
-          yield* Effect.all(
-            combined.sourceIds.map((sourceId) =>
-              authority.require(
-                {
-                  action: "read",
-                  address,
-                  context,
-                  pinnedAgent: agent,
-                  resource: {
-                    id: sourceId,
-                    kind: "memory",
-                    organizationId: address.organizationId,
-                  },
-                },
-                options
-              )
-            )
-          );
-          yield* Effect.all(
-            combined.toolIds.map((toolId) => {
-              const registered = tools.find(
-                (tool) => tool.definition.id === toolId
-              );
-              if (!registered) {
-                return Effect.fail(
-                  new Denied({
-                    code: "revoked",
-                    reason: "The receiving role cannot read this tool.",
-                  })
-                );
-              }
-              return authority.require(
-                {
-                  action: "read",
-                  address,
-                  context,
-                  pinnedAgent: agent,
-                  tool: registered.definition,
-                  resource: {
-                    id: toolId,
-                    kind: "tool",
-                    organizationId: address.organizationId,
-                  },
-                },
-                options
-              );
-            })
-          );
-        }
+        yield* receivingDependencies(
+          context,
+          readOnly ? combined : imported,
+          options
+        );
         return yield* tryAdapter(() =>
           withDatabase(env, (database) =>
             checkContentDependencies(env, database, context, combined, options)
@@ -374,8 +398,30 @@ export const createExecutionComposition = (
       audit: sendToAuditSink(env.AUDIT_SINK),
       authority,
       checkDependencies: dependencies,
+      checkImportedDependencies: (
+        context: ExecutionContext,
+        requested: ContentDependencies,
+        options: ReadOptions
+      ) =>
+        dependencies(context, requested, options).pipe(
+          Effect.flatMap(() =>
+            receivingDependencies(context, requested, options)
+          )
+        ),
       executor,
-      contentDependencies: content.dependencies,
+      contentDependencies: async () => {
+        const recorded = await content.dependencies();
+        const imported = (await importedDependencies?.()) ?? {
+          sourceIds: [],
+          toolIds: [],
+        };
+        return {
+          sourceIds: [
+            ...new Set([...recorded.sourceIds, ...imported.sourceIds]),
+          ],
+          toolIds: [...new Set([...recorded.toolIds, ...imported.toolIds])],
+        };
+      },
       inheritDependencies: content.inheritDependencies,
       importDependencies: content.importDependencies,
       ownerContext,

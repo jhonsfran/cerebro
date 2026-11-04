@@ -33,6 +33,7 @@ import {
 } from "../../packages/runtime/src/coordinator-ledger.ts";
 import type { CoordinatorWorkRecord } from "../../packages/runtime/src/coordinator-ledger.ts";
 import { createCoordinatorWork } from "../../packages/runtime/src/coordinator-work.ts";
+import { readImportedContent } from "../../packages/runtime/src/imported-content.ts";
 import {
   chatPresentation,
   piContext,
@@ -171,8 +172,20 @@ export const setup = async (timeoutMs = 600_000) => {
           now: () => clock,
           pi,
           services: {
-            contentDependencies: () =>
-              Promise.resolve(structuredClone(dependencies)),
+            contentDependencies: async () => {
+              const imported = await readImportedContent(pi, native.id);
+              return {
+                sourceIds: [
+                  ...new Set([
+                    ...dependencies.sourceIds,
+                    ...imported.sourceIds,
+                  ]),
+                ],
+                toolIds: [
+                  ...new Set([...dependencies.toolIds, ...imported.toolIds]),
+                ],
+              };
+            },
             ownerPrincipalId,
             profile,
             thread: source.thread,

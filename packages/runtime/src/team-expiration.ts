@@ -1,8 +1,15 @@
 import { Denied, InvalidInput } from "@cerebro/contracts/failures";
 import { digestToolArguments } from "@cerebro/contracts/tools";
-import { TeamCommandReceiptSchema } from "@cerebro/contracts/work";
-import type { TeamCommand, WorkAdmission } from "@cerebro/contracts/work";
-import type { Harness, Registry } from "@earendil-works/pi-durable";
+import {
+  TeamCommandReceiptSchema,
+  WorkReportSchema,
+} from "@cerebro/contracts/work";
+import type {
+  TeamCommand,
+  WorkAdmission,
+  WorkReport,
+} from "@cerebro/contracts/work";
+import type { Harness, Registry, Tx } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 import { piContext } from "./pi-harness.ts";
@@ -16,7 +23,8 @@ import {
 export const expireTeam = async (
   pi: Harness,
   registry: Registry,
-  work: WorkAdmission
+  work: WorkAdmission,
+  persistReportIn?: (tx: Tx, report: WorkReport) => Promise<void>
 ): Promise<void> => {
   const task = createTeamAdmission({
     pi,
@@ -34,6 +42,18 @@ export const expireTeam = async (
     if (state.phase === "running" || state.phase === "waiting") {
       state.phase = "failed";
     }
+    state.report ??= Schema.decodeUnknownSync(WorkReportSchema)({
+      id: `report:${work.key.workId}`,
+      key: work.key,
+      contentDependencies: { sourceIds: [], toolIds: [] },
+      ...(state.phase === "cancelled"
+        ? { kind: "cancelled" }
+        : {
+            kind: "failed",
+            reason: "The team could not complete within its execution limits.",
+          }),
+    });
+    await persistReportIn?.(tx, state.report);
   }, piContext());
   const state = await pi.snapshot(TeamState, piContext());
   pi.resume();
@@ -56,7 +76,8 @@ export const expireTeam = async (
 export const receiveExpiredTeam = async (
   pi: Harness,
   registry: Registry,
-  command: TeamCommand
+  command: TeamCommand,
+  persistReportIn?: (tx: Tx, report: WorkReport) => Promise<void>
 ) => {
   const digest = await digestToolArguments(command);
   const result = await pi.commit(async (tx) => {
@@ -83,7 +104,7 @@ export const receiveExpiredTeam = async (
     };
     return { accepted, reason: accepted ? null : "expired" };
   }, piContext());
-  await expireTeam(pi, registry, command.work);
+  await expireTeam(pi, registry, command.work, persistReportIn);
   return Schema.decodeUnknownSync(TeamCommandReceiptSchema)({
     commandId: command.id,
     key: command.work.key,

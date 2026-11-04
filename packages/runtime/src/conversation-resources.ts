@@ -25,13 +25,22 @@ const run = async <A>(
   }
   return result.success;
 };
-type ChatOperation = "read" | "send" | "stop" | "allow" | "deny";
+type ChatOperation =
+  | "read"
+  | "send"
+  | "stop"
+  | "allow"
+  | "deny"
+  | "coordinate"
+  | "transfer";
 const operationAction = {
   allow: "approve",
   deny: "approve",
   read: "read",
   send: "execute",
   stop: "execute",
+  coordinate: "execute",
+  transfer: "execute",
 } as const;
 
 export const createConversationResources = (
@@ -66,7 +75,30 @@ export const createConversationResources = (
         options(signal)
       )
     );
-    if (operation === "read" || operation === "send" || operation === "allow") {
+    if (operation === "coordinate" || operation === "transfer") {
+      await run(
+        configuration.authority.require(
+          {
+            action: "read",
+            address: configuration.address,
+            context,
+            pinnedAgent: configuration.agent,
+            resource: {
+              id: configuration.agent.agentId,
+              kind: "agent",
+              organizationId: configuration.address.organizationId,
+            },
+          },
+          options(signal)
+        )
+      );
+    }
+    if (
+      operation === "read" ||
+      operation === "send" ||
+      operation === "allow" ||
+      operation === "transfer"
+    ) {
       await run(
         configuration.checkDependencies(
           context,

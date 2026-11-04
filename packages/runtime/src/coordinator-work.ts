@@ -38,6 +38,7 @@ import { createCoordinatorDispatch } from "./coordinator-dispatch.ts";
 import {
   CommandReceipts,
   SourceOperations,
+  SourceWork,
   WorkDocuments,
   WorkLedger,
   coordinatorOperationKey,
@@ -68,6 +69,21 @@ export interface CoordinationServices {
   readonly contentDependencies: () => Promise<ContentDependencies>;
   readonly sendCommand: (command: TeamCommand) => Promise<void>;
 }
+type CoordinatorInput =
+  | { readonly kind: "cancel" }
+  | {
+      readonly kind: "input";
+      readonly text: string;
+      readonly contentDependencies: ContentDependencies;
+    };
+const matchesCommandInput = (
+  saved: TeamCommand,
+  input: CoordinatorInput
+): boolean =>
+  saved.kind === input.kind &&
+  (saved.kind !== "input" ||
+    input.kind !== "input" ||
+    saved.text === input.text);
 const HEARTBEAT_MS = 5000;
 const publicWork = (record: CoordinatorWorkRecord) => ({
   workId: record.admission.key.workId,
@@ -309,6 +325,8 @@ export const createCoordinatorWork = (options: {
         if (reusableId) {
           const reusable = await requireCoordinatorWork(tx, source, reusableId);
           operation.route = { kind: "coordinator", workId: reusableId };
+          const sourceWork = await tx.doc(SourceWork, options.nativeId);
+          sourceWork.workId = reusableId;
           return publicWork(reusable);
         }
         if (Object.keys(ledger.active).length >= services.profile.maxTeams) {
@@ -357,6 +375,8 @@ export const createCoordinatorWork = (options: {
           deadlineAt: admission.deadlineAt,
         };
         operation.route = { kind: "coordinator", workId: candidate };
+        const sourceWork = await tx.doc(SourceWork, options.nativeId);
+        sourceWork.workId = candidate;
         return publicWork(record);
       },
       (change) => api.commit(change, context)
@@ -367,36 +387,36 @@ export const createCoordinatorWork = (options: {
     tx: Tx,
     workId: string,
     operationId: string,
-    input:
-      | { readonly kind: "cancel" }
-      | {
-          readonly kind: "input";
-          readonly text: string;
-          readonly contentDependencies: ContentDependencies;
-        }
+    input: CoordinatorInput,
+    origin: "human" | "tool" = "human"
   ) => {
     const { kind } = input;
-    const suffix = await coordinatorOperationKey(operationId);
+    const suffix = await coordinatorOperationKey(
+      JSON.stringify([origin, operationId])
+    );
     const commandId =
       kind === "cancel" ? `cancel:${workId}` : `input:${workId}:${suffix}`;
-    const operation = await tx.doc(
-      SourceOperations,
-      options.nativeId,
-      suffix,
-      operationId
-    );
-    if (
-      operation.route &&
-      (operation.route.kind !== "team" ||
-        operation.route.workId !== workId ||
-        operation.route.commandId !== commandId)
-    ) {
-      throw new InvalidInput({
-        reason: "The source operation already chose another route.",
-      });
+    const operation =
+      origin === "human"
+        ? await tx.doc(
+            SourceOperations,
+            options.nativeId,
+            await coordinatorOperationKey(operationId),
+            operationId
+          )
+        : undefined;
+    if (operation?.route) {
+      const expected = JSON.stringify({ kind: "team", workId, commandId });
+      if (JSON.stringify(operation.route) !== expected) {
+        throw new InvalidInput({
+          reason: "The source operation already chose another route.",
+        });
+      }
     }
     const record = await requireCoordinatorWork(tx, binding(), workId);
-    operation.route = { kind: "team", workId, commandId };
+    if (operation) {
+      operation.route = { kind: "team", workId, commandId };
+    }
     const receipt = await tx.doc(CommandReceipts, commandId, null);
     if (receipt.receipt) {
       const task = await tx.task(receipt.receipt.taskId);
@@ -406,11 +426,8 @@ export const createCoordinatorWork = (options: {
       if (
         !saved ||
         saved.id !== commandId ||
-        saved.kind !== kind ||
-        JSON.stringify(saved.work) !== JSON.stringify(record.admission) ||
-        (saved.kind === "input" &&
-          input.kind === "input" &&
-          saved.text !== input.text)
+        !matchesCommandInput(saved, input) ||
+        JSON.stringify(saved.work) !== JSON.stringify(record.admission)
       ) {
         throw new InvalidInput({
           reason: "The team command ID names another input.",
@@ -501,11 +518,17 @@ export const createCoordinatorWork = (options: {
               return await admissions.commit(
                 `input:${api.taskId}`,
                 (tx) =>
-                  commandIn(tx, workId, String(api.taskId), {
-                    kind: "input",
-                    text,
-                    contentDependencies,
-                  }),
+                  commandIn(
+                    tx,
+                    workId,
+                    String(api.taskId),
+                    {
+                      kind: "input",
+                      text,
+                      contentDependencies,
+                    },
+                    "tool"
+                  ),
                 (change) => api.commit(change, context)
               );
             }),
@@ -525,7 +548,13 @@ export const createCoordinatorWork = (options: {
               return await admissions.commit(
                 `stop:${api.taskId}`,
                 (tx) =>
-                  commandIn(tx, workId, String(api.taskId), { kind: "cancel" }),
+                  commandIn(
+                    tx,
+                    workId,
+                    String(api.taskId),
+                    { kind: "cancel" },
+                    "tool"
+                  ),
                 (change) => api.commit(change, context)
               );
             }),
@@ -534,6 +563,8 @@ export const createCoordinatorWork = (options: {
     : [];
 
   return {
+    binding,
+    services: options.services,
     tools,
     tasks: [dispatch],
     admissions,

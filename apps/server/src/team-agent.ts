@@ -1,4 +1,5 @@
 import { assertQueuePayloadSize } from "@cerebro/channels/queue-payload";
+import { prepareTeamReport } from "@cerebro/channels/team-reports";
 import { Denied, fromPortResult } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import {
@@ -6,7 +7,11 @@ import {
   digestToolArguments,
 } from "@cerebro/contracts/tools";
 import { TeamCommandSchema, workCellName } from "@cerebro/contracts/work";
-import type { WorkAdmission } from "@cerebro/contracts/work";
+import type {
+  WorkAdmission,
+  WorkReport,
+  TeamReportDelivery,
+} from "@cerebro/contracts/work";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import type { MetadataTransaction } from "@cerebro/runtime/session-agent";
@@ -21,6 +26,15 @@ import { createExecutionComposition } from "./session/execution";
 import { authenticateSessionRequest } from "./session/proof";
 
 export class TeamAgent extends TeamHost<WorkerEnv> {
+  protected override reportTransport(work: WorkAdmission) {
+    return {
+      prepare: (report: WorkReport) => prepareTeamReport(work, report),
+      send: async (delivery: TeamReportDelivery) => {
+        assertQueuePayloadSize(delivery);
+        await this.env.TEAM_REPORTS.send(delivery);
+      },
+    };
+  }
   protected override async resolve(request: Request) {
     if (new URL(request.url).pathname !== "/control") {
       throw new Denied({

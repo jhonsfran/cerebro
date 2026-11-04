@@ -76,7 +76,16 @@ export const CommandReceipts = defineDocFamily({
 });
 type SourceRoute =
   | { kind: "coordinator"; workId: string | null }
-  | { kind: "team"; workId: string; commandId: string };
+  | { kind: "team"; workId: string; commandId: string }
+  | { kind: "handled"; workId: string | null };
+export const SourceWork = defineDoc({
+  kind: "cerebro.coordinator-source-work",
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  version: 1,
+  initial: (): { workId: string | null } => ({ workId: null }),
+});
 export const SourceOperations = defineDocFamily({
   kind: "cerebro.coordinator-source-operation",
   scope: "conversation",
@@ -86,9 +95,14 @@ export const SourceOperations = defineDocFamily({
   version: 1,
   initial: (
     operationId: string
-  ): { operationId: string; route: SourceRoute | null } => ({
+  ): {
+    operationId: string;
+    route: SourceRoute | null;
+    digest: string | null;
+  } => ({
     operationId,
     route: null,
+    digest: null,
   }),
 });
 export const CoordinatorAdmissions = defineDoc({

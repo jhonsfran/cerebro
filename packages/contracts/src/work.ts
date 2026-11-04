@@ -164,6 +164,25 @@ export const WorkReportSchema = Schema.Union([
 ]);
 export type WorkReport = typeof WorkReportSchema.Type;
 
+export const TeamReportDeliverySchema = Schema.Struct({
+  report: WorkReportSchema,
+  sourceEventAddress: WorkAdmissionSchema.fields.sourceEventAddress,
+  sourceSlackThread: SlackThreadSchema,
+}).check(
+  Schema.makeFilter(
+    (delivery) =>
+      delivery.report.key.organizationId ===
+      delivery.sourceEventAddress.organizationId
+  )
+);
+export type TeamReportDelivery = typeof TeamReportDeliverySchema.Type;
+export const TeamReportReceiptSchema = Schema.Struct({
+  reportId: WorkReportIdSchema,
+  key: WorkKeySchema,
+  accepted: Schema.Boolean,
+});
+export type TeamReportReceipt = typeof TeamReportReceiptSchema.Type;
+
 export const TeamCommandReceiptSchema = Schema.Union([
   Schema.Struct({
     commandId: WorkCommandIdSchema,

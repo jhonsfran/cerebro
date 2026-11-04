@@ -25,6 +25,8 @@ import type {
   SessionEnvironment,
 } from "./session-agent.ts";
 import { expireTeam, receiveExpiredTeam } from "./team-expiration.ts";
+import { createTeamReportOutbox } from "./team-report-outbox.ts";
+import type { TeamReportTransport } from "./team-report-outbox.ts";
 import type { TeamRoleConfiguration } from "./team-role.ts";
 import { createTeamRuntime } from "./team-runtime.ts";
 import type { TeamRuntime } from "./team-runtime.ts";
@@ -40,9 +42,11 @@ export abstract class TeamAgent<
     | undefined;
   private runtime: TeamRuntime | undefined;
   private opening: Promise<TeamRuntime> | undefined;
+  private outbox: ReturnType<typeof createTeamReportOutbox> | undefined;
   private incoming: WorkAdmission | undefined;
 
   protected abstract resolve(request: Request): Promise<TeamCommand>;
+  protected abstract reportTransport(work: WorkAdmission): TeamReportTransport;
   protected abstract configure(
     work: WorkAdmission,
     metadata: MetadataTransaction
@@ -77,15 +81,19 @@ export abstract class TeamAgent<
       try {
         const state = await pi.snapshot(TeamState, context);
         work = state?.admission ?? this.incoming;
-        if (work && work.deadlineAt <= Date.now()) {
-          await expireTeam(pi, registry, work);
-        } else if (work) {
-          await this.open(work);
+        if (work) {
+          const outbox = await this.ensureReportOutbox(work);
+          await (state?.report || work.deadlineAt <= Date.now()
+            ? expireTeam(pi, registry, work, outbox.enqueueIn)
+            : this.open(work));
+          await outbox.wake();
         }
         return pi;
       } catch (error) {
         if (work && work.deadlineAt <= Date.now()) {
-          await expireTeam(pi, registry, work);
+          const outbox = await this.ensureReportOutbox(work);
+          await expireTeam(pi, registry, work, outbox.enqueueIn);
+          await outbox.wake();
           return pi;
         }
         await pi.close(context);
@@ -159,6 +167,26 @@ export abstract class TeamAgent<
     );
   }
 
+  private async ensureReportOutbox(work: WorkAdmission) {
+    if (this.outbox) {
+      return this.outbox;
+    }
+    const { host } = this;
+    if (!host) {
+      throw new InvalidInput({ reason: "The team native host is not open." });
+    }
+    const root = await host.pi.root(piContext());
+    this.outbox = createTeamReportOutbox({
+      pi: host.pi,
+      registry: host.registry,
+      nativeId: root.id,
+      transport: this.reportTransport(work),
+      persist: () => this.ctx.storage.sync(),
+      waitUntil: (promise) => this.trackWork(promise),
+    });
+    return this.outbox;
+  }
+
   private async createRuntime(work: WorkAdmission): Promise<TeamRuntime> {
     const { host } = this;
     if (!host) {
@@ -166,6 +194,7 @@ export abstract class TeamAgent<
     }
     const metadata: MetadataTransaction = (operation) =>
       host.pi.commit(operation, piContext());
+    const outbox = await this.ensureReportOutbox(work);
     const configurations = await this.configure(work, metadata);
     return await createTeamRuntime({
       ...host,
@@ -173,6 +202,7 @@ export abstract class TeamAgent<
       configurations,
       storage: this.ctx.storage,
       metadata,
+      persistReportIn: outbox.enqueueIn,
       ensureWake: (deadlineAt) => this.ensureWake(deadlineAt),
       waitUntil: (promise) => this.trackWork(promise),
       submit: (nativeId, text, operationId) =>
@@ -192,9 +222,16 @@ export abstract class TeamAgent<
       }
       this.incoming = command.work;
       await this.harness.pi();
+      const outbox = await this.ensureReportOutbox(command.work);
       if (command.work.deadlineAt <= Date.now() && this.host) {
+        await this.ensureWake(command.work.deadlineAt);
         return Response.json(
-          await receiveExpiredTeam(this.host.pi, this.host.registry, command)
+          await receiveExpiredTeam(
+            this.host.pi,
+            this.host.registry,
+            command,
+            outbox.enqueueIn
+          )
         );
       }
       const runtime = await this.open(command.work);
@@ -215,12 +252,17 @@ export abstract class TeamAgent<
     const { deadlineAt } = Schema.decodeUnknownSync(wakePayload)(job.payload);
     try {
       await this.harness.pi();
+      const outboxWake = await this.outbox?.wake();
       if (!this.runtime) {
+        if (outboxWake) {
+          return outboxWake;
+        }
         return deadlineAt > Date.now()
           ? { rescheduleAt: Math.min(deadlineAt, Date.now() + 5000) }
           : undefined;
       }
-      return await this.runtime.wake(deadlineAt);
+      const running = await this.runtime.wake(deadlineAt);
+      return running ?? (await this.outbox?.wake());
     } catch (error) {
       this.reportFailure(error);
       if (deadlineAt <= Date.now()) {

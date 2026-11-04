@@ -315,6 +315,13 @@ const config = {
   queues: {
     consumers: [
       {
+        dead_letter_queue: "cerebro-team-reports-dead-letter",
+        max_batch_size: 5,
+        max_batch_timeout: 1,
+        max_retries: 5,
+        queue: "cerebro-team-reports",
+      },
+      {
         dead_letter_queue: "cerebro-team-commands-dead-letter",
         max_batch_size: 5,
         max_batch_timeout: 1,
@@ -332,6 +339,7 @@ const config = {
     producers: [
       { binding: "SLACK_EVENTS", queue: "cerebro-slack-events" },
       { binding: "TEAM_COMMANDS", queue: "cerebro-team-commands" },
+      { binding: "TEAM_REPORTS", queue: "cerebro-team-reports" },
     ],
   },
   services: [

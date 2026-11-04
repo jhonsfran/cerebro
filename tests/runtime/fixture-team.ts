@@ -8,22 +8,28 @@ import {
 import { Effect, Schema } from "effect";
 
 import { createAgentAuthority } from "../../packages/authorization/src/agent-authority.ts";
+import { prepareTeamReport } from "../../packages/channels/src/team-reports.ts";
 import { enforceDecision } from "../../packages/contracts/src/authority-service.ts";
 import type { AuthorityService } from "../../packages/contracts/src/authority-service.ts";
 import { Denied, Unavailable } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { AgentDefinition } from "../../packages/contracts/src/session.ts";
+import type {
+  TeamReportDelivery,
+  WorkReport,
+  WorkAdmission,
+} from "../../packages/contracts/src/work.ts";
 import {
   BoundedContentDependenciesSchema,
   TeamCommandSchema,
   workCellName,
 } from "../../packages/contracts/src/work.ts";
-import type { WorkAdmission } from "../../packages/contracts/src/work.ts";
 import type { ConversationId } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import { createSourceDependencyStore } from "../../packages/runtime/src/content-dependency-store.ts";
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
 import type { MetadataTransaction } from "../../packages/runtime/src/session-agent.ts";
 import { TeamAgent } from "../../packages/runtime/src/team-agent.ts";
+import { TeamReportOutbox } from "../../packages/runtime/src/team-report-outbox.ts";
 import type { TeamRoleConfiguration } from "../../packages/runtime/src/team-role.ts";
 import { TeamState } from "../../packages/runtime/src/team-state.ts";
 import type { TestEnvironment } from "./environment.ts";
@@ -33,6 +39,37 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
   private activeWork: WorkAdmission | undefined;
   private readonly modelHolds = new Map<string, () => void>();
 
+  protected override reportTransport(work: WorkAdmission) {
+    return {
+      prepare: (report: WorkReport) => prepareTeamReport(work, report),
+      send: async (delivery: TeamReportDelivery) => {
+        if (work.goal.includes("report-flow")) {
+          const response = await this.env.COORDINATOR.get(
+            this.env.COORDINATOR.idFromName(
+              JSON.stringify([
+                work.key.organizationId,
+                work.key.ownerPrincipalId,
+              ])
+            )
+          ).fetch("https://source.internal/team-report", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-fixture-principal": work.key.ownerPrincipalId,
+            },
+            body: JSON.stringify(delivery),
+          });
+          if (!response.ok) {
+            throw new Error("Fixture report admission failed.");
+          }
+        }
+        await this.ctx.storage.put("fixture-report", {
+          delivery,
+          at: Date.now(),
+        });
+      },
+    };
+  }
   protected override reportFailure(error: unknown): void {
     console.error("TEAM_FIXTURE_FAILURE", this.ctx.id.name, error);
   }
@@ -502,10 +539,21 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
   }
 
   override async onRequest(request: Request): Promise<Response> {
+    if (new URL(request.url).pathname === "/published") {
+      return Response.json(
+        (await this.ctx.storage.get("fixture-report")) ?? null
+      );
+    }
+
     const path = new URL(request.url).pathname;
     if (path === "/inspect") {
       const pi = await this.harness.pi();
+      const outbox = await pi.snapshot(TeamReportOutbox, piContext());
       return Response.json({
+        outbox,
+        reportTask: outbox?.taskId
+          ? await pi.getTask(outbox.taskId, piContext())
+          : null,
         state: await pi.snapshot(TeamState, piContext()),
         io: this.ctx.storage.sql
           .exec("SELECT * FROM team_fixture_io ORDER BY rowid")
