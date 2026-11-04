@@ -41,11 +41,17 @@ export interface ConnectorView {
   readonly source: "admin" | "runtime.json";
   readonly toolCount: number;
   readonly url: string | null;
+  // MCP tools by the name the server lists them under.
+  readonly tools: readonly {
+    readonly name: string;
+    readonly effect: "read" | "write";
+  }[];
 }
 export interface ConnectorInput {
   readonly id: string;
   readonly url: string;
   readonly headers: Readonly<Record<string, string>>;
+  readonly readTools?: readonly string[];
 }
 export interface ConnectorChange {
   readonly id: string;
@@ -70,6 +76,15 @@ export interface ConnectorAdmin {
     organizationId: string,
     principalId: string,
     connectorId: string
+  ) => Promise<ConnectorChange>;
+  // Replaces the tools that run without approval and rediscovers, so the
+  // catalog matches the new list.
+  readonly setReadTools: (
+    database: Database,
+    organizationId: string,
+    principalId: string,
+    connectorId: string,
+    readTools: readonly string[]
   ) => Promise<ConnectorChange>;
   readonly remove: (
     database: Database,

@@ -118,6 +118,20 @@ export const createChannelService = (
       connectorId
     );
   };
+  const setConnectorReadTools = async (
+    userId: string,
+    connectorId: string,
+    readTools: readonly string[]
+  ) => {
+    const { admin, principalId } = await connectorAdmin(userId);
+    return await admin.setReadTools(
+      database,
+      options.organizationId,
+      principalId,
+      connectorId,
+      readTools
+    );
+  };
   const removeConnector = async (userId: string, connectorId: string) => {
     const { admin } = await connectorAdmin(userId);
     await admin.remove(database, options.organizationId, connectorId);
@@ -606,6 +620,7 @@ export const createChannelService = (
     refreshConnector,
     removeConnector,
     setAccess,
+    setConnectorReadTools,
     setup,
   };
 };

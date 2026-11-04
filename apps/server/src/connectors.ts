@@ -19,6 +19,7 @@ import {
 } from "@cerebro/tools/accounts";
 
 import type { WorkerEnv } from "./bindings";
+import { catalogTools } from "./catalog";
 import type { CatalogTool } from "./config";
 import { productionEndpoint, withRedactions } from "./config";
 import { discoverMcpTools } from "./mcp-discovery";
@@ -73,10 +74,49 @@ export const createConnectorAdmin = (
       id: connector.id,
       organizationId,
       principalId,
+      readTools: connector.readTools,
       tools: rows(tools),
       url: connector.url,
     });
     return { id: connector.id, skipped, toolCount: tools.length };
+  };
+  // Discovers again with the stored credentials. A new read list is stored only
+  // when discovery succeeds, so the list always matches the catalog rows.
+  const rediscover = async (
+    database: Database,
+    organizationId: string,
+    principalId: string,
+    connectorId: string,
+    readTools?: readonly string[]
+  ): Promise<ConnectorChange> => {
+    const connector = await findConnector(
+      database,
+      organizationId,
+      connectorId
+    );
+    if (!connector) {
+      throw new ChannelError(404, "not-found", "The connector was not found.");
+    }
+    const accountId = connectorAccountId(connectorId);
+    const sealed = await findSealedAccount(database, organizationId, accountId);
+    const stored = sealed
+      ? await openCredentials(
+          env.ACCOUNT_KEY,
+          { accountId, organizationId },
+          sealed
+        )
+      : undefined;
+    return await save(
+      database,
+      organizationId,
+      principalId,
+      {
+        id: connectorId,
+        readTools: readTools ?? connector.readTools,
+        url: connector.url,
+      },
+      stored?.headers ?? {}
+    );
   };
   return {
     add: async (
@@ -125,48 +165,33 @@ export const createConnectorAdmin = (
         database,
         organizationId,
         principalId,
-        { id: input.id, readTools: [], url: url.href },
+        { id: input.id, readTools: input.readTools ?? [], url: url.href },
         input.headers,
         account
       );
     },
-    list: (database, organizationId) =>
-      listConnectors(database, organizationId),
-    refresh: async (database, organizationId, principalId, connectorId) => {
-      const connector = await findConnector(
-        database,
-        organizationId,
-        connectorId
-      );
-      if (!connector) {
-        throw new ChannelError(
-          404,
-          "not-found",
-          "The connector was not found."
-        );
-      }
-      const accountId = connectorAccountId(connectorId);
-      const sealed = await findSealedAccount(
-        database,
-        organizationId,
-        accountId
-      );
-      const stored = sealed
-        ? await openCredentials(
-            env.ACCOUNT_KEY,
-            { accountId, organizationId },
-            sealed
-          )
-        : undefined;
-      const headers = stored?.headers ?? {};
-      return await save(
-        database,
-        organizationId,
-        principalId,
-        { id: connectorId, readTools: [], url: connector.url },
-        headers
-      );
+    list: async (database, organizationId) => {
+      const connectors = await listConnectors(database, organizationId);
+      const tools = await catalogTools(database, organizationId);
+      return connectors.map((connector) => ({
+        ...connector,
+        tools: tools.flatMap((tool) =>
+          tool.connectorId === connector.id && tool.target.kind === "mcp"
+            ? [{ effect: tool.effect, name: tool.target.method }]
+            : []
+        ),
+      }));
     },
+    refresh: (database, organizationId, principalId, connectorId) =>
+      rediscover(database, organizationId, principalId, connectorId),
+    setReadTools: (
+      database,
+      organizationId,
+      principalId,
+      connectorId,
+      readTools
+    ) =>
+      rediscover(database, organizationId, principalId, connectorId, readTools),
     remove: async (database, organizationId, connectorId) => {
       if (!(await findConnector(database, organizationId, connectorId))) {
         throw new ChannelError(

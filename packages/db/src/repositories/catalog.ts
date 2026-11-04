@@ -139,9 +139,11 @@ export const findConnector = async (
   database: Database,
   organizationId: string,
   connectorId: string
-): Promise<{ readonly url: string } | undefined> => {
+): Promise<
+  { readonly url: string; readonly readTools: readonly string[] } | undefined
+> => {
   const [row] = await database
-    .select({ url: connector.url })
+    .select({ readTools: connector.readTools, url: connector.url })
     .from(connector)
     .where(
       and(
@@ -170,6 +172,7 @@ export const saveAdminConnector = (
     readonly id: string;
     readonly url: string;
     readonly principalId: string;
+    readonly readTools: readonly string[];
     readonly account?: { readonly id: string; readonly sealed: string };
     readonly tools: readonly CatalogRow[];
   }
@@ -182,10 +185,11 @@ export const saveAdminConnector = (
         createdBy: input.principalId,
         id: input.id,
         organizationId,
+        readTools: input.readTools,
         url: input.url,
       })
       .onConflictDoUpdate({
-        set: { url: input.url },
+        set: { readTools: input.readTools, url: input.url },
         target: [connector.organizationId, connector.id],
       });
     if (input.account) {

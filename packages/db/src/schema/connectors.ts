@@ -10,6 +10,8 @@ import { organization } from "./core.ts";
 
 // An MCP server an administrator added at runtime. Its tools live in
 // connector_tool with source `admin:<id>`, its credentials in connector_account.
+// `read_tools` names the MCP tools the administrator confirmed run without
+// approval.
 export const connector = pgTable(
   "connector",
   {
@@ -19,6 +21,10 @@ export const connector = pgTable(
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id),
+    readTools: jsonb("read_tools")
+      .$type<readonly string[]>()
+      .notNull()
+      .default([]),
     url: text("url").notNull(),
   },
   (table) => [primaryKey({ columns: [table.organizationId, table.id] })]

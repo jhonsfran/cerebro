@@ -121,6 +121,7 @@ test("a running session denies a catalog registration changed under the same too
         id: "crm",
         url: tool.target.url,
         principalId: f.principal.id,
+        readTools: [],
         tools: [{ id: tool.id, connectorId: tool.connectorId, definition }],
       });
     await save(tool);
@@ -300,6 +301,81 @@ test("an anonymous MCP connector stores an empty account and executes", async ()
         content: [{ type: "text", text: "Public evidence" }],
       });
       assert.deepEqual(calls, ["lookup"]);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("an administrator's read list decides which tools skip approval and survives refresh", async () => {
+  const f = await fixture();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (_url, init) => {
+    const message = JSON.parse(String(init?.body));
+    if (message.method === "notifications/initialized") {
+      return Promise.resolve(new Response(null, { status: 202 }));
+    }
+    const result =
+      message.method === "initialize"
+        ? {
+            protocolVersion: "2025-11-25",
+            capabilities: { tools: {} },
+            serverInfo: { name: "fixture", version: "1" },
+          }
+        : {
+            tools: [
+              {
+                name: "archive",
+                inputSchema: { type: "object" },
+                annotations: { readOnlyHint: true },
+              },
+              { name: "lookup", inputSchema: { type: "object" } },
+            ],
+          };
+    return Promise.resolve(
+      Response.json({ jsonrpc: "2.0", id: message.id, result })
+    );
+  };
+  try {
+    await withDatabase(f.env, async (database) => {
+      const admin = createConnectorAdmin(f.env);
+      const tools = async () =>
+        (await admin.list(database, f.organizationId)).find(
+          (connector) => connector.id === "crm"
+        )?.tools;
+      await admin.add(database, f.organizationId, f.principal.id, {
+        id: "crm",
+        url: "http://fixture.invalid/mcp",
+        headers: {},
+      });
+      assert.deepEqual(await tools(), [
+        { effect: "write", name: "archive" },
+        { effect: "write", name: "lookup" },
+      ]);
+      await admin.setReadTools(
+        database,
+        f.organizationId,
+        f.principal.id,
+        "crm",
+        ["lookup"]
+      );
+      const confirmed = [
+        { effect: "write", name: "archive" },
+        { effect: "read", name: "lookup" },
+      ];
+      assert.deepEqual(await tools(), confirmed);
+      await admin.refresh(database, f.organizationId, f.principal.id, "crm");
+      assert.deepEqual(await tools(), confirmed);
+      await assert.rejects(
+        admin.setReadTools(
+          database,
+          f.organizationId,
+          f.principal.id,
+          "missing",
+          ["lookup"]
+        ),
+        { status: 404 }
+      );
     });
   } finally {
     globalThis.fetch = originalFetch;
