@@ -42,6 +42,7 @@ import { createGenerativeUiTool } from "./generative-ui-tool.ts";
 import { chatSnapshot, piContext, snapshotToolIds } from "./pi-harness.ts";
 import { createControlledProvider } from "./pi-provider.ts";
 import { createPiTools } from "./pi-tools.ts";
+import { createRunLimits } from "./run-limits.ts";
 import type {
   MetadataTransaction,
   SessionHostConfiguration,
@@ -358,7 +359,7 @@ export class ConversationScope {
     );
     services.install({
       name: `cerebro-tools:${configuration.address.sessionId}`,
-      hooks: scope.work.hooks,
+      hooks: [...scope.work.hooks, ...createRunLimits({ pi: services.pi })],
       tools: [
         ...runtime.tools,
         ...scope.work.tools,
