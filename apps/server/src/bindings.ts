@@ -1,4 +1,5 @@
 import type { SlackQueueDelivery } from "@cerebro/channels/slack-events";
+import type { TeamCommand } from "@cerebro/contracts/work";
 
 import type { IdentityAgent } from "./session/agent";
 
@@ -13,6 +14,7 @@ export interface WorkerEnv {
   CHANNEL_ORGANIZATION_ID?: string;
   SLACK_CHANNEL_JSON?: string;
   SLACK_EVENTS: Queue<SlackQueueDelivery>;
+  TEAM_COMMANDS: Queue<TeamCommand>;
   SESSION: DurableObjectNamespace<IdentityAgent>;
   AUDIT_SINK: Fetcher;
   ACCOUNT_KEY: string;

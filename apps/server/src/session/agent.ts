@@ -48,6 +48,7 @@ import { catalogTools } from "../catalog";
 import { slackSettings } from "../channels";
 import { createCatalogRegistry, runtimeConfiguration } from "../config";
 import { SessionContent, sessionContentLayer } from "./content";
+import { createCoordinatorServices } from "./coordination";
 import { authenticateSessionRequest } from "./proof";
 import type { SessionIdentity } from "./proof";
 import { createSlackNotifier } from "./slack";
@@ -437,6 +438,17 @@ export const createRuntimeComposition = (
           }
         : {}),
       agent,
+      coordination: createCoordinatorServices({
+        env,
+        address,
+        agent,
+        authority,
+        conversation,
+        profile: config.coordination,
+        contentDependencies: content.dependencies,
+        slack,
+        ownerContext,
+      }),
       audit: sendToAuditSink(env.AUDIT_SINK),
       authority,
       checkDependencies: dependencies,

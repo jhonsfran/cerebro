@@ -318,7 +318,10 @@ const config = {
         queue: "cerebro-slack-events",
       },
     ],
-    producers: [{ binding: "SLACK_EVENTS", queue: "cerebro-slack-events" }],
+    producers: [
+      { binding: "SLACK_EVENTS", queue: "cerebro-slack-events" },
+      { binding: "TEAM_COMMANDS", queue: "cerebro-team-commands" },
+    ],
   },
   services: [
     { binding: "AUDIT_SINK", entrypoint: "AuditSink", service: "cerebro-api" },

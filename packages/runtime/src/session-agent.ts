@@ -49,6 +49,7 @@ import { searchConversationHistory } from "./conversation-history.ts";
 import { ReminderPayload } from "./conversation-reminders.ts";
 import { ConversationScope } from "./conversation-scope.ts";
 import type { SearchResult } from "./conversation-work.ts";
+import type { CoordinationServices } from "./coordinator-work.ts";
 import { piContext, snapshotToolIds } from "./pi-harness.ts";
 import type { ControlledProviderConfiguration } from "./pi-provider.ts";
 import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
@@ -59,6 +60,7 @@ export type MetadataTransaction = <A>(
 ) => Promise<A>;
 export interface SessionHostConfiguration {
   readonly address: EventAddress;
+  readonly coordination?: CoordinationServices;
   readonly origin?: {
     readonly address: EventAddress;
     readonly entryId: string;
@@ -537,6 +539,7 @@ export class SessionAgent<
         "cerebro-child",
         "cerebro-reminder",
         "cerebro-compact",
+        "cerebro-coordination",
       ].includes(job.fn)
     ) {
       return;
@@ -550,6 +553,9 @@ export class SessionAgent<
       const binding = bindings?.conversations[sessionId];
       if (binding) {
         const scope = await this.scope(binding.address);
+        if (job.fn === "cerebro-coordination") {
+          return await scope.coordination.wake();
+        }
         if (job.fn === "cerebro-child") {
           const payload = Schema.decodeUnknownSync(childPayload)(job.payload);
           await scope.work.stop(payload.childId);

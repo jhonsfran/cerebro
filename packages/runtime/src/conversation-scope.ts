@@ -36,6 +36,7 @@ import { createConversationReminders } from "./conversation-reminders.ts";
 import { createConversationResources } from "./conversation-resources.ts";
 import { createConversationWork } from "./conversation-work.ts";
 import type { SearchResult } from "./conversation-work.ts";
+import { createCoordinatorWork } from "./coordinator-work.ts";
 import { createGenerativeUiTool } from "./generative-ui-tool.ts";
 import { chatSnapshot, piContext, snapshotToolIds } from "./pi-harness.ts";
 import { createRunLimits } from "./run-limits.ts";
@@ -92,6 +93,7 @@ export class ConversationScope {
   readonly work: ReturnType<typeof createConversationWork>;
   readonly reminders: ReturnType<typeof createConversationReminders>;
   readonly compaction: ReturnType<typeof createConversationCompaction>;
+  readonly coordination: ReturnType<typeof createCoordinatorWork>;
 
   private constructor(
     runtime: ReturnType<typeof createConversationResources>,
@@ -99,7 +101,8 @@ export class ConversationScope {
     services: ConversationScopeServices,
     work: ReturnType<typeof createConversationWork>,
     reminders: ReturnType<typeof createConversationReminders>,
-    compaction: ReturnType<typeof createConversationCompaction>
+    compaction: ReturnType<typeof createConversationCompaction>,
+    coordination: ReturnType<typeof createCoordinatorWork>
   ) {
     this.runtime = runtime;
     this.native = native;
@@ -107,6 +110,7 @@ export class ConversationScope {
     this.work = work;
     this.reminders = reminders;
     this.compaction = compaction;
+    this.coordination = coordination;
   }
 
   static async open(
@@ -202,25 +206,39 @@ export class ConversationScope {
       sessionId: configuration.address.sessionId,
       waitUntil: services.waitUntil,
     });
+    const coordination = createCoordinatorWork({
+      address: configuration.address,
+      authorize,
+      jobs: services.jobs,
+      metadata: services.metadata,
+      nativeId: native.id,
+      persist: () => services.storage.sync(),
+      pi: services.pi,
+      services: configuration.coordination,
+    });
     const scope = new ConversationScope(
       runtime,
       native,
       services,
       work,
       reminders,
-      compaction
+      compaction,
+      coordination
     );
     services.install({
       name: `cerebro-tools:${configuration.address.sessionId}`,
       hooks: [...scope.work.hooks, ...createRunLimits({ pi: services.pi })],
+      tasks: scope.coordination.tasks,
       tools: [
         ...runtime.tools,
         ...scope.work.tools,
         ...scope.reminders.tools,
+        ...scope.coordination.tools,
         createGenerativeUiTool({ authorize }),
       ],
     });
     await scope.reminders.restore();
+    await scope.coordination.restore();
     if (configuration.notify) {
       const watch = await native.watch(piContext());
       watch.start(() => scope.scheduleNotify());
@@ -557,6 +575,7 @@ export class ConversationScope {
           )
         );
         await runtime.authorize(context, "send", request.signal);
+        await this.coordination.rememberHumanOperation(command.operationId);
         const receipt = await this.services.harness.submit(command.text, {
           session: String(this.native.id),
           operationId: command.operationId,

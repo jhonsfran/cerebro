@@ -16,6 +16,7 @@ import {
 
 const admission = () => ({
   admittedAt: 1_800_000_000_000,
+  contentDependencies: { sourceIds: [], toolIds: [] },
   deadlineAt: 1_800_000_600_000,
   goal: "Compare the two deployment reports.",
   key: {
@@ -64,6 +65,14 @@ test("work admission preserves public source identity and published role pins", 
     { deadlineAt: value.admittedAt },
     { deadlineAt: value.deadlineAt + 1 },
     { limits: { ...value.limits, maxWorkers: 3 } },
+    { contentDependencies: undefined },
+    { contentDependencies: { sourceIds: [" source-A"], toolIds: [] } },
+    {
+      contentDependencies: {
+        sourceIds: Array.from({ length: 513 }, () => "source-A"),
+        toolIds: [],
+      },
+    },
     { goal: "x".repeat(16_001) },
   ]) {
     assert.throws(() =>
@@ -76,7 +85,13 @@ test("every team command carries the immutable admission for unordered delivery"
   const work = admission();
   for (const command of [
     { id: "start-A", kind: "start", work },
-    { id: "input-A", kind: "input", text: "Include the outage.", work },
+    {
+      id: "input-A",
+      kind: "input",
+      text: "Include the outage.",
+      contentDependencies: { sourceIds: [], toolIds: [] },
+      work,
+    },
     { id: "cancel-A", kind: "cancel", work },
   ]) {
     const serialized = JSON.stringify(command);
@@ -88,6 +103,7 @@ test("every team command carries the immutable admission for unordered delivery"
   for (const command of [
     { id: "input-A", kind: "input", text: "Include the outage." },
     { id: "input-A", kind: "input", work },
+    { id: "input-A", kind: "input", text: "Private update.", work },
     { id: "cancel-A", kind: "cancel", text: "Unexpected", work },
     { id: "", kind: "start", work },
     { id: "unknown-A", kind: "restart", work },

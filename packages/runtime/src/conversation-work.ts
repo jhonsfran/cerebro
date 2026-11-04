@@ -68,6 +68,10 @@ const removedTools = new Set([
   "search_conversations",
   "schedule",
   "cancel_schedule",
+  "start_team",
+  "get_work",
+  "message_team",
+  "stop_work",
 ]);
 
 export interface ConversationWorkOptions {

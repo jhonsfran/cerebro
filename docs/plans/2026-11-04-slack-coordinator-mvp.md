@@ -51,14 +51,14 @@ flowchart TD
 6. Cancellation is stored in the target team before abort. A delayed start cannot revive cancelled work. Model and tool dispatch also check cancellation and deadline.
 7. Restore every role provider, task definition, and tool selection before Pi resumes.
 8. Current published agent permissions and principal ownership are checked at physical model and tool boundaries.
-9. Persist result provenance in the receiving scope before result admission. Recheck before reads and Slack disclosure.
+9. Carry source and tool dependencies on every model-generated handoff, including the initial team goal. Check the receiving role's grants and current principal access before admission. Persist the dependencies in the receiving scope and recheck before model use, reads, and Slack disclosure.
 10. A stable report ID prevents duplicate result admission. External Slack writes retain their existing uncertain-delivery semantics.
 
 ## Delivery chunks
 
 - [x] **1. Shared runtime and contracts.** Extract guarded conversation resources without changing behavior. Add schema-derived work, role, command, receipt, report, and profile contracts. Verify contracts, configuration, existing provider behavior, types, and lint.
 - [x] **2. Durable Slack intake.** Add queue-before-acknowledgement, deterministic filtering, linked-user resolution, original event identity, and dead-letter handling. Verify rejected inputs make zero model calls and queue failures do not receive successful acknowledgements. Save immutable routing or ignored decisions before delivery. The dead-letter queue retains failures until the operations path in chunk 6.
-- [ ] **3. Coordinator work.** Add the shared work and thread index, identity-wide admission slots, and coordinator start/status/input/stop tools backed by durable dispatch tasks. Verify replay reuses work and chat stays responsive in each existing Slack conversation.
+- [x] **3. Coordinator work.** Add the shared work and thread index, identity-wide admission slots, and coordinator start/status/input/stop tools backed by durable dispatch tasks. Verify replay reuses work and chat stays responsive in each existing Slack conversation. The active index and command backlog are bounded. Independent admission leases close the wake/commit gap. Goal and input commands retain their original dependency snapshots. All ten new Pi tests and the full 108-case runtime suite passed, plus six dependency checks. Independent thermo and comment reviews passed.
 - [ ] **4. Team runtime and role composition.** Add TeamAgent, private command validation, published role pins, guarded lead and worker providers, worker limits, deadline, and cancellation. Verify model traces, isolation, revocation, and restored registration.
 - [ ] **5. Thread updates and results.** Connect subscriptions, stable reports and provenance transfer, current Slack delivery, and explicit control routing. Verify duplicate and reordered delivery, cancelled work, and denied result disclosure.
 - [ ] **6. Full-stack recovery and operations.** Wire deployment and disposable test fixtures. Prove the real Slack queue-to-team-to-reply path and SIGKILL recovery without a reader. Add replay/status guidance and run the complete relevant suites.

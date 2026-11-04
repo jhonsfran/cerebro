@@ -71,8 +71,20 @@ export const CoordinationProfileSchema = Schema.Struct({
 });
 export type CoordinationProfile = typeof CoordinationProfileSchema.Type;
 
+export const BoundedContentDependenciesSchema = Schema.Struct({
+  sourceIds: Schema.mutable(
+    Schema.Array(identifier<"SourceId">()).check(Schema.isMaxLength(512))
+  ),
+  toolIds: Schema.mutable(
+    Schema.Array(
+      Schema.NonEmptyString.check(Schema.isTrimmed(), Schema.isMaxLength(512))
+    ).check(Schema.isMaxLength(256))
+  ),
+}) satisfies Schema.Codec<ContentDependencies>;
+
 export const WorkAdmissionSchema = Schema.Struct({
   admittedAt: timestamp,
+  contentDependencies: BoundedContentDependenciesSchema,
   deadlineAt: timestamp,
   goal: text,
   key: WorkKeySchema,
@@ -105,6 +117,7 @@ export const TeamCommandSchema = Schema.Union([
   Schema.Struct({
     id: WorkCommandIdSchema,
     kind: Schema.Literal("input"),
+    contentDependencies: BoundedContentDependenciesSchema,
     text,
     work: WorkAdmissionSchema,
   }),
@@ -131,16 +144,8 @@ export const WorkStatusSchema = Schema.Union([
 ]);
 export type WorkStatus = typeof WorkStatusSchema.Type;
 
-const contentDependenciesSchema = Schema.Struct({
-  sourceIds: Schema.Array(identifier<"SourceId">()).check(
-    Schema.isMaxLength(512)
-  ),
-  toolIds: Schema.Array(
-    Schema.NonEmptyString.check(Schema.isTrimmed(), Schema.isMaxLength(512))
-  ).check(Schema.isMaxLength(256)),
-}) satisfies Schema.Codec<ContentDependencies>;
 const reportFields = {
-  contentDependencies: contentDependenciesSchema,
+  contentDependencies: BoundedContentDependenciesSchema,
   id: WorkReportIdSchema,
   key: WorkKeySchema,
 };
