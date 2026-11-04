@@ -1,5 +1,7 @@
 import { id } from "@cerebro/contracts";
+import { CoordinationProfileSchema } from "@cerebro/contracts/work";
 import { createToolRegistry } from "@cerebro/tools/registry";
+import { Schema } from "effect";
 import { z } from "zod";
 
 const positive = z.number().int().positive().max(1_048_576);
@@ -75,6 +77,14 @@ const schema = z.strictObject({
   }),
   bootstrapToken: z.string().min(32).optional(),
   connectors: z.array(connectorSchema).default([]),
+  coordination: z
+    .unknown()
+    .transform((value) =>
+      Schema.decodeUnknownSync(CoordinationProfileSchema, {
+        onExcessProperty: "error",
+      })(value)
+    )
+    .optional(),
   gatewaySigningKey: z.string().min(32),
   mode: z.enum(["local", "production"]),
   models: z.array(modelSchema).min(1),
