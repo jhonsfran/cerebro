@@ -1,4 +1,3 @@
-/* oxlint-disable no-await-in-loop -- The provider stream preserves the vendor event order. */
 import { Denied, InvalidInput } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import type { ReadOptions } from "@cerebro/contracts/port";
@@ -89,9 +88,16 @@ export const createControlledProvider = (
       typeof body === "string" &&
       new TextEncoder().encode(body).byteLength > configuration.maxInputBytes
     ) {
-      throw new InvalidInput({
-        reason: "Model input exceeds the configured byte limit",
-      });
+      return Response.json(
+        {
+          error: {
+            code: "context_length_exceeded",
+            message: "Model input exceeds the configured byte limit",
+            type: "invalid_request_error",
+          },
+        },
+        { status: 400 }
+      );
     }
     const signal =
       init?.signal ?? (input instanceof Request ? input.signal : undefined);

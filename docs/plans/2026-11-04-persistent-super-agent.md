@@ -16,7 +16,7 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 3b: Route explicit task subscriptions and one-time team handback.
 - [x] Unit 4a: Connect ordered web events, work causes, controls, and recall.
 - [x] Unit 4b: Apply published coordinator definitions safely within the same conversation.
-- [ ] Unit 4 context: Preserve native compaction when the model request reaches its byte limit.
+- [x] Unit 4 context: Preserve native compaction when the model request reaches its byte limit.
 - [ ] Unit 4c: Connect Slack primary events and exact event replies.
 - [ ] Unit 4d: Preserve legacy admission and forward saved timers through controlled cutover.
 - [ ] Unit 5a: Add protected saved-state inspection and safe terminal Team reads.
@@ -39,7 +39,7 @@ Unit 4a sends web input through owned events and preserves the original operatio
 
 Unit 4b adopts the complete definition and capability policy after native work drains. Owned event admission checks source and content access while model access is checked for execution. Review and native tests fixed failed staging, stale authorization denials, and publication races. The HTTP probe preserves chat identity, replay, saved fork pins, and the adopted model over a process kill. All three final reviews pass.
 
-Long-chat verification found an existing model-boundary error. A ninth full-length input reaches the serialized request byte cap before Pi's token threshold. The adapter treats the thrown local error as a connection failure. A separate repair must preserve the supported overflow response so Pi can use its existing compaction task. This repair keeps the byte limit and adds no scheduler or guessed token conversion.
+Long-chat verification found an existing model-boundary error. A ninth full-length input reaches the serialized request byte cap before Pi's token threshold. The adapter treated the thrown local error as a connection failure. The separate repair returns the supported local overflow response so Pi uses its existing compaction task. It keeps the byte limit and adds no scheduler or guessed token conversion. Actual Pi tests cover repeated compaction, retained entries, replay, reopen, and current authorization. The final HTTP build completed fourteen long inputs and their exact replays without added replay calls. Native recovery still requires a selectable cut and a summary that fits.
 
 The approved architecture is the design baseline. Read-only grounding checks its integration points. A second architecture competition is unnecessary unless the implementation disproves the design.
 

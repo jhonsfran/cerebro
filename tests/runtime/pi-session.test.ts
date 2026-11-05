@@ -4,7 +4,7 @@ import { test } from "node:test";
 
 import { Effect } from "effect";
 
-import { Denied } from "../../packages/contracts/src/failures.ts";
+import { Denied, InvalidInput } from "../../packages/contracts/src/failures.ts";
 import {
   fauxProvider,
   fauxAssistantMessage,
@@ -165,6 +165,7 @@ test("provider input limit counts UTF-8 bytes before physical dispatch", async (
   const model = faux.getModel();
   for (const body of ["é", "éé"] as const) {
     let physicalCalls = 0;
+    let response: Response | undefined;
     const provider = {
       ...faux.provider,
       streamSimple: (
@@ -176,12 +177,19 @@ test("provider input limit counts UTF-8 bytes before physical dispatch", async (
         const dispatch = async () => {
           try {
             assert.ok(readOptions?.fetch);
-            await readOptions.fetch("https://fixture.invalid/model", {
-              body,
-              method: "POST",
-              signal: readOptions.signal,
-            });
-            stream.end(fauxAssistantMessage("Accepted"));
+            response = await readOptions.fetch(
+              "https://fixture.invalid/model",
+              {
+                body,
+                method: "POST",
+                signal: readOptions.signal,
+              }
+            );
+            stream.end(
+              fauxAssistantMessage("Accepted", {
+                stopReason: response.ok ? "stop" : "error",
+              })
+            );
           } catch {
             stream.end(fauxAssistantMessage("", { stopReason: "error" }));
           }
@@ -207,6 +215,80 @@ test("provider input limit counts UTF-8 bytes before physical dispatch", async (
       .result();
     assert.equal(physicalCalls, body === "é" ? 1 : 0);
     assert.equal(result.stopReason, body === "é" ? "stop" : "error");
+    assert.equal(response?.status, body === "é" ? 200 : 400);
+    if (body === "éé") {
+      assert.deepEqual(await response?.json(), {
+        error: {
+          code: "context_length_exceeded",
+          message: "Model input exceeds the configured byte limit",
+          type: "invalid_request_error",
+        },
+      });
+    }
+  }
+});
+
+test("unsupported request bodies remain invalid input and cannot dispatch", async () => {
+  for (const request of [
+    {
+      input: "https://fixture.invalid/model",
+      body: new Uint8Array([1, 2]),
+    },
+    {
+      input: new Request("https://fixture.invalid/model", {
+        body: "{}",
+        method: "POST",
+      }),
+      body: undefined,
+    },
+  ]) {
+    const faux = fauxProvider();
+    const model = faux.getModel();
+    let physicalCalls = 0;
+    let failure: unknown;
+    const provider = createControlledProvider({
+      authorize: () => Effect.void,
+      deadlineMs: 1000,
+      fetch: () => {
+        physicalCalls += 1;
+        return Promise.resolve(new Response("fixture"));
+      },
+      maxInputBytes: 4096,
+      maxResponseBytes: 4096,
+      model,
+      provider: {
+        ...faux.provider,
+        streamSimple: (_model, _transcript, options) => {
+          const stream = createAssistantMessageEventStream();
+          const dispatch = async () => {
+            try {
+              assert.ok(options?.fetch);
+              await options.fetch(request.input, {
+                body: request.body,
+                method: "POST",
+                signal: options.signal,
+              });
+              stream.end(fauxAssistantMessage("Unexpected request."));
+            } catch (error) {
+              failure = error;
+              stream.end(fauxAssistantMessage("", { stopReason: "error" }));
+            }
+          };
+          void dispatch();
+          return stream;
+        },
+      },
+    });
+    const result = await provider
+      .streamSimple(model, normalizeContext({ messages: [] }))
+      .result();
+    assert.equal(result.stopReason, "error");
+    assert.equal(physicalCalls, 0);
+    assert.ok(failure instanceof InvalidInput);
+    assert.equal(
+      failure.reason,
+      "Controlled model requests require a serialized body"
+    );
   }
 });
 
