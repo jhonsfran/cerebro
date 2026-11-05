@@ -2,6 +2,7 @@ import type { BotEvent } from "@cerebro/contracts/bot-events";
 import { normalizeEventAdmission } from "@cerebro/contracts/bot-routing";
 import type { EventAdmission } from "@cerebro/contracts/bot-routing";
 import {
+  Conflict,
   Denied,
   InvalidInput,
   NotFound,
@@ -69,6 +70,22 @@ export const WorkSubscriptions = defineDocFamily({
   ): { record: { binding: StoredBinding; threadKeys: string[] } | null } => ({
     record: null,
   }),
+});
+export const SubscriptionMutations = defineDocFamily({
+  kind: "cerebro.subscription-mutation",
+  scope: "conversation",
+  history: "latest",
+  fork: "initial",
+  family: true,
+  version: 1,
+  initial: (
+    _seed: null
+  ): {
+    receipt: {
+      digest: string;
+      result: { workId: string; eventId: string; subscribed: boolean };
+    } | null;
+  } => ({ receipt: null }),
 });
 const requireBinding = (
   actual: CoordinationBinding,
@@ -265,16 +282,17 @@ export const createCoordinatorSubscriptions = (options: {
     );
     const admitted = saved.record.admission;
     const key = await keyFor(binding(), thread);
+    const digest = await digestToolArguments({
+      binding: binding(),
+      workId,
+      eventId,
+      subscribed: subscribe,
+    });
     return await options.coordination.admissions.commit(
       `subscription:${api.taskId}`,
       async (tx) => {
         await options.guardIn?.(tx);
         const record = await requireCoordinatorWork(tx, binding(), workId);
-        if (subscribe && !workAcceptsEvents(record, Date.now())) {
-          throw new InvalidInput({
-            reason: "Only active or queued work can subscribe to a thread.",
-          });
-        }
         if (
           (await digestToolArguments(record.admission)) !==
           (await digestToolArguments(admitted))
@@ -284,16 +302,38 @@ export const createCoordinatorSubscriptions = (options: {
             reason: "The saved work admission changed.",
           });
         }
+        const mutation = await tx.doc(
+          SubscriptionMutations,
+          options.nativeId,
+          String(api.taskId),
+          null
+        );
+        if (mutation.receipt) {
+          if (mutation.receipt.digest !== digest) {
+            throw new Conflict({
+              code: "digest-mismatch",
+              reason: "The subscription operation names another payload.",
+            });
+          }
+          return { ...mutation.receipt.result };
+        }
+        if (subscribe && !workAcceptsEvents(record, Date.now())) {
+          throw new InvalidInput({
+            reason: "Only active or queued work can subscribe to a thread.",
+          });
+        }
         const { threads, works } = await relationIn(tx, binding(), key, workId);
         const existing = threads.record?.workIds.includes(workId) ?? false;
+        const result = { workId, eventId, subscribed: subscribe };
         if (existing === subscribe) {
-          return { workId, eventId, subscribed: subscribe };
+          mutation.receipt = { digest, result };
+          return result;
         }
-        if (
-          subscribe &&
-          ((threads.record?.workIds.length ?? 0) >= 8 ||
-            (works.record?.threadKeys.length ?? 0) >= 8)
-        ) {
+        const size = Math.max(
+          threads.record?.workIds.length ?? 0,
+          works.record?.threadKeys.length ?? 0
+        );
+        if (subscribe && size >= 8) {
           throw new InvalidInput({
             reason:
               "A work item and thread each support at most eight subscriptions.",
@@ -314,7 +354,8 @@ export const createCoordinatorSubscriptions = (options: {
           ? [...works.record.threadKeys, key]
           : works.record.threadKeys.filter((id) => id !== key);
         threads.record.revision += 1;
-        return { workId, eventId, subscribed: subscribe };
+        mutation.receipt = { digest, result };
+        return result;
       },
       (change) => api.commit(change, context)
     );

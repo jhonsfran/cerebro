@@ -23,7 +23,7 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 5b: Add the development Inspector UI with lazy detail loading.
 - [x] Unit 6a: Repair model-visible event references and saved history/Inspector projections.
 - [x] Unit 6b1: Repair native runtime verification at actual event and storage boundaries.
-- [ ] Unit 6d1: Preserve later subscription mutations when native tools replay.
+- [x] Unit 6d1: Preserve later subscription mutations when native tools replay.
 - [ ] Unit 6d2: Give Inspector tools distinct occurrence identity across native rounds.
 - [ ] Unit 6b2: Complete realistic Slack, subscription, queue, and Inspector application fixtures.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
@@ -88,6 +88,8 @@ The Inspector shows active and completed work, lead and worker models, saved sta
 Unit 6a closes integration gaps found by the full runtime baseline and actual browser. The coordinator receives the admitted Slack event reference. History search recognizes real web-event inputs while preserving hidden-event boundaries. Paged tools report unknown when their result is outside the page. Selected Inspector source status follows report settlement after private cleanup seals, with no further private polling. Real Pi and mounted regressions pass, including the original independent stale-status probe. Final native, browser, realistic-conversation, and live-provider checks remain required.
 
 Unit 6b1 repairs native verification at the actual saved event and storage boundaries. Public operation IDs remain distinct from native event, input, and entry IDs. The real lost-response injector joins the exact committed submission and entry. Safe physical correlation proves replacement-host completion before source readers. Both native fault cases pass through replay and later progress. The initial run exposed assertions for deliberately omitted raw log text. The revised checks use the existing sanitized failure event with the exact identity and committed witness time. The full runtime and application-native gates remain pending, as do the two separate production audit repairs.
+
+Unit 6d1 saves each subscription mutation result with both relation directions in the existing native transaction. Exact native task replay returns its original result after current authority checks, without undoing a later subscription change. Real Pi and SQLite regressions cover both orders, no-ops, terminal Work, changed requests, revoked access, and rollback. All three fresh reviews pass. The 125 focused tests, normal workspace type checks, and 165 PostgreSQL channel tests pass. The receipt cannot reconstruct mutations made by intermediate unshipped development builds that never saved it. The pre-task release had no subscription tools; that development-state limit is retained explicitly. Inspector occurrence identity and the final product gates remain pending.
 
 ## Cutover
 
