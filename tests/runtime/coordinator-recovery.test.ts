@@ -336,9 +336,9 @@ test("dispatch retries stop after five sends and retain the reservation until th
       { goal: "Blocked." },
       "start-c"
     );
-    assert.match(
-      blocked.snapshot.tools.at(-1)?.output ?? "",
-      /maximum active teams/u
+    assert.equal(
+      JSON.parse(blocked.snapshot.tools.at(-1)?.output ?? "{}").status.kind,
+      "queued"
     );
     fixture.advance(600_001);
     await fixture.invoke(

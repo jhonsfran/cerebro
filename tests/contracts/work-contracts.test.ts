@@ -230,6 +230,18 @@ test("business work and start input identities are stable and tenant scoped", ()
 });
 
 test("cancel and terminal outcomes cannot be replaced by delayed execution", () => {
+  assert.deepEqual(
+    Schema.decodeUnknownSync(WorkStatusSchema)({ kind: "queued" }),
+    { kind: "queued" }
+  );
+  assert.deepEqual(
+    transitionWorkStatus({ kind: "queued" }, { kind: "accepted" }),
+    { kind: "accepted" }
+  );
+  assert.deepEqual(
+    transitionWorkStatus({ kind: "accepted" }, { kind: "queued" }),
+    { kind: "accepted" }
+  );
   const cancelled = Schema.decodeUnknownSync(WorkStatusSchema)({
     commandId: "cancel-A",
     kind: "cancelled",

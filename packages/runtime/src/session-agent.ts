@@ -49,6 +49,9 @@ import { searchConversationHistory } from "./conversation-history.ts";
 import { ReminderPayload } from "./conversation-reminders.ts";
 import { ConversationScope } from "./conversation-scope.ts";
 import type { SearchResult } from "./conversation-work.ts";
+import type { ScanWorkKeys } from "./coordinator-history.ts";
+import { WorkDocuments } from "./coordinator-ledger.ts";
+import { wakeCoordinatorJob } from "./coordinator-work.ts";
 import type { CoordinationServices } from "./coordinator-work.ts";
 import { readImportedContent } from "./imported-content.ts";
 import { piContext, snapshotToolIds } from "./pi-harness.ts";
@@ -116,6 +119,7 @@ const Bindings = defineDoc({
   version: 1,
 });
 interface NativeHost {
+  readonly scanWorkKeys: ScanWorkKeys;
   readonly pi: Harness;
   readonly models: MutableModels;
   readonly registry: Registry;
@@ -192,7 +196,24 @@ export class SessionAgent<
         },
         context
       );
-      const host = { models, pi, registry };
+      const scanWorkKeys: ScanWorkKeys = (cursor) =>
+        pi.commit(async () => {
+          const page = await storage.scanDocuments(
+            {
+              scope: { kind: "session" },
+              at: "current",
+              kind: WorkDocuments.definition.kind,
+            },
+            32,
+            cursor,
+            piContext()
+          );
+          return {
+            keys: page.items.flatMap((entry) => (entry.key ? [entry.key] : [])),
+            ...(page.next ? { next: page.next } : {}),
+          };
+        }, piContext());
+      const host = { models, pi, registry, scanWorkKeys };
       const resetFailedIdentity = async () => {
         const end = await pi.closed;
         if (end.reason === "failed") {
@@ -344,6 +365,7 @@ export class SessionAgent<
         jobs: this.lifecycle.jobs,
         metadata,
         pi: host.pi,
+        scanWorkKeys: host.scanWorkKeys,
         search: (term, signal) => this.search(address, host, term, signal),
         scheduleNotify: (target, nativeId) =>
           host.pi.commit(
@@ -570,10 +592,17 @@ export class SessionAgent<
       const bindings = await pi.snapshot(Bindings, piContext());
       const binding = bindings?.conversations[sessionId];
       if (binding) {
-        const scope = await this.scope(binding.address);
         if (job.fn === "cerebro-coordination") {
-          return await scope.coordination.wake();
+          return await wakeCoordinatorJob({
+            pi,
+            address: binding.address,
+            restore: async () => {
+              const { coordination } = await this.scope(binding.address);
+              return coordination;
+            },
+          });
         }
+        const scope = await this.scope(binding.address);
         if (job.fn === "cerebro-child") {
           const payload = Schema.decodeUnknownSync(childPayload)(job.payload);
           await scope.work.stop(payload.childId);

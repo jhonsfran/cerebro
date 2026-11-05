@@ -37,6 +37,7 @@ import { createConversationReminders } from "./conversation-reminders.ts";
 import { createConversationResources } from "./conversation-resources.ts";
 import { createConversationWork } from "./conversation-work.ts";
 import type { SearchResult } from "./conversation-work.ts";
+import type { ScanWorkKeys } from "./coordinator-history.ts";
 import { createCoordinatorReport } from "./coordinator-report.ts";
 import { createCoordinatorSource } from "./coordinator-source.ts";
 import { createCoordinatorWork } from "./coordinator-work.ts";
@@ -67,6 +68,7 @@ const decisionSchema = Schema.Struct({
 });
 
 interface ConversationScopeServices {
+  readonly scanWorkKeys: ScanWorkKeys;
   readonly jobs: LifecycleJobs;
   readonly install: (extension: Extension) => void;
   readonly search: (
@@ -237,6 +239,21 @@ export class ConversationScope {
       persist: () => services.storage.sync(),
       pi: services.pi,
       services: configuration.coordination,
+      scanWorkKeys: services.scanWorkKeys,
+      contentAccess: {
+        check: async (dependencies, signal) => {
+          const context = await run(configuration.ownerContext());
+          await runtime.authorize(context, "transfer", signal);
+          await run(
+            configuration.checkDependencies(context, dependencies, {
+              deadlineAt: Date.now() + 30_000,
+              signal,
+            })
+          );
+        },
+        retain: (dependencies) =>
+          configuration.importDependencies?.(dependencies),
+      },
       waitUntil: services.waitUntil,
     });
     const scope = new ConversationScope(

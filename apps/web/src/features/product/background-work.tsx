@@ -8,6 +8,7 @@ import { operationFor } from "./intent";
 import type { OperationIntent } from "./intent";
 
 const states = {
+  queued: "Queued",
   accepted: "Accepted",
   running: "Running",
   cancelled: "Cancelled",

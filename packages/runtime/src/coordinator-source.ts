@@ -5,12 +5,11 @@ import type { Conversation, Harness } from "@earendil-works/pi-durable";
 import type { createConversationResources } from "./conversation-resources.ts";
 import {
   SourceOperations,
-  SourceWork,
   WorkLedger,
   pruneWorkIndex,
   coordinatorOperationKey,
   requireCoordinatorWork,
-  workHoldsSlot,
+  sameWorkSource,
 } from "./coordinator-ledger.ts";
 import type { createCoordinatorWork } from "./coordinator-work.ts";
 import { appendPassiveAnswer, appendPassiveUser } from "./passive-history.ts";
@@ -66,12 +65,6 @@ export const createCoordinatorSource =
       return handled;
     }
     const control = text === "status" || text === "stop";
-    const dependencies = control
-      ? { sourceIds: [], toolIds: [] }
-      : await services.contentDependencies();
-    if (!control) {
-      await runtime.authorize(context, "transfer", signal);
-    }
     const handled = await coordination.admissions.commit(
       operationId,
       async (tx) => {
@@ -97,62 +90,41 @@ export const createCoordinatorSource =
         }
         const ledger = await tx.doc(WorkLedger);
         await pruneWorkIndex(tx, ledger, Date.now());
-        const source = await tx.doc(SourceWork, native.id);
-        const record = source.workId
-          ? await requireCoordinatorWork(
-              tx,
-              coordination.binding(),
-              source.workId
-            )
-          : undefined;
         if (control) {
-          if (text === "stop" && record && workHoldsSlot(record, Date.now())) {
-            await coordination.commandIn(
-              tx,
-              record.admission.key.workId,
-              operationId,
-              { kind: "cancel" }
-            );
-          }
-          operation.route = { kind: "handled", workId: source.workId };
+          const entries = [
+            ...Object.entries(ledger.active).map(([workId, entry]) => ({
+              workId,
+              ...entry,
+            })),
+            ...(ledger.queue ?? []),
+          ].filter((entry) =>
+            sameWorkSource(entry.source, coordination.binding().address)
+          );
+          const records = await Promise.all(
+            entries.map((entry) =>
+              requireCoordinatorWork(tx, coordination.binding(), entry.workId)
+            )
+          );
+          operation.route = { kind: "handled", workId: null };
           await appendPassiveUser(tx, native.id, text);
-          const answer = record
-            ? `Team work ${record.status.kind}.`
-            : "There is no team work in this thread.";
+          const statuses = records
+            .map(
+              (record) =>
+                `${record.admission.key.workId}: ${record.status.kind}`
+            )
+            .join("\n");
+          let answer =
+            statuses ||
+            "There is no active or queued team work in this conversation.";
+          if (text === "stop" && records.length > 0) {
+            answer = `Choose a work ID and use stop_work to cancel it.\n${statuses}`;
+          }
           await appendPassiveAnswer(
             tx,
             native.id,
             answer,
             runtime.configuration.provider.model
           );
-          return true;
-        }
-        if (record && workHoldsSlot(record, Date.now())) {
-          if (
-            record.status.kind === "accepted" ||
-            record.status.kind === "running"
-          ) {
-            await coordination.commandIn(
-              tx,
-              record.admission.key.workId,
-              operationId,
-              {
-                kind: "input",
-                text,
-                contentDependencies: dependencies,
-              }
-            );
-            await appendPassiveUser(tx, native.id, text);
-          } else {
-            await appendPassiveUser(tx, native.id, text);
-            operation.route = { kind: "handled", workId: source.workId };
-            await appendPassiveAnswer(
-              tx,
-              native.id,
-              "This team work no longer accepts input.",
-              runtime.configuration.provider.model
-            );
-          }
           return true;
         }
         operation.route = { kind: "coordinator", workId: null };

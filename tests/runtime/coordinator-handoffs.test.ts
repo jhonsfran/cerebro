@@ -212,22 +212,22 @@ test("reports atomically import native provenance and passive history, and retri
   }
 });
 
-test("exact controls precede direct updates and saved routes survive terminal work", async () => {
+test("exact controls list work and ordinary input returns to the coordinator", async () => {
   const f = await subject();
   try {
     const calls = f.source.faux.state.callCount;
     assert.equal(await f.route("status-op", "status", actor), true);
-    assert.equal(await f.route("update-op", "status please", actor), true);
+    assert.equal(await f.route("update-op", "status please", actor), false);
     await f.fixture.waitDispatch();
     assert.deepEqual(
       f.fixture.delivered
         .filter((value) => value.kind === "input")
         .map((value) => (value.kind === "input" ? value.text : "")),
-      ["status please"]
+      []
     );
     await f.receive(f.delivery, actor);
     const before = await f.messages();
-    assert.equal(await f.route("update-op", "status please", actor), true);
+    assert.equal(await f.route("update-op", "status please", actor), false);
     assert.equal(await f.route("status-op", "status", actor), true);
     assert.deepEqual(await f.messages(), before);
     await assert.rejects(
@@ -236,6 +236,41 @@ test("exact controls precede direct updates and saved routes survive terminal wo
     );
     assert.equal(await f.route("new-human", "Start fresh.", actor), false);
     assert.equal(f.source.faux.state.callCount, calls);
+  } finally {
+    await f.fixture.close();
+  }
+});
+
+test("exact controls list independent work IDs and bare stop selects no team", async () => {
+  const f = await subject();
+  try {
+    const first = await f.fixture.work("a");
+    await f.fixture.invoke(
+      "a",
+      "start_team",
+      { goal: "Second independent goal." },
+      "second-start"
+    );
+    const second = await f.fixture.work("a");
+    assert.notEqual(first.admission.key.workId, second.admission.key.workId);
+    assert.equal(await f.route("list-status", "status", actor), true);
+    assert.equal(await f.route("ambiguous-stop", "stop", actor), true);
+    const messages = await f.messages();
+    const answer = messages.at(-1)?.text ?? "";
+    assert.match(answer, /Choose a work ID/u);
+    assert.ok(answer.includes(first.admission.key.workId));
+    assert.ok(answer.includes(second.admission.key.workId));
+    await f.fixture.waitDispatch();
+    assert.equal(
+      f.fixture.delivered.some((command) => command.kind === "cancel"),
+      false
+    );
+    const ledger = await f.fixture.ledger();
+    assert.ok(
+      Object.values(ledger.works).every(
+        (record) => record.status.kind === "accepted"
+      )
+    );
   } finally {
     await f.fixture.close();
   }
@@ -255,7 +290,10 @@ test("stop saves cancellation before late reports, and wrong sources or revoked 
       f.receive(wrong, actor),
       (error: unknown) => error instanceof Denied
     );
-    await f.route("stop-op", "stop", actor);
+    await f.source.coordinator.cancel({
+      workId: f.delivery.report.key.workId,
+      operationId: "stop-op",
+    });
     const cancelled = await f.fixture.work("a");
     assert.equal(cancelled.status.kind, "cancelled");
     const ignored = await f.receive(f.delivery, actor);
@@ -478,7 +516,10 @@ test("receiving dependency denial blocks the first report while cancelled metada
       await readImportedContent(f.fixture.pi(), f.source.native.id),
       { sourceIds: [], toolIds: [] }
     );
-    await f.route("cancel-before-report", "stop", actor);
+    await f.source.coordinator.cancel({
+      workId: f.delivery.report.key.workId,
+      operationId: "cancel-before-report",
+    });
     const ignored = await f.receive(f.delivery, actor);
     assert.equal(ignored.accepted, false);
     assert.equal(
@@ -522,25 +563,31 @@ test("a native request from before profile enablement keeps its coordinator rout
   }
 });
 
-test("passive updates and stop commit while an earlier command is still pending", async () => {
+test("targeted updates and cancellation commit while an earlier command is still pending", async () => {
   const f = await subject();
   try {
     f.fixture.hold();
     const before = await f.messages();
-    await f.route("pending-input-one", "Update one.", actor);
-    await f.route("pending-input-two", "Update two.", actor);
-    await f.route("pending-stop", "stop", actor);
+    const { workId } = f.delivery.report.key;
+    for (const [operationId, text] of [
+      ["pending-input-one", "Update one."],
+      ["pending-input-two", "Update two."],
+    ]) {
+      // oxlint-disable-next-line no-await-in-loop -- Each command must save its own durable receipt before cancellation.
+      await f.source.coordinator.admissions.commit(operationId, (tx) =>
+        f.source.coordinator.commandIn(tx, workId, operationId, {
+          kind: "input",
+          text,
+          contentDependencies: { sourceIds: [], toolIds: [] },
+        })
+      );
+    }
+    await f.source.coordinator.cancel({ workId, operationId: "pending-stop" });
     const record = await f.fixture.work("a");
     assert.equal(record.status.kind, "cancelled");
     assert.equal(Object.keys(record.pendingCommands).length, 3);
     const after = await f.messages();
-    assert.equal(after.length, before.length + 4);
-    assert.equal(
-      after.filter(
-        (message) => message.role === "user" && message.text === "Update one."
-      ).length,
-      1
-    );
+    assert.deepEqual(after, before);
     f.fixture.release();
     await f.fixture.waitDispatch();
   } finally {

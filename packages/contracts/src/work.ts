@@ -153,6 +153,7 @@ export const TeamCommandSchema = Schema.Union([
 export type TeamCommand = typeof TeamCommandSchema.Type;
 
 export const WorkStatusSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("queued") }),
   Schema.Struct({ kind: Schema.Literal("accepted") }),
   Schema.Struct({ kind: Schema.Literal("running") }),
   Schema.Struct({
@@ -275,7 +276,8 @@ export const transitionWorkStatus = (
     current.kind === "cancelled" ||
     current.kind === "completed" ||
     current.kind === "failed" ||
-    (current.kind === "running" && next.kind === "accepted")
+    (current.kind === "running" && next.kind === "accepted") ||
+    (current.kind !== "queued" && next.kind === "queued")
   ) {
     return current;
   }

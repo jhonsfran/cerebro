@@ -97,6 +97,7 @@ export const setup = async (timeoutMs = 600_000) => {
     ["b", true],
     ["c", true],
   ]);
+  const revokedContent = new Set<string>();
   const ownerPrincipalId = id.principal("owner-A");
   const profile = Schema.decodeUnknownSync(CoordinationProfileSchema)({
     leadAgentId: "lead-A",
@@ -107,7 +108,7 @@ export const setup = async (timeoutMs = 600_000) => {
     name,
     address: {
       organizationId: id.organization("org-A"),
-      agentId: id.agent("coordinator-A"),
+      agentId: id.agent(`coordinator-${name.toUpperCase()}`),
       conversationId: id.conversation(`public-${name}`),
       sessionId: id.session(`source-${name}`),
     },
@@ -171,6 +172,42 @@ export const setup = async (timeoutMs = 600_000) => {
           },
           now: () => clock,
           pi,
+          scanWorkKeys: (cursor) =>
+            pi.commit(async () => {
+              const page = await storage.scanDocuments(
+                {
+                  scope: { kind: "session" },
+                  at: "current",
+                  kind: WorkDocuments.definition.kind,
+                },
+                32,
+                cursor,
+                context
+              );
+              return {
+                keys: page.items.flatMap((entry) =>
+                  entry.key ? [entry.key] : []
+                ),
+                ...(page.next ? { next: page.next } : {}),
+              };
+            }, context),
+          contentAccess: {
+            check: (content) =>
+              allowed.get(source.name) &&
+              !content.sourceIds.some((sourceId) =>
+                revokedContent.has(sourceId)
+              )
+                ? Promise.resolve()
+                : Promise.reject(
+                    new Denied({
+                      code: "revoked",
+                      reason: "Content access revoked.",
+                    })
+                  ),
+            retain: (content) => {
+              dependencies = content;
+            },
+          },
           services: {
             contentDependencies: async () => {
               const imported = await readImportedContent(pi, native.id);
@@ -264,7 +301,11 @@ export const setup = async (timeoutMs = 600_000) => {
           ? [[document.record.admission.key.workId, document.record]]
           : []
     );
-    return { ...value, works: Object.fromEntries(pairs) };
+    return {
+      ...value,
+      documents: page.items.length,
+      works: Object.fromEntries(pairs),
+    };
   };
 
   const work = async (name: string) => {
@@ -308,6 +349,9 @@ export const setup = async (timeoutMs = 600_000) => {
     },
     setDependencies: (value: typeof dependencies) => {
       dependencies = value;
+    },
+    revokeContent: (sourceId: string) => {
+      revokedContent.add(sourceId);
     },
     revoke: (name: string) => {
       allowed.set(name, false);
@@ -357,9 +401,12 @@ export const setup = async (timeoutMs = 600_000) => {
       reportId: string,
       admit?: (
         tx: Parameters<typeof applyCoordinatorReport>[0]
-      ) => Promise<void>
+      ) => Promise<void>,
+      workId?: string
     ) => {
-      const record = await work(name);
+      const saved = await ledger();
+      const record = workId ? saved.works[workId] : await work(name);
+      assert.ok(record);
       const report = Schema.decodeUnknownSync(WorkReportSchema)({
         kind: "completed",
         id: reportId,

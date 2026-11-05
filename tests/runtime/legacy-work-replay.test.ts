@@ -21,6 +21,8 @@ import { createModels } from "../../packages/runtime/node_modules/@earendil-work
 import {
   Harness,
   createRegistry,
+  defineDoc,
+  defineDocFamily,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import { openNodeSqliteStorage } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/node.js";
 import { createCoordinatorDispatch } from "../../packages/runtime/src/coordinator-dispatch.ts";
@@ -29,6 +31,10 @@ import {
   WorkDocuments,
   WorkLedger,
   coordinatorOperationKey,
+} from "../../packages/runtime/src/coordinator-ledger.ts";
+import type {
+  CoordinatorWorkRecord,
+  WorkLedgerState,
 } from "../../packages/runtime/src/coordinator-ledger.ts";
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
 import { createTeamAdmission } from "../../packages/runtime/src/team-admission.ts";
@@ -48,6 +54,29 @@ const legacyJson =
 const work = Schema.decodeUnknownSync(WorkAdmissionSchema, {
   onExcessProperty: "error",
 })(JSON.parse(legacyJson));
+const LegacyWorkLedger = defineDoc({
+  kind: WorkLedger.definition.kind,
+  scope: "session",
+  version: 1,
+  initial: (): Pick<WorkLedgerState, "identity" | "active"> => ({
+    identity: null,
+    active: {},
+  }),
+});
+const LegacyWorkDocuments = defineDocFamily({
+  kind: WorkDocuments.definition.kind,
+  scope: "session",
+  version: 1,
+  family: true,
+  initial: (
+    _seed: null
+  ): {
+    record: Pick<
+      CoordinatorWorkRecord,
+      "admission" | "status" | "pendingCommands" | "reportId"
+    > | null;
+  } => ({ record: null }),
+});
 const commands = [
   {
     json: `{"id":"start-A","kind":"start","work":${legacyJson}}`,
@@ -117,7 +146,7 @@ test("literal old pending dispatches reopen with their original stringify digest
   let host = await create();
   try {
     const tasks = await host.pi.commit(async (tx) => {
-      const ledger = await tx.doc(WorkLedger);
+      const ledger = await tx.doc(LegacyWorkLedger);
       ledger.identity = {
         organizationId: work.key.organizationId,
         ownerPrincipalId: work.key.ownerPrincipalId,
@@ -126,7 +155,7 @@ test("literal old pending dispatches reopen with their original stringify digest
         source: work.sourceEventAddress,
         deadlineAt: work.deadlineAt,
       };
-      const document = await tx.doc(WorkDocuments, work.key.workId, null);
+      const document = await tx.doc(LegacyWorkDocuments, work.key.workId, null);
       document.record = {
         admission: JSON.parse(legacyJson),
         status: { kind: "accepted" },
@@ -176,6 +205,13 @@ test("literal old pending dispatches reopen with their original stringify digest
     );
     assert.equal(JSON.stringify(retained?.record?.admission), legacyJson);
     assert.deepEqual(retained?.record?.pendingCommands, {});
+    assert.equal(retained?.record?.dispatched, true);
+    assert.equal(retained?.record?.terminalReport, null);
+    assert.equal(retained?.record?.humanOperationId, null);
+    assert.deepEqual(retained?.record?.queuedCommands, {});
+    const migratedLedger = await host.pi.snapshot(WorkLedger, context);
+    assert.deepEqual(migratedLedger?.queue, []);
+    assert.ok(migratedLedger?.active[work.key.workId]);
     await Promise.all(
       tasks.map(async (item) => {
         const receipt = await host.pi.snapshot(

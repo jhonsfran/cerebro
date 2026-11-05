@@ -222,12 +222,13 @@ test("two Slack scopes share identity slots, keep destinations across reopen, an
       { goal: "Analyze C." },
       "human-C"
     );
-    assert.match(
-      denied.snapshot.tools.at(-1)?.output ?? "",
-      /maximum active teams/u
+    assert.equal(
+      JSON.parse(denied.snapshot.tools.at(-1)?.output ?? "{}").status.kind,
+      "queued"
     );
     const fullLedger = await fixture.ledger();
-    assert.equal(Object.keys(fullLedger.works).length, 2);
+    assert.equal(Object.keys(fullLedger.works).length, 3);
+    assert.equal(fullLedger.queue.length, 1);
     await fixture.reopen();
     const wrong = await fixture.invoke(
       "a",
@@ -294,9 +295,7 @@ test("team acceptance completes while transport waits and native dispatch retrie
       "a",
       "start_team",
       { goal: "Do bounded work." },
-      "human-1",
-      true,
-      2
+      "human-1"
     );
     assert.equal(accepted.settled.status, "done");
     const initial = await fixture.work("a");
@@ -355,9 +354,9 @@ test("cancel is absorbing and retains its slot until a terminal team receipt", a
       { goal: "C." },
       "blocked-C"
     );
-    assert.match(
-      blocked.snapshot.tools.at(-1)?.output ?? "",
-      /maximum active teams/u
+    assert.equal(
+      JSON.parse(blocked.snapshot.tools.at(-1)?.output ?? "{}").status.kind,
+      "queued"
     );
     let disclosures = 0;
     const report = await fixture.report("a", "late-report", () => {
@@ -377,12 +376,7 @@ test("cancel is absorbing and retains its slot until a terminal team receipt", a
       update.snapshot.tools.at(-1)?.output ?? "",
       /no longer accepts input/u
     );
-    await fixture.invoke(
-      "c",
-      "start_team",
-      { goal: "C after release." },
-      "new-C"
-    );
+    await fixture.source("c").coordinator.wake();
     const afterRelease = await fixture.ledger();
     assert.equal(Object.keys(afterRelease.works).length, 3);
     await fixture.waitDispatch();

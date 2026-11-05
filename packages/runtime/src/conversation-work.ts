@@ -70,6 +70,8 @@ const removedTools = new Set([
   "cancel_schedule",
   "start_team",
   "get_work",
+  "list_work",
+  "recall_work",
   "message_team",
   "stop_work",
 ]);

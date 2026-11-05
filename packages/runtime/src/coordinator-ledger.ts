@@ -4,12 +4,14 @@ import type { PrincipalId } from "@cerebro/contracts/identity";
 import {
   WorkCommandIdSchema,
   WorkAdmissionSchema,
+  WorkStatusSchema,
   transitionWorkStatus,
 } from "@cerebro/contracts/work";
 import type {
   WorkAdmission,
   WorkReport,
   WorkStatus,
+  TeamCommand,
 } from "@cerebro/contracts/work";
 import {
   LiveDoc,
@@ -38,28 +40,87 @@ export interface CoordinatorCommandReceipt extends JsonObject {
 }
 export interface CoordinatorWorkRecord extends JsonObject {
   admission: WorkAdmission;
+  humanOperationId: string | null;
   status: WorkStatus;
   reportId: string | null;
   pendingCommands: Record<string, CoordinatorCommandReceipt>;
+  dispatched: boolean;
+  queuedCommands: Record<string, TeamCommand>;
+  terminalReport: WorkReport | null;
 }
-interface WorkLedgerState extends JsonObject {
+export interface WorkLedgerState extends JsonObject {
   identity: { organizationId: string; ownerPrincipalId: string } | null;
   active: Record<
     string,
     { source: WorkAdmission["sourceEventAddress"]; deadlineAt: number }
   >;
+  queue: {
+    workId: string;
+    source: WorkAdmission["sourceEventAddress"];
+    deadlineAt: number;
+  }[];
 }
+const legacyRecordSchema = Schema.Struct({
+  admission: WorkAdmissionSchema,
+  status: WorkStatusSchema,
+  reportId: Schema.NullOr(Schema.String),
+  pendingCommands: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      digest: Schema.String,
+      taskId: Schema.declare<TaskId>(
+        (value): value is TaskId =>
+          typeof value === "number" && Number.isSafeInteger(value) && value > 0
+      ),
+    })
+  ),
+});
+const legacyLedgerSchema = Schema.Struct({
+  identity: Schema.NullOr(
+    Schema.Struct({
+      organizationId: Schema.String,
+      ownerPrincipalId: Schema.String,
+    })
+  ),
+  active: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      source: WorkAdmissionSchema.members[0].fields.sourceEventAddress,
+      deadlineAt: Schema.Number,
+    })
+  ),
+});
 export const WorkLedger = defineDoc({
   kind: "cerebro.coordinator-index",
   scope: "session",
-  version: 1,
-  initial: (): WorkLedgerState => ({ identity: null, active: {} }),
+  version: 2,
+  migrate: (value): WorkLedgerState => ({
+    ...Schema.decodeUnknownSync(legacyLedgerSchema)(value),
+    queue: [],
+  }),
+  initial: (): WorkLedgerState => ({ identity: null, active: {}, queue: [] }),
 });
 export const WorkDocuments = defineDocFamily({
   kind: "cerebro.coordinator-work",
   scope: "session",
   family: true,
-  version: 1,
+  version: 2,
+  migrate: (value): { record: CoordinatorWorkRecord | null } => {
+    const legacy = Schema.decodeUnknownSync(
+      Schema.Struct({ record: Schema.NullOr(legacyRecordSchema) })
+    )(value);
+    return {
+      record: legacy.record
+        ? {
+            ...legacy.record,
+            humanOperationId: null,
+            dispatched: true,
+            queuedCommands: {},
+            terminalReport: null,
+          }
+        : null,
+    };
+  },
   initial: (_seed: null): { record: CoordinatorWorkRecord | null } => ({
     record: null,
   }),
@@ -172,7 +233,10 @@ export const requireWorkSource = (
 export const workHoldsSlot = (
   record: CoordinatorWorkRecord,
   now: number
-): boolean => record.reportId === null && record.admission.deadlineAt > now;
+): boolean =>
+  record.dispatched &&
+  record.reportId === null &&
+  record.admission.deadlineAt > now;
 export const requireCoordinatorWork = async (
   tx: Tx,
   binding: CoordinationBinding,
@@ -277,6 +341,25 @@ export const pruneWorkIndex = async (
         Reflect.deleteProperty(ledger.active, workId);
       })
   );
+  const { queue } = ledger;
+  await Promise.all(
+    queue
+      .filter((entry) => entry.deadlineAt <= now)
+      .map(async ({ workId }) => {
+        const document = await tx.doc(WorkDocuments, workId, null);
+        if (document.record) {
+          document.record.status = transitionWorkStatus(
+            document.record.status,
+            {
+              kind: "failed",
+              reason: "The team work deadline expired.",
+            }
+          );
+          document.record.queuedCommands = {};
+        }
+      })
+  );
+  ledger.queue = queue.filter((entry) => entry.deadlineAt > now);
 };
 export const applyCoordinatorReport = async (
   tx: Tx,
@@ -317,6 +400,13 @@ export const applyCoordinatorReport = async (
     return { accepted: false, status: { ...record.status } };
   }
   await admit(tx, report);
+  if (report.kind === "completed") {
+    record.terminalReport = { ...report, text: report.text.slice(0, 4000) };
+  } else if (report.kind === "failed") {
+    record.terminalReport = { ...report, reason: report.reason.slice(0, 4000) };
+  } else {
+    record.terminalReport = report;
+  }
   record.reportId = report.id;
   Reflect.deleteProperty(ledger.active, report.key.workId);
   if (report.kind === "completed") {

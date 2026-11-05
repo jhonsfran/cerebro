@@ -10,8 +10,9 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Phase B: Design the workflow.
 - [ ] Phase C: Run the loop.
 - [x] Unit 1: Bind each agent to one persistent conversation and open it from the web.
-- [ ] Unit 2: Admit independent work with two active teams and sixteen queued items per person.
-- [ ] Unit 3: Route durable events through filters and explicit task subscriptions.
+- [x] Unit 2: Admit independent work with two active teams and sixteen queued items per person.
+- [ ] Unit 3a: Admit durable coordinator events and reports with atomic delivery intent.
+- [ ] Unit 3b: Route explicit task subscriptions and one-time team handback.
 - [ ] Unit 4: Connect web, Slack, timers, and reports to the coordinator and its control tools.
 - [ ] Unit 5: Add the protected development Inspector for private teams and workers.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
@@ -19,6 +20,8 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [ ] Phase E: Verify and hand back.
 
 Each implementation unit ends with focused checks, a fresh specification review, a fresh thermo-nuclear review, accepted fixes, and a separate commit. Reviews cover comments and unnecessary abstractions. The parent checks the actual diff and evidence before each commit.
+
+Unit 3 has two commits because event admission and team handback have different crash and authorization boundaries. Each receives its own checks and fresh review.
 
 The approved architecture is the design baseline. Read-only grounding checks its integration points. A second architecture competition is unnecessary unless the implementation disproves the design.
 
@@ -36,6 +39,8 @@ Grounding confirmed that Pi Durable 1.3.0, agents 0.26.0, and celld 0.6.1 alread
 ## Required behavior
 
 The coordinator handles conversation, new tasks, ambiguity, cross-task decisions, status, cancellation, and recall. It does not execute task tools. Deterministic filters run before model judgement. Explicit task follow-ups can reach subscribed work directly. Unrelated events return to the coordinator once.
+
+A published coordinator definition applies at a safe turn boundary in the same conversation. An active turn retains its original definition. Existing team role pins remain unchanged. Refresh must replace the provider, tools, and authorization configuration together and recover consistently after interruption. Merely changing Pi instructions would leave old policy closures active.
 
 Multiple goals in the primary chat create separate work items. Capacity waiting does not block the coordinator. Queue time counts toward the absolute deadline. Overflow is explicit. Cancelling queued work creates no Team cell. Cancellation of dispatched work retains its slot until a terminal acknowledgement or its deadline.
 
@@ -57,7 +62,7 @@ Inventory pending inputs, teams, outboxes, and future reminders. Pause old admis
 
 The running app must demonstrate all of these behaviors.
 
-1. Concurrent opens, reloads, and published agent changes retain one primary conversation.
+1. Concurrent opens, reloads, and published agent changes retain one primary conversation. The next safe coordinator turn uses the new definition.
 2. Two unrelated realistic requests create distinct private teams while the coordinator remains responsive.
 3. A third task queues, resumes after capacity returns, and can be cancelled before dispatch.
 4. Duplicate Slack events produce one logical admission. Filters reject unsupported events before model use. Explicit subscriptions route follow-ups correctly.

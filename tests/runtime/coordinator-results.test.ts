@@ -115,7 +115,7 @@ journey(
 );
 
 journey(
-  "status, direct updates and durable stop do not require an available coordinator model",
+  "status and targeted cancellation work without the model while ordinary input requires coordinator judgement",
   async (stack) => {
     const address = addressFor("passive-company", "notify-report-flow-held");
     const send = (operationId: string, text: string) =>
@@ -129,30 +129,37 @@ journey(
       },
       (value) => value.models.length === 2 && value.transport.length >= 2
     );
-    const row = inspected.transport.at(-1);
-    assert.ok(row);
+    const startedRow = inspected.transport.at(-1);
+    assert.ok(startedRow);
     const input = Schema.decodeUnknownSync(TeamCommandSchema)(
-      JSON.parse(row.command)
+      JSON.parse(startedRow.command)
     );
     const disabled = await call(stack, "model-access", { address });
     assert.equal(disabled.status, 200);
     const status = await send("status-human", "status");
     const update = await send("update-human", "Continue with this update.");
-    assert.deepEqual([status.status, update.status], [200, 200]);
-    await waitFor(
-      async () => {
-        const response = await call(stack, "inspect", { address });
-        return Schema.decodeUnknownSync(inspection)(await response.json());
-      },
-      (value) =>
-        value.transport.some(
-          (command) =>
-            Schema.decodeUnknownSync(TeamCommandSchema)(
-              JSON.parse(command.command)
-            ).kind === "input"
-        )
+    assert.deepEqual([status.status, update.status], [200, 403]);
+    const ambiguous = await send("stop-human", "stop");
+    assert.equal(ambiguous.status, 200);
+    const beforeStop = await call(stack, "inspect", { address });
+    const before = Schema.decodeUnknownSync(inspection)(
+      await beforeStop.json()
     );
-    const stopped = await send("stop-human", "stop");
+    assert.ok(
+      before.transport.every(
+        (row) =>
+          Schema.decodeUnknownSync(TeamCommandSchema)(JSON.parse(row.command))
+            .kind === "start"
+      )
+    );
+    const stopped = await call(stack, "control", {
+      address,
+      command: {
+        kind: "stop-work",
+        workId: input.work.key.workId,
+        operationId: "targeted-stop",
+      },
+    });
     assert.equal(stopped.status, 200, await stopped.clone().text());
     const teamName = JSON.stringify([
       "team-v1",

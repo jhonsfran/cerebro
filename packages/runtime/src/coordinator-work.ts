@@ -27,7 +27,6 @@ import { defineTool } from "@earendil-works/pi-durable";
 import type {
   ConversationId,
   Harness,
-  TaskId,
   ToolExecutionApi,
   ToolExecutionResult,
   ToolRegistration,
@@ -37,9 +36,14 @@ import type { LifecycleJobOutcome, LifecycleJobs } from "agents/lifecycle";
 import { Schema } from "effect";
 
 import { createCoordinatorAdmissions } from "./coordinator-admission.ts";
-import { createCoordinatorDispatch } from "./coordinator-dispatch.ts";
 import {
-  CommandReceipts,
+  canCancelWork,
+  createCoordinatorCommands,
+} from "./coordinator-commands.ts";
+import { createCoordinatorDispatch } from "./coordinator-dispatch.ts";
+import { createCoordinatorHistory } from "./coordinator-history.ts";
+import type { ScanWorkKeys, WorkContentAccess } from "./coordinator-history.ts";
+import {
   SourceOperations,
   SourceWork,
   WorkDocuments,
@@ -72,30 +76,8 @@ export interface CoordinationServices {
   readonly contentDependencies: () => Promise<ContentDependencies>;
   readonly sendCommand: (command: TeamCommand) => Promise<void>;
 }
-type CoordinatorInput =
-  | { readonly kind: "cancel" }
-  | {
-      readonly kind: "input";
-      readonly text: string;
-      readonly contentDependencies: ContentDependencies;
-    };
-const matchesCommandInput = (
-  saved: TeamCommand,
-  input: CoordinatorInput
-): boolean =>
-  saved.kind === input.kind &&
-  (saved.kind !== "input" ||
-    input.kind !== "input" ||
-    saved.text === input.text);
 const HEARTBEAT_MS = 5000;
-const acceptsCommands = (record: CoordinatorWorkRecord): boolean =>
-  record.reportId === null &&
-  (record.status.kind === "accepted" || record.status.kind === "running");
-const canCancelWork = (record: CoordinatorWorkRecord, time: number): boolean =>
-  workHoldsSlot(record, time) &&
-  record.status.kind !== "cancelled" &&
-  record.status.kind !== "completed";
-
+const MAX_QUEUED_WORK = 16;
 const output = async (
   operation: () => Promise<unknown>
 ): Promise<ToolExecutionResult> => {
@@ -115,6 +97,8 @@ const output = async (
 
 export const createCoordinatorWork = (options: {
   readonly address: EventAddress;
+  readonly scanWorkKeys: ScanWorkKeys;
+  readonly contentAccess: WorkContentAccess;
   readonly nativeId: ConversationId;
   readonly services?: CoordinationServices;
   readonly pi: Harness;
@@ -160,7 +144,13 @@ export const createCoordinatorWork = (options: {
   const records = async () => {
     const ledger = await options.pi.snapshot(WorkLedger, piContext());
     const documents = await Promise.all(
-      Object.entries(ledger?.active ?? {})
+      [
+        ...Object.entries(ledger?.active ?? {}),
+        ...(ledger?.queue ?? []).map((entry): [string, typeof entry] => [
+          entry.workId,
+          entry,
+        ]),
+      ]
         .filter(([, entry]) => sameWorkSource(entry.source, options.address))
         .map(([workId]) =>
           options.pi.snapshot(WorkDocuments, workId, piContext())
@@ -181,68 +171,6 @@ export const createCoordinatorWork = (options: {
     now,
   });
 
-  const commandReceipt = async (tx: Tx, command: TeamCommand) => {
-    const digest = await coordinatorOperationKey(JSON.stringify(command));
-    const document = await tx.doc(CommandReceipts, command.id, null);
-    if (!document.receipt) {
-      return { digest, document, taskId: undefined };
-    }
-    const task = await tx.task(document.receipt.taskId);
-    if (
-      !task ||
-      task.kind !== dispatch.definition.name ||
-      document.receipt.digest !== digest
-    ) {
-      throw new InvalidInput({
-        reason: "The team command ID names another input.",
-      });
-    }
-    const saved = Schema.decodeUnknownSync(TeamCommandSchema, {
-      onExcessProperty: "error",
-    })(task.input);
-    if ((await coordinatorOperationKey(JSON.stringify(saved))) !== digest) {
-      throw new InvalidInput({ reason: "The saved team command changed." });
-    }
-    return { digest, document, taskId: document.receipt.taskId };
-  };
-  const enqueueIn = async (
-    tx: Tx,
-    record: CoordinatorWorkRecord,
-    command: TeamCommand
-  ): Promise<TaskId> => {
-    const previous = await commandReceipt(tx, command);
-    if (previous.taskId !== undefined) {
-      return previous.taskId;
-    }
-    const pending = await Promise.all(
-      Object.entries(record.pendingCommands).map(
-        async ([commandId, receipt]) => ({
-          commandId,
-          task: await tx.task(receipt.taskId),
-        })
-      )
-    );
-    for (const item of pending) {
-      if (!item.task || item.task.state.status === "terminal") {
-        Reflect.deleteProperty(record.pendingCommands, item.commandId);
-      }
-    }
-    const limit = command.kind === "cancel" ? 8 : 7;
-    if (Object.keys(record.pendingCommands).length >= limit) {
-      throw new InvalidInput({
-        reason: "This work already has its maximum pending commands.",
-      });
-    }
-    const taskId = await tx.createTask(dispatch, command, {
-      background: true,
-      conversationId: options.nativeId,
-      ownership: { kind: "conversation" },
-    });
-    const receipt = { digest: previous.digest, taskId };
-    previous.document.receipt = receipt;
-    record.pendingCommands[command.id] = receipt;
-    return taskId;
-  };
   const pendingDispatches = () =>
     options.pi.commit(async (tx) => {
       const states: ("pending" | "running" | "waiting" | "completing")[] = [
@@ -274,6 +202,13 @@ export const createCoordinatorWork = (options: {
     );
   };
 
+  const { enqueueIn, enqueueAllIn, commandIn } = createCoordinatorCommands({
+    nativeId: options.nativeId,
+    dispatch,
+    binding,
+    now,
+    publicWork,
+  });
   const admissions = createCoordinatorAdmissions({
     pi: options.pi,
     nativeId: options.nativeId,
@@ -306,49 +241,70 @@ export const createCoordinatorWork = (options: {
       options.pi,
       options.nativeId
     );
+    const candidate = Schema.decodeUnknownSync(WorkIdSchema)(
+      await coordinatorOperationKey(
+        JSON.stringify([
+          "work-task-v1",
+          source.address.organizationId,
+          source.ownerPrincipalId,
+          source.address.agentId,
+          source.address.conversationId,
+          source.address.sessionId,
+          String(api.taskId),
+        ])
+      )
+    );
+    const prior = await options.pi.snapshot(
+      WorkDocuments,
+      candidate,
+      piContext(context.abortSignal)
+    );
+    if (prior?.record) {
+      requireWorkSource(prior.record, source);
+      if (prior.record.admission.goal !== goal) {
+        throw new InvalidInput({
+          reason: "The start task names another goal.",
+        });
+      }
+      return publicWork(prior.record);
+    }
+    const admittedAt = now();
     const [pins, contentDependencies] = await Promise.all([
       services.resolveRolePins(),
       services.contentDependencies(),
     ]);
-    const candidate = Schema.decodeUnknownSync(WorkIdSchema)(
-      crypto.randomUUID()
-    );
     return await admissions.commit(
       `start:${api.taskId}`,
       async (tx) => {
+        const document = await tx.doc(WorkDocuments, candidate, null);
+        if (document.record) {
+          requireWorkSource(document.record, source);
+          if (document.record.admission.goal !== goal) {
+            throw new InvalidInput({
+              reason: "The start task names another goal.",
+            });
+          }
+          return publicWork(document.record);
+        }
         const human = await currentHumanOperation(
           tx,
           source,
           options.nativeId,
           candidates
         );
-        const operation = await tx.doc(
-          SourceOperations,
-          options.nativeId,
-          human.key,
-          human.operationId
-        );
         const ledger = await tx.doc(WorkLedger);
         requireWorkIdentity(ledger, source);
         await pruneWorkIndex(tx, ledger, now());
-        const priorId = operation.route?.workId;
-        const activeId = Object.entries(ledger.active).find(([, entry]) =>
-          sameWorkSource(entry.source, source.address)
-        )?.[0];
-        const reusableId = priorId ?? activeId;
-        if (reusableId) {
-          const reusable = await requireCoordinatorWork(tx, source, reusableId);
-          operation.route = { kind: "coordinator", workId: reusableId };
-          const sourceWork = await tx.doc(SourceWork, options.nativeId);
-          sourceWork.workId = reusableId;
-          return publicWork(reusable);
-        }
-        if (Object.keys(ledger.active).length >= services.profile.maxTeams) {
+        const { queue } = ledger;
+        const queued =
+          queue.length > 0 ||
+          Object.keys(ledger.active).length >= services.profile.maxTeams;
+        if (queued && queue.length >= MAX_QUEUED_WORK) {
           throw new InvalidInput({
-            reason: "This identity already has its maximum active teams.",
+            reason:
+              "This identity already has its maximum sixteen queued work items.",
           });
         }
-        const admittedAt = now();
         const admission = Schema.decodeUnknownSync(WorkAdmissionSchema, {
           onExcessProperty: "error",
         })({
@@ -374,25 +330,38 @@ export const createCoordinatorWork = (options: {
         });
         const record: CoordinatorWorkRecord = {
           admission,
+          humanOperationId: human.operationId,
           pendingCommands: {},
           reportId: null,
-          status: { kind: "accepted" },
+          terminalReport: null,
+          dispatched: !queued,
+          queuedCommands: {},
+          status: { kind: queued ? "queued" : "accepted" },
         };
-        const document = await tx.doc(WorkDocuments, candidate, null);
         document.record = record;
-        const command = Schema.decodeUnknownSync(TeamCommandSchema, {
-          onExcessProperty: "error",
-        })({
-          id: `start:${candidate}`,
-          kind: "start",
-          work: admission,
-        });
-        await enqueueIn(tx, document.record, command);
-        ledger.active[candidate] = {
+        const entry = {
+          workId: candidate,
           source: source.address,
           deadlineAt: admission.deadlineAt,
         };
-        operation.route = { kind: "coordinator", workId: candidate };
+        if (queued) {
+          queue.push(entry);
+          ledger.queue = queue;
+        } else {
+          await enqueueIn(
+            tx,
+            document.record,
+            Schema.decodeUnknownSync(TeamCommandSchema)({
+              id: `start:${candidate}`,
+              kind: "start",
+              work: admission,
+            })
+          );
+          ledger.active[candidate] = {
+            source: entry.source,
+            deadlineAt: entry.deadlineAt,
+          };
+        }
         const sourceWork = await tx.doc(SourceWork, options.nativeId);
         sourceWork.workId = candidate;
         return publicWork(record);
@@ -401,83 +370,59 @@ export const createCoordinatorWork = (options: {
     );
   };
 
-  const commandIn = async (
-    tx: Tx,
-    workId: string,
-    operationId: string,
-    input: CoordinatorInput,
-    origin: "human" | "tool" = "human"
-  ) => {
-    const { kind } = input;
-    const suffix = await coordinatorOperationKey(
-      JSON.stringify([origin, operationId])
-    );
-    const commandId =
-      kind === "cancel" ? `cancel:${workId}` : `input:${workId}:${suffix}`;
-    const operation =
-      origin === "human"
-        ? await tx.doc(
-            SourceOperations,
-            options.nativeId,
-            await coordinatorOperationKey(operationId),
-            operationId
-          )
-        : undefined;
-    if (operation?.route) {
-      const expected = JSON.stringify({ kind: "team", workId, commandId });
-      if (JSON.stringify(operation.route) !== expected) {
-        throw new InvalidInput({
-          reason: "The source operation already chose another route.",
-        });
+  const promoteIn = async (
+    tx: Tx
+  ): Promise<{ record: CoordinatorWorkRecord; command: TeamCommand }[]> => {
+    const ledger = await tx.doc(WorkLedger);
+    requireWorkIdentity(ledger, binding());
+    await pruneWorkIndex(tx, ledger, now());
+    const commands: { record: CoordinatorWorkRecord; command: TeamCommand }[] =
+      [];
+    for (;;) {
+      const [head] = ledger.queue;
+      if (!head || !sameWorkSource(head.source, options.address)) {
+        break;
       }
-    }
-    const record = await requireCoordinatorWork(tx, binding(), workId);
-    if (operation) {
-      operation.route = { kind: "team", workId, commandId };
-    }
-    const receipt = await tx.doc(CommandReceipts, commandId, null);
-    if (receipt.receipt) {
-      const task = await tx.task(receipt.receipt.taskId);
-      const saved = task
-        ? Schema.decodeUnknownSync(TeamCommandSchema, {
-            onExcessProperty: "error",
-          })(task.input)
-        : undefined;
+      // oxlint-disable-next-line no-await-in-loop -- Each reservation changes the capacity available to the next FIFO head.
+      const record = await requireCoordinatorWork(tx, binding(), head.workId);
+      if (record.status.kind !== "queued") {
+        ledger.queue = ledger.queue.slice(1);
+        continue;
+      }
       if (
-        !saved ||
-        saved.id !== commandId ||
-        !matchesCommandInput(saved, input) ||
-        JSON.stringify(saved.work) !== JSON.stringify(record.admission)
+        Object.keys(ledger.active).length >= record.admission.limits.maxTeams
       ) {
-        throw new InvalidInput({
-          reason: "The team command ID names another input.",
-        });
+        break;
       }
-      await commandReceipt(tx, saved);
-      return { ...publicWork(record), accepted: false };
-    }
-    const command = Schema.decodeUnknownSync(TeamCommandSchema, {
-      onExcessProperty: "error",
-    })({
-      id: commandId,
-      work: record.admission,
-      ...input,
-    });
-    if (kind === "cancel") {
-      if (!canCancelWork(record, now())) {
-        return { ...publicWork(record), accepted: false };
-      }
-      record.status = {
-        kind: "cancelled",
-        commandId: command.id,
+      record.dispatched = true;
+      record.status = { kind: "accepted" };
+      const startCommand = Schema.decodeUnknownSync(TeamCommandSchema)({
+        id: `start:${head.workId}`,
+        kind: "start",
+        work: record.admission,
+      });
+      commands.push(
+        ...[startCommand, ...Object.values(record.queuedCommands)].map(
+          (command) => ({ record, command })
+        )
+      );
+      record.queuedCommands = {};
+      ledger.active[head.workId] = {
+        source: head.source,
+        deadlineAt: head.deadlineAt,
       };
-    } else if (!workHoldsSlot(record, now()) || !acceptsCommands(record)) {
-      throw new InvalidInput({ reason: "This work no longer accepts input." });
+      ledger.queue = ledger.queue.slice(1);
     }
-    await enqueueIn(tx, record, command);
-    return { ...publicWork(record), accepted: true };
+    return commands;
   };
 
+  const history = createCoordinatorHistory({
+    pi: options.pi,
+    nativeId: options.nativeId,
+    binding,
+    scanWorkKeys: options.scanWorkKeys,
+    contentAccess: options.contentAccess,
+  });
   const tools: ToolRegistration[] = options.services
     ? [
         defineTool({
@@ -578,6 +523,38 @@ export const createCoordinatorWork = (options: {
               );
             }),
         }),
+        defineTool({
+          callers: ["model"],
+          name: "list_work",
+          description:
+            "List a bounded creation-order page of work from this conversation. Continue with next even when a filtered page is empty. No exact total is provided.",
+          parameters: Type.Object({
+            cursor: Type.Optional(
+              Type.String({ minLength: 1, maxLength: 4096 })
+            ),
+          }),
+          replay: "safe",
+          execute: ({ cursor }, api, context) =>
+            output(async () => {
+              await requireCaller(api, context.abortSignal);
+              return await history.list(cursor, api, context);
+            }),
+        }),
+        defineTool({
+          callers: ["model"],
+          name: "recall_work",
+          description:
+            "Recall one permitted work item's bounded goal and terminal report by its work ID.",
+          parameters: Type.Object({
+            workId: Type.String({ minLength: 1, maxLength: 512 }),
+          }),
+          replay: "safe",
+          execute: ({ workId }, api, context) =>
+            output(async () => {
+              await requireCaller(api, context.abortSignal);
+              return await history.recall(workId, api, context);
+            }),
+        }),
       ]
     : [];
 
@@ -673,6 +650,19 @@ export const createCoordinatorWork = (options: {
       }
     },
     wake: async (): Promise<LifecycleJobOutcome> => {
+      let authorized = false;
+      try {
+        await options.authorize();
+        authorized = options.services !== undefined;
+      } catch (error) {
+        if (
+          !(error instanceof Denied) &&
+          !(error instanceof NotFound) &&
+          !(error instanceof InvalidInput)
+        ) {
+          throw error;
+        }
+      }
       await options.pi.commit(async (tx) => {
         const ledger = await tx.doc(WorkLedger);
         const expired = Object.entries(ledger.active).filter(
@@ -680,7 +670,7 @@ export const createCoordinatorWork = (options: {
             sameWorkSource(entry.source, options.address) &&
             entry.deadlineAt <= now()
         );
-        await Promise.all(
+        const cancellations = await Promise.all(
           expired.map(async ([workId]) => {
             const document = await tx.doc(WorkDocuments, workId, null);
             const { record } = document;
@@ -696,16 +686,25 @@ export const createCoordinatorWork = (options: {
                 id: `cancel:${workId}`,
                 work: record.admission,
               });
-              await enqueueIn(tx, record, command);
+              Reflect.deleteProperty(ledger.active, workId);
+              return [{ record, command }];
             }
             Reflect.deleteProperty(ledger.active, workId);
+            return [];
           })
         );
+        await pruneWorkIndex(tx, ledger, now());
+        const promotions = authorized ? await promoteIn(tx) : [];
+        await enqueueAllIn(tx, [...cancellations.flat(), ...promotions]);
       }, piContext());
       options.pi.resume();
       await holdDispatches();
       const pending = await pendingDispatches();
-      if (pending.length > 0 || (await admissions.pending())) {
+      const queued = await options.pi.snapshot(WorkLedger, piContext());
+      const hasQueued = (queued?.queue ?? []).some((entry) =>
+        sameWorkSource(entry.source, options.address)
+      );
+      if (pending.length > 0 || hasQueued || (await admissions.pending())) {
         return { rescheduleAt: now() + HEARTBEAT_MS };
       }
       const current = await records();
@@ -717,4 +716,36 @@ export const createCoordinatorWork = (options: {
         : undefined;
     },
   };
+};
+
+export const wakeCoordinatorJob = async (options: {
+  readonly pi: Harness;
+  readonly address: EventAddress;
+  readonly restore: () => Promise<{
+    readonly wake: () => Promise<LifecycleJobOutcome>;
+  }>;
+  readonly now?: () => number;
+}): Promise<LifecycleJobOutcome> => {
+  const now = options.now ?? Date.now;
+  let coordinator: Awaited<ReturnType<typeof options.restore>>;
+  try {
+    coordinator = await options.restore();
+  } catch (error) {
+    if (
+      !(error instanceof Denied) &&
+      !(error instanceof NotFound) &&
+      !(error instanceof InvalidInput)
+    ) {
+      throw error;
+    }
+    return await options.pi.commit(async (tx) => {
+      const ledger = await tx.doc(WorkLedger);
+      await pruneWorkIndex(tx, ledger, now());
+      const remaining = [...Object.values(ledger.active), ...ledger.queue].some(
+        (entry) => sameWorkSource(entry.source, options.address)
+      );
+      return remaining ? { rescheduleAt: now() + HEARTBEAT_MS } : undefined;
+    }, piContext());
+  }
+  return await coordinator.wake();
 };
