@@ -1,6 +1,7 @@
 import type { EventAddress } from "@cerebro/contracts/events";
 import { Conflict, Denied, NotFound } from "@cerebro/contracts/failures";
 import type { PrincipalId } from "@cerebro/contracts/identity";
+import type { ContentDependencies } from "@cerebro/contracts/session";
 import type { TeamCommandTransport } from "@cerebro/contracts/team-events";
 import {
   WorkCommandIdSchema,
@@ -39,6 +40,26 @@ export interface CoordinatorWorkRecord extends JsonObject {
   queuedCommands: Record<string, TeamCommandTransport>;
   terminalReport: WorkReport | null;
 }
+export const retainedWorkDependencies = (
+  records: readonly CoordinatorWorkRecord[]
+): ContentDependencies => ({
+  sourceIds: [
+    ...new Set(
+      records.flatMap((record) => [
+        ...record.admission.contentDependencies.sourceIds,
+        ...(record.terminalReport?.contentDependencies.sourceIds ?? []),
+      ])
+    ),
+  ],
+  toolIds: [
+    ...new Set(
+      records.flatMap((record) => [
+        ...record.admission.contentDependencies.toolIds,
+        ...(record.terminalReport?.contentDependencies.toolIds ?? []),
+      ])
+    ),
+  ],
+});
 export interface WorkLedgerState extends JsonObject {
   identity: { organizationId: string; ownerPrincipalId: string } | null;
   active: Record<
@@ -51,6 +72,34 @@ export interface WorkLedgerState extends JsonObject {
     deadlineAt: number;
   }[];
 }
+export const RecentTerminalWork = defineDocFamily({
+  kind: "cerebro.recent-terminal-work",
+  scope: "session",
+  family: true,
+  version: 1,
+  initial: (_seed: null): { ids: string[] } => ({ ids: [] }),
+});
+export const retainTerminalWorkIn = async (
+  tx: Tx,
+  record: CoordinatorWorkRecord
+): Promise<void> => {
+  if (
+    record.status.kind === "queued" ||
+    record.status.kind === "accepted" ||
+    record.status.kind === "running"
+  ) {
+    return;
+  }
+  const recent = await tx.doc(
+    RecentTerminalWork,
+    record.admission.sourceEventAddress.sessionId,
+    null
+  );
+  recent.ids = [
+    record.admission.key.workId,
+    ...recent.ids.filter((id) => id !== record.admission.key.workId),
+  ].slice(0, 16);
+};
 const legacyRecordSchema = Schema.Struct({
   admission: WorkAdmissionSchema,
   status: WorkStatusSchema,
@@ -289,6 +338,7 @@ export const pruneWorkIndex = async (
             document.record.status,
             { kind: "failed", reason: "The team work deadline expired." }
           );
+          await retainTerminalWorkIn(tx, document.record);
         }
         Reflect.deleteProperty(ledger.active, workId);
       })
@@ -310,6 +360,7 @@ export const pruneWorkIndex = async (
               reason: "The team work deadline expired.",
             }
           );
+          await retainTerminalWorkIn(tx, document.record);
           await discardQueuedCommandsIn(tx, document.record, "expired");
         }
       })
@@ -360,6 +411,7 @@ export const applyCoordinatorReport = async (
   const ledger = await tx.doc(WorkLedger);
   if (record.status.kind === "cancelled" || record.status.kind === "failed") {
     record.reportId = report.id;
+    await retainTerminalWorkIn(tx, record);
     Reflect.deleteProperty(ledger.active, report.key.workId);
     return { accepted: false, status: { ...record.status } };
   }
@@ -385,5 +437,6 @@ export const applyCoordinatorReport = async (
       kind: "cancelled",
     });
   }
+  await retainTerminalWorkIn(tx, record);
   return { accepted: true, status: { ...record.status } };
 };

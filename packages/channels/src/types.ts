@@ -4,6 +4,7 @@ import type {
   PortResult,
 } from "@cerebro/contracts";
 import type { EventAddress } from "@cerebro/contracts/events";
+import type { InspectionClient } from "@cerebro/contracts/inspection";
 import type { ChatClient } from "@cerebro/contracts/session-service";
 import type { SlackThread } from "@cerebro/contracts/work";
 import type { Database } from "@cerebro/db";
@@ -138,6 +139,7 @@ export interface ChannelOptions {
     }
   ) => Promise<PortResult<SourceView>>;
   readonly sessions: (database: Database) => ChatClient;
+  readonly inspection?: InspectionClient;
   readonly observationResponse?: (input: {
     readonly address: EventAddress;
     readonly context: ExecutionContext;

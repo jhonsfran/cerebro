@@ -19,6 +19,7 @@ import type { Harness as PiHarness } from "../../packages/runtime/node_modules/@
 import { openNodeSqliteStorage } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/node.js";
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
 import { createTeamAdmission } from "../../packages/runtime/src/team-admission.ts";
+import { readTeamInspection } from "../../packages/runtime/src/team-inspection.ts";
 import { TeamState } from "../../packages/runtime/src/team-state.ts";
 import { drainTerminalTeam } from "../../packages/runtime/src/team-terminal.ts";
 import { waitFor } from "./helpers.ts";
@@ -111,6 +112,20 @@ for (const scenario of ["generation", "tool", "admission"] as const) {
         const inspection = await pi.inspect(context);
         assert.equal(inspection.scheduling, "paused");
         const before = await retained(pi);
+        assert.ok(before.state.admission);
+        const query = {
+          kind: "team" as const,
+          workId: before.state.admission.key.workId,
+        };
+        const unsealed = await readTeamInspection({
+          pi,
+          work: before.state.admission,
+          query,
+        });
+        assert.ok(
+          unsealed.kind === "team" && unsealed.team.kind === "available"
+        );
+        assert.equal(unsealed.team.sealed, false);
         assert.ok(
           before.tasks.some((task) => task.state.status !== "terminal")
         );
@@ -120,6 +135,26 @@ for (const scenario of ["generation", "tool", "admission"] as const) {
         );
         await drainTerminalTeam(pi);
         const drained = await retained(pi);
+        const sealed = await readTeamInspection({
+          pi,
+          work: before.state.admission,
+          query,
+        });
+        assert.ok(sealed.kind === "team" && sealed.team.kind === "available");
+        assert.equal(sealed.team.sealed, true);
+        assert.equal(sealed.team.requestReservations, before.state.modelCalls);
+        assert.equal(sealed.team.monetaryCost, "unavailable");
+        assert.equal(sealed.team.roles[0]?.modelId, "model");
+        const tasks = await readTeamInspection({
+          pi,
+          work: before.state.admission,
+          query: { kind: "tasks", workId: query.workId, role: 0 },
+        });
+        assert.ok(tasks.kind === "tasks" && tasks.tasks.length > 0);
+        assert.equal(
+          tasks.tasks.every((task) => task.status === "terminal"),
+          true
+        );
         const pending = new Set(
           before.tasks
             .filter((task) => task.state.status !== "terminal")
@@ -167,10 +202,18 @@ for (const scenario of ["generation", "tool", "admission"] as const) {
           physical
         );
         await drainTerminalTeam(pi);
+        assert.deepEqual(
+          await readTeamInspection({ pi, work: before.state.admission, query }),
+          sealed
+        );
         assert.deepEqual(await retained(pi), drained);
         await pi.close(context);
         pi = await open(path.join(directory, "state.sqlite"));
         await drainTerminalTeam(pi);
+        assert.deepEqual(
+          await readTeamInspection({ pi, work: before.state.admission, query }),
+          sealed
+        );
         assert.deepEqual(await retained(pi), drained);
         assert.equal(
           readFileSync(path.join(directory, "physical.log"), "utf-8"),

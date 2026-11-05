@@ -17,6 +17,7 @@ import {
   WorkDocuments,
   coordinatorOperationKey,
   requireWorkSource,
+  retainTerminalWorkIn,
   sameWorkSource,
   workHoldsSlot,
 } from "./coordinator-ledger.ts";
@@ -223,6 +224,7 @@ export const createCoordinatorDispatch = (options: {
                 kind: "failed",
                 reason,
               });
+              await retainTerminalWorkIn(tx, record);
               if (notify) {
                 await options.terminalNoticeIn?.(tx, record, "dispatch-failed");
               }

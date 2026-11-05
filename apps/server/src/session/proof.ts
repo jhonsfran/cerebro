@@ -48,6 +48,7 @@ const proofSchema = z.strictObject({
   path: z.enum([
     "/send",
     "/read",
+    "/inspect",
     "/observe",
     "/decide",
     "/stop",

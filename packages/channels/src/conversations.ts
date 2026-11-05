@@ -5,6 +5,7 @@ import type {
   EventAddress,
   ExecutionContext,
 } from "@cerebro/contracts";
+import type { InspectionQuery } from "@cerebro/contracts/inspection";
 import type {
   ChatReceipt,
   ChatControl,
@@ -268,6 +269,17 @@ export const createConversationService = (
     await options.sessions(database).read(access);
     return access;
   };
+  const inspectConversation = async (
+    userId: string,
+    conversationId: string,
+    query: InspectionQuery
+  ) => {
+    const access = await conversationAccess(userId, conversationId);
+    if (!options.inspection) {
+      throw new ChannelError(503, "unavailable", "Inspection is unavailable.");
+    }
+    return await options.inspection.read({ ...access, query });
+  };
   const listConversations = async (userId: string) => {
     const context = await current(userId);
     const rows = await database
@@ -378,6 +390,7 @@ export const createConversationService = (
     createConversation,
     forkConversation,
     history,
+    inspectConversation,
     listConversations,
     readConversation,
     source,

@@ -6,12 +6,9 @@ import { Schema } from "effect";
 
 import type { MetadataTransaction } from "./session-agent.ts";
 
-export const createSourceDependencyStore = (
-  storage: DurableObjectStorage,
-  sessionId: EventAddress["sessionId"],
-  metadata: MetadataTransaction,
-  bounded = false
-) => {
+export const initializeContentSchema = (
+  storage: DurableObjectStorage
+): void => {
   storage.sql.exec(
     "CREATE TABLE IF NOT EXISTS cerebro_content_source (session_id TEXT NOT NULL, source_id TEXT NOT NULL, PRIMARY KEY(session_id, source_id))"
   );
@@ -21,6 +18,52 @@ export const createSourceDependencyStore = (
   storage.sql.exec(
     "CREATE TABLE IF NOT EXISTS cerebro_content_chat (session_id TEXT NOT NULL, source_session_id TEXT NOT NULL, organization_id TEXT NOT NULL, agent_id TEXT NOT NULL, conversation_id TEXT NOT NULL, PRIMARY KEY(session_id, source_session_id))"
   );
+};
+
+export const readRecordedContent = (
+  storage: DurableObjectStorage,
+  sessionId: EventAddress["sessionId"]
+) => ({
+  sourceIds: storage.sql
+    .exec<{ source_id: string }>(
+      "SELECT source_id FROM cerebro_content_source WHERE session_id=? ORDER BY source_id",
+      sessionId
+    )
+    .toArray()
+    .map((row) => id.source(row.source_id)),
+  toolIds: storage.sql
+    .exec<{ tool_id: string }>(
+      "SELECT tool_id FROM cerebro_content_tool WHERE session_id=? ORDER BY tool_id",
+      sessionId
+    )
+    .toArray()
+    .map((row) => id.tool(row.tool_id)),
+  history: storage.sql
+    .exec<{
+      organization_id: string;
+      agent_id: string;
+      conversation_id: string;
+      source_session_id: string;
+    }>(
+      "SELECT organization_id, agent_id, conversation_id, source_session_id FROM cerebro_content_chat WHERE session_id=? ORDER BY source_session_id",
+      sessionId
+    )
+    .toArray()
+    .map((row): EventAddress => ({
+      organizationId: id.organization(row.organization_id),
+      agentId: id.agent(row.agent_id),
+      conversationId: id.conversation(row.conversation_id),
+      sessionId: id.session(row.source_session_id),
+    })),
+});
+
+export const createSourceDependencyStore = (
+  storage: DurableObjectStorage,
+  sessionId: EventAddress["sessionId"],
+  metadata: MetadataTransaction,
+  bounded = false
+) => {
+  initializeContentSchema(storage);
   const importDependencies = (dependencies: ContentDependencies): void => {
     if (bounded) {
       Schema.decodeUnknownSync(BoundedContentDependenciesSchema)({

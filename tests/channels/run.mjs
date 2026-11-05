@@ -102,6 +102,8 @@ try {
       "tests/channels/observation.test.ts",
       "tests/channels/capabilities-ui.test.ts",
       "tests/channels/forks.test.ts",
+      "tests/channels/inspection-proof.test.ts",
+      "tests/channels/inspection.test.ts",
     ],
     {
       env: { ...process.env, CHANNEL_TEST_DATABASE_URL: databaseUrl },

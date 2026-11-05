@@ -3,6 +3,8 @@ import {
   failureToHttp,
   toContractFailure,
 } from "@cerebro/contracts/failures";
+import type { ExecutionContext } from "@cerebro/contracts/identity";
+import type { PrivateInspectionQuery } from "@cerebro/contracts/inspection";
 import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
 import type { TeamCommandTransport } from "@cerebro/contracts/team-events";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
@@ -21,6 +23,7 @@ import type {
 import { DurableObject } from "cloudflare:workers";
 import { Schema } from "effect";
 
+import { initializeContentSchema } from "./content-dependency-store.ts";
 import { trackNativeProgress } from "./native-progress.ts";
 import { piContext } from "./pi-harness.ts";
 import type {
@@ -33,6 +36,7 @@ import type { ReadTeamRoleImports } from "./team-content.ts";
 import { createTeamEvents } from "./team-events.ts";
 import type { TeamEventReturnTransport, TeamEvents } from "./team-events.ts";
 import { expireTeam, receiveExpiredTeam } from "./team-expiration.ts";
+import { readTeamInspection } from "./team-inspection.ts";
 import { createTeamReportOutbox } from "./team-report-outbox.ts";
 import type { TeamReportTransport } from "./team-report-outbox.ts";
 import type { TeamRoleConfiguration } from "./team-role.ts";
@@ -70,6 +74,24 @@ export abstract class TeamAgent<
     importedDependencies: ReadTeamRoleImports
   ): Promise<readonly TeamRoleConfiguration[]>;
 
+  // oxlint-disable-next-line class-methods-use-this -- Server subclasses verify the signed private inspection target.
+  protected resolveInspection(
+    _request: Request
+  ): Promise<PrivateInspectionQuery & { readonly context: ExecutionContext }> {
+    throw new InvalidInput({ reason: "Private inspection is not configured." });
+  }
+  // oxlint-disable-next-line class-methods-use-this -- Server subclasses check current source and recorded content reads.
+  protected authorizeInspection(
+    _pi: Harness,
+    _work: WorkAdmission,
+    _context: ExecutionContext,
+    _signal?: AbortSignal
+  ): Promise<void> {
+    throw new InvalidInput({
+      reason: "Private inspection access is not configured.",
+    });
+  }
+
   readonly harness = new PiHarness({
     harness: async ({ storage, context }) => {
       const models = createModels();
@@ -101,6 +123,10 @@ export abstract class TeamAgent<
       void close();
       let work = this.incoming;
       try {
+        await pi.commit(
+          () => initializeContentSchema(this.ctx.storage),
+          context
+        );
         const state = await pi.snapshot(TeamState, context);
         const retained = state?.admission ?? this.incoming;
         work = retained
@@ -298,6 +324,29 @@ export abstract class TeamAgent<
 
   async onRequest(request: Request): Promise<Response> {
     try {
+      if (new URL(request.url).pathname === "/inspect") {
+        const input = await this.resolveInspection(request);
+        const pi = await this.harness.pi();
+        await this.authorizeInspection(
+          pi,
+          input.work,
+          input.context,
+          request.signal
+        );
+        const frame = await readTeamInspection({
+          pi,
+          work: input.work,
+          query: input.query,
+          signal: request.signal,
+        });
+        await this.authorizeInspection(
+          pi,
+          input.work,
+          input.context,
+          request.signal
+        );
+        return Response.json(frame);
+      }
       const input = await this.resolve(request);
       const { command, wire } = normalizeTeamCommand(input);
       if (

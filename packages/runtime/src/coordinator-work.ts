@@ -56,6 +56,7 @@ import {
   requireCoordinatorWork,
   requireWorkIdentity,
   requireWorkSource,
+  retainTerminalWorkIn,
   sameWorkSource,
   workHoldsSlot,
 } from "./coordinator-ledger.ts";
@@ -720,6 +721,7 @@ export const createCoordinatorWork = (options: {
                 kind: "failed",
                 reason: "The team work deadline expired.",
               });
+              await retainTerminalWorkIn(tx, record);
               const command = Schema.decodeUnknownSync(TeamCommandSchema, {
                 onExcessProperty: "error",
               })({

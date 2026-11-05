@@ -11,6 +11,7 @@ import {
 } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
+import { InspectionQuery } from "@cerebro/contracts/inspection";
 import type { ReadOptions } from "@cerebro/contracts/port";
 import type {
   AgentDefinition,
@@ -30,7 +31,7 @@ import {
   UserEntry,
   AssistantEntry,
 } from "@earendil-works/pi-durable";
-import type { EntryId, Registry } from "@earendil-works/pi-durable";
+import type { EntryId, Registry, Storage } from "@earendil-works/pi-durable";
 import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
 import type {
@@ -41,12 +42,15 @@ import { DurableObject } from "cloudflare:workers";
 import { Effect, Result, Schema } from "effect";
 
 import type { CompanySkill } from "./company-skills.ts";
+import { initializeContentSchema } from "./content-dependency-store.ts";
 import type { createSourceDependencyStore } from "./content-dependency-store.ts";
 import { Bindings } from "./conversation-bindings.ts";
 import type { ConversationBinding } from "./conversation-bindings.ts";
 import { CompactPayload } from "./conversation-compaction.ts";
 import { selectedRegistrationsIn } from "./conversation-drain.ts";
 import { searchConversationHistory } from "./conversation-history.ts";
+import { readConversationInspection } from "./conversation-inspection.ts";
+import type { InspectionAccess } from "./conversation-inspection.ts";
 import { ReminderPayload } from "./conversation-reminders.ts";
 import { ConversationScope } from "./conversation-scope.ts";
 import type { SearchResult } from "./conversation-work.ts";
@@ -68,6 +72,7 @@ import type {
 import { wakeCoordinatorJob } from "./coordinator-work.ts";
 import type { CoordinationServices } from "./coordinator-work.ts";
 import { readImportedContent } from "./imported-content.ts";
+import { scanInspectionKeys } from "./inspection-page.ts";
 import { piContext, snapshotToolIds } from "./pi-harness.ts";
 import type { ControlledProviderConfiguration } from "./pi-provider.ts";
 import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
@@ -150,6 +155,7 @@ export interface SessionHostConfiguration {
 }
 
 interface NativeHost {
+  readonly store: Storage;
   restoring: boolean;
   readonly events: CoordinatorEvents;
   readonly replies: CoordinatorReplyOutbox;
@@ -232,28 +238,14 @@ export class SessionAgent<
         context
       );
       const scanWorkKeys: ScanWorkKeys = (cursor) =>
-        pi.commit(async () => {
-          const page = await storage.scanDocuments(
-            {
-              scope: { kind: "session" },
-              at: "current",
-              kind: WorkDocuments.definition.kind,
-            },
-            32,
-            cursor,
-            piContext()
-          );
-          return {
-            keys: page.items.flatMap((entry) => (entry.key ? [entry.key] : [])),
-            ...(page.next ? { next: page.next } : {}),
-          };
-        }, piContext());
+        scanInspectionKeys(pi, storage, WorkDocuments.definition.kind, cursor);
       const waitUntil = (promise: Promise<unknown>) => {
         if (!this.lifecycle.trackAlarmWork(promise)) {
           this.ctx.waitUntil(promise);
         }
       };
       const host: NativeHost = {
+        store: storage,
         models,
         pi,
         registry,
@@ -278,24 +270,12 @@ export class SessionAgent<
           },
           resolve: (address) => this.botEventScope(address, host),
           scan: (cursor) =>
-            pi.commit(async () => {
-              const page = await storage.scanDocuments(
-                {
-                  scope: { kind: "session" },
-                  at: "current",
-                  kind: BotEventReceipts.definition.kind,
-                },
-                32,
-                cursor,
-                piContext()
-              );
-              return {
-                keys: page.items.flatMap((entry) =>
-                  entry.key ? [entry.key] : []
-                ),
-                ...(page.next ? { next: page.next } : {}),
-              };
-            }, piContext()),
+            scanInspectionKeys(
+              pi,
+              storage,
+              BotEventReceipts.definition.kind,
+              cursor
+            ),
           waitUntil,
         }),
       };
@@ -313,6 +293,10 @@ export class SessionAgent<
       };
       void resetFailedIdentity();
       try {
+        await pi.commit(
+          () => initializeContentSchema(this.ctx.storage),
+          context
+        );
         const bindings = await pi.snapshot(Bindings, context);
         for (const binding of Object.values(bindings?.conversations ?? {})) {
           try {
@@ -369,6 +353,13 @@ export class SessionAgent<
         reason: "Conversation host composition is not configured.",
       })
     );
+  }
+
+  // oxlint-disable-next-line class-methods-use-this -- Server subclasses provide current read authority and private transport.
+  protected inspectionAccess(): InspectionAccess {
+    throw new Unavailable({
+      reason: "Inspection read access is not configured.",
+    });
   }
 
   private async openScope(
@@ -867,6 +858,37 @@ export class SessionAgent<
         return Response.json({ status: "ok", value: targets });
       }
       const { address, context } = resolved;
+      if (new URL(request.url).pathname === "/inspect") {
+        const query = Schema.decodeUnknownSync(InspectionQuery, {
+          onExcessProperty: "error",
+        })(await request.json());
+        await this.harness.pi();
+        const host = this.active;
+        if (!host) {
+          throw new Unavailable({
+            reason: "The identity runtime is unavailable.",
+          });
+        }
+        return Response.json(
+          await readConversationInspection({
+            pi: host.pi,
+            storage: this.ctx.storage,
+            address,
+            context,
+            query,
+            signal: request.signal,
+            access: this.inspectionAccess(),
+            scanWorkKeys: host.scanWorkKeys,
+            scanEventKeys: (cursor) =>
+              scanInspectionKeys(
+                host.pi,
+                host.store,
+                BotEventReceipts.definition.kind,
+                cursor
+              ),
+          })
+        );
+      }
       const scope = await this.scope(address);
       if ("kind" in resolved && resolved.kind === "accepted-legacy-input") {
         const receipt = await scope.acceptLegacyInput(

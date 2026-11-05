@@ -1,5 +1,7 @@
 import { InvalidInput } from "@cerebro/contracts/failures";
+import { id } from "@cerebro/contracts/identity";
 import type { ContentDependencies } from "@cerebro/contracts/session";
+import { digestToolArguments } from "@cerebro/contracts/tools";
 import type { WorkAdmission } from "@cerebro/contracts/work";
 import type { Harness } from "@earendil-works/pi-durable";
 
@@ -10,6 +12,19 @@ import { TeamState, requireTeamAdmission } from "./team-state.ts";
 export type ReadTeamRoleImports = (
   roleIndex: number
 ) => Promise<ContentDependencies>;
+export const teamRoleAddress = async (work: WorkAdmission, index: number) => {
+  if (!Number.isInteger(index) || index < 0 || index > work.limits.maxWorkers) {
+    throw new InvalidInput({ reason: "Invalid private role slot." });
+  }
+  const pin = index === 0 ? work.lead : work.worker;
+  const digest = await digestToolArguments({ key: work.key, role: index });
+  return {
+    organizationId: work.key.organizationId,
+    agentId: pin.agentId,
+    conversationId: id.conversation(`team:${digest}`),
+    sessionId: id.session(`team:${digest}`),
+  };
+};
 
 export const readTeamRoleImports = async (
   pi: Harness,

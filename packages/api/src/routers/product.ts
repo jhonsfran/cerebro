@@ -2,6 +2,7 @@ import { createChannelService } from "@cerebro/channels/service";
 import { ChannelError } from "@cerebro/channels/types";
 import { id } from "@cerebro/contracts";
 import { failureToHttp, isContractFailure } from "@cerebro/contracts/failures";
+import { InspectionQuery } from "@cerebro/contracts/inspection";
 import { ChatControl } from "@cerebro/contracts/session-service";
 import { ORPCError } from "@orpc/server";
 import { Schema } from "effect";
@@ -59,6 +60,16 @@ const agentInput = z.object({
   operationId: identifier,
 });
 const conversation = z.object({ conversationId: z.string().min(1) });
+const inspectionQuery = z.unknown().transform((value, context) => {
+  try {
+    return Schema.decodeUnknownSync(InspectionQuery, {
+      onExcessProperty: "error",
+    })(value);
+  } catch {
+    context.addIssue({ code: "custom", message: "Invalid inspection query." });
+    return z.NEVER;
+  }
+});
 const connectorId = z.object({ connectorId: identifier });
 // The Agent Skills name rule: lowercase words joined by single hyphens.
 const skillName = z
@@ -236,6 +247,24 @@ export const productRouter = {
     .input(conversation)
     .handler(({ context, input }) =>
       context.service.history(context.userId, input.conversationId)
+    ),
+  inspectConversation: product
+    .route({
+      method: "POST",
+      path: "/product/conversations/{conversationId}/inspection",
+    })
+    .input(
+      z.strictObject({
+        conversationId: z.string().min(1),
+        query: inspectionQuery,
+      })
+    )
+    .handler(({ context, input }) =>
+      context.service.inspectConversation(
+        context.userId,
+        input.conversationId,
+        input.query
+      )
     ),
   install: product
     .route({ method: "POST", path: "/product/setup" })

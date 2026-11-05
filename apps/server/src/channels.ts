@@ -14,6 +14,7 @@ import { catalogTools } from "./catalog";
 import { runtimeConfiguration } from "./config";
 import { createConnectorAdmin } from "./connectors";
 import { createSessionClient } from "./session/client";
+import { createInspectionClient } from "./session/inspection-client";
 import { createSlackEventClient } from "./session/slack-event-client";
 
 const slackConfiguration = z
@@ -83,6 +84,7 @@ export const createChannelOptions = (env: WorkerEnv) => {
       return session?.user ?? null;
     },
     mode: env.DEPLOY_MODE,
+    inspection: createInspectionClient(env),
     observationResponse: (input: Parameters<ChatClient["observe"]>[0]) =>
       createSessionClient(env).observe(input),
     organizationId: env.CHANNEL_ORGANIZATION_ID ?? "local-company",

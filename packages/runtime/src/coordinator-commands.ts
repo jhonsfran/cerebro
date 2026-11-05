@@ -22,6 +22,7 @@ import {
   WorkLedger,
   coordinatorOperationKey,
   requireCoordinatorWork,
+  retainTerminalWorkIn,
   workHoldsSlot,
   workAcceptsEvents,
 } from "./coordinator-ledger.ts";
@@ -67,6 +68,7 @@ const bufferIn = async (
   if (command.kind === "cancel") {
     await discardQueuedCommandsIn(tx, record, "cancelled");
     record.status = { kind: "cancelled", commandId: command.id };
+    await retainTerminalWorkIn(tx, record);
     const ledger = await tx.doc(WorkLedger);
     ledger.queue = ledger.queue.filter(
       (entry) => entry.workId !== record.admission.key.workId
@@ -277,6 +279,7 @@ export const createCoordinatorCommands = (options: {
         kind: "cancelled",
         commandId: command.id,
       };
+      await retainTerminalWorkIn(tx, record);
     } else if (!workHoldsSlot(record, now()) || !acceptsCommands(record)) {
       throw new InvalidInput({ reason: "This work no longer accepts input." });
     }

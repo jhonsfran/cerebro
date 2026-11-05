@@ -567,6 +567,7 @@ export const setup = async (
     waitDispatch,
     pi: () => host.pi,
     database: () => host.database,
+    storage: () => host.storage,
     events: () => host.events,
     eventSubmissions,
     pauseEventSubmit: (at: "before" | "after") => {

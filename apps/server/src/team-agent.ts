@@ -2,14 +2,11 @@ import { assertQueuePayloadSize } from "@cerebro/channels/queue-payload";
 import { contextByPrincipal } from "@cerebro/channels/security";
 import { prepareTeamReport } from "@cerebro/channels/team-reports";
 import { Denied, fromPortResult } from "@cerebro/contracts/failures";
-import { id } from "@cerebro/contracts/identity";
+import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { ContentDependencies } from "@cerebro/contracts/session";
 import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
 import type { TeamEventReturn } from "@cerebro/contracts/team-events";
-import {
-  canonicalToolArguments,
-  digestToolArguments,
-} from "@cerebro/contracts/tools";
+import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import { workCellName } from "@cerebro/contracts/work";
 import type {
   WorkAdmission,
@@ -18,9 +15,11 @@ import type {
 } from "@cerebro/contracts/work";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
+import type { Harness } from "@cerebro/runtime/pi-harness";
 import type { MetadataTransaction } from "@cerebro/runtime/session-agent";
 import { TeamAgent as TeamHost } from "@cerebro/runtime/team-agent";
 import type { ReadTeamRoleImports } from "@cerebro/runtime/team-content";
+import { teamRoleAddress } from "@cerebro/runtime/team-content";
 import { teamCommandDependencies } from "@cerebro/runtime/team-state";
 import { Effect } from "effect";
 
@@ -28,15 +27,37 @@ import { checkContentDependencies, createCurrentAuthority } from "./access";
 import type { WorkerEnv } from "./bindings";
 import { slackSettings } from "./channels";
 import { runtimeConfiguration } from "./config";
-import { resolveSessionAddress } from "./session/agent";
+import { resolveSessionAddress } from "./session/address";
 import {
   isCoordinatorConversation,
   requireLegacySourceMatch,
 } from "./session/coordination";
 import { createExecutionComposition } from "./session/execution";
 import { authenticateSessionRequest } from "./session/proof";
+import {
+  authorizeTeamInspection,
+  resolveTeamInspection,
+} from "./session/team-inspection";
 
 export class TeamAgent extends TeamHost<WorkerEnv> {
+  protected override resolveInspection(request: Request) {
+    return resolveTeamInspection(this.env, this.ctx.id.name, request);
+  }
+  protected override authorizeInspection(
+    pi: Harness,
+    work: WorkAdmission,
+    context: ExecutionContext,
+    signal?: AbortSignal
+  ) {
+    return authorizeTeamInspection(
+      this.env,
+      this.ctx.storage,
+      pi,
+      work,
+      context,
+      signal
+    );
+  }
   private async authorizeEventSource(
     work: WorkAdmission,
     dependencies: ContentDependencies
@@ -192,16 +213,7 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
           )
         );
         const agent = await Effect.runPromise(fromPortResult(result));
-        const digest = await digestToolArguments({
-          key: work.key,
-          role: index,
-        });
-        const address = {
-          organizationId: work.key.organizationId,
-          agentId: pin.agentId,
-          conversationId: id.conversation(`team:${digest}`),
-          sessionId: id.session(`team:${digest}`),
-        };
+        const address = await teamRoleAddress(work, index);
         return await Effect.runPromise(
           createExecutionComposition(
             this.env,

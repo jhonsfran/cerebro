@@ -29,25 +29,27 @@ import {
 } from "@cerebro/contracts/work";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
-import { channelConversation } from "@cerebro/db/schema/agents";
+import type { channelConversation } from "@cerebro/db/schema/agents";
 import { SessionAgent as SessionHost } from "@cerebro/runtime/session-agent";
 import type {
   DefinitionSelection,
   MetadataTransaction,
   SessionHostConfiguration,
 } from "@cerebro/runtime/session-agent";
-import { and, eq } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import { z } from "zod";
 
 import type { WorkerEnv } from "../bindings";
 import { slackSettings } from "../channels";
 import { runtimeConfiguration } from "../config";
+import { resolveSessionAddress } from "./address";
 import {
   createCoordinatorServices,
   requireLegacySourceMatch,
 } from "./coordination";
 import { createExecutionComposition } from "./execution";
+import { requireInspectionRead } from "./inspection-access";
+import { readPrivateTeamInspection } from "./inspection-client";
 import {
   authenticateIdentityRequest,
   authenticateSessionRequest,
@@ -79,40 +81,6 @@ const resolveIdentity = (name: string | undefined) =>
       };
     },
   });
-
-export const resolveSessionAddress = (
-  env: WorkerEnv,
-  address: EventAddress,
-  identity: SessionIdentity
-) =>
-  tryAdapter(() =>
-    withDatabase(env, async (database) => {
-      const [row] = await database
-        .select()
-        .from(channelConversation)
-        .where(
-          and(
-            eq(channelConversation.organizationId, address.organizationId),
-            eq(channelConversation.agentId, address.agentId),
-            eq(channelConversation.conversationId, address.conversationId),
-            eq(channelConversation.sessionId, address.sessionId)
-          )
-        );
-      if (
-        !row ||
-        row.engine !== "pi-identity-v1" ||
-        row.retiredAt ||
-        row.organizationId !== identity.organizationId ||
-        row.ownerPrincipalId !== identity.ownerPrincipalId
-      ) {
-        throw new Denied({
-          code: "unauthorized",
-          reason: "The identity does not own this active conversation.",
-        });
-      }
-      return { address, conversation: row };
-    })
-  );
 
 export const createRuntimeComposition = (
   env: WorkerEnv,
@@ -284,6 +252,14 @@ export const createRuntimeComposition = (
   });
 
 export class IdentityAgent extends SessionHost<WorkerEnv> {
+  protected override inspectionAccess() {
+    return {
+      authorize: (input: Parameters<typeof requireInspectionRead>[1]) =>
+        requireInspectionRead(this.env, input),
+      team: (input: Parameters<typeof readPrivateTeamInspection>[1]) =>
+        readPrivateTeamInspection(this.env, input),
+    };
+  }
   protected override resolve(request: Request) {
     return Effect.gen({ self: this }, function* resolveRequest() {
       const identity = yield* resolveIdentity(this.ctx.id.name);

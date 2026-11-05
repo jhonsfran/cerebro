@@ -21,6 +21,8 @@ import { Schema } from "effect";
 
 import { webEventData } from "./coordinator-event-input.ts";
 
+export type { Harness } from "@earendil-works/pi-durable";
+
 export const snapshotToolIds = (snapshot: ChatSnapshot): readonly string[] => [
   ...new Set(
     [

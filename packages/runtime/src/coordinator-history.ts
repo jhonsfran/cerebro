@@ -10,6 +10,7 @@ import { Schema } from "effect";
 
 import {
   WorkDocuments,
+  retainedWorkDependencies,
   requireWorkSource,
   sameWorkSource,
 } from "./coordinator-ledger.ts";
@@ -39,27 +40,6 @@ const cursorSchema = Schema.fromJsonString(
     Schema.is(Schema.JsonObject)(value)
   )
 );
-const dependenciesOf = (
-  records: readonly CoordinatorWorkRecord[]
-): ContentDependencies => ({
-  sourceIds: [
-    ...new Set(
-      records.flatMap((record) => [
-        ...record.admission.contentDependencies.sourceIds,
-        ...(record.terminalReport?.contentDependencies.sourceIds ?? []),
-      ])
-    ),
-  ],
-  toolIds: [
-    ...new Set(
-      records.flatMap((record) => [
-        ...record.admission.contentDependencies.toolIds,
-        ...(record.terminalReport?.contentDependencies.toolIds ?? []),
-      ])
-    ),
-  ],
-});
-
 const boundedStatus = (record: CoordinatorWorkRecord) =>
   record.status.kind === "failed"
     ? { ...record.status, reason: record.status.reason.slice(0, 400) }
@@ -77,7 +57,7 @@ export const createCoordinatorHistory = (options: {
     api: Pick<ToolExecutionApi, "commit">,
     context: Parameters<ToolExecutionApi["agent"]>[0]
   ): Promise<void> => {
-    const dependencies = dependenciesOf(records);
+    const dependencies = retainedWorkDependencies(records);
     await options.contentAccess.check(dependencies, context.abortSignal);
     await api.commit(async (tx) => {
       await importContentIn(tx, options.nativeId, dependencies);
