@@ -171,6 +171,7 @@ export const InspectionTool = Schema.Struct({
   id: identifier,
   name: identifier,
   status: Schema.Literals([
+    "unknown",
     "pending",
     "running",
     "succeeded",

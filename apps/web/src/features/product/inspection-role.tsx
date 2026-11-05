@@ -173,7 +173,9 @@ const Tools = ({ frame }: { frame: InspectionTranscript }) => (
               <InspectionText content={tool.output} />
             </div>
           ) : (
-            <p className="text-muted-foreground">No saved output.</p>
+            <p className="text-muted-foreground">
+              Output unavailable on this page.
+            </p>
           )}
           <InspectionFacts
             rows={[

@@ -151,7 +151,7 @@ const inspectMessage = (
 const inspectToolCall = (call: ToolCall): InspectionTool => ({
   id: call.id.slice(0, 2048),
   name: call.name.slice(0, 2048),
-  status: "interrupted",
+  status: "unknown",
   input: safeToolInput(call.name, call.arguments),
   output: null,
   resultEntryId: null,

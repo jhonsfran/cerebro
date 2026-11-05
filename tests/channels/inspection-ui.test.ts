@@ -192,6 +192,54 @@ test("role transcript, safe tools, tasks and saved usage use bounded lazy querie
   );
 });
 
+test("a tool call without a result on its page shows unknown status and page-local output text", async () => {
+  const work = inspectionWork();
+  const transcript = inspectionTranscript(work.workId);
+  const [tool] = transcript.tools;
+  assert.ok(tool);
+  const fixture = inspectorFixture({
+    respond: ({ query }) => {
+      if (query.kind === "team") {
+        return Response.json(inspectionTeam(work));
+      }
+      if (query.kind === "transcript") {
+        return Response.json({
+          ...transcript,
+          tools: [
+            { ...tool, status: "unknown", output: null, resultEntryId: null },
+          ],
+        });
+      }
+      return Response.json(inspectionOverview([work]));
+    },
+  });
+  const view = fixture.mount();
+  await waitFor(() =>
+    assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
+  );
+  await act(() =>
+    view.getByRole("button", { name: "Inspect work work-a" }).click()
+  );
+  await waitFor(() =>
+    assert.ok(view.getByRole("button", { name: "Lead tools" }))
+  );
+  await act(() => view.getByRole("button", { name: "Lead tools" }).click());
+  await waitFor(() =>
+    assert.ok(view.getByRole("article", { name: "delegate_worker unknown" }))
+  );
+  assert.ok(view.getByText("Output unavailable on this page."));
+  assert.ok(view.getByText("Check database recovery."));
+  assert.equal(view.queryByText("No saved output."), null);
+  assert.deepEqual(
+    fixture.calls.map(({ query }) => query),
+    [
+      { kind: "overview" },
+      { kind: "team", workId: work.workId },
+      { kind: "transcript", workId: work.workId, role: 0 },
+    ]
+  );
+});
+
 test("work history and owned events keep empty-page continuations and replace old pages", async () => {
   const old = inspectionWork("old-work");
   const recent = inspectionWork("recent-work");

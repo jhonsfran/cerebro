@@ -193,6 +193,7 @@ export const useInspection = ({
     const refreshDetails =
       manual ||
       (poll && !(previousTeam?.kind === "available" && previousTeam.sealed));
+    let freshOverview: InspectionOverview | undefined;
     const loadOverview = async () => {
       if (
         !poll &&
@@ -207,6 +208,7 @@ export const useInspection = ({
           throw new Error("Invalid overview.");
         }
         if (live()) {
+          freshOverview = frame;
           loaded.current.overviewCause = cause;
           refreshState.current.source = frame.refresh;
         }
@@ -305,6 +307,14 @@ export const useInspection = ({
       ]);
       if (!live()) {
         return;
+      }
+      const { team } = saved.current;
+      const work = freshOverview?.work.find((item) => item.workId === workId);
+      if (work && team.kind === "ready" && team.value.work.workId === workId) {
+        update("team", {
+          kind: "ready",
+          value: { ...team.value, work },
+        });
       }
       await loadRole();
       if (live() && needsRefresh()) {

@@ -303,6 +303,104 @@ test("selected sealed details stop polling while other work keeps overview refre
   assert.equal(fixture.calls.at(-1)?.query.kind, "overview");
 });
 
+test("sealed private details retain fresh source settlement after work leaves the bounded overview", async () => {
+  const admitted = inspectionWork("work-a", {
+    status: "accepted",
+    reservationHeld: true,
+  });
+  const completed = inspectionWork("work-a", {
+    status: "completed",
+    reservationHeld: false,
+  });
+  const queued = inspectionWork("queued", {
+    status: "queued",
+    dispatched: false,
+  });
+  let stage = 0;
+  const fixture = inspectorFixture({
+    respond: ({ query }) => {
+      if (query.kind === "team") {
+        return Response.json(
+          inspectionTeam(admitted, { sealed: true, phase: "completed" })
+        );
+      }
+      if (query.kind === "transcript") {
+        return Response.json(inspectionTranscript(admitted.workId));
+      }
+      return Response.json(
+        inspectionOverview(
+          stage === 2 ? [queued] : [stage === 1 ? completed : admitted, queued],
+          stage < 2
+        )
+      );
+    },
+  });
+  const view = fixture.mount();
+  await waitFor(() =>
+    assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
+  );
+  await act(() =>
+    view.getByRole("button", { name: "Inspect work work-a" }).click()
+  );
+  await waitFor(() =>
+    assert.ok(view.getByRole("button", { name: "Lead transcript" }))
+  );
+  await act(() =>
+    view.getByRole("button", { name: "Lead transcript" }).click()
+  );
+  await waitFor(() =>
+    assert.ok(view.getByText("SQLite fits this local workflow."))
+  );
+  assert.equal(
+    view.getByText("Source status").nextElementSibling?.textContent,
+    "accepted"
+  );
+  assert.equal(
+    view.getByText("Slot reservation").nextElementSibling?.textContent,
+    "Held"
+  );
+  const privateReads = fixture.calls.filter(
+    ({ query }) => query.kind !== "overview"
+  ).length;
+  assert.equal(privateReads, 2);
+  await waitFor(() => assert.equal(clock.pending.size, 1));
+  stage = 1;
+  await clock.next();
+  await waitFor(() =>
+    assert.equal(
+      view.getByText("Source status").nextElementSibling?.textContent,
+      "completed"
+    )
+  );
+  assert.equal(
+    view.getByText("Slot reservation").nextElementSibling?.textContent,
+    "Released"
+  );
+  await waitFor(() => assert.equal(clock.pending.size, 1));
+  stage = 2;
+  await clock.next();
+  await waitFor(() =>
+    assert.equal(
+      view.queryByRole("button", { name: "Inspect work work-a" }),
+      null
+    )
+  );
+  assert.equal(
+    view.getByText("Source status").nextElementSibling?.textContent,
+    "completed"
+  );
+  assert.equal(
+    view.getByText("Slot reservation").nextElementSibling?.textContent,
+    "Released"
+  );
+  assert.ok(view.getByText("SQLite fits this local workflow."));
+  assert.equal(
+    fixture.calls.filter(({ query }) => query.kind !== "overview").length,
+    privateReads
+  );
+  assert.equal(clock.pending.size, 0);
+});
+
 test("selected unsealed Team refreshes until sealing even when overview has no reservation", async () => {
   const work = inspectionWork();
   let teamReads = 0;

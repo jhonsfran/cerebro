@@ -71,7 +71,7 @@ export const botEventInput = (event: BotEvent): string => {
       return event.content.text;
     }
     case "slack": {
-      return `Slack message.\n${event.content.text}`;
+      return `Slack event.\n${JSON.stringify({ eventId: event.id, content: event.content })}`;
     }
     case "savedtimer": {
       return `Saved authorized instruction.\n${event.content.text}`;

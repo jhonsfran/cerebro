@@ -14,6 +14,7 @@ import type {
 import { Effect, Result } from "effect";
 
 import type { SearchResult } from "./conversation-work.ts";
+import { webEventData } from "./coordinator-event-input.ts";
 import { piContext, snapshotToolIds } from "./pi-harness.ts";
 import type {
   MetadataTransaction,
@@ -59,6 +60,10 @@ const run = async <A>(
   return result.success;
 };
 type Match = SearchResult["matches"][number];
+const publicInput = (entry: EntryRecord): boolean =>
+  UserEntry.is(entry) ||
+  (entry.kind === "cerebro.bot-event-input" &&
+    webEventData(entry.data) !== undefined);
 const turnMatches = (
   turn: readonly EntryRecord[],
   nativeId: ConversationId,
@@ -82,7 +87,7 @@ const turnMatches = (
   for (const entry of turn) {
     if (
       entry.conversationId !== nativeId ||
-      !(UserEntry.is(entry) || AssistantEntry.is(entry))
+      !(publicInput(entry) || AssistantEntry.is(entry))
     ) {
       continue;
     }
@@ -133,7 +138,7 @@ const scan = async (
     for (const entry of page.items) {
       budget.entries -= 1;
       turn.push(entry);
-      if (UserEntry.is(entry)) {
+      if (UserEntry.is(entry) || entry.kind === "cerebro.bot-event-input") {
         const found = turnMatches(
           turn,
           source.native.id,
