@@ -1,6 +1,18 @@
-# Run agent teams from web chat
+# Run a persistent coordinator and private teams
 
-Start a conversation with a cheap coordinator, let a stronger lead use cheaper workers, and receive the result in that same conversation. Slack setup is not required.
+Open one persistent conversation with a cheaper coordinator. A stronger lead runs independent work with cheaper workers. Results return to the same conversation. Web chat works before Slack is configured.
+
+```mermaid
+flowchart LR
+  Web[Web chat] --> C[Persistent coordinator]
+  Slack[Filtered Slack events] --> C
+  C --> A[Private Team A]
+  C --> B[Private Team B]
+  A --> C
+  B --> C
+```
+
+The identity cell stores the coordinator and admission records. Each Team has its own cell. Its lead and workers are private Pi conversations inside that cell. Always on means saved state and event-driven wake-up. An idle agent makes no model requests.
 
 ## Configure the models and role agents
 
@@ -33,17 +45,25 @@ The coordinator is the agent you select for the web conversation. The profile se
 
 ## Send and control a team request
 
-Select the coordinator agent and start a conversation. Send:
+Select the coordinator agent and open its conversation. Reopening the same agent returns to the same primary chat. Send:
 
 > Start a team. Compare SQLite and PostgreSQL for a local task tracker. Ask one worker to assess each option, then give me a recommendation and its tradeoff.
 
 Require the coordinator's acknowledgement, a background-work status, and a later result in the same conversation. The composer remains available while the team runs. Reload that conversation and require the saved result to remain.
 
-While work is active, send exact lowercase `status` to read its saved state. Send new requirements to update the team. Send `stop`, or click **Stop background work**, to cancel. These actions do not call the coordinator model. The existing foreground **Stop** controls foreground generation.
+While work is active, send exact lowercase `status` to read saved work state without a model call. Exact `stop` returns the work IDs to choose from. Ask the coordinator to stop one work ID. The foreground **Stop** button stops the current coordinator turn and leaves private Teams running.
+
+Ordinary new text reaches the coordinator. It can answer, start independent work, or message an existing work ID. State the target when you add a requirement. For example, send "For storage work <work ID>, add a two-device offline conflict requirement." Automatic routing applies only to an explicit saved subscription.
+
+Two Teams can run for one person across their agents. Sixteen more can wait in a saved FIFO queue. The absolute deadline includes queue time. Cancelling a queued item creates no Team cell.
+
+In a local installation, the development Inspector opens inside the chat. Select a work item to inspect its lead, workers, saved models, safe tool activity, retry state, reservations, tokens, and result. Details load on demand. Completed work remains available after reload. Inspection checks current read access and admits no new model work. A cold active cell can resume an already accepted request during normal recovery. Repeated reads of a sealed Team add no model requests. Configured zero prices make monetary cost unavailable. Request reservations and provider token usage are separate values.
+
+A published coordinator definition applies at a safe turn boundary in the same chat. Existing Teams retain the role definitions saved at admission. Historical roots and forks show closed ordinary admission and a way to open primary. Their history, accepted operations, and saved timers remain retained.
 
 If command delivery is uncertain, work can show **Failed** while cancellation is still available. Stop sends a durable cancellation request. Current permissions and the deadline still apply.
 
-A model can answer directly instead of starting a team. Check the actual `start_team` activity and provider request logs when you test model selection. Private worker transcripts do not have a dedicated web viewer.
+A model can answer directly instead of starting a team. Check the actual `start_team` activity and provider request logs when you test model selection. Use the Inspector to check the saved private role state. Full provider reasoning, system instructions, credentials, and raw tool arguments are excluded.
 
 ## Use a separate local configuration
 

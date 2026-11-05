@@ -112,7 +112,7 @@ export const SkillsPanel = () => {
         "PUT"
       );
       reset();
-      return `Saved ${saved.name}. New conversations can use it.`;
+      return `Saved ${saved.name}. Publish a new agent version to apply it.`;
     });
   const remove = (skillName: string) =>
     run(async () => {
@@ -131,7 +131,8 @@ export const SkillsPanel = () => {
     <PageBody>
       <PageIntro id="skills-title" title="Playbooks your agents can follow">
         Every agent sees each skill name and description. When a task matches,
-        the agent reads the instructions. Changes apply to new conversations.
+        the agent reads the instructions. Publish a new agent version to apply
+        skill changes after the current turn finishes.
       </PageIntro>
       {errorMessage ? <ErrorAlert>{errorMessage}</ErrorAlert> : null}
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
@@ -319,8 +320,8 @@ export const SkillsPanel = () => {
         onCancel={() => setConfirming(null)}
         onConfirm={remove}
       >
-        Agents stop seeing this skill in new conversations. This cannot be
-        undone.
+        Publish a new agent version to apply this removal after the current turn
+        finishes. This cannot be undone.
       </ConfirmRemoval>
     </PageBody>
   );

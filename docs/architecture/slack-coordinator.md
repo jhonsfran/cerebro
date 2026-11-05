@@ -1,114 +1,98 @@
-# Conversation coordinator and teams
+# Persistent coordinator and private teams
 
-A conversation can start in web chat or a Slack DM. Its selected agent is the coordinator. The coordinator can answer directly or use tools to start a separate team. Each role uses its own published agent definition, model, instructions, and grants.
-
-## Where execution lives
+Each person has one primary conversation for each agent. Web messages and filtered Slack events use that conversation. The coordinator handles the conversation and uses tools to create independent work.
 
 ```mermaid
 flowchart TD
-  W[Web chat] --> API[Authenticated conversation API]
-  S[Signed Slack DM] --> EQ[(Durable event queue)]
-  API --> CW
-  EQ --> CS
-  subgraph I[One identity cell per organization and person]
-    CW[Web conversation coordinator]
-    CS[Slack thread coordinator]
-    X[Shared active-work index]
-    H[Canonical conversation histories]
-    CW --> X
-    CS --> X
+  Web[Web chat] --> Inbox
+  Slack[Signed Slack event] --> Queue[(Slack event queue)]
+  Queue --> Filter[Filter and save external decision]
+  Filter --> Inbox
+  subgraph Identity[Identity cell for one organization and person]
+    Inbox[(Owned event receipts and Pi tasks)] --> Coordinator[Primary coordinator for the selected agent]
+    Coordinator --> Work[Saved work and FIFO admission]
   end
-  X --> CQ[(Team command queue)]
-  CQ --> L
-  subgraph T[One private team cell per work ID]
-    L[Lead conversation]
-    W1[Worker conversation 1]
-    W2[Worker conversation 2]
-    L --> W1
-    L --> W2
-    W1 --> L
-    W2 --> L
+  Work --> Commands[(Team command queue)]
+  Commands --> A
+  Commands --> B
+  subgraph A[Private Team cell A]
+    LeadA[Lead] --> WorkerA1[Worker 1]
+    LeadA --> WorkerA2[Worker 2]
   end
-  L --> RQ[(Team report queue)]
-  RQ --> H
-  H --> O[Web observation]
-  H --> N[Slack notifier for a Slack source]
+  subgraph B[Private Team cell B]
+    LeadB[Lead] --> WorkerB1[Worker 1]
+    LeadB --> WorkerB2[Worker 2]
+  end
+  A --> Reports[(Report queue)]
+  B --> Reports
+  Reports --> Inbox
+  Coordinator --> WebReply[Web answer]
+  Coordinator --> Reply[Exact Slack reply intent]
+  Reply --> SlackPost[Checked Slack post]
 ```
 
-A conversation inside a box is a native Pi conversation, not another Durable Object. Workers share their team's cell and model request budget. Private roles do not create public conversation rows.
+A Team is a separate cell. Its lead and workers are private Pi conversations inside that cell. They are not separate Durable Objects or public chats. The identity cell holds the person's agent conversations and shared admission limits. Native conversation IDs are local to a cell. Use the cell name and native ID together when debugging.
 
-Each conversation keeps its own history and work pointer. The identity cell shares the active-work index across web and Slack. One person cannot bypass the team limit by using another entry point or selecting another agent.
+Always on means durable state and event-driven wake-up. No model loop runs while the agent is idle. Pi tasks, existing queues, and lifecycle alarms resume accepted work.
 
-Events and Lifecycle wakes resume saved Pi tasks. The coordinator does not need a continuous model loop while idle.
-
-## What one prompt does
+## What one input does
 
 ```mermaid
 flowchart TD
-  P[Conversation message] --> C{Exact status or stop?}
-  C -->|Yes| K[Read saved status or cancel]
-  C -->|No| A{Active team in this conversation?}
-  A -->|Yes| U[Queue update for that team]
-  A -->|No| M[Coordinator model]
-  M -->|Answer| Reply[Conversation reply]
-  M -->|start_team| Save[Commit work and dispatch task]
-  Save -->|Tool receipt| M
-  Save --> Team[Private team runs independently]
-  U --> Team
-  Team -->|Permitted report| Reply
-  K --> Reply
+  Input[Owned input] --> Check{Exact status or stop?}
+  Check -->|Yes| Local[Saved local answer]
+  Check -->|No| Route{Explicit subscribed follow-up?}
+  Route -->|Yes| Team[Existing private Team]
+  Route -->|No| Model[Coordinator model]
+  Model -->|Answer| Answer[Conversation answer]
+  Model -->|start_team| Save[Save independent work]
+  Save --> Ack[Return admission receipt]
+  Ack --> Model
+  Save --> Capacity{Capacity available?}
+  Capacity -->|Yes| Start[Dispatch private Team]
+  Capacity -->|No| Wait[Saved FIFO queue]
+  Wait --> Start
+  Start --> Report[Saved report]
+  Report --> Model
 ```
 
-A prompt does not automatically create a team. Instructions tell the coordinator when to use `start_team`. The tool returns after durable admission. The coordinator can acknowledge the request while the team continues independently.
+Ordinary text reaches the coordinator. It does not automatically update whichever Team is active. The model can answer directly, start another task, ask for clarification, or use an explicit Team tool. A report gives the coordinator a result to explain. It cannot authorize another Team or a future instruction by itself.
 
-The lead can answer directly or call `delegate_worker` for at most two worker tasks. Workers cannot create more workers or teams. This is a bounded hierarchy.
+## Roles and tools
 
-## Tools and model selection
-
-| Role | Selected by | Coordination tools |
+| Role | Model | Tools |
 | --- | --- | --- |
-| Web coordinator | Agent selected in the conversation | `start_team`, `get_work`, `message_team`, `stop_work` |
-| Slack coordinator | `channels.json` → `slack.agentId` | The same four tools |
-| Lead | `coordination.leadAgentId` | `delegate_worker` |
-| Worker | `coordination.workerAgentId` | No delegation or scheduling |
+| Coordinator | Usually cheaper | Start, inspect, message, stop, and recall work; explicit subscriptions; authorized reminders; UI rendering. |
+| Lead | Usually stronger | Read tools and delegate_worker; return an unrelated subscribed event once. |
+| Worker | Usually cheaper | Permitted read tools; no further delegation or scheduling. |
 
-The [runtime profile](../reference/runtime-configuration.md#coordination) enables this feature. Without it, ordinary chat remains available and team tools are absent. The UI has no separate role picker. Publish the role agents, then configure their IDs. Coordinator and worker definitions can select the same cheap model while the lead selects a stronger model.
+The coordinator does not run task connector tools or foreground subagents. Each Team saves its lead and worker definition pins at admission. Current permissions still apply before execution and content transfer.
 
-The existing web `subagent` tool is a separate foreground capability. Its parent waits for the result, and the child uses the parent's model and configuration. Independent teams use private team cells and the separately published role definitions.
+Publishing a coordinator definition stages a complete profile. Existing native work drains first. Provider, instructions, tools, skills, and permission callbacks then change together in the same conversation. New events can wait durably during this boundary.
 
-## Background state in web chat
+## Two receipt boundaries
 
-The conversation shows its current background work state after the coordinator finishes its acknowledgement. The composer stays available. **Stop background work** targets the displayed work. The existing foreground **Stop** controls foreground generation.
-
-The exact lowercase messages `status` and `stop`, and inputs to active work, route through code without a coordinator model call. A team report enters canonical history without another coordinator generation. Existing web observation supplies the result automatically and reconstructs it after reload.
-
-## Source binding and recovery
-
-The command consumer in [team-events.ts](../../apps/server/src/team-events.ts) selects one stable private cell:
-
-```ts
-const stub = env.TEAM.get(env.TEAM.idFromName(workCellName(command.work.key)));
-```
-
-The name contains `team-v1`, organization ID, owner principal ID, and work ID. A retried command reaches the same cell and saved receipt.
-
-New work carries version 2 and the canonical source conversation address. The trusted conversation row owns its entry type and Slack destination. Old Slack work retains its exact saved envelope so pending tasks, command digests, and reports remain replayable. The runtime does not rewrite retained work to the new format.
-
-Pi saves transcripts, tasks, work intent, and receipts in SQLite. Queues transport commands and reports. After a restart, role providers and tools are restored before execution resumes. Stable event, input, work, command, and report IDs prevent duplicate logical admission.
-
-## Permissions, limits, and tradeoffs
-
-Every generated handoff carries its source and tool dependencies. The receiving role needs its own grants, and the person's current access must still permit the transfer. Teams have read-only connector tools. Results pass source authority and content checks before they enter the public conversation or Slack reply.
-
-| Default and hard ceiling | Scope |
+| Boundary | Purpose |
 | --- | --- |
-| Two active teams | One organization and person, across all conversations and entry points |
-| Two workers | Total distinct worker tasks per team |
-| Eight model request reservations | Shared by the lead and workers, including retries and compaction |
-| Ten-minute deadline | Absolute time from work admission |
+| External Slack decision | One provider event saves its exact owner, callback digest, and frozen bot targets. |
+| Owned BotEvent | Each target primary admits that event once and associates it with its exact native submission and answer. |
 
-The profile can lower these limits. Cancellation keeps its slot until the target acknowledges a terminal result or the deadline expires. Source history and receipts remain in SQLite after the bounded active index is pruned, so retained storage still grows.
+A duplicate with matching content reuses the saved decision. Changed content conflicts. Each target has an independent receipt. Replies use the event's exact settled answer, never the most recent assistant message. Web answers do not become Slack replies.
 
-Separate team cells isolate their execution from the conversation. They also require durable command and result transport. Use external storage for large artifacts and keep payloads bounded.
+A Slack post first saves an unknown outcome and synchronizes storage. Confirmed success saves its timestamp. A rate limit can retry. An uncertain post never sends again automatically. Every attempt checks the original Slack link, source, and complete content access.
 
-An interrupted provider request can repeat and incur another charge. A model request reservation can also be consumed before later authorization denies dispatch. These bounds are not a monetary spend ceiling. Slack keeps its conservative handling of posts with an unknown delivery outcome.
+## Limits and recovery
+
+Two Teams can be active and sixteen can wait for one person across their agents. Queue time counts toward the absolute deadline. Cancelling queued work creates no Team cell. A failed source status can still hold a reservation when delivery is uncertain. The slot returns only after terminal acknowledgement or its deadline.
+
+Pi stores transcripts, tasks, receipts, and compacted context in SQLite. The native request byte cap can trigger Pi's existing compaction task. Full entries remain retained; the active chat view shows its current summary and tail. Recovery still needs a selectable cut and a summary that fits the request cap.
+
+Interrupted model requests can repeat and incur another charge. Request reservations are not monetary spend. Large artifacts belong in external storage, with bounded text and references in coordinator context.
+
+The development Inspector reads source-owned metadata and selected private details on demand. It shows saved models, role status, safe tool fields, retries, reservations, tokens, and results. It excludes credentials, system instructions, provider reasoning, and raw task payloads. Read access is required even in local mode. Inspection admits no new work. A cold active cell can resume already accepted execution during normal recovery. Terminal startup drains saved role tasks before it opens details, without loading a role provider. Repeated sealed reads keep usage and result IDs unchanged.
+
+Historical roots and forks retain their history and pins. Fresh ordinary input moves to the primary. Accepted old work and trusted retries can finish under their original source. Saved timer occurrences forward through retained receipts. Histories are not merged.
+
+## MVP boundaries
+
+Slack support covers linked direct messages and their threads. Coordinator inputs run in durable order; private Teams run concurrently. The hierarchy is bounded to one lead and two workers. Team tools are read-only. Burst inference batching, endpoint execution daemons, and a separate semantic-progress Watchdog remain future work.

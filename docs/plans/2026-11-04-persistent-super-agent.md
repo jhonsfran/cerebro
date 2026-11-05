@@ -27,6 +27,7 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 6d2: Give Inspector tools distinct occurrence identity across native rounds.
 - [x] Unit 6b2a: Add realistic provider and Slack fixtures with exact test cleanup.
 - [ ] Unit 6b2b: Prove persistent-agent routing, subscriptions, queue limits, and Inspector through the native application.
+- [x] Unit 6 docs: Document primary continuity, event routing, private Teams, and development inspection.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
 - [ ] Phase D: Keep the audit trail throughout the run.
 - [ ] Phase E: Verify and hand back.
@@ -95,6 +96,8 @@ Unit 6d1 saves each subscription mutation result with both relation directions i
 Unit 6d2 gives each Inspector tool occurrence a stable native-entry key and a separate displayed provider call ID. Live status requires the exact current generation and full private call ID. One existing task read proves the round on a latest live page; historical and settled pages add none. Real Pi tests cover repeated IDs, pending calls, orphan results, full caps, and matching display prefixes. Mounted tests preserve distinct rows and prior output. Fresh reviews removed an unnecessary null state from the bounded result join. The final revision passes 16 runtime tests, 13 workspace type tasks, scoped lint, and all 166 PostgreSQL channel tests. All three final reviews pass. Final native and browser gates remain pending.
 
 Unit 6b2a adds distinct storage and Slack task fixtures with actual incoming tool-result joins and trusted event references. The Slack boundary can accept one exact post, persist it, then return an uncertain response. Reopening retains consumption without fake physical deduplication. Fresh reviews fixed failed-worker text that OpenAI transports without an error flag and replaced static-answer test echoes with independent contributions. All 16 focused cases pass. The public channel runner and its external-database path each pass all 166 tests. Controlled test-process failure also cleans up its exact owned database. The external path makes zero Docker calls. Test PostgreSQL uses labelled tmpfs and creates no volume. All final reviews pass. Actual test-image module bytes and full native, runtime, and browser gates remain pending.
+
+Unit 6 documentation describes one persistent primary, filtered Slack events, bounded private Teams, and current-read development inspection. It gives a separate multi-model local configuration and same-chat publication steps. Three Skills UI strings now require publication after the current turn finishes. Review corrected a mistaken inference from an internal report's null reply destination. Saved Work origin lookup can authorize the coordinator's answer in the original Slack thread; a report grants no new destination. Final specification and thermo reviews pass on all twelve files. Workspace types, scoped lint, and the React error gate pass. Native acceptance, the repaired Stop verification, pilot migration, and final browser checks remain separate pending work.
 
 ## Cutover
 

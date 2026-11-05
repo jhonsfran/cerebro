@@ -1,6 +1,6 @@
 # How to connect Slack
 
-People can talk to one Cerebro agent in a Slack direct message. Each top-level message starts a conversation, and replies in its thread continue it. Answers, progress, and approval buttons appear in the same thread. Cerebro checks the person's current permissions before it posts anything, exactly as it does in the web app.
+Slack direct messages are events for a person's persistent agent. They use the same coordinator conversation as web chat. A Slack thread is a reply destination and can have explicit work subscriptions. It does not create another coordinator. Cerebro checks current account links, source access, and content access before each reply.
 
 Answers only go to direct messages. If someone mentions the app in a channel, Cerebro tells only that person, in a message the others cannot see, to send a DM instead. That keeps company content out of shared channels.
 
@@ -11,7 +11,7 @@ Answers only go to direct messages. If someone mentions the app in a channel, Ce
    - `chat:write`, to post and edit replies.
    - `im:history`, to receive direct messages.
    - `app_mentions:read`, to answer a channel mention with the DM hint.
-3. Under **App Home**, turn on **Allow users to send Slash commands and messages from the messages tab**.
+3. Under **App Home**, enable the **Messages Tab** in **Show Tabs**. See [Slack's App Home setup](https://docs.slack.dev/surfaces/app-home/).
 4. Under **Event Subscriptions**, set the request URL to `https://<API_HOST>/api/channels/slack/events` and subscribe to the bot events `message.im` and `app_mention`. Slack verifies the URL when you save it, so the stack must be running.
 5. Under **Interactivity & Shortcuts**, turn interactivity on and set the request URL to `https://<API_HOST>/api/channels/slack/interactions`. The Approve and Deny buttons post here.
 6. Install the app to the workspace and copy the **Bot User OAuth Token**.
@@ -55,12 +55,12 @@ Cerebro confirms the link in the DM. An unlinked person who writes to the app ge
 
 ## What happens to a message
 
-1. Cerebro verifies the signature, workspace, and app. It saves an accepted event to the durable event queue before it acknowledges Slack. A queue failure gets an unsuccessful response so Slack can retry. URL verification returns its challenge after signature validation.
-2. The consumer checks the event type and account link. It saves either an ignored decision or a fixed conversation target under the provider event ID. A retry keeps that decision. Current access is checked again before execution and disclosure.
-3. The conversation's session posts **Working on it…** in the thread, then edits that message into the answer. Sources appear under the answer.
-4. When a tool needs approval, the session posts the request with **Approve** and **Deny** buttons. A button press decides the approval as the linked person, with the same permission checks as the web app. The message then shows the decision.
+1. Cerebro verifies the [Slack request signature](https://docs.slack.dev/authentication/verifying-requests-from-slack/), workspace, and app. It saves an accepted event to the durable event queue before it acknowledges Slack. A queue failure gets an unsuccessful response so Slack can retry. URL verification returns its challenge after signature validation.
+2. The consumer filters bot messages, unsupported events, and unlinked users. An accepted message saves its owner and fixed target bots under the provider event ID. Explicit subscriptions can select several owned bots. Otherwise, the configured agent is the target. A retry reuses that decision. Changed content conflicts.
+3. Each target primary admits one owned event. Ordinary text reaches the coordinator. A follow-up with an explicit work subscription goes to that Team. An unrelated subscribed event can return to the coordinator once.
+4. The coordinator's exact settled answer creates a durable reply intent for the original thread. Concurrent web answers cannot become Slack replies. Current access is checked again before delivery.
 
-The session journals Slack writes. It edits a known message on replay. If a post's delivery is uncertain, it does not blindly repeat the post. This prevents duplicate retries but can leave an uncertain reply undelivered. A known rate-limit response can be retried after the delay.
+The reply task saves an unknown outcome and synchronizes storage before posting. Confirmed success saves its Slack timestamp. An uncertain post does not send again automatically. This can leave a reply undelivered when Slack did not receive the original attempt. A known rate-limit response can retry after its saved delay. Historical Slack sessions retain their saved progress messages and approval handling.
 
 ## Enable background teams
 
@@ -68,9 +68,11 @@ The same coordinator and team runtime also supports [ordinary web chat](agent-te
 
 Publish coordinator, lead, and worker agents with the models and grants each role needs. Set `channels.json`'s `agentId` to the coordinator. Add the optional [coordination profile](../reference/runtime-configuration.md#coordination) to `runtime.json`, then run bootstrap again.
 
-The coordinator gets `start_team`, `get_work`, `message_team`, and `stop_work`. The lead gets `delegate_worker`. Team tools are read-only. The source conversation delivers the result to the original Slack thread.
+The coordinator gets `start_team`, `get_work`, `message_team`, `stop_work`, `list_work`, `recall_work`, `subscribe_work`, and `unsubscribe_work`. The lead gets `delegate_worker` and `return_event`. Team connector tools are read-only. A report enters the coordinator as an internal event. It grants no new Slack destination. If the work retains an authorized Slack origin, the coordinator's answer can return only to that original thread.
 
-In a thread with active work, further messages go directly to that team. The exact lowercase messages `status` and `stop` are controls. They do not call the coordinator model. A later request can start new work after the previous team has settled.
+Ordinary messages can start independent work while other Teams run. Only explicit subscriptions forward thread events directly. The exact lowercase `status` reads saved work without a model call. Exact `stop` lists work IDs when a target is needed. Ask the coordinator to stop a specific work ID. Two Teams can run and sixteen can wait for one person across their agents.
+
+The web development Inspector shows saved event decisions, work, private roles, model IDs, usage, and results. It requires current read access. Opening it does not admit work. An idle coordinator makes no model requests.
 
 See the [cell diagram and code](../architecture/slack-coordinator.md) for placement, limits, and recovery.
 

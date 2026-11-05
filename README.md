@@ -1,6 +1,6 @@
 # Cerebro
 
-Cerebro is a self-hosted assistant for a company. People chat with agents that answer from company memory, call controlled tools, and ask for approval before they write anything. Every step checks the person's current permissions. Agents run on [Pi Durable](https://www.npmjs.com/package/@earendil-works/pi-durable), so a conversation survives a crash and a write is never sent twice.
+Cerebro is a self-hosted assistant for a company. Each person has one persistent coordinator conversation per agent. Web messages and filtered Slack events reach that coordinator. It can delegate work to private Teams with separately configured lead and worker models. Current permissions control execution and disclosure. [Pi Durable](https://www.npmjs.com/package/@earendil-works/pi-durable) saves conversations, tasks, and receipts for recovery.
 
 The [architecture overview](docs/architecture/overview.md) explains how the parts fit together.
 
@@ -41,7 +41,7 @@ The default model is GPT-6 Luna on OpenRouter (`openrouter/openai/gpt-6-luna`). 
 
 ## Use background agent teams
 
-Web chat and Slack can use a coordinator that starts independent teams. Publish coordinator, lead, and worker agents with the models each role needs, then enable the coordination profile. Web chat needs no Slack setup. See [Run agent teams from web chat](docs/operations/agent-teams.md) and the [cell diagram and code](docs/architecture/slack-coordinator.md).
+Each person has one persistent coordinator conversation per agent. Web messages and filtered Slack events reach that coordinator. It can answer or start several private background teams. Publish coordinator, lead, and worker agents with their own models, then enable the coordination profile. Web chat needs no Slack setup. The local development Inspector shows private roles, saved models, tool activity, usage, and results. See [Run persistent agent teams](docs/operations/agent-teams.md) and the [cell diagram](docs/architecture/slack-coordinator.md).
 
 ## Commands
 

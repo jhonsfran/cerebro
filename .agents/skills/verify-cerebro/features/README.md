@@ -30,7 +30,8 @@ Read this index before driving the web workspace. The feature files describe use
 
 - [Account and workspace setup](account-setup.md) covers signup, signin, initial owner claim, and signout.
 - [Agents and access](agents.md) covers both creation entry points, publishing versions, cancellation, and permission controls.
-- [Conversations and approvals](conversations.md) covers both conversation entry points, sending, reconnecting, persistence, stop, and approved or denied writes.
+- [Conversations and approvals](conversations.md) covers primary opening, sending, reconnecting, persistence, Stop, and retained historical capabilities.
+- [Development Inspector](inspector.md) covers private Team roles, saved models, tool activity, usage, results, paging, and current read authority.
 - [Connectors](connectors.md) covers the catalog, adding an MCP connector, refresh, and removal.
 - [Skills](skills.md) covers creating, editing, and removing company playbooks.
 
