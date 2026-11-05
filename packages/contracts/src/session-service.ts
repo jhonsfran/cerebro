@@ -31,6 +31,7 @@ const jsonValue = Schema.Unknown.check(
 
 export const ChatMessage = Schema.Struct({
   entryId: Schema.optional(Schema.NonEmptyString),
+  operationId: Schema.optional(Schema.NonEmptyString),
   kind: Schema.optional(Schema.Literal("summary")),
   id: Schema.NonEmptyString,
   outcome: Schema.optional(
@@ -46,6 +47,7 @@ export type ChatMessage = typeof ChatMessage.Type;
 
 export const ChatQueuedInput = Schema.Struct({
   mode: Schema.Literals(["steer", "followUp"]),
+  operationId: Schema.optional(Schema.NonEmptyString),
   submissionId: Schema.NonEmptyString,
   text: Schema.String,
 });

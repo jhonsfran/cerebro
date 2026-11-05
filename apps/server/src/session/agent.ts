@@ -184,6 +184,7 @@ export const createRuntimeComposition = (
     );
     return {
       ...execution,
+      conversationKind: conversation.kind,
       ...(forkOrigin
         ? {
             origin: {

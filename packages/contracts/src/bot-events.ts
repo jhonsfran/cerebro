@@ -52,6 +52,13 @@ export const BotEventSourceSchema = Schema.Union([
     reason: Schema.Literals(["expired", "dispatch-failed"]),
   }),
 ]);
+const eventTextLimits = {
+  web: 16_000,
+  slack: 16_000,
+  savedtimer: 32_000,
+  teamreport: 2000,
+  "coordinator-terminalnotice": 2000,
+} satisfies Record<(typeof BotEventSourceSchema.Type)["kind"], number>;
 export const BotEventSchema = Schema.Struct({
   version: Schema.Literal(1),
   id: Schema.NonEmptyString.check(Schema.isMaxLength(512)),
@@ -71,7 +78,7 @@ export const BotEventSchema = Schema.Struct({
     ])
   ),
   content: Schema.Struct({
-    text: Schema.NonEmptyString.check(Schema.isMaxLength(2000)),
+    text: Schema.NonEmptyString.check(Schema.isMaxLength(32_000)),
     reference: Schema.NullOr(
       Schema.Struct({
         kind: Schema.Literal("work"),
@@ -85,6 +92,7 @@ export const BotEventSchema = Schema.Struct({
     const key = "key" in event.source ? event.source.key : null;
     const reference = event.content.reference?.key;
     return (
+      event.content.text.length <= eventTextLimits[event.source.kind] &&
       (!key ||
         (key.organizationId === event.coordinator.organizationId &&
           key.ownerPrincipalId === event.ownerPrincipalId)) &&

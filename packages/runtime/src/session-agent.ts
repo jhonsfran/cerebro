@@ -50,6 +50,7 @@ import { ReminderPayload } from "./conversation-reminders.ts";
 import { ConversationScope } from "./conversation-scope.ts";
 import type { SearchResult } from "./conversation-work.ts";
 import { terminalNoticeIn } from "./coordinator-event-content.ts";
+import { webEventForkPointIn } from "./coordinator-event-input.ts";
 import {
   BotEventReceipts,
   createCoordinatorEvents,
@@ -70,6 +71,7 @@ export type MetadataTransaction = <A>(
 ) => Promise<A>;
 export interface SessionHostConfiguration {
   readonly address: EventAddress;
+  readonly conversationKind?: "web" | "slack";
   readonly coordination?: CoordinationServices;
   readonly origin?: {
     readonly address: EventAddress;
@@ -551,7 +553,8 @@ export class SessionAgent<
         reason: "The fork agent version differs from its source.",
       });
     }
-    const snapshot = await parent.read(await run(configuration.ownerContext()));
+    const owner = await run(configuration.ownerContext());
+    const snapshot = await parent.read(owner);
     const toolIds = snapshotToolIds(snapshot);
     const parsedId = await run(
       Effect.try({
@@ -571,7 +574,20 @@ export class SessionAgent<
     if (
       !point ||
       String(point.id) !== origin.entryId ||
-      !(UserEntry.is(point) || AssistantEntry.is(point))
+      !(
+        UserEntry.is(point) ||
+        AssistantEntry.is(point) ||
+        (await host.pi.commit(
+          (tx) =>
+            webEventForkPointIn(tx, {
+              point,
+              nativeId: parent.native.id,
+              address: origin.address,
+              ownerPrincipalId: owner.represented?.id ?? owner.actor.id,
+            }),
+          piContext()
+        ))
+      )
     ) {
       throw new InvalidInput({
         reason:

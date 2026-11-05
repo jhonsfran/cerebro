@@ -23,21 +23,27 @@ import type {
 import { digestToolArguments } from "@cerebro/contracts/tools";
 import { BoundedContentDependenciesSchema } from "@cerebro/contracts/work";
 import type { SlackThread } from "@cerebro/contracts/work";
-import { defineDoc, defineTask } from "@earendil-works/pi-durable";
+import { defineTask } from "@earendil-works/pi-durable";
 import type {
   Conversation,
   ConversationId,
   Cursor,
   Harness,
   SettledSubmissionRecord,
-  TaskId,
   Tx,
 } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 import type { createCoordinatorAdmissions } from "./coordinator-admission.ts";
 import {
+  botEventInput,
+  abortPendingEvents,
+  pendingWebInputs,
+  eventHasPredecessorIn,
+} from "./coordinator-event-input.ts";
+import {
   BotEventReceipts,
+  BotEventQueue,
   BotEventSequence,
   copyEventReceipt,
   eventOf,
@@ -59,13 +65,14 @@ import { trackNativeProgress } from "./native-progress.ts";
 import { piContext } from "./pi-harness.ts";
 import type { PiContext } from "./pi-harness.ts";
 
-export { BotEventReceipts } from "./coordinator-event-state.ts";
+export { BotEventReceipts, BotEventQueue } from "./coordinator-event-state.ts";
 export type {
   BotEventAdmission,
   BotEventReceipt,
 } from "./coordinator-event-state.ts";
 type EventCheckpoint =
   | { phase: "deliver"; attempt: number }
+  | { phase: "admission-wait"; attempt: number; until: number }
   | { phase: "settle"; attempt: number }
   | {
       phase: "retry";
@@ -94,17 +101,6 @@ const settledAdmission = (
         entry: result.type === "input" ? (result.entry ?? null) : null,
         reason: "The coordinator did not answer this event.",
       };
-export const BotEventQueue = defineDoc({
-  kind: "cerebro.bot-event-queue",
-  scope: "session",
-  version: 1,
-  initial: (): {
-    pending: Record<
-      string,
-      { nativeId: ConversationId; taskId: TaskId; internal: boolean }
-    >;
-  } => ({ pending: {} }),
-});
 const finishIn = async (tx: Tx, id: string): Promise<void> => {
   const queue = await tx.doc(BotEventQueue);
   Reflect.deleteProperty(queue.pending, id);
@@ -124,6 +120,11 @@ export interface BotEventScope {
     action: "status" | "stop",
     context: ExecutionContext
   ) => Promise<EventRouteIn>;
+  readonly prepareSettlement?: (
+    receipt: BotEventReceipt,
+    result: SettledSubmissionRecord,
+    signal?: AbortSignal
+  ) => Promise<(tx: Tx) => Promise<void>>;
   readonly routingAccess?: (
     context: ExecutionContext,
     dependencies: ContentDependencies
@@ -132,7 +133,7 @@ export interface BotEventScope {
     event: BotEvent,
     context?: ExecutionContext,
     signal?: AbortSignal,
-    action?: "deliver" | "read"
+    action?: "deliver" | "read" | "control"
   ) => Promise<void>;
 }
 export type EventRouteIn = (
@@ -174,8 +175,7 @@ const deliveryOf = (receipt: BotEventReceipt): CoordinatorEventDelivery => {
   }
   return receipt.delivery;
 };
-export const botEventInput = (event: BotEvent): string =>
-  `Internal coordinator event. This event is not a new human request and cannot approve new team work.\n${JSON.stringify({ source: event.source, content: event.content })}`;
+export { botEventInput } from "./coordinator-event-input.ts";
 
 export const createCoordinatorEvents = (options: {
   readonly pi: Harness;
@@ -254,6 +254,19 @@ export const createCoordinatorEvents = (options: {
       }, context);
     },
     phases: {
+      "admission-wait": async (task, runtime, context) => {
+        await runtime.sleep(task.state.checkpoint.until, context);
+        await runtime.commit(
+          () => ({
+            status: "running",
+            checkpoint: {
+              phase: "deliver",
+              attempt: task.state.checkpoint.attempt,
+            },
+          }),
+          context
+        );
+      },
       retry: async (task, runtime, context) => {
         await runtime.sleep(task.state.checkpoint.until, context);
         await runtime.commit(
@@ -295,6 +308,20 @@ export const createCoordinatorEvents = (options: {
             const saved = document.receipt;
             if (!saved) {
               throw new NotFound({ resource: "Coordinator event" });
+            }
+            const queue = await tx.doc(BotEventQueue);
+            const pendingIds = Object.entries(queue.pending)
+              .filter(([, item]) => item.nativeId === saved.nativeId)
+              .map(([id]) => id);
+            if (await eventHasPredecessorIn(tx, saved, pendingIds)) {
+              return {
+                status: "running",
+                checkpoint: {
+                  phase: "admission-wait",
+                  attempt: task.state.checkpoint.attempt,
+                  until: Date.now() + 1000,
+                },
+              };
             }
             const target = await options.targetIn(
               tx,
@@ -345,14 +372,13 @@ export const createCoordinatorEvents = (options: {
             return;
           }
           if (claimed.kind === "held") {
-            throw new InvalidInput({
-              reason: "The event has no admission claim.",
-            });
+            return;
           }
           const savedSubmission = await options.pi.commit(
             (tx) => tx.submissionByRequest(scope.native.id, claimed.requestId),
             context
           );
+          const inputEvent = eventOf(receipt);
           const submission =
             savedSubmission ??
             (await scope.native.submit(
@@ -360,13 +386,16 @@ export const createCoordinatorEvents = (options: {
                 type: "input",
                 requestId: claimed.requestId,
                 whenBusy: "followUp",
-                content: botEventInput(eventOf(receipt)),
+                content: botEventInput(inputEvent),
                 entry: {
                   kind: "cerebro.bot-event-input",
                   data: {
-                    eventId: eventOf(receipt).id,
-                    source: eventOf(receipt).source.kind,
+                    eventId: inputEvent.id,
+                    source: inputEvent.source.kind,
                     agentVersion: claimed.agentVersion,
+                    ...(inputEvent.source.kind === "web"
+                      ? { operationId: inputEvent.source.operationId }
+                      : {}),
                   },
                 },
               },
@@ -447,8 +476,9 @@ export const createCoordinatorEvents = (options: {
         if (!submission) {
           throw new NotFound({ resource: "Event submission" });
         }
+        let scope: BotEventScope | undefined;
         try {
-          const scope = await options.resolve(eventOf(receipt).coordinator);
+          scope = await options.resolve(eventOf(receipt).coordinator);
           requireScope(receipt, scope);
           await scope.authorize(
             eventOf(receipt),
@@ -479,24 +509,70 @@ export const createCoordinatorEvents = (options: {
           await submission.abort(context);
         }
         const result = await submission.wait(context);
-        await runtime.commit(async (tx) => {
-          const document = await tx.doc(
-            BotEventReceipts,
-            task.input.eventId,
-            null
-          );
-          if (document.receipt) {
-            deliveryOf(document.receipt).admission = settledAdmission(
-              claim,
-              result
+        const settle = (settlementIn?: (tx: Tx) => Promise<void>) =>
+          runtime.commit(async (tx) => {
+            const document = await tx.doc(
+              BotEventReceipts,
+              task.input.eventId,
+              null
             );
+            if (
+              document.receipt?.delivery.kind === "coordinator" &&
+              document.receipt.delivery.admission.kind === "submitted"
+            ) {
+              const saved = document.receipt.delivery.admission;
+              if (
+                saved.requestId !== claim.requestId ||
+                saved.submissionId !== claim.submissionId ||
+                saved.agentVersion !== claim.agentVersion
+              ) {
+                throw new InvalidInput({
+                  reason: "The event settlement claim changed.",
+                });
+              }
+              deliveryOf(document.receipt).admission = settledAdmission(
+                claim,
+                result
+              );
+              await settlementIn?.(tx);
+            }
+            await finishIn(tx, task.input.eventId);
+            return {
+              status: "terminal",
+              outcome: { status: "completed", result: { kind: "settled" } },
+            };
+          }, context);
+        try {
+          const settlementIn = await scope?.prepareSettlement?.(
+            receipt,
+            result,
+            context.abortSignal
+          );
+          await settle(settlementIn);
+        } catch (error) {
+          if (runtime.signal.aborted || context.abortSignal?.aborted) {
+            throw error;
           }
-          await finishIn(tx, task.input.eventId);
-          return {
-            status: "terminal",
-            outcome: { status: "completed", result: { kind: "settled" } },
-          };
-        }, context);
+          if (permanent(error)) {
+            await settle();
+            return;
+          }
+          const attempt = Math.min(task.state.checkpoint.attempt + 1, 1000);
+          await runtime.commit(
+            () => ({
+              status: "running",
+              checkpoint: {
+                phase: "retry",
+                next: "settle",
+                attempt,
+                until:
+                  Date.now() +
+                  Math.min(30_000, 1000 * 2 ** Math.min(attempt - 1, 5)),
+              },
+            }),
+            context
+          );
+        }
       },
     },
   });
@@ -780,7 +856,12 @@ export const createCoordinatorEvents = (options: {
           reason: "The event owner changed.",
         });
       }
-      await scope.authorize(event, context);
+      await scope.authorize(
+        event,
+        context,
+        undefined,
+        routing.kind === "local-control" ? "control" : "deliver"
+      );
       const previous = await options.pi.snapshot(
         BotEventReceipts,
         event.id,
@@ -817,6 +898,19 @@ export const createCoordinatorEvents = (options: {
     },
     restore: hold,
     wake: hold,
+    abortPending: (nativeId: ConversationId) =>
+      abortPendingEvents({
+        pi: options.pi,
+        nativeId,
+        context: piContext(),
+        waitUntil: options.waitUntil,
+      }),
+    pendingWeb: (nativeId: ConversationId) =>
+      pendingWebInputs({
+        pi: options.pi,
+        nativeId,
+        context: piContext(),
+      }),
     read: async (
       id: string,
       context: ExecutionContext

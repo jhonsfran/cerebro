@@ -324,10 +324,39 @@ test("full reports stay in work storage while event input and recall remain boun
       Schema.Struct({
         report: Schema.Struct({ text: Schema.String }),
         reportTruncated: Schema.Boolean,
+        nextReportOffset: Schema.Number,
       })
     )(JSON.parse(recalled.snapshot.tools.at(-1)?.output ?? "{}"));
     assert.equal(result.report.text.length, 4000);
     assert.equal(result.reportTruncated, true);
+    const chunks = [result.report.text];
+    let nextOffset: number | undefined = result.nextReportOffset;
+    for (const expectedOffset of [4000, 8000, 12_000]) {
+      assert.equal(nextOffset, expectedOffset);
+      // oxlint-disable-next-line no-await-in-loop -- Each chunk request uses the preceding response's continuation offset.
+      const page = await f.fixture.invoke(
+        "a",
+        "recall_work",
+        {
+          workId: work.admission.key.workId,
+          offset: nextOffset,
+        },
+        `recall-report-${expectedOffset}`
+      );
+      const chunk = Schema.decodeUnknownSync(
+        Schema.Struct({
+          report: Schema.Struct({ text: Schema.String }),
+          nextReportOffset: Schema.optional(Schema.Number),
+          reportOffset: Schema.Number,
+        })
+      )(JSON.parse(page.snapshot.tools.at(-1)?.output ?? "{}"));
+      assert.equal(chunk.reportOffset, expectedOffset);
+      assert.equal(chunk.report.text.length, 4000);
+      chunks.push(chunk.report.text);
+      nextOffset = chunk.nextReportOffset;
+    }
+    assert.equal(nextOffset, undefined);
+    assert.equal(chunks.join(""), "x".repeat(16_000));
   } finally {
     await f.fixture.close();
   }

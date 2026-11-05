@@ -14,7 +14,7 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 3a: Admit durable coordinator events and reports with atomic delivery intent.
 - [x] Unit 3c: Make private-team provenance imports atomic and recoverable.
 - [x] Unit 3b: Route explicit task subscriptions and one-time team handback.
-- [ ] Unit 4a: Connect ordered web events, work causes, controls, and recall.
+- [x] Unit 4a: Connect ordered web events, work causes, controls, and recall.
 - [ ] Unit 4b: Apply published coordinator definitions safely within the same conversation.
 - [ ] Unit 4c: Connect Slack primary events and exact event replies.
 - [ ] Unit 4d: Preserve legacy admission and forward saved timers through controlled cutover.
@@ -33,6 +33,8 @@ Unit 3c repairs a confirmed existing transaction error before team event integra
 Unit 4b fixes the permanent definition pin exposed by a persistent conversation. Its design keeps one scope and uses a complete immutable execution profile. A native applied-version change and Pi configuration commit together. New event delivery uses a durable version claim before native input admission. Design alternatives and the independent comparison are retained in the run's evidence.
 
 Unit 4 uses separate runtime, profile, Slack, and cutover commits. The runtime commit keeps current tool selections. The profile commit then adopts coordinator-only tools after old native calls drain, including when the published definition is unchanged. Slack and timer adapters build on that coherent profile gate.
+
+Unit 4a sends web input through owned events and preserves the original operation ID in receipts, pending input, and history. Foreground Stop marks pending event tasks before acknowledgement. Native causes prevent reports from authorizing new work. Independent reviews also fixed permanent settlement rejection and two legacy replay cases. The actual HTTP and celld probe passed on the final source, and its disposable stack was removed.
 
 The approved architecture is the design baseline. Read-only grounding checks its integration points. A second architecture competition is unnecessary unless the implementation disproves the design.
 

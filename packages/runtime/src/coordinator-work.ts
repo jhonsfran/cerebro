@@ -51,8 +51,6 @@ import {
   WorkDocuments,
   WorkLedger,
   coordinatorOperationKey,
-  currentHumanCandidates,
-  currentHumanOperation,
   pruneWorkIndex,
   requireCoordinatorWork,
   requireWorkIdentity,
@@ -64,6 +62,7 @@ import type {
   CoordinationBinding,
   CoordinatorWorkRecord,
 } from "./coordinator-ledger.ts";
+import { prepareInstructionCause } from "./instruction-cause.ts";
 import { trackNativeProgress } from "./native-progress.ts";
 import { piContext } from "./pi-harness.ts";
 import type { MetadataTransaction } from "./session-agent.ts";
@@ -229,10 +228,11 @@ export const createCoordinatorWork = (options: {
         reason: "Team coordination is disabled.",
       });
     }
-    const candidates = await currentHumanCandidates(
-      options.pi,
-      options.nativeId
-    );
+    const instructionCauseIn = await prepareInstructionCause({
+      pi: options.pi,
+      nativeId: options.nativeId,
+      ...source,
+    });
     const candidate = Schema.decodeUnknownSync(WorkIdSchema)(
       await coordinatorOperationKey(
         JSON.stringify([
@@ -278,12 +278,7 @@ export const createCoordinatorWork = (options: {
           }
           return publicWork(document.record);
         }
-        const human = await currentHumanOperation(
-          tx,
-          source,
-          options.nativeId,
-          candidates
-        );
+        const human = await instructionCauseIn(tx);
         const ledger = await tx.doc(WorkLedger);
         requireWorkIdentity(ledger, source);
         const expired = await pruneWorkIndex(tx, ledger, now());
@@ -542,15 +537,18 @@ export const createCoordinatorWork = (options: {
           callers: ["model"],
           name: "recall_work",
           description:
-            "Recall one permitted work item's bounded goal and terminal report by its work ID.",
+            "Recall one permitted work item's bounded goal and a terminal report chunk. Continue with nextReportOffset to read a longer report.",
           parameters: Type.Object({
             workId: Type.String({ minLength: 1, maxLength: 512 }),
+            offset: Type.Optional(
+              Type.Integer({ minimum: 0, maximum: 16_000 })
+            ),
           }),
           replay: "safe",
-          execute: ({ workId }, api, context) =>
+          execute: ({ workId, offset }, api, context) =>
             output(async () => {
               await requireCaller(api, context.abortSignal);
-              return await history.recall(workId, api, context);
+              return await history.recall(workId, api, context, offset);
             }),
         }),
       ]

@@ -83,3 +83,48 @@ test("new event schemas reject excess mutable fields, foreign ownership and unbo
     })
   );
 });
+
+for (const [kind, maximum] of [
+  ["web", 16_000],
+  ["slack", 16_000],
+  ["savedtimer", 32_000],
+  ["teamreport", 2000],
+] as const) {
+  test(`${kind} input preserves its ${maximum}-character boundary`, async () => {
+    const original = await event();
+    let origin: BotEvent["source"] = source;
+    if (kind === "web") {
+      origin = { kind, operationId: id.operation("web-input") };
+    }
+    if (kind === "slack") {
+      origin = {
+        kind,
+        eventId: "slack-event",
+        thread: {
+          workspaceId: "workspace",
+          channelId: "D123",
+          rootTimestamp: "123.456000",
+        },
+      };
+    }
+    if (kind === "savedtimer") {
+      origin = { kind, scheduleId: "saved-schedule", occurrenceId: "123" };
+    }
+    const input = {
+      ...original,
+      source: origin,
+      id: await botEventId(coordinator, origin),
+      content: { text: "x".repeat(maximum), reference: null },
+    };
+    const decode = Schema.decodeUnknownSync(BotEventSchema, {
+      onExcessProperty: "error",
+    });
+    assert.equal(decode(input).content.text.length, maximum);
+    assert.throws(() =>
+      decode({
+        ...input,
+        content: { ...input.content, text: `${input.content.text}x` },
+      })
+    );
+  });
+}

@@ -381,7 +381,7 @@ test("new event inputs reject oversized content and keep source identity indepen
         (tx) =>
           fixture.events().enqueueIn(tx, {
             ...event,
-            content: { text: "x".repeat(2001), reference: null },
+            content: { text: "x".repeat(16_001), reference: null },
           }),
         context
       )
@@ -544,7 +544,15 @@ test("submitted internal input retains capacity and cancellation withdraws it be
       context
     );
     await entered.promise;
-    const event = await eventFor(fixture, "a");
+    const event = await eventFor(fixture, "a", {
+      kind: "coordinator-terminalnotice",
+      key: {
+        organizationId: id.organization("org-A"),
+        ownerPrincipalId: actor.actor.id,
+        workId: Schema.decodeUnknownSync(WorkIdSchema)("notice-work"),
+      },
+      reason: "expired",
+    });
     const receipt = await fixture.events().admit(event, actor);
     let current = await saved(fixture, event);
     for (
@@ -607,6 +615,12 @@ test("saved event reads require current read and content access without executio
       native: source.native,
       coordination: source.coordinator,
       subscriptions: source.subscriptions,
+      web: {
+        prepareLocalControl: () =>
+          Promise.reject(
+            new Error("Local controls are outside this read check.")
+          ),
+      },
       runtime: {
         authorize: (_caller: unknown, operation: string) => {
           operations.push(operation);

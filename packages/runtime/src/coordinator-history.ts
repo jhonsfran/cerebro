@@ -134,7 +134,8 @@ export const createCoordinatorHistory = (options: {
     recall: async (
       workId: string,
       api: Pick<ToolExecutionApi, "commit">,
-      context: Parameters<ToolExecutionApi["agent"]>[0]
+      context: Parameters<ToolExecutionApi["agent"]>[0],
+      offset = 0
     ) => {
       const document = await options.pi.snapshot(
         WorkDocuments,
@@ -148,13 +149,16 @@ export const createCoordinatorHistory = (options: {
       await retain([document.record], api, context);
       let report = document.record.terminalReport;
       const reportTruncated =
-        (report?.kind === "completed" && report.text.length > 4000) ||
-        (report?.kind === "failed" && report.reason.length > 4000);
+        (report?.kind === "completed" && report.text.length > offset + 4000) ||
+        (report?.kind === "failed" && report.reason.length > offset + 4000);
       if (report?.kind === "completed") {
-        report = { ...report, text: report.text.slice(0, 4000) };
+        report = { ...report, text: report.text.slice(offset, offset + 4000) };
       }
       if (report?.kind === "failed") {
-        report = { ...report, reason: report.reason.slice(0, 4000) };
+        report = {
+          ...report,
+          reason: report.reason.slice(offset, offset + 4000),
+        };
       }
       return {
         workId: document.record.admission.key.workId,
@@ -163,6 +167,8 @@ export const createCoordinatorHistory = (options: {
         deadlineAt: document.record.admission.deadlineAt,
         report,
         reportTruncated,
+        reportOffset: offset,
+        ...(reportTruncated ? { nextReportOffset: offset + 4000 } : {}),
       };
     },
   };

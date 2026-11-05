@@ -15,23 +15,11 @@ import type {
   WorkReport,
   WorkStatus,
 } from "@cerebro/contracts/work";
-import {
-  LiveDoc,
-  defineDoc,
-  defineDocFamily,
-} from "@earendil-works/pi-durable";
-import type {
-  ConversationId,
-  Harness,
-  JsonObject,
-  SubmissionId,
-  TaskId,
-  Tx,
-} from "@earendil-works/pi-durable";
+import { defineDoc, defineDocFamily } from "@earendil-works/pi-durable";
+import type { JsonObject, TaskId, Tx } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 import { discardQueuedCommandsIn } from "./coordinator-retired-events.ts";
-import { piContext } from "./pi-harness.ts";
 
 export interface CoordinationBinding {
   readonly address: EventAddress;
@@ -278,84 +266,6 @@ export const requireCoordinatorWork = async (
   }
   requireWorkSource(document.record, binding);
   return document.record;
-};
-interface HumanCandidate {
-  readonly operationId: string;
-  readonly key: string;
-  readonly submissionId: SubmissionId;
-}
-export const currentHumanCandidates = async (
-  pi: Harness,
-  nativeId: ConversationId
-): Promise<HumanCandidate[]> => {
-  const live = await pi.snapshot(LiveDoc, nativeId, piContext());
-  const candidates = await Promise.all(
-    (live?.run?.inputs ?? []).map(async (submissionId) => {
-      const submission = await pi.submission(submissionId, piContext());
-      const record = await submission?.status(piContext());
-      if (record?.type !== "input" || !record.requestId) {
-        return;
-      }
-      return {
-        submissionId,
-        operationId: record.requestId,
-        key: await coordinatorOperationKey(record.requestId),
-      };
-    })
-  );
-  return candidates.filter((candidate) => candidate !== undefined);
-};
-export const currentHumanOperation = async (
-  tx: Tx,
-  binding: CoordinationBinding,
-  nativeId: ConversationId,
-  candidates: readonly HumanCandidate[]
-) => {
-  const ledger = await tx.doc(WorkLedger);
-  requireWorkIdentity(ledger, binding);
-  const live = await tx.doc(LiveDoc, nativeId);
-  const inputs = new Set(live.run?.inputs);
-  const verified = await Promise.all(
-    candidates.map(async (candidate) => {
-      const submission = await tx.submissionByRequest(
-        nativeId,
-        candidate.operationId
-      );
-      if (
-        !submission ||
-        submission.type !== "input" ||
-        submission.id !== candidate.submissionId ||
-        !inputs.has(submission.id)
-      ) {
-        return;
-      }
-      if (submission.status !== "placed" && submission.status !== "done") {
-        return;
-      }
-      const entry = await tx.entry(submission.entry);
-      if (entry?.kind !== "pi.user") {
-        return;
-      }
-      const operation = await tx.doc(
-        SourceOperations,
-        nativeId,
-        candidate.key,
-        candidate.operationId
-      );
-      return operation.operationId === candidate.operationId &&
-        operation.route?.kind === "coordinator"
-        ? candidate
-        : undefined;
-    })
-  );
-  const current = verified.findLast((candidate) => candidate !== undefined);
-  if (!current) {
-    throw new Denied({
-      code: "unauthorized",
-      reason: "A new team requires a current human request.",
-    });
-  }
-  return current;
 };
 export const pruneWorkIndex = async (
   tx: Tx,

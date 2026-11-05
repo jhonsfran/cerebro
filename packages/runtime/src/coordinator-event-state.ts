@@ -267,3 +267,15 @@ export const BotEventSequence = defineDoc({
 });
 export const eventOf = (receipt: BotEventReceipt) =>
   normalizeEventAdmission(receipt.input).event;
+
+export const BotEventQueue = defineDoc({
+  kind: "cerebro.bot-event-queue",
+  scope: "session",
+  version: 1,
+  initial: (): {
+    pending: Record<
+      string,
+      { nativeId: ConversationId; taskId: TaskId; internal: boolean }
+    >;
+  } => ({ pending: {} }),
+});

@@ -1,3 +1,4 @@
+import { normalizeEventAdmission } from "@cerebro/contracts/bot-routing";
 import type { EventAddress } from "@cerebro/contracts/events";
 import {
   Denied,
@@ -45,6 +46,7 @@ import { sameWorkSource } from "./coordinator-ledger.ts";
 import { createCoordinatorReport } from "./coordinator-report.ts";
 import { createCoordinatorSource } from "./coordinator-source.ts";
 import { createCoordinatorSubscriptions } from "./coordinator-subscriptions.ts";
+import { createCoordinatorWeb } from "./coordinator-web.ts";
 import { createCoordinatorWork } from "./coordinator-work.ts";
 import { createGenerativeUiTool } from "./generative-ui-tool.ts";
 import { chatSnapshot, piContext, snapshotToolIds } from "./pi-harness.ts";
@@ -64,8 +66,11 @@ const run = async <A>(
   return result.success;
 };
 const sendSchema = Schema.Struct({
-  operationId: Schema.NonEmptyString,
-  text: Schema.NonEmptyString,
+  operationId: Schema.NonEmptyString.check(
+    Schema.isMaxLength(512),
+    Schema.makeFilter((value) => value.trim() === value)
+  ),
+  text: Schema.NonEmptyString.check(Schema.isMaxLength(16_000)),
 });
 const decisionSchema = Schema.Struct({
   approvalId: Schema.NonEmptyString,
@@ -108,6 +113,7 @@ export class ConversationScope {
   readonly routeHuman: ReturnType<typeof createCoordinatorSource>;
   readonly receiveReport: ReturnType<typeof createCoordinatorReport>;
   readonly subscriptions: ReturnType<typeof createCoordinatorSubscriptions>;
+  readonly web: ReturnType<typeof createCoordinatorWeb>;
 
   private constructor(
     runtime: ReturnType<typeof createConversationResources>,
@@ -133,6 +139,13 @@ export class ConversationScope {
       notify: () => this.scheduleNotify(),
     };
     this.routeHuman = createCoordinatorSource(source);
+    this.web = createCoordinatorWeb({
+      pi: services.pi,
+      native,
+      runtime,
+      events: services.events,
+      replayHandled: this.routeHuman,
+    });
     this.receiveReport = createCoordinatorReport({
       ...source,
       persist: () => services.storage.sync(),
@@ -332,7 +345,19 @@ export class ConversationScope {
       agentVersion: configuration.agent.version,
       ownerPrincipalId: owner.represented?.id ?? owner.actor.id,
       admissions: this.coordination.admissions,
-      prepareRoute: this.subscriptions.prepare,
+      prepareRoute: async (input, context) => {
+        if (configuration.coordination) {
+          return await this.subscriptions.prepare(input, context);
+        }
+        if (normalizeEventAdmission(input).routing.kind !== "automatic") {
+          throw new Denied({
+            code: "revoked",
+            reason: "Team coordination is disabled.",
+          });
+        }
+        return () => Promise.resolve({ kind: "coordinator" as const });
+      },
+      prepareLocalControl: this.web.prepareLocalControl,
       routingAccess: async (context, dependencies) => {
         if (!configuration.coordination) {
           throw new Denied({
@@ -354,11 +379,11 @@ export class ConversationScope {
         let permission: "read" | "coordinate" | "send" = "send";
         if (action === "read") {
           permission = "read";
-        } else if (configuration.coordination) {
+        } else if (configuration.coordination || action === "control") {
           permission = "coordinate";
         }
         await this.runtime.authorize(caller, permission, signal);
-        if (action === "deliver") {
+        if (action !== "read") {
           await this.runtime.authorize(caller, "transfer", signal);
         }
         await run(
@@ -456,11 +481,21 @@ export class ConversationScope {
       approvals,
       view,
     });
+    const visibleOperations = new Set([
+      ...snapshot.messages.map((message) => message.operationId),
+      ...snapshot.queuedInputs.map((input) => input.operationId),
+    ]);
+    const pendingInputs = await this.services.events.pendingWeb(this.native.id);
+    const pending = pendingInputs.filter(
+      (input) => !visibleOperations.has(input.operationId)
+    );
     return {
       ...snapshot,
+      queuedInputs: [...snapshot.queuedInputs, ...pending],
       activity,
       busy:
         snapshot.busy ||
+        pending.length > 0 ||
         activity.compactions.some(
           (compaction) => compaction.reason === "manual"
         ),
@@ -675,12 +710,14 @@ export class ConversationScope {
       }
       if (path === "/stop") {
         await runtime.authorize(context, "stop", request.signal);
+        const [stopped] = await Promise.all([
+          this.services.harness.abort({ session: String(this.native.id) }),
+          this.services.events.abortPending(this.native.id),
+        ]);
         return Response.json({
           status: "ok",
           value: {
-            stopped: await this.services.harness.abort({
-              session: String(this.native.id),
-            }),
+            stopped,
           },
         });
       }
@@ -726,6 +763,17 @@ export class ConversationScope {
             )
           )
         );
+        if (runtime.configuration.conversationKind !== "slack") {
+          return Response.json({
+            status: "ok",
+            value: await this.web.send(
+              command.operationId,
+              command.text,
+              context,
+              request.signal
+            ),
+          });
+        }
         if (
           await this.routeHuman(
             command.operationId,

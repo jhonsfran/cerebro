@@ -111,6 +111,8 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
   const delivered: TeamCommand[] = [];
   const transports: TeamCommandTransport[] = [];
   let localControl: BotEventScope["prepareLocalControl"];
+  let deliveryAuthorization: ((event: BotEvent) => Promise<void>) | undefined;
+  let prepareSettlement: BotEventScope["prepareSettlement"];
   const progress: Promise<unknown>[] = [];
   let pinVersion = 1;
   let clock = Date.now();
@@ -226,8 +228,8 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
             return typeof value === "function" ? value.bind(target) : value;
           },
         });
-        const authorize = (event: BotEvent) =>
-          allowed.get(current.name) &&
+        const authorize = async (event: BotEvent, caller?: unknown) => {
+          await (allowed.get(current.name) &&
           !event.dependencies.sourceIds.some((sourceId) =>
             revokedContent.has(sourceId)
           )
@@ -237,7 +239,11 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
                   code: "revoked",
                   reason: "Event content revoked.",
                 })
-              );
+              ));
+          if (caller === undefined) {
+            await deliveryAuthorization?.(event);
+          }
+        };
         return Promise.resolve({
           native,
           agentVersion: pinVersion,
@@ -245,6 +251,7 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
           admissions: current.coordinator.admissions,
           prepareRoute: current.subscriptions.prepare,
           prepareLocalControl: localControl,
+          prepareSettlement,
           routingAccess: (_context, content) =>
             allowed.get(current.name) &&
             !content.sourceIds.some((sourceId) => revokedContent.has(sourceId))
@@ -472,7 +479,7 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
     );
     await Promise.all(scopes.map((scope) => scope.coordinator.restore()));
     await events.restore();
-    return { pi, registry, scopes, storage, events, database };
+    return { pi, registry, models, scopes, storage, events, database };
   };
   let host = await open();
   const source = (name: string) => {
@@ -543,6 +550,15 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
     setLocalControl: (handler: BotEventScope["prepareLocalControl"]) => {
       localControl = handler;
     },
+    setEventDeliveryAuthorization: (handler: typeof deliveryAuthorization) => {
+      deliveryAuthorization = handler;
+    },
+    setEventSettlement: (handler: BotEventScope["prepareSettlement"]) => {
+      prepareSettlement = handler;
+    },
+    registry: () => host.registry,
+    models: () => host.models,
+    lifecycleJobs: queued.jobs,
     jobs: queued.rows,
     waitDispatch,
     pi: () => host.pi,

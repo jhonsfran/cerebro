@@ -19,6 +19,8 @@ import type {
 } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
+import { webEventData } from "./coordinator-event-input.ts";
+
 export const snapshotToolIds = (snapshot: ChatSnapshot): readonly string[] => [
   ...new Set(
     [
@@ -108,7 +110,12 @@ const inboxSchema = Schema.Struct({
     Schema.Union([
       Schema.Struct({
         content: inputContent,
-        entry: Schema.optional(Schema.Struct({ kind: Schema.String })),
+        entry: Schema.optional(
+          Schema.Struct({
+            kind: Schema.String,
+            data: Schema.optional(Schema.Unknown),
+          })
+        ),
         id: Schema.Number,
         mode: Schema.Literals(["steer", "followUp"]),
       }),
@@ -118,24 +125,31 @@ const inboxSchema = Schema.Struct({
 });
 
 const queuedInputs = (inbox: typeof inboxSchema.Type): ChatQueuedInput[] =>
-  inbox.items.flatMap((item) =>
-    item.mode === "write" || item.entry?.kind === "cerebro.bot-event-input"
-      ? []
-      : [
-          {
-            mode: item.mode,
-            submissionId: String(item.id),
-            text:
-              typeof item.content === "string"
-                ? item.content
-                : item.content
-                    .map((part) =>
-                      part.type === "text" ? part.text : "[Image]"
-                    )
-                    .join("\n"),
-          },
-        ]
-  );
+  inbox.items.flatMap((item) => {
+    if (item.mode === "write") {
+      return [];
+    }
+    const web =
+      item.entry?.kind === "cerebro.bot-event-input"
+        ? webEventData(item.entry.data)
+        : undefined;
+    if (item.entry?.kind === "cerebro.bot-event-input" && !web) {
+      return [];
+    }
+    return [
+      {
+        mode: item.mode,
+        submissionId: String(item.id),
+        ...(web ? { operationId: web.operationId } : {}),
+        text:
+          typeof item.content === "string"
+            ? item.content
+            : item.content
+                .map((part) => (part.type === "text" ? part.text : "[Image]"))
+                .join("\n"),
+      },
+    ];
+  });
 
 const applyLiveToolSlots = (
   tools: ChatToolExecution[],
@@ -332,34 +346,46 @@ const presentedMessage = (
   };
 };
 
+const presentedEntry = (
+  entry: ConversationView["entries"][number]
+): ChatMessage[] => {
+  const messages: ChatMessage[] = [];
+  const web =
+    entry.kind === "cerebro.bot-event-input"
+      ? webEventData(entry.data)
+      : undefined;
+  if (entry.kind === "cerebro.bot-event-input" && !web) {
+    return [];
+  }
+  for (const [index, message] of (entry.model ?? []).entries()) {
+    const presented = presentedMessage(
+      message,
+      entry.model?.length === 1 ? String(entry.id) : `${entry.id}:${index}`
+    );
+    if (presented) {
+      messages.push({
+        ...presented,
+        ...(web && presented.role === "user"
+          ? { operationId: web.operationId }
+          : {}),
+        ...(entry.kind === "pi.compaction"
+          ? { kind: "summary" as const, role: "assistant" as const }
+          : {}),
+        ...(presented.role !== "tool" &&
+        entry.kind !== "pi.compaction" &&
+        entry.kind !== "pi.reset"
+          ? { entryId: String(entry.id) }
+          : {}),
+      });
+    }
+  }
+  return messages;
+};
+
 export const chatPresentation = (
   view: ConversationView
 ): Pick<ChatSnapshot, "busy" | "messages" | "queuedInputs" | "tools"> => {
-  const messages: ChatMessage[] = [];
-  for (const entry of view.entries) {
-    if (entry.kind === "cerebro.bot-event-input") {
-      continue;
-    }
-    for (const [index, message] of (entry.model ?? []).entries()) {
-      const presented = presentedMessage(
-        message,
-        entry.model?.length === 1 ? String(entry.id) : `${entry.id}:${index}`
-      );
-      if (presented) {
-        messages.push({
-          ...presented,
-          ...(entry.kind === "pi.compaction"
-            ? { kind: "summary" as const, role: "assistant" as const }
-            : {}),
-          ...(presented.role !== "tool" &&
-          entry.kind !== "pi.compaction" &&
-          entry.kind !== "pi.reset"
-            ? { entryId: String(entry.id) }
-            : {}),
-        });
-      }
-    }
-  }
+  const messages = view.entries.flatMap(presentedEntry);
   const live = Schema.decodeUnknownSync(liveSchema)(view.docs["pi.live"] ?? {});
   const inbox = Schema.decodeUnknownSync(inboxSchema)(
     view.docs["pi.inbox"] ?? { items: [] }
