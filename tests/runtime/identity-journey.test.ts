@@ -359,6 +359,17 @@ journey(
           )
         )
     );
+    const beforeStop = await waitFor(
+      () => read(stack, left),
+      (snapshot) =>
+        snapshot.busy &&
+        snapshot.messages.some(
+          (message) =>
+            message.role === "assistant" &&
+            message.state === "streaming" &&
+            message.text.length > 0
+        )
+    );
     const stopped = await stop(stack, left);
     assert.equal(stopped.stopped, true);
     const leftStopped = await waitFor(
@@ -413,6 +424,7 @@ journey(
       notificationsA,
       notificationsB,
       relations,
+      beforeStop,
       leftStopped,
     });
   }

@@ -28,6 +28,7 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 6b2a: Add realistic provider and Slack fixtures with exact test cleanup.
 - [ ] Unit 6b2b: Prove persistent-agent routing, subscriptions, queue limits, and Inspector through the native application.
 - [x] Unit 6 docs: Document primary continuity, event routing, private Teams, and development inspection.
+- [x] Unit 6 Stop verification: Observe a streamed partial before checking interrupted output.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
 - [ ] Phase D: Keep the audit trail throughout the run.
 - [ ] Phase E: Verify and hand back.
@@ -98,6 +99,8 @@ Unit 6d2 gives each Inspector tool occurrence a stable native-entry key and a se
 Unit 6b2a adds distinct storage and Slack task fixtures with actual incoming tool-result joins and trusted event references. The Slack boundary can accept one exact post, persist it, then return an uncertain response. Reopening retains consumption without fake physical deduplication. Fresh reviews fixed failed-worker text that OpenAI transports without an error flag and replaced static-answer test echoes with independent contributions. All 16 focused cases pass. The public channel runner and its external-database path each pass all 166 tests. Controlled test-process failure also cleans up its exact owned database. The external path makes zero Docker calls. Test PostgreSQL uses labelled tmpfs and creates no volume. All final reviews pass. Actual test-image module bytes and full native, runtime, and browser gates remain pending.
 
 Unit 6 documentation describes one persistent primary, filtered Slack events, bounded private Teams, and current-read development inspection. It gives a separate multi-model local configuration and same-chat publication steps. Three Skills UI strings now require publication after the current turn finishes. Review corrected a mistaken inference from an internal report's null reply destination. Saved Work origin lookup can authorize the coordinator's answer in the original Slack thread; a report grants no new destination. Final specification and thermo reviews pass on all twelve files. Workspace types, scoped lint, and the React error gate pass. Native acceptance, the repaired Stop verification, pilot migration, and final browser checks remain separate pending work.
+
+The first complete runtime run on the current source executes 374 Node cases with 372 passes, two Stop-precondition failures, and no skips. Bun does not run after that failure. The two new interrupted-output assertions required a native partial but waited only for a provider request. The separate Stop verification change waits for actual nonempty streaming text and preserves every interruption, input, sibling wake, notification, and resume assertion. A fresh specification, thermo, and comment review passes. Both exact native cases now pass with zero skips; both actual images match all 288 frozen runtime source paths. Their two owned stacks and every captured mount are removed. The full Node and Bun runtime command remains a final gate after fixture context repairs.
 
 ## Cutover
 

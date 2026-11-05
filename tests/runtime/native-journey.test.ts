@@ -402,6 +402,17 @@ journey(
             call.completedAt === undefined
         )
     );
+    const beforeStop = await waitFor(
+      () => read(stack, address),
+      (snapshot) =>
+        snapshot.busy &&
+        snapshot.messages.some(
+          (message) =>
+            message.role === "assistant" &&
+            message.state === "streaming" &&
+            message.text.length > 0
+        )
+    );
     assert.deepEqual(await stop(stack, address), { stopped: true });
     const stopped = await waitFor(
       () => read(stack, address),
@@ -430,7 +441,7 @@ journey(
       2
     );
     assert.equal(final.messages.at(-1)?.text, answer);
-    await evidence(stack, "stop", { final, stopped, relation });
+    await evidence(stack, "stop", { final, stopped, relation, beforeStop });
   }
 );
 
