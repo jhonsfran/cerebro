@@ -85,17 +85,19 @@ test("a successful tool result outside the selected page leaves its call status 
     );
     await entered.promise;
     const activeContext = await native.context(context);
-    const running = inspectLive(
-      inspectEntries(activeContext.entries),
-      await pi.snapshot(LiveDoc, native.id, context)
-    );
+    const live = await pi.snapshot(LiveDoc, native.id, context);
+    assert.ok(live?.run);
+    const running = inspectLive(inspectEntries(activeContext.entries), live, {
+      task: await pi.getTask(live.run.taskId, context),
+      conversationId: native.id,
+    });
     assert.equal(running.tools[0]?.status, "running");
     released.resolve(true);
     const settled = await input.wait(context);
     assert.equal(settled.status, "done");
     const completedContext = await native.context(context);
     const history = completedContext.entries;
-    const complete = inspectEntries(history);
+    const complete = inspectLive(inspectEntries(history));
     assert.deepEqual(
       complete.tools.map((tool) => ({
         status: tool.status,
@@ -122,17 +124,19 @@ test("a successful tool result outside the selected page leaves its call status 
       undefined,
       context
     );
-    const projected = inspectEntries(page.items);
+    const projected = inspectLive(inspectEntries(page.items));
     assert.deepEqual(
       projected.tools.map((tool) => ({
         id: tool.id,
+        callId: tool.callId,
         status: tool.status,
         output: tool.output,
         resultEntryId: tool.resultEntryId,
       })),
       [
         {
-          id: "page-call",
+          id: `call:${call.id}:0:0`,
+          callId: "page-call",
           status: "unknown",
           output: null,
           resultEntryId: null,

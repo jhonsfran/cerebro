@@ -240,6 +240,86 @@ test("a tool call without a result on its page shows unknown status and page-loc
   );
 });
 
+test("reused provider call IDs keep separate stable tool rows and preserve completed output across refresh", async () => {
+  const work = inspectionWork();
+  const transcript = inspectionTranscript(work.workId);
+  const [tool] = transcript.tools;
+  assert.ok(tool);
+  let completed = false;
+  const fixture = inspectorFixture({
+    respond: ({ query }) => {
+      if (query.kind === "team") {
+        return Response.json(inspectionTeam(work));
+      }
+      if (query.kind === "transcript") {
+        return Response.json({
+          ...transcript,
+          tools: [
+            { ...tool, id: "call:11:0:0", callId: "reused-provider-call" },
+            {
+              ...tool,
+              id: "call:22:0:0",
+              callId: "reused-provider-call",
+              status: completed ? "succeeded" : "running",
+              output: completed
+                ? { text: "The second check is complete.", truncated: false }
+                : null,
+              resultEntryId: completed ? "second-result" : null,
+            },
+          ],
+        });
+      }
+      return Response.json(inspectionOverview([work]));
+    },
+  });
+  const view = fixture.mount();
+  await waitFor(() =>
+    assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
+  );
+  await act(() =>
+    view.getByRole("button", { name: "Inspect work work-a" }).click()
+  );
+  await waitFor(() =>
+    assert.ok(view.getByRole("button", { name: "Lead tools" }))
+  );
+  await act(() => view.getByRole("button", { name: "Lead tools" }).click());
+  await waitFor(() =>
+    assert.equal(view.getAllByText("reused-provider-call").length, 2)
+  );
+  const first = view.getByRole("article", {
+    name: "delegate_worker succeeded",
+  });
+  const second = view.getByRole("article", { name: "delegate_worker running" });
+  assert.match(first.textContent ?? "", /WAL preserves committed writes/u);
+  assert.equal(
+    second.textContent?.includes("WAL preserves committed writes"),
+    false
+  );
+  assert.equal(view.queryByText("call:11:0:0"), null);
+  completed = true;
+  await act(() =>
+    view.getByRole("button", { name: "Refresh Inspector" }).click()
+  );
+  await waitFor(() =>
+    assert.ok(view.getByText("The second check is complete."))
+  );
+  assert.equal(
+    view.getByText("WAL preserves committed writes.").closest("article"),
+    first
+  );
+  assert.equal(
+    view.getByText("The second check is complete.").closest("article"),
+    second
+  );
+  assert.equal(
+    view.getAllByRole("article", { name: "delegate_worker succeeded" }).length,
+    2
+  );
+  assert.equal(view.getAllByText("reused-provider-call").length, 2);
+  assert.equal(first.textContent?.includes("second-result"), false);
+  assert.ok(view.getByText("second-result"));
+});
+
 test("work history and owned events keep empty-page continuations and replace old pages", async () => {
   const old = inspectionWork("old-work");
   const recent = inspectionWork("recent-work");

@@ -169,6 +169,7 @@ export const InspectionMessage = Schema.Struct({
 export type InspectionMessage = typeof InspectionMessage.Type;
 export const InspectionTool = Schema.Struct({
   id: identifier,
+  callId: identifier,
   name: identifier,
   status: Schema.Literals([
     "unknown",

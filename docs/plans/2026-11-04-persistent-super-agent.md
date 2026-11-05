@@ -24,7 +24,7 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 6a: Repair model-visible event references and saved history/Inspector projections.
 - [x] Unit 6b1: Repair native runtime verification at actual event and storage boundaries.
 - [x] Unit 6d1: Preserve later subscription mutations when native tools replay.
-- [ ] Unit 6d2: Give Inspector tools distinct occurrence identity across native rounds.
+- [x] Unit 6d2: Give Inspector tools distinct occurrence identity across native rounds.
 - [ ] Unit 6b2: Complete realistic Slack, subscription, queue, and Inspector application fixtures.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
 - [ ] Phase D: Keep the audit trail throughout the run.
@@ -90,6 +90,8 @@ Unit 6a closes integration gaps found by the full runtime baseline and actual br
 Unit 6b1 repairs native verification at the actual saved event and storage boundaries. Public operation IDs remain distinct from native event, input, and entry IDs. The real lost-response injector joins the exact committed submission and entry. Safe physical correlation proves replacement-host completion before source readers. Both native fault cases pass through replay and later progress. The initial run exposed assertions for deliberately omitted raw log text. The revised checks use the existing sanitized failure event with the exact identity and committed witness time. The full runtime and application-native gates remain pending, as do the two separate production audit repairs.
 
 Unit 6d1 saves each subscription mutation result with both relation directions in the existing native transaction. Exact native task replay returns its original result after current authority checks, without undoing a later subscription change. Real Pi and SQLite regressions cover both orders, no-ops, terminal Work, changed requests, revoked access, and rollback. All three fresh reviews pass. The 125 focused tests, normal workspace type checks, and 165 PostgreSQL channel tests pass. The receipt cannot reconstruct mutations made by intermediate unshipped development builds that never saved it. The pre-task release had no subscription tools; that development-state limit is retained explicitly. Inspector occurrence identity and the final product gates remain pending.
+
+Unit 6d2 gives each Inspector tool occurrence a stable native-entry key and a separate displayed provider call ID. Live status requires the exact current generation and full private call ID. One existing task read proves the round on a latest live page; historical and settled pages add none. Real Pi tests cover repeated IDs, pending calls, orphan results, full caps, and matching display prefixes. Mounted tests preserve distinct rows and prior output. Fresh reviews removed an unnecessary null state from the bounded result join. The final revision passes 16 runtime tests, 13 workspace type tasks, scoped lint, and all 166 PostgreSQL channel tests. All three final reviews pass. Final native and browser gates remain pending.
 
 ## Cutover
 

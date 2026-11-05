@@ -136,6 +136,7 @@ export const inspectionTranscript = (
   tools: [
     {
       id: "tool-call-a",
+      callId: "provider-call-a",
       name: "delegate_worker",
       status: "succeeded",
       input: {
@@ -148,6 +149,7 @@ export const inspectionTranscript = (
     },
     {
       id: "tool-call-b",
+      callId: "provider-call-b",
       name: "unknown_connector",
       status: "failed",
       input: { kind: "unavailable" },

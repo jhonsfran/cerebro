@@ -6,6 +6,8 @@ import type {
 } from "@cerebro/contracts/inspection";
 import type { Message, Usage, ToolCall } from "@earendil-works/pi-ai";
 import type {
+  ConversationId,
+  EntryId,
   EntryRecord,
   Harness,
   LiveState,
@@ -148,40 +150,62 @@ const inspectMessage = (
         : "complete",
   };
 };
-const inspectToolCall = (call: ToolCall): InspectionTool => ({
-  id: call.id.slice(0, 2048),
-  name: call.name.slice(0, 2048),
-  status: "unknown",
-  input: safeToolInput(call.name, call.arguments),
-  output: null,
-  resultEntryId: null,
+interface ProjectedTool {
+  readonly value: InspectionTool;
+  readonly callId: string;
+  readonly assistantEntryId: EntryId | null;
+}
+const inspectToolCall = (
+  call: ToolCall,
+  entry: EntryRecord,
+  messageIndex: number,
+  blockIndex: number
+): ProjectedTool => ({
+  value: {
+    id: `call:${entry.id}:${messageIndex}:${blockIndex}`,
+    callId: call.id.slice(0, 2048),
+    name: call.name.slice(0, 2048),
+    status: "unknown",
+    input: safeToolInput(call.name, call.arguments),
+    output: null,
+    resultEntryId: null,
+  },
+  callId: call.id,
+  assistantEntryId: entry.kind === "pi.assistant" ? entry.id : null,
 });
 const applyToolResult = (
-  tools: InspectionTool[],
+  tools: ProjectedTool[],
+  unmatched: Map<string, number>,
   message: Extract<Message, { role: "toolResult" }>,
-  entryId: string
+  entryId: string,
+  messageIndex: number
 ): void => {
-  const index = tools.findLastIndex(
-    (candidate) => candidate.id === message.toolCallId
-  );
-  const previous = tools[index];
+  const index = unmatched.get(message.toolCallId);
+  unmatched.delete(message.toolCallId);
+  const previous = index === undefined ? undefined : tools[index];
   const result: InspectionTool = {
-    id: message.toolCallId.slice(0, 2048),
+    id: previous?.value.id ?? `result:${entryId}:${messageIndex}`,
+    callId: message.toolCallId.slice(0, 2048),
     name: message.toolName.slice(0, 2048),
     status: message.isError ? "failed" : "succeeded",
-    input: previous?.input ?? { kind: "unavailable" },
+    input: previous?.value.input ?? { kind: "unavailable" },
     output: message.isError ? null : inspectionText(messageText(message)),
     resultEntryId: entryId,
   };
-  if (previous) {
-    tools[index] = result;
+  if (previous && index !== undefined) {
+    tools[index] = { ...previous, value: result };
   } else if (tools.length < 24) {
-    tools.push(result);
+    tools.push({
+      value: result,
+      callId: message.toolCallId,
+      assistantEntryId: null,
+    });
   }
 };
 export const inspectEntries = (entries: readonly EntryRecord[]) => {
   const messages: InspectionMessage[] = [];
-  const tools: InspectionTool[] = [];
+  const tools: ProjectedTool[] = [];
+  const unmatched = new Map<string, number>();
   for (const entry of entries) {
     if (
       entry.kind !== "pi.user" &&
@@ -196,22 +220,54 @@ export const inspectEntries = (entries: readonly EntryRecord[]) => {
         messages.push(projected);
       }
       if (message.role === "assistant") {
-        tools.push(
-          ...message.content
-            .filter((block) => block.type === "toolCall")
-            .slice(0, 24 - tools.length)
-            .map(inspectToolCall)
-        );
+        for (const [blockIndex, block] of message.content.entries()) {
+          if (block.type !== "toolCall") {
+            continue;
+          }
+          if (tools.length < 24) {
+            unmatched.set(block.id, tools.length);
+            tools.push(inspectToolCall(block, entry, index, blockIndex));
+          } else {
+            unmatched.delete(block.id);
+          }
+        }
       } else if (message.role === "toolResult") {
-        applyToolResult(tools, message, String(entry.id));
+        applyToolResult(tools, unmatched, message, String(entry.id), index);
       }
     }
   }
   return { messages, tools };
 };
+const toolRound = Schema.Struct({
+  phase: Schema.Literal("tools"),
+  assistant: Schema.Number,
+});
+interface CurrentRound {
+  readonly task: NativeTask | undefined;
+  readonly conversationId: ConversationId;
+}
+const currentAssistant = (
+  live: LiveState | undefined,
+  round: CurrentRound | undefined
+): number | undefined => {
+  const task = round?.task;
+  if (
+    !task ||
+    task.id !== live?.run?.taskId ||
+    task.conversationId !== round?.conversationId ||
+    task.kind !== "pi.generation" ||
+    task.state.status === "terminal" ||
+    task.state.status === "completing"
+  ) {
+    return;
+  }
+  const decoded = Schema.decodeUnknownOption(toolRound)(task.state.checkpoint);
+  return decoded._tag === "Some" ? decoded.value.assistant : undefined;
+};
 export const inspectLive = (
   projected: ReturnType<typeof inspectEntries>,
-  live: LiveState | undefined
+  live?: LiveState,
+  round?: CurrentRound
 ) => {
   const partial = live?.generation?.message;
   let { messages } = projected;
@@ -229,11 +285,17 @@ export const inspectLive = (
       },
     ];
   }
-  const tools = projected.tools.map((tool) => {
-    const saved = live?.tools?.find((slot) => slot.callId === tool.id);
+  const assistant = currentAssistant(live, round);
+  const tools = projected.tools.map(({ value, callId, assistantEntryId }) => {
+    const saved =
+      assistantEntryId !== null &&
+      assistantEntryId === assistant &&
+      value.resultEntryId === null
+        ? live?.tools?.find((slot) => slot.callId === callId)
+        : undefined;
     return saved && saved.status !== "done"
-      ? { ...tool, status: saved.status }
-      : tool;
+      ? { ...value, status: saved.status }
+      : value;
   });
   return { messages, tools };
 };

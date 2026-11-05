@@ -179,7 +179,7 @@ const Tools = ({ frame }: { frame: InspectionTranscript }) => (
           )}
           <InspectionFacts
             rows={[
-              ["Tool call", tool.id],
+              ["Tool call", tool.callId],
               ["Result entry", tool.resultEntryId],
             ]}
           />

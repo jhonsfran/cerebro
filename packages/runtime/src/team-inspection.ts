@@ -136,11 +136,15 @@ const readTranscript = async (
   const live = query.cursor
     ? undefined
     : await input.pi.snapshot(LiveDoc, nativeId, context);
+  const task =
+    live?.run && live.tools?.some((tool) => tool.status !== "done")
+      ? await input.pi.getTask(live.run.taskId, context)
+      : undefined;
   return {
     kind: "transcript",
     workId: input.work.key.workId,
     role: query.role,
-    ...inspectLive(projected, live),
+    ...inspectLive(projected, live, { task, conversationId: nativeId }),
     next: nextInspectionCursor(input.work.sourceEventAddress, query, page.next),
   };
 };
