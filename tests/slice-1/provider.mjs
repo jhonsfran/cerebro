@@ -6,8 +6,6 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
-// The provider holds a connector response at these points so a test can
-// kill celld while a physical write is in flight.
 export const boundaries = ["before-tool-dispatch", "after-tool-dispatch"];
 const canonical = (value) => {
   if (Array.isArray(value)) {
@@ -48,6 +46,59 @@ const identity = (value) => {
   }
   return value;
 };
+export const parseInputCorrelation = (header, requestId) => {
+  if (header === undefined) {
+    return;
+  }
+  if (typeof header !== "string" || header.length > 4096) {
+    throw new Error("Invalid fixture input correlation header");
+  }
+  const input = JSON.parse(header);
+  const address = Object.fromEntries(
+    ["organizationId", "agentId", "conversationId", "sessionId"].map((key) => [
+      key,
+      identity(input.address?.[key]),
+    ])
+  );
+  const numericId = (value) => {
+    const result = identity(value);
+    if (!/^[1-9]\d*$/u.test(result) || !Number.isSafeInteger(Number(result))) {
+      throw new Error("Invalid fixture native identity");
+    }
+    return result;
+  };
+  const common = {
+    address,
+    instanceId: identity(input.instanceId),
+    nativeSessionId: numericId(input.nativeSessionId),
+  };
+  if (input.kind === "maintenance") {
+    return { kind: "maintenance", ...common };
+  }
+  if (!["web", "native"].includes(input.kind)) {
+    throw new Error("Invalid fixture input correlation kind");
+  }
+  const nativeRequestId = identity(input.nativeRequestId);
+  if (nativeRequestId !== requestId) {
+    throw new Error("Fixture correlation names another physical request");
+  }
+  if (input.kind === "web" && input.eventId !== nativeRequestId) {
+    throw new Error("Fixture web event names another native request");
+  }
+  return {
+    kind: input.kind,
+    ...common,
+    nativeRequestId,
+    entryId: numericId(input.entryId),
+    submissionId: numericId(input.submissionId),
+    ...(input.kind === "web"
+      ? {
+          eventId: identity(input.eventId),
+          operationId: identity(input.operationId),
+        }
+      : {}),
+  };
+};
 
 const textParts = (message) => {
   if (typeof message?.content === "string") {
@@ -60,7 +111,6 @@ const textParts = (message) => {
     : [];
 };
 const messageText = (message) => textParts(message).join("\n");
-// The prompt names the fixture tool it wants, so tests need no host hooks.
 const promptedTool = (input) => {
   const prompt = messageText(
     input.messages.findLast((message) => message.role === "user")
@@ -240,7 +290,6 @@ const toolArguments = (name, input) => {
   }
   return { query: "slice-1" };
 };
-// One user turn keeps one identity across its model requests.
 const turnIdentity = (input) =>
   `turn:${digest(
     input.messages.slice(
@@ -527,6 +576,10 @@ export const createFixture = async ({
         ? "compaction"
         : "turn";
     const call = {
+      input: parseInputCorrelation(
+        request.headers["x-fixture-input"],
+        operationId
+      ),
       digest: digest(input),
       maxTokens: input.max_completion_tokens ?? input.max_tokens ?? null,
       messageTextDigests: input.messages.flatMap((message) =>
@@ -645,7 +698,6 @@ export const createFixture = async ({
       startedAt: Date.now(),
       write,
     };
-    // Every physical write counts, including duplicates; the fixture does not hide runtime replay.
     state.tools.push(entry);
     await save();
     await checkpoint("after-tool-dispatch", operationId, response);
@@ -671,8 +723,6 @@ export const createFixture = async ({
           }
     );
   };
-  // The tools a discovered fixture MCP connector lists. Only `lookup` is
-  // marked read-only, so `archive` becomes a write that needs approval.
   const listedTools = [
     {
       annotations: { readOnlyHint: true },
@@ -832,7 +882,6 @@ export const createFixture = async ({
       if (route === "GET /health") {
         json(response, 200, { fixtureId, ok: true, sha });
       } else if (route === "GET /observations") {
-        // Serve the file that crossed the persistence boundary, not mutable process state.
         await writes;
         json(response, 200, {
           ...JSON.parse(await readFile(filename, "utf-8")),

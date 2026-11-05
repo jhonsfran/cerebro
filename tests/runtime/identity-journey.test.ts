@@ -3,10 +3,14 @@ import assert from "node:assert/strict";
 
 import {
   addressFor,
+  assertPiFailure,
+  compose,
   control,
   decide,
   evidence,
   lifecycle,
+  inputCalls,
+  inputCorrelation,
   nativeStorage,
   pending,
   provider,
@@ -83,6 +87,10 @@ journey(
       send(stack, right, operationId, textB),
     ]);
     assert.ok(receipts.every((receipt) => receipt.accepted));
+    assert.deepEqual(
+      receipts.map((receipt) => receipt.operationId),
+      [operationId, operationId]
+    );
     const [approvalA, approvalB] = await Promise.all([
       pending(stack, left),
       pending(stack, right),
@@ -116,25 +124,31 @@ journey(
     assert.ok(retries.every((receipt) => !receipt.accepted));
     assert.equal(await writeCount(stack, approvalA.operationId), 1);
     assert.equal(await writeCount(stack, approvalB.operationId), 1);
-    const [nativeA, nativeB, evidenceA, evidenceB] = await Promise.all([
-      nativeStorage(stack, left),
-      nativeStorage(stack, right),
-      runtimeEvidence(stack, left),
-      runtimeEvidence(stack, right),
-    ]);
+    const [nativeA, nativeB, evidenceA, evidenceB, relationA, relationB] =
+      await Promise.all([
+        nativeStorage(stack, left),
+        nativeStorage(stack, right),
+        runtimeEvidence(stack, left),
+        runtimeEvidence(stack, right),
+        inputCorrelation(stack, left, operationId, textA),
+        inputCorrelation(stack, right, operationId, textB),
+      ]);
+    assert.notEqual(relationA.nativeRequestId, relationB.nativeRequestId);
+    assert.equal(nativeA.submissions[0]?.request_id, relationA.nativeRequestId);
+    assert.equal(nativeB.submissions[0]?.request_id, relationB.nativeRequestId);
     assert.equal(nativeA.submissions.length, 1);
     assert.equal(nativeB.submissions.length, 1);
     assert.notEqual(
       nativeA.submissions[0]?.conversation_id,
       nativeB.submissions[0]?.conversation_id
     );
-    for (const [scope, own, other, agent] of [
-      [evidenceA, "ALPHA", "BETA", "agent-a"],
-      [evidenceB, "BETA", "ALPHA", "agent-b-v2"],
+    for (const [scope, relation, own, other, agent] of [
+      [evidenceA, relationA, "ALPHA", "BETA", "agent-a"],
+      [evidenceB, relationB, "BETA", "ALPHA", "agent-b-v2"],
     ] as const) {
       assert.ok(scope.modelRequests.length >= 2);
       for (const call of scope.modelRequests) {
-        assert.equal(call.operationId, operationId);
+        assert.equal(call.operationId, relation.nativeRequestId);
         assert.equal(call.body.model, "slice-1");
         const messages = JSON.stringify(call.body.messages);
         assert.ok(messages.includes(own));
@@ -156,6 +170,8 @@ journey(
       retries,
       nativeA,
       nativeB,
+      relationA,
+      relationB,
     });
   }
 );
@@ -310,18 +326,50 @@ journey(
       send(stack, left, "stop-only-left", "Explain the left policy."),
       send(stack, right, "keep-right-running", "Explain the right policy."),
     ]);
+    const relations = await Promise.all([
+      waitFor(
+        () =>
+          inputCorrelation(
+            stack,
+            left,
+            "stop-only-left",
+            "Explain the left policy."
+          ),
+        () => true
+      ),
+      waitFor(
+        () =>
+          inputCorrelation(
+            stack,
+            right,
+            "keep-right-running",
+            "Explain the right policy."
+          ),
+        () => true
+      ),
+    ]);
     await waitFor(
       () => provider(stack),
       (value) =>
-        ["stop-only-left", "keep-right-running"].every((operationId) =>
-          value.model.some((call) => call.operationId === operationId)
+        relations.every((relation) =>
+          inputCalls(value, relation.address, relation.operationId).some(
+            (call) =>
+              call.operationId === relation.nativeRequestId &&
+              call.completedAt === undefined
+          )
         )
     );
     const stopped = await stop(stack, left);
     assert.equal(stopped.stopped, true);
-    await waitFor(
+    const leftStopped = await waitFor(
       () => read(stack, left),
       (snapshot) => !snapshot.busy
+    );
+    assert.ok(
+      leftStopped.messages.some(
+        (message) =>
+          message.role === "assistant" && message.outcome === "interrupted"
+      )
     );
     const sibling = await read(stack, right);
     assert.equal(sibling.busy, true);
@@ -329,7 +377,7 @@ journey(
     assert.notEqual(active.alarmAt, null);
     assert.ok(
       active.pending.some(
-        (operation) => operation.operationId === "keep-right-running"
+        (operation) => operation.operationId === relations[1]?.nativeRequestId
       )
     );
     assert.ok(active.jobs.length > 0);
@@ -364,6 +412,8 @@ journey(
       final,
       notificationsA,
       notificationsB,
+      relations,
+      leftStopped,
     });
   }
 );
@@ -379,22 +429,53 @@ journey(
       send(stack, left, "identity-crash-left", "Recover the left policy."),
       send(stack, right, "identity-crash-right", "Recover the right policy."),
     ]);
+    const relations = await Promise.all([
+      waitFor(
+        () =>
+          inputCorrelation(
+            stack,
+            left,
+            "identity-crash-left",
+            "Recover the left policy."
+          ),
+        () => true
+      ),
+      waitFor(
+        () =>
+          inputCorrelation(
+            stack,
+            right,
+            "identity-crash-right",
+            "Recover the right policy."
+          ),
+        () => true
+      ),
+    ]);
     await waitFor(
       () => provider(stack),
       (value) =>
-        ["identity-crash-left", "identity-crash-right"].every((operationId) =>
-          value.model.some((call) => call.operationId === operationId)
+        relations.every((relation) =>
+          inputCalls(value, relation.address, relation.operationId).some(
+            (call) =>
+              call.operationId === relation.nativeRequestId &&
+              call.completedAt === undefined
+          )
         )
     );
+    const killedAt = Date.now();
     restart(stack);
     await control(stack, { delayMs: 0 });
     const automaticRecovery = await waitFor(
       () => provider(stack),
       (value) =>
-        ["identity-crash-left", "identity-crash-right"].every((operationId) =>
-          value.model.some(
+        relations.every((relation) =>
+          inputCalls(value, relation.address, relation.operationId).some(
             (call) =>
-              call.operationId === operationId && call.completedAt !== undefined
+              call.operationId === relation.nativeRequestId &&
+              call.startedAt > killedAt &&
+              call.completedAt !== undefined &&
+              call.status === 200 &&
+              call.input?.instanceId !== beforeCrash.instanceId
           )
         )
     );
@@ -406,6 +487,20 @@ journey(
     ]);
     assert.notEqual(beforeCrash.instanceId, reopenedA.instanceId);
     assert.equal(reopenedA.instanceId, reopenedB.instanceId);
+    assert.notEqual(reopenedA.nativeSessionId, reopenedB.nativeSessionId);
+    for (const relation of relations) {
+      assert.deepEqual(
+        await inputCorrelation(
+          stack,
+          relation.address,
+          relation.operationId,
+          relation.address.sessionId === left.sessionId
+            ? "Recover the left policy."
+            : "Recover the right policy."
+        ),
+        relation
+      );
+    }
     assert.deepEqual(userTexts(a), ["Recover the left policy."]);
     assert.deepEqual(userTexts(b), ["Recover the right policy."]);
     assert.equal((await nativeStorage(stack, left)).submissions.length, 1);
@@ -417,6 +512,8 @@ journey(
       b,
       reopenedA,
       reopenedB,
+      relations,
+      killedAt,
     });
   }
 );
@@ -454,22 +551,37 @@ journey(
       "identity-write-sibling",
       "Recover a separate sibling input."
     );
+    const siblingRelation = await waitFor(
+      () =>
+        inputCorrelation(
+          stack,
+          right,
+          "identity-write-sibling",
+          "Recover a separate sibling input."
+        ),
+      () => true
+    );
     await waitFor(
       () => provider(stack),
       (value) =>
-        value.model.some(
-          (call) => call.operationId === "identity-write-sibling"
+        inputCalls(value, right, "identity-write-sibling").some(
+          (call) =>
+            call.operationId === siblingRelation.nativeRequestId &&
+            call.completedAt === undefined
         )
     );
+    const killedAt = Date.now();
     restart(stack);
     await control(stack, { arm: null, delayMs: 0, release: true });
     const recoveredBeforeRead = await waitFor(
       () => provider(stack),
       (value) =>
-        value.model.some(
+        inputCalls(value, right, "identity-write-sibling").some(
           (call) =>
-            call.operationId === "identity-write-sibling" &&
-            call.completedAt !== undefined
+            call.operationId === siblingRelation.nativeRequestId &&
+            call.startedAt > killedAt &&
+            call.completedAt !== undefined &&
+            call.status === 200
         )
     );
     const [uncertain, sibling] = await Promise.all([
@@ -505,6 +617,8 @@ journey(
       recoveredBeforeRead,
       uncertain,
       sibling,
+      siblingRelation,
+      killedAt,
     });
   }
 );
@@ -522,11 +636,23 @@ journey(
       "identity-commit-sibling",
       "Keep the sibling input after reset."
     );
+    const siblingRelation = await waitFor(
+      () =>
+        inputCorrelation(
+          stack,
+          right,
+          "identity-commit-sibling",
+          "Keep the sibling input after reset."
+        ),
+      () => true
+    );
     await waitFor(
       () => provider(stack),
       (value) =>
-        value.model.some(
-          (call) => call.operationId === "identity-commit-sibling"
+        inputCalls(value, right, "identity-commit-sibling").some(
+          (call) =>
+            call.operationId === siblingRelation.nativeRequestId &&
+            call.completedAt === undefined
         )
     );
     await request(stack, "/runtime/fixture/fail-commit", {
@@ -552,18 +678,22 @@ journey(
     } catch (error) {
       assert.ok(error instanceof TypeError);
     }
-    assert.notEqual(interruptedStatus, 200);
     await control(stack, { delayMs: 0 });
     const recoveredBeforeRead = await waitFor(
       () => provider(stack),
       (value) =>
-        ["identity-commit-sibling", "identity-commit-failure"].every(
-          (operationId) =>
-            value.model.some(
-              (call) =>
-                call.operationId === operationId &&
-                call.completedAt !== undefined
-            )
+        (
+          [
+            [right, "identity-commit-sibling"],
+            [left, "identity-commit-failure"],
+          ] as const
+        ).every(([address, operationId]) =>
+          inputCalls(value, address, operationId).some(
+            (call) =>
+              call.input?.instanceId !== beforeFailure.instanceId &&
+              call.completedAt !== undefined &&
+              call.status === 200
+          )
         )
     );
     const [a, b, hostA, hostB] = await Promise.all([
@@ -574,9 +704,62 @@ journey(
     ]);
     assert.notEqual(hostA.instanceId, beforeFailure.instanceId);
     assert.equal(hostA.instanceId, hostB.instanceId);
+    assert.notEqual(hostA.nativeSessionId, hostB.nativeSessionId);
     assert.equal(hostA.failures.length, 1);
     assert.equal(hostA.failures[0]?.instanceId, beforeFailure.instanceId);
     assert.equal(hostB.failures.length, 0);
+    const relation = await inputCorrelation(
+      stack,
+      left,
+      "identity-commit-failure",
+      "Keep the committed input after reset."
+    );
+    assert.deepEqual(
+      await inputCorrelation(
+        stack,
+        right,
+        "identity-commit-sibling",
+        "Keep the sibling input after reset."
+      ),
+      siblingRelation
+    );
+    const [failure] = hostA.failures;
+    assert.equal(failure?.operationId, "identity-commit-failure");
+    assert.ok(
+      failure &&
+        failure.committedSeq > 0 &&
+        failure.witness?.kind === "submission"
+    );
+    assert.deepEqual(failure.witness, {
+      kind: "submission",
+      address: left,
+      nativeSessionId: relation.nativeSessionId,
+      nativeRequestId: relation.nativeRequestId,
+      entryId: relation.entryId,
+      submissionId: relation.submissionId,
+      at: failure.witness.at,
+    });
+    assert.ok(failure.witness.at > 0);
+    for (const captured of [relation, siblingRelation]) {
+      const calls = inputCalls(
+        recoveredBeforeRead,
+        captured.address,
+        captured.operationId
+      ).filter(
+        (call) =>
+          call.completedAt !== undefined &&
+          call.status === 200 &&
+          call.input?.instanceId === hostA.instanceId
+      );
+      assert.equal(calls.length, 1);
+      assert.deepEqual(calls[0]?.input, {
+        kind: "web",
+        ...captured,
+        instanceId: hostA.instanceId,
+      });
+    }
+    const resetLogs = compose(stack, ["logs", "--no-color", "celld"]);
+    const resetWitness = assertPiFailure(resetLogs, left, failure.witness.at);
     assert.deepEqual(userTexts(a), ["Keep the committed input after reset."]);
     assert.deepEqual(userTexts(b), ["Keep the sibling input after reset."]);
     assert.equal(
@@ -603,6 +786,21 @@ journey(
     );
     assert.equal((await nativeStorage(stack, left)).submissions.length, 1);
     assert.equal((await nativeStorage(stack, right)).submissions.length, 1);
+    const replayedPhysical = await provider(stack);
+    for (const captured of [relation, siblingRelation]) {
+      assert.equal(
+        inputCalls(
+          replayedPhysical,
+          captured.address,
+          captured.operationId
+        ).filter(
+          (call) => call.completedAt !== undefined && call.status === 200
+        ).length,
+        1
+      );
+    }
+    assert.equal((await runtimeEvidence(stack, left)).failures.length, 1);
+    assert.equal((await runtimeEvidence(stack, right)).failures.length, 0);
     await evidence(stack, "identity-shared-commit-failure", {
       beforeFailure,
       interruptedStatus,
@@ -611,6 +809,10 @@ journey(
       b,
       hostA,
       hostB,
+      siblingRelation,
+      relation,
+      resetWitness,
+      replayedPhysical,
     });
   }
 );

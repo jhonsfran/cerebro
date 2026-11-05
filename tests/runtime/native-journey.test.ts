@@ -1,4 +1,4 @@
-/* oxlint-disable unicorn/no-await-expression-member, no-await-in-loop -- Each native observation and crash boundary depends on the preceding result. */
+/* oxlint-disable unicorn/no-await-expression-member -- Each native observation and crash boundary depends on the preceding result. */
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -6,11 +6,15 @@ import { Schema } from "effect";
 
 import {
   addressFor,
+  assertPiFailure,
+  compose,
   control,
   decide,
   dependencyCheckpoint,
   evidence,
   lifecycle,
+  inputCalls,
+  inputCorrelation,
   nativeStorage,
   observe,
   pending,
@@ -58,6 +62,7 @@ journey(
   async (stack) => {
     const address = addressFor("company-journey", "commit-failure");
     const operationId = "commit-failure-input";
+    const text = "Explain the committed recovery policy.";
     const beforeFailure = await runtimeEvidence(stack, address);
     await request(stack, "/runtime/fixture/fail-commit", {
       address,
@@ -71,7 +76,7 @@ journey(
           body: JSON.stringify({
             address,
             operationId,
-            text: "Explain the committed recovery policy.",
+            text,
           }),
           headers: { "Content-Type": "application/json" },
           method: "POST",
@@ -82,40 +87,73 @@ journey(
     } catch (error) {
       assert.ok(error instanceof TypeError);
     }
-    assert.notEqual(interruptedStatus, 200);
-    const retry = await waitFor(
-      () =>
-        send(
-          stack,
-          address,
-          operationId,
-          "Explain the committed recovery policy."
-        ),
-      (value) => value.operationId === operationId
+    const automatic = await waitFor(
+      () => provider(stack),
+      (value) =>
+        inputCalls(value, address, operationId).some(
+          (call) =>
+            call.input?.instanceId !== beforeFailure.instanceId &&
+            call.completedAt !== undefined &&
+            call.status === 200
+        )
     );
-    assert.equal(retry.accepted, false);
     const final = await waitFor(() => read(stack, address), completed);
+    const relation = await inputCorrelation(stack, address, operationId, text);
     const recovered = await runtimeEvidence(stack, address);
     assert.notEqual(recovered.instanceId, beforeFailure.instanceId);
     assert.equal(recovered.failures.length, 1);
     assert.equal(recovered.failures[0]?.instanceId, beforeFailure.instanceId);
     assert.equal(recovered.failures[0]?.operationId, operationId);
     assert.ok((recovered.failures[0]?.committedSeq ?? 0) > 0);
+    const [failure] = recovered.failures;
+    assert.ok(failure?.witness?.kind === "submission");
+    assert.deepEqual(failure.witness, {
+      kind: "submission",
+      address,
+      nativeSessionId: relation.nativeSessionId,
+      nativeRequestId: relation.nativeRequestId,
+      entryId: relation.entryId,
+      submissionId: relation.submissionId,
+      at: failure.witness.at,
+    });
+    assert.ok(failure.witness.at > 0);
+    const recoveredCalls = inputCalls(automatic, address, operationId).filter(
+      (call) =>
+        call.input?.instanceId === recovered.instanceId &&
+        call.completedAt !== undefined &&
+        call.status === 200
+    );
+    assert.equal(recoveredCalls.length, 1);
+    assert.deepEqual(recoveredCalls[0]?.input, {
+      kind: "web",
+      ...relation,
+      instanceId: recovered.instanceId,
+    });
+    const resetLogs = compose(stack, ["logs", "--no-color", "celld"]);
+    const resetWitness = assertPiFailure(
+      resetLogs,
+      address,
+      failure.witness.at
+    );
+    const retry = await send(stack, address, operationId, text);
+    assert.equal(retry.accepted, false);
     assert.deepEqual(
       final.messages
         .filter((message) => message.role === "user")
         .map((message) => message.text),
-      ["Explain the committed recovery policy."]
+      [text]
     );
     assert.equal(final.messages.at(-1)?.text, answer);
     assert.equal((await nativeStorage(stack, address)).submissions.length, 1);
     assert.equal(
-      (await provider(stack)).model.filter(
+      inputCalls(await provider(stack), address, operationId).filter(
         (call) =>
-          call.operationId === operationId && call.completedAt !== undefined
+          call.operationId === relation.nativeRequestId &&
+          call.completedAt !== undefined
       ).length,
       1
     );
+    assert.equal((await runtimeEvidence(stack, address)).failures.length, 1);
     await send(
       stack,
       address,
@@ -132,6 +170,9 @@ journey(
     const quiet = await waitForQuiet(stack, address);
     await evidence(stack, "commit-failure-recovery", {
       beforeFailure,
+      automatic,
+      relation,
+      resetWitness,
       final,
       interruptedStatus,
       quiet,
@@ -311,16 +352,26 @@ journey(
     );
     const storage = await nativeStorage(stack, address);
     assert.equal(storage.submissions.length, 1);
+    const relation = await inputCorrelation(
+      stack,
+      address,
+      "concurrent-input",
+      "Explain concurrent admission."
+    );
+    assert.equal(String(storage.submissions[0]?.id), relation.submissionId);
+    assert.equal(storage.submissions[0]?.request_id, relation.nativeRequestId);
     const observed = await provider(stack);
     assert.equal(
-      observed.model.filter((call) => call.operationId === "concurrent-input")
-        .length,
+      inputCalls(observed, address, "concurrent-input").filter(
+        (call) => call.operationId === relation.nativeRequestId
+      ).length,
       1
     );
     await evidence(stack, "concurrent-send", {
       final,
       observed,
       receipts,
+      relation,
       storage,
     });
   }
@@ -332,10 +383,24 @@ journey(
     const address = addressFor("company-journey", "stop");
     await control(stack, { delayMs: 5000 });
     await send(stack, address, "stopped-input", "Explain the current policy.");
+    const relation = await waitFor(
+      () =>
+        inputCorrelation(
+          stack,
+          address,
+          "stopped-input",
+          "Explain the current policy."
+        ),
+      () => true
+    );
     await waitFor(
       () => provider(stack),
       (value) =>
-        value.model.some((call) => call.operationId === "stopped-input")
+        inputCalls(value, address, "stopped-input").some(
+          (call) =>
+            call.operationId === relation.nativeRequestId &&
+            call.completedAt === undefined
+        )
     );
     assert.deepEqual(await stop(stack, address), { stopped: true });
     const stopped = await waitFor(
@@ -345,6 +410,12 @@ journey(
     assert.equal(
       stopped.messages.filter((message) => message.role === "user").length,
       1
+    );
+    assert.ok(
+      stopped.messages.some(
+        (message) =>
+          message.role === "assistant" && message.outcome === "interrupted"
+      )
     );
     await control(stack, { delayMs: 0 });
     await send(
@@ -359,7 +430,7 @@ journey(
       2
     );
     assert.equal(final.messages.at(-1)?.text, answer);
-    await evidence(stack, "stop", { final, stopped });
+    await evidence(stack, "stop", { final, stopped, relation });
   }
 );
 
@@ -374,12 +445,22 @@ journey(
       "content-stop-input",
       "Explain the private policy."
     );
+    const relation = await waitFor(
+      () =>
+        inputCorrelation(
+          stack,
+          stoppedAddress,
+          "content-stop-input",
+          "Explain the private policy."
+        ),
+      () => true
+    );
     await waitFor(
       () => provider(stack),
       (value) =>
-        value.model.some(
+        inputCalls(value, stoppedAddress, "content-stop-input").some(
           (call) =>
-            call.operationId === "content-stop-input" &&
+            call.operationId === relation.nativeRequestId &&
             call.completedAt === undefined
         )
     );
@@ -473,6 +554,7 @@ journey(
       final,
       provider: await provider(stack),
       stopped,
+      relation,
     });
   }
 );
@@ -554,30 +636,69 @@ journey(
     const address = addressFor("company-journey", "generation-crash");
     await control(stack, { delayMs: 5000 });
     await send(stack, address, "recover-input", "Explain the recovery policy.");
-    await waitFor(
+    const relation = await waitFor(
+      () =>
+        inputCorrelation(
+          stack,
+          address,
+          "recover-input",
+          "Explain the recovery policy."
+        ),
+      () => true
+    );
+    const inFlight = await waitFor(
       () => provider(stack),
       (value) =>
-        value.model.some(
+        inputCalls(value, address, "recover-input").some(
           (call) =>
-            call.operationId === "recover-input" &&
+            call.operationId === relation.nativeRequestId &&
             call.completedAt === undefined
         )
     );
+    const activeCalls = inputCalls(inFlight, address, "recover-input");
+    assert.equal(activeCalls.length, 1);
+    const [activeCall] = activeCalls;
+    assert.ok(activeCall?.input);
+    const originalInstanceId = activeCall.input.instanceId;
     const killedAt = Date.now();
     restart(stack);
     await control(stack, { delayMs: 0 });
     const recovered = await waitFor(
       () => provider(stack),
       (value) =>
-        value.model.some(
+        inputCalls(value, address, "recover-input").some(
           (call) =>
-            call.operationId === "recover-input" &&
+            call.operationId === relation.nativeRequestId &&
             call.startedAt > killedAt &&
+            call.input?.instanceId !== originalInstanceId &&
             call.completedAt !== undefined &&
             call.status === 200
         )
     );
     const final = await waitFor(() => read(stack, address), completed);
+    assert.deepEqual(
+      await inputCorrelation(
+        stack,
+        address,
+        "recover-input",
+        "Explain the recovery policy."
+      ),
+      relation
+    );
+    const physical = inputCalls(recovered, address, "recover-input").filter(
+      (call) =>
+        call.startedAt > killedAt &&
+        call.status === 200 &&
+        call.completedAt !== undefined
+    );
+    assert.equal(physical.length, 1);
+    const [completedCall] = physical;
+    assert.ok(completedCall?.input);
+    assert.deepEqual(completedCall.input, {
+      kind: "web",
+      ...relation,
+      instanceId: completedCall.input.instanceId,
+    });
     assert.equal(
       final.messages.filter((message) => message.role === "user").length,
       1
@@ -602,6 +723,8 @@ journey(
     await evidence(stack, "generation-recovery", {
       final,
       killedAt,
+      inFlight,
+      relation,
       recovered,
       scheduled,
       storage,

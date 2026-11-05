@@ -22,6 +22,10 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 5a: Add protected saved-state inspection and safe terminal Team reads.
 - [x] Unit 5b: Add the development Inspector UI with lazy detail loading.
 - [x] Unit 6a: Repair model-visible event references and saved history/Inspector projections.
+- [x] Unit 6b1: Repair native runtime verification at actual event and storage boundaries.
+- [ ] Unit 6d1: Preserve later subscription mutations when native tools replay.
+- [ ] Unit 6d2: Give Inspector tools distinct occurrence identity across native rounds.
+- [ ] Unit 6b2: Complete realistic Slack, subscription, queue, and Inspector application fixtures.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
 - [ ] Phase D: Keep the audit trail throughout the run.
 - [ ] Phase E: Verify and hand back.
@@ -82,6 +86,8 @@ The coordinator stores compact summaries, IDs, and references. Recall loads boun
 The Inspector shows active and completed work, lead and worker models, saved status, tool activity, retries, request reservations, provider usage, and results. It loads private details on demand. Current owner, source, and content access apply to every read. Inspection can load a cell but must not create new model work. It excludes credentials and provider-private reasoning. Development visibility is not authorization.
 
 Unit 6a closes integration gaps found by the full runtime baseline and actual browser. The coordinator receives the admitted Slack event reference. History search recognizes real web-event inputs while preserving hidden-event boundaries. Paged tools report unknown when their result is outside the page. Selected Inspector source status follows report settlement after private cleanup seals, with no further private polling. Real Pi and mounted regressions pass, including the original independent stale-status probe. Final native, browser, realistic-conversation, and live-provider checks remain required.
+
+Unit 6b1 repairs native verification at the actual saved event and storage boundaries. Public operation IDs remain distinct from native event, input, and entry IDs. The real lost-response injector joins the exact committed submission and entry. Safe physical correlation proves replacement-host completion before source readers. Both native fault cases pass through replay and later progress. The initial run exposed assertions for deliberately omitted raw log text. The revised checks use the existing sanitized failure event with the exact identity and committed witness time. The full runtime and application-native gates remain pending, as do the two separate production audit repairs.
 
 ## Cutover
 

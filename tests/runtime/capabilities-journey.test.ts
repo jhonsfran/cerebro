@@ -609,11 +609,11 @@ journey(
       "long-history",
       "cap-compact-agent"
     );
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 10; index += 1) {
       await note(
         address,
         `long-${index}`,
-        `CAP_COMPACT turn-${index} ${"archive ".repeat(4500)}`
+        `CAP_COMPACT turn-${index} ${"archive ".repeat(1800)}`
       );
     }
     await control(stack, { delayMs: 5000 });
@@ -623,14 +623,24 @@ journey(
       operationId: "manual-compaction",
     };
     const receipt = await chatControl(stack, address, command);
-    await waitFor(
+    const inFlight = await waitFor(
       () => capabilityProvider(stack),
       (value) =>
         value.model.some(
           (call) =>
-            call.scope === address.sessionId && call.purpose === "compaction"
+            call.scope === address.sessionId &&
+            call.purpose === "compaction" &&
+            call.completedAt === undefined
         )
     );
+    const attempts = inFlight.model.filter(
+      (call) =>
+        call.scope === address.sessionId && call.purpose === "compaction"
+    );
+    assert.equal(attempts.length, 1);
+    const [attempt] = attempts;
+    assert.ok(attempt);
+    const killedAt = Date.now();
     restart();
     await control(stack, { delayMs: 0 });
     const automatic = await waitFor(
@@ -640,6 +650,8 @@ journey(
           (call) =>
             call.scope === address.sessionId &&
             call.purpose === "compaction" &&
+            call.operationId === attempt.operationId &&
+            call.startedAt > killedAt &&
             call.completedAt !== undefined
         )
     );
@@ -677,6 +689,8 @@ journey(
       final,
       receipt,
       stored,
+      inFlight,
+      killedAt,
     });
   }
 );
@@ -689,11 +703,11 @@ journey(
       "history",
       "cap-compact-stop-agent"
     );
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 10; index += 1) {
       await note(
         address,
         `stop-history-${index}`,
-        `CAP_COMPACT stop-turn-${index} ${"archive ".repeat(4500)}`
+        `CAP_COMPACT stop-turn-${index} ${"archive ".repeat(1800)}`
       );
     }
     await control(stack, { delayMs: 5000 });

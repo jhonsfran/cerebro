@@ -11,6 +11,7 @@ import { promisify } from "node:util";
 
 import { Schema } from "effect";
 
+import { BotEventAddressSchema } from "../../packages/contracts/src/bot-events.ts";
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/identity.ts";
@@ -26,6 +27,38 @@ import {
   ChatReceipt,
   ChatSnapshot,
 } from "../../packages/contracts/src/session-service.ts";
+
+const sourceAddress = BotEventAddressSchema;
+const inputRelation = {
+  address: sourceAddress,
+  operationId: Schema.String,
+  eventId: Schema.String,
+  nativeRequestId: Schema.String,
+  submissionId: Schema.String,
+  entryId: Schema.String,
+  nativeSessionId: Schema.String,
+};
+export const InputCorrelation = Schema.Struct(inputRelation);
+const physicalSource = {
+  address: sourceAddress,
+  nativeSessionId: Schema.String,
+  instanceId: Schema.String,
+};
+const physicalInput = Schema.Union([
+  Schema.Struct({
+    ...inputRelation,
+    kind: Schema.Literal("web"),
+    instanceId: Schema.String,
+  }),
+  Schema.Struct({
+    ...physicalSource,
+    kind: Schema.Literal("native"),
+    nativeRequestId: Schema.String,
+    entryId: Schema.String,
+    submissionId: Schema.String,
+  }),
+  Schema.Struct({ ...physicalSource, kind: Schema.Literal("maintenance") }),
+]);
 
 export interface Stack {
   readonly project: string;
@@ -219,7 +252,6 @@ export const request = async (
   );
   return result.value;
 };
-// Docker Desktop can refuse a published port for a moment after a container signal.
 export const getFixture = async (
   stack: Stack,
   path = "/observations"
@@ -256,6 +288,7 @@ const providerSchema = Schema.Struct({
       operationId: Schema.String,
       startedAt: Schema.Number,
       status: Schema.optional(Schema.Number),
+      input: Schema.optional(physicalInput),
     })
   ),
   revision: Schema.Number,
@@ -270,6 +303,24 @@ const providerSchema = Schema.Struct({
   ),
 });
 export type ProviderEvidence = typeof providerSchema.Type;
+export const inputCalls = (
+  observed: ProviderEvidence,
+  address: EventAddress,
+  operationId: string
+) =>
+  observed.model.filter((call) => {
+    const { input } = call;
+    return (
+      input?.kind === "web" &&
+      input.operationId === operationId &&
+      input.nativeRequestId === call.operationId &&
+      input.eventId === call.operationId &&
+      input.address.organizationId === address.organizationId &&
+      input.address.agentId === address.agentId &&
+      input.address.conversationId === address.conversationId &&
+      input.address.sessionId === address.sessionId
+    );
+  });
 export const provider = async (stack: Stack): Promise<ProviderEvidence> =>
   Schema.decodeUnknownSync(providerSchema)(await getFixture(stack));
 export const control = async (stack: Stack, input: unknown): Promise<void> => {
@@ -328,6 +379,63 @@ export const fixtureContext = (organizationId: string): ExecutionContext => ({
     state: "active",
   },
 });
+const maximumFailureLogLength = 10_485_760;
+const maximumFailureLineLength = 8192;
+const failureConsoleLine =
+  /^[^|\r\n]{1,160}\|\s*(?<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z)\s+INFO cell_console: ERROR (?<payload>\{.*\})\s*$/u;
+const piFailureEvent = Schema.Struct({
+  event: Schema.Literal("pi.execution.failed"),
+  service: Schema.Literal("cerebro-runtime"),
+  errorCode: Schema.Literal("Unavailable"),
+  errorType: Schema.Literal("Error"),
+  identity: Schema.String,
+});
+export const assertPiFailure = (
+  logs: string,
+  address: EventAddress,
+  since: number
+) => {
+  assert.ok(
+    logs.length <= maximumFailureLogLength,
+    "The fixture failure log exceeds its bound."
+  );
+  assert.ok(
+    Number.isFinite(since) && since > 0,
+    "A saved commit witness time is required."
+  );
+  const identity = JSON.stringify([
+    address.organizationId,
+    fixtureContext(address.organizationId).actor.id,
+  ]);
+  for (const line of logs.split("\n")) {
+    if (line.length > maximumFailureLineLength) {
+      continue;
+    }
+    const match = failureConsoleLine.exec(line);
+    const timestamp = match?.groups?.timestamp;
+    const payload = match?.groups?.payload;
+    if (!timestamp || !payload) {
+      continue;
+    }
+    const at = Date.parse(timestamp);
+    if (!Number.isFinite(at) || at < since) {
+      continue;
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(payload);
+    } catch {
+      continue;
+    }
+    const event = Schema.decodeUnknownOption(piFailureEvent)(value);
+    if (event._tag === "Some" && event.value.identity === identity) {
+      return { ...event.value, at };
+    }
+  }
+  assert.fail(
+    "No current sanitized Pi failure event matches the exact fixture identity."
+  );
+};
 export const addressFor = (
   organizationId: string,
   conversationId: string,
@@ -578,6 +686,26 @@ export const runtimeEvidence = async (
           committedSeq: Schema.Number,
           instanceId: Schema.String,
           operationId: Schema.String,
+          witness: Schema.NullOr(
+            Schema.Union([
+              Schema.Struct({
+                kind: Schema.Literal("submission"),
+                address: sourceAddress,
+                nativeSessionId: Schema.String,
+                nativeRequestId: Schema.String,
+                entryId: Schema.String,
+                submissionId: Schema.String,
+                at: Schema.Number,
+              }),
+              Schema.Struct({
+                kind: Schema.Literal("compaction"),
+                address: sourceAddress,
+                nativeSessionId: Schema.String,
+                taskId: Schema.String,
+                at: Schema.Number,
+              }),
+            ])
+          ),
         })
       ),
       instanceId: Schema.String,
@@ -612,6 +740,24 @@ export const runtimeEvidence = async (
       ...(ownerPrincipalId ? { ownerPrincipalId } : {}),
     })
   );
+export const inputCorrelation = async (
+  stack: Stack,
+  address: EventAddress,
+  operationId: string,
+  text: string
+) => {
+  const relation = Schema.decodeUnknownSync(InputCorrelation)(
+    await request(stack, "/runtime/fixture/input-correlation", {
+      address,
+      operationId,
+      text,
+    })
+  );
+  assert.deepEqual(relation.address, address);
+  assert.equal(relation.operationId, operationId);
+  assert.equal(relation.eventId, relation.nativeRequestId);
+  return relation;
+};
 export const dependencyCheckpoint = async (
   stack: Stack,
   address: EventAddress,

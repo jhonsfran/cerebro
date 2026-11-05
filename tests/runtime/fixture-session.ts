@@ -43,6 +43,12 @@ import {
   forkOrigin,
   requestAddress,
 } from "./fixture-contracts.ts";
+import {
+  commitFailures,
+  matchCommittedInput,
+  physicalInput,
+  readInputCorrelation,
+} from "./fixture-input.ts";
 
 const ownerContext = (
   address: EventAddress,
@@ -271,6 +277,9 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
         "CREATE TABLE IF NOT EXISTS fixture_commit_failure (session_id TEXT NOT NULL, operation_id TEXT NOT NULL, instance_id TEXT NOT NULL, committed_seq INTEGER NOT NULL, PRIMARY KEY(session_id, operation_id))"
       );
       this.ctx.storage.sql.exec(
+        "CREATE TABLE IF NOT EXISTS fixture_commit_witness (session_id TEXT NOT NULL, operation_id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(session_id, operation_id))"
+      );
+      this.ctx.storage.sql.exec(
         "CREATE TABLE IF NOT EXISTS fixture_notification (session_id TEXT NOT NULL, snapshot TEXT NOT NULL)"
       );
       this.ctx.storage.sql.exec(
@@ -365,7 +374,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
         this.ctx.storage,
         address.sessionId
       );
-      // The real connector executor; FAIL_FIRST_EFFECT loses the response after the write.
       const executor = createConnectorExecutor({
         credentials: () =>
           Promise.resolve({
@@ -410,8 +418,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
       const configuration: SessionHostConfiguration = {
         address,
         agent,
-        // The production sink, with injected failures and holds. Each delivered
-        // event is logged in storage so a restart cannot erase the evidence.
         audit: (event) =>
           Effect.gen({ self: this }, function* fixtureAudit() {
             const fault = this.auditFaults.get(address.sessionId);
@@ -562,6 +568,21 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
             });
             const headers = new Headers(init?.headers);
             headers.set("x-fixture-request-id", operationId);
+            headers.set(
+              "x-fixture-input",
+              JSON.stringify(
+                await physicalInput(
+                  await this.harness.pi(),
+                  {
+                    address,
+                    ownerPrincipalId: context.actor.id,
+                    nativeSessionId: nativeId,
+                  },
+                  active?.operationId,
+                  this.instanceId
+                )
+              )
+            );
             if (address.agentId.startsWith("cap-")) {
               headers.set("x-fixture-capabilities", "1");
               headers.set("x-fixture-public-session", address.sessionId);
@@ -680,27 +701,34 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
     const storage = await this.harness.storage();
     const commit = storage.commit.bind(storage);
     storage.commit = async (writes, context) => {
-      const matches = writes.some(
-        (write) =>
-          ((kind === "submission" &&
-            write.type === "submission" &&
-            write.value.requestId === operationId) ||
-            (kind === "compaction" &&
-              write.type === "task" &&
-              write.value.kind === "pi.compaction")) &&
-          String(write.value.conversationId) === nativeId
-      );
-      if (!matches) {
+      const matched = matchCommittedInput(writes, nativeId, operationId, kind);
+      if (!matched) {
         return await commit(writes, context);
       }
       storage.commit = commit;
       const seq = await commit(writes, context);
+      if (!(seq > 0)) {
+        throw new Error(
+          "The injected fixture commit has no positive sequence."
+        );
+      }
       this.ctx.storage.sql.exec(
         "INSERT INTO fixture_commit_failure VALUES (?, ?, ?, ?)",
         address.sessionId,
         operationId,
         this.instanceId,
         seq
+      );
+      this.ctx.storage.sql.exec(
+        "INSERT INTO fixture_commit_witness VALUES (?, ?, ?)",
+        address.sessionId,
+        operationId,
+        JSON.stringify({
+          ...matched,
+          address,
+          nativeSessionId: nativeId,
+          at: Date.now(),
+        })
       );
       await this.ctx.storage.sync();
       throw new Error("Injected lost native commit response");
@@ -804,6 +832,24 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
       if (path === "/fixture/access" || path === "/fixture/content-access") {
         return await this.setAccess(request, path, configuration);
       }
+      if (path === "/fixture/input-correlation") {
+        const { operationId, text } = z
+          .object({ operationId: z.string().min(1), text: z.string() })
+          .parse(await request.json());
+        return Response.json({
+          status: "ok",
+          value: await readInputCorrelation(
+            await this.harness.pi(),
+            {
+              address,
+              ownerPrincipalId: id.principal(this.identity().principalId),
+              nativeSessionId: nativeId,
+            },
+            operationId,
+            text
+          ),
+        });
+      }
       if (path === "/fixture/fail-commit") {
         const { operationId, kind } = z
           .object({
@@ -821,16 +867,7 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
         return Response.json({
           status: "ok",
           value: {
-            failures: this.ctx.storage.sql
-              .exec<{
-                operationId: string;
-                instanceId: string;
-                committedSeq: number;
-              }>(
-                "SELECT operation_id AS operationId, instance_id AS instanceId, committed_seq AS committedSeq FROM fixture_commit_failure WHERE session_id=? ORDER BY rowid",
-                address.sessionId
-              )
-              .toArray(),
+            failures: commitFailures(this.ctx.storage, address.sessionId),
             instanceId: this.instanceId,
             nativeSessionId: nativeId,
             modelRequests: this.ctx.storage.sql

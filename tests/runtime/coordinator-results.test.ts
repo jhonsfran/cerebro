@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 
 import { Schema } from "effect";
 
-import { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
+import {
+  ChatReceipt,
+  ChatSnapshot,
+} from "../../packages/contracts/src/session-service.ts";
 import {
   TeamCommandSchema,
   TeamReportDeliverySchema,
 } from "../../packages/contracts/src/work.ts";
-import { addressFor, evidence, waitFor } from "./helpers.ts";
+import { InputCorrelation, addressFor, evidence, waitFor } from "./helpers.ts";
 import type { Stack } from "./helpers.ts";
 import { runtimeJourney } from "./runtime-journey.ts";
 
@@ -139,13 +142,96 @@ journey(
     assert.equal(disabled.status, 200);
     const status = await send("status-human", "status");
     const update = await send("update-human", "Continue with this update.");
-    assert.deepEqual([status.status, update.status], [200, 403]);
+    assert.deepEqual([status.status, update.status], [200, 200]);
+    const updateReceipt = Schema.decodeUnknownSync(
+      Schema.Struct({
+        status: Schema.Literal("ok"),
+        value: ChatReceipt,
+      })
+    )(await update.json());
+    assert.equal(updateReceipt.value.accepted, true);
+    assert.equal(updateReceipt.value.operationId, "update-human");
+    const relation = await waitFor(
+      async () => {
+        const response = await call(stack, "fixture/input-correlation", {
+          address,
+          operationId: "update-human",
+          text: "Continue with this update.",
+        });
+        assert.equal(response.status, 200, await response.clone().text());
+        return Schema.decodeUnknownSync(
+          Schema.Struct({
+            status: Schema.Literal("ok"),
+            value: InputCorrelation,
+          })
+        )(await response.json()).value;
+      },
+      () => true
+    );
+    const denied = await waitFor(
+      async () => {
+        const response = await call(stack, "read", { address });
+        assert.equal(response.status, 200);
+        return Schema.decodeUnknownSync(
+          Schema.Struct({ status: Schema.Literal("ok"), value: ChatSnapshot })
+        )(await response.json()).value;
+      },
+      (snapshot) => {
+        const index = snapshot.messages.findIndex(
+          (message) =>
+            message.entryId === relation.entryId &&
+            message.operationId === "update-human"
+        );
+        return (
+          !snapshot.busy &&
+          index !== -1 &&
+          snapshot.messages
+            .slice(index + 1)
+            .some(
+              (message) =>
+                message.role === "assistant" && message.outcome === "failed"
+            )
+        );
+      }
+    );
+    const nativeResponse = await call(stack, "fixture/native-storage", {
+      address,
+    });
+    assert.equal(nativeResponse.status, 200);
+    const native = Schema.decodeUnknownSync(
+      Schema.Struct({
+        status: Schema.Literal("ok"),
+        value: Schema.Struct({
+          submissions: Schema.Array(
+            Schema.Struct({
+              id: Schema.Number,
+              request_id: Schema.NullOr(Schema.String),
+              status: Schema.String,
+            })
+          ),
+        }),
+      })
+    )(await nativeResponse.json()).value;
+    assert.deepEqual(
+      native.submissions.filter(
+        (submission) => String(submission.id) === relation.submissionId
+      ),
+      [
+        {
+          id: Number(relation.submissionId),
+          request_id: relation.nativeRequestId,
+          status: "unanswered",
+        },
+      ]
+    );
     const ambiguous = await send("stop-human", "stop");
     assert.equal(ambiguous.status, 200);
     const beforeStop = await call(stack, "inspect", { address });
     const before = Schema.decodeUnknownSync(inspection)(
       await beforeStop.json()
     );
+    assert.equal(before.models.length, 2);
+    assert.deepEqual(before.transport, inspected.transport);
     assert.ok(
       before.transport.every(
         (row) =>
@@ -199,6 +285,13 @@ journey(
       ).length,
       1
     );
-    await evidence(stack, "passive-model-unavailable", { observed, terminal });
+    await evidence(stack, "passive-model-unavailable", {
+      observed,
+      terminal,
+      updateReceipt,
+      relation,
+      denied,
+      native,
+    });
   }
 );
