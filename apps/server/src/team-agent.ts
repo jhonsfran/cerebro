@@ -16,6 +16,7 @@ import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import type { MetadataTransaction } from "@cerebro/runtime/session-agent";
 import { TeamAgent as TeamHost } from "@cerebro/runtime/team-agent";
+import type { ReadTeamRoleImports } from "@cerebro/runtime/team-content";
 import { Effect, Schema } from "effect";
 
 import type { WorkerEnv } from "./bindings";
@@ -96,7 +97,8 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
 
   protected override async configure(
     work: WorkAdmission,
-    metadata: MetadataTransaction
+    metadata: MetadataTransaction,
+    importedDependencies: ReadTeamRoleImports
   ) {
     const pins = [
       work.lead,
@@ -132,7 +134,8 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
             agent,
             work.key.ownerPrincipalId,
             metadata,
-            true
+            true,
+            () => importedDependencies(index)
           )
         );
       })

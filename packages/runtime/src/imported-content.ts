@@ -50,8 +50,16 @@ export const reconcileImportedContent = async (
   pi: Harness,
   nativeId: ConversationId,
   retain: (dependencies: ContentDependencies) => void,
-  signal?: AbortSignal
+  options: {
+    readonly signal?: AbortSignal;
+    readonly authorize?: (
+      dependencies: ContentDependencies
+    ) => Promise<"authorized" | "deferred">;
+  } = {}
 ): Promise<void> => {
   const imported = await readImportedContent(pi, nativeId);
-  await pi.commit(() => retain(imported), piContext(signal));
+  if ((await options.authorize?.(imported)) === "deferred") {
+    return;
+  }
+  await pi.commit(() => retain(imported), piContext(options.signal));
 };

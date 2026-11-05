@@ -25,6 +25,8 @@ import type {
   MetadataTransaction,
   SessionEnvironment,
 } from "./session-agent.ts";
+import { readTeamRoleImports } from "./team-content.ts";
+import type { ReadTeamRoleImports } from "./team-content.ts";
 import { expireTeam, receiveExpiredTeam } from "./team-expiration.ts";
 import { createTeamReportOutbox } from "./team-report-outbox.ts";
 import type { TeamReportTransport } from "./team-report-outbox.ts";
@@ -50,7 +52,8 @@ export abstract class TeamAgent<
   protected abstract reportTransport(work: WorkAdmission): TeamReportTransport;
   protected abstract configure(
     work: WorkAdmission,
-    metadata: MetadataTransaction
+    metadata: MetadataTransaction,
+    importedDependencies: ReadTeamRoleImports
   ): Promise<readonly TeamRoleConfiguration[]>;
 
   readonly harness = new PiHarness({
@@ -201,7 +204,9 @@ export abstract class TeamAgent<
     const metadata: MetadataTransaction = (operation) =>
       host.pi.commit(operation, piContext());
     const outbox = await this.ensureReportOutbox(work);
-    const configurations = await this.configure(work, metadata);
+    const configurations = await this.configure(work, metadata, (index) =>
+      readTeamRoleImports(host.pi, work, index)
+    );
     return await createTeamRuntime({
       ...host,
       work,

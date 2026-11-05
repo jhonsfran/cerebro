@@ -12,10 +12,12 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 1: Bind each agent to one persistent conversation and open it from the web.
 - [x] Unit 2: Admit independent work with two active teams and sixteen queued items per person.
 - [x] Unit 3a: Admit durable coordinator events and reports with atomic delivery intent.
-- [ ] Unit 3c: Make private-team provenance imports atomic and recoverable.
+- [x] Unit 3c: Make private-team provenance imports atomic and recoverable.
 - [ ] Unit 3b: Route explicit task subscriptions and one-time team handback.
-- [ ] Unit 4: Connect web, Slack, timers, and reports to the coordinator and its control tools.
+- [ ] Unit 4a: Connect ordered web events, work causes, controls, and recall.
 - [ ] Unit 4b: Apply published coordinator definitions safely within the same conversation.
+- [ ] Unit 4c: Connect Slack primary events and exact event replies.
+- [ ] Unit 4d: Preserve legacy admission and forward saved timers through controlled cutover.
 - [ ] Unit 5: Add the protected development Inspector for private teams and workers.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
 - [ ] Phase D: Keep the audit trail throughout the run.
@@ -28,6 +30,8 @@ Event admission and team handback have different crash and authorization boundar
 Unit 3c repairs a confirmed existing transaction error before team event integration. Real Pi and SQLite probes showed that rejected team admissions and worker handoffs could retain raw dependency rows. Canonical role imports must commit with the handoff. The raw dependency store becomes an authorized, retryable mirror of accepted imports.
 
 Unit 4b fixes the permanent definition pin exposed by a persistent conversation. Its design keeps one scope and uses a complete immutable execution profile. A native applied-version change and Pi configuration commit together. New event delivery uses a durable version claim before native input admission. Design alternatives and the independent comparison are retained in the run's evidence.
+
+Unit 4 uses separate runtime, profile, Slack, and cutover commits. The runtime commit keeps current tool selections. The profile commit then adopts coordinator-only tools after old native calls drain, including when the published definition is unchanged. Slack and timer adapters build on that coherent profile gate.
 
 The approved architecture is the design baseline. Read-only grounding checks its integration points. A second architecture competition is unnecessary unless the implementation disproves the design.
 
@@ -63,6 +67,8 @@ The Inspector shows active and completed work, lead and worker models, saved sta
 ## Cutover
 
 Inventory pending inputs, teams, outboxes, and future reminders. Pause old admission and timer delivery during transition. Settle old work and transfer future schedules idempotently. Preserve historical transcripts, signed source addresses, original digests, and legacy receipt codecs. Do not reset the database or merge histories.
+
+After cutover, the primary alone admits new ordinary input. Historical roots and saved forks remain readable under their original pins and finish accepted work. Their saved operation receipts still replay. A dedicated admission record enforces this rule because retirement would also deny history, timer, and report access.
 
 ## Completion predicate
 

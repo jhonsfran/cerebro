@@ -6,6 +6,7 @@ import type { WorkAdmission } from "@cerebro/contracts/work";
 import { isInternalToolName } from "@cerebro/tools/tool-names";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
 import type {
+  ConversationId,
   Harness,
   Registry,
   ToolRegistration,
@@ -14,6 +15,7 @@ import { Effect, Result, Schema } from "effect";
 
 import { conversationProvider } from "./conversation-provider.ts";
 import { createConversationResources } from "./conversation-resources.ts";
+import { reconcileImportedContent } from "./imported-content.ts";
 import { piContext } from "./pi-harness.ts";
 import { createRunLimits } from "./run-limits.ts";
 import type {
@@ -138,14 +140,24 @@ export const createTeamRole = (options: {
       },
     };
   };
+  const permit = async (
+    dependencies: Parameters<SessionHostConfiguration["checkDependencies"]>[1],
+    signal?: AbortSignal
+  ) => {
+    const context = await run(configured.ownerContext());
+    await resources.authorize(context, "send", signal);
+    await run(
+      configured.checkDependencies(context, dependencies, {
+        deadlineAt: Math.min(now() + 30_000, options.work.deadlineAt),
+        signal,
+      })
+    );
+  };
   return {
     configuration: configured,
     resources,
     install,
-    dependencies: async () =>
-      Schema.decodeUnknownSync(BoundedContentDependenciesSchema)(
-        await configured.contentDependencies()
-      ),
+    dependencies: configured.contentDependencies,
     admitDependencies: async (
       dependencies: Parameters<
         SessionHostConfiguration["checkDependencies"]
@@ -178,21 +190,41 @@ export const createTeamRole = (options: {
         configuration.checkDependencies(context, dependencies, readOptions)
       );
     },
-    permit: async (
-      dependencies: Parameters<
-        SessionHostConfiguration["checkDependencies"]
-      >[1],
-      signal?: AbortSignal
-    ) => {
-      const context = await run(configured.ownerContext());
-      await resources.authorize(context, "send", signal);
-      await run(
-        configured.checkDependencies(context, dependencies, {
-          deadlineAt: Math.min(now() + 30_000, options.work.deadlineAt),
-          signal,
-        })
-      );
-    },
+    permit,
+    reconcileImports: async (
+      nativeId: ConversationId,
+      operation: {
+        readonly kind: "handoff" | "restore";
+        readonly signal?: AbortSignal;
+      }
+    ) =>
+      await reconcileImportedContent(
+        pi,
+        nativeId,
+        configuration.importDependencies,
+        {
+          signal: operation.signal,
+          authorize: async (dependencies) => {
+            try {
+              await permit(dependencies, operation.signal);
+            } catch (error) {
+              if (operation.kind === "handoff") {
+                throw error;
+              }
+              return "deferred";
+            }
+            if (
+              operation.kind === "restore" &&
+              !Schema.is(BoundedContentDependenciesSchema)(
+                await configuration.contentDependencies()
+              )
+            ) {
+              return "deferred";
+            }
+            return "authorized";
+          },
+        }
+      ),
   };
 };
 export type TeamRole = ReturnType<typeof createTeamRole>;

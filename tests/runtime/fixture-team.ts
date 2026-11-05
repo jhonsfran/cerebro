@@ -29,6 +29,7 @@ import { createSourceDependencyStore } from "../../packages/runtime/src/content-
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
 import type { MetadataTransaction } from "../../packages/runtime/src/session-agent.ts";
 import { TeamAgent } from "../../packages/runtime/src/team-agent.ts";
+import type { ReadTeamRoleImports } from "../../packages/runtime/src/team-content.ts";
 import { TeamReportOutbox } from "../../packages/runtime/src/team-report-outbox.ts";
 import type { TeamRoleConfiguration } from "../../packages/runtime/src/team-role.ts";
 import { TeamState } from "../../packages/runtime/src/team-state.ts";
@@ -86,7 +87,8 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
 
   protected override async configure(
     work: WorkAdmission,
-    metadata: MetadataTransaction
+    metadata: MetadataTransaction,
+    importedDependencies: ReadTeamRoleImports
   ): Promise<readonly TeamRoleConfiguration[]> {
     this.activeWork = work;
     this.ctx.storage.sql.exec(
@@ -225,10 +227,17 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
           metadata,
           true
         );
-        const dependencies = async () => ({
-          sourceIds: await sources.all(),
-          toolIds: await sources.tools(),
-        });
+        const dependencies = async () => {
+          const imported = await importedDependencies(index);
+          return {
+            sourceIds: [
+              ...new Set([...(await sources.all()), ...imported.sourceIds]),
+            ],
+            toolIds: [
+              ...new Set([...(await sources.tools()), ...imported.toolIds]),
+            ],
+          };
+        };
         const record = (kind: string, body: unknown) =>
           metadata(() => {
             this.ctx.storage.sql.exec(

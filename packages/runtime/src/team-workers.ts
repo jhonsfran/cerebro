@@ -1,9 +1,12 @@
 import { Denied, InvalidInput } from "@cerebro/contracts/failures";
 import { digestToolArguments } from "@cerebro/contracts/tools";
+import { BoundedContentDependenciesSchema } from "@cerebro/contracts/work";
 import { Type } from "@earendil-works/pi-ai";
 import { AssistantEntry, defineTool } from "@earendil-works/pi-durable";
 import type { Harness } from "@earendil-works/pi-durable";
+import { Schema } from "effect";
 
+import { importContentIn } from "./imported-content.ts";
 import type { TeamRole } from "./team-role.ts";
 import { TeamState, requireTeamRunning } from "./team-state.ts";
 
@@ -23,7 +26,9 @@ export const createTeamWorkerTool = (options: {
       text: Type.String({ minLength: 1, maxLength: 16_000 }),
     }),
     execute: async ({ text }, api, context) => {
-      const dependencies = await options.lead.dependencies();
+      const dependencies = Schema.decodeUnknownSync(
+        BoundedContentDependenciesSchema
+      )(await options.lead.dependencies());
       await options.lead.permit(dependencies, context.abortSignal);
       const digest = await digestToolArguments(text);
       const selected = await api.commit(async (tx) => {
@@ -81,8 +86,12 @@ export const createTeamWorkerTool = (options: {
       await role.permit(inputDependencies, context.abortSignal);
       await api.commit(async (tx) => {
         requireTeamRunning(await tx.doc(TeamState), options.now());
-        role.configuration.importDependencies(inputDependencies);
+        await importContentIn(tx, worker.nativeId, inputDependencies);
       }, context);
+      await role.reconcileImports(worker.nativeId, {
+        kind: "handoff",
+        signal: context.abortSignal,
+      });
       if (!worker.requestId) {
         throw new InvalidInput({ reason: "The worker request is missing." });
       }
@@ -105,15 +114,21 @@ export const createTeamWorkerTool = (options: {
           ],
         };
       }
-      const resultDependencies = await role.dependencies();
+      const resultDependencies = Schema.decodeUnknownSync(
+        BoundedContentDependenciesSchema
+      )(await role.dependencies());
       await role.permit(resultDependencies, context.abortSignal);
       await options.lead.permit(resultDependencies, context.abortSignal);
       const answer = await api.commit(async (tx) => {
         const current = await tx.doc(TeamState);
         requireTeamRunning(current, options.now());
-        options.lead.configuration.importDependencies(resultDependencies);
+        await importContentIn(tx, api.conversationId, resultDependencies);
         return await tx.entry(AssistantEntry, settled.answer);
       }, context);
+      await options.lead.reconcileImports(api.conversationId, {
+        kind: "handoff",
+        signal: context.abortSignal,
+      });
       const message = answer?.model?.[0];
       const result =
         message?.role === "assistant"

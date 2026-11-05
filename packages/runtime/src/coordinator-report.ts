@@ -224,7 +224,7 @@ export const createCoordinatorReport =
         options.pi,
         options.native.id,
         importDependencies,
-        signal
+        { signal }
       );
     }
     await options.persist();

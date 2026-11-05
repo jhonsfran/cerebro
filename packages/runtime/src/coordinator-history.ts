@@ -86,7 +86,7 @@ export const createCoordinatorHistory = (options: {
       options.pi,
       options.nativeId,
       options.contentAccess.retain,
-      context.abortSignal
+      { signal: context.abortSignal }
     );
   };
   return {

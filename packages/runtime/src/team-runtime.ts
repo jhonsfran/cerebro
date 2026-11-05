@@ -20,6 +20,7 @@ import type {
 } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
+import { importContentIn } from "./imported-content.ts";
 import { trackNativeProgress } from "./native-progress.ts";
 import { piContext } from "./pi-harness.ts";
 import type { MetadataTransaction } from "./session-agent.ts";
@@ -91,6 +92,16 @@ export const createTeamRuntime = async (options: {
     });
   }
   const workers = roles.slice(1);
+  const reconcileLead = async () => {
+    const current = await pi.snapshot(TeamState, piContext());
+    if (
+      current?.lead &&
+      current.phase === "running" &&
+      work.deadlineAt > now()
+    ) {
+      await lead.reconcileImports(current.lead, { kind: "handoff" });
+    }
+  };
   const agents = roles.map((role, index) =>
     role.install(
       index === 0 ? [createTeamWorkerTool({ pi, lead, workers, now })] : []
@@ -101,6 +112,7 @@ export const createTeamRuntime = async (options: {
     work,
     now,
     deliver: async (command, nativeId, signal) => {
+      await lead.reconcileImports(nativeId, { kind: "handoff", signal });
       await lead.permit(teamCommandDependencies(command), signal);
       await options.submit(nativeId, work.goal, workStartOperationId(work.key));
       if (command.kind === "input") {
@@ -139,6 +151,23 @@ export const createTeamRuntime = async (options: {
           })
         );
       }, piContext());
+      if (state.phase === "running" && work.deadlineAt > now()) {
+        const ids = [
+          state.lead,
+          ...state.workers.map((worker) => worker.nativeId),
+        ];
+        await Promise.all(
+          ids.map(async (nativeId, index) => {
+            const role = roles[index];
+            if (!role) {
+              throw new InvalidInput({
+                reason: "The saved team role is missing.",
+              });
+            }
+            await role.reconcileImports(nativeId, { kind: "restore" });
+          })
+        );
+      }
     }
     if (
       state?.admission &&
@@ -205,6 +234,12 @@ export const createTeamRuntime = async (options: {
         if (receipt.receipt.digest !== digest) {
           throw new InvalidInput({
             reason: "The team command ID names another payload.",
+          });
+        }
+        if (revoked) {
+          throw new Denied({
+            code: "revoked",
+            reason: "Current access no longer permits this team handoff.",
           });
         }
         return {
@@ -284,7 +319,7 @@ export const createTeamRuntime = async (options: {
       }
       state.phase = "running";
       state.inputCount += 1;
-      lead.configuration.importDependencies(teamCommandDependencies(command));
+      await importContentIn(tx, state.lead, teamCommandDependencies(command));
       const taskId = await tx.createTask(task, command, {
         background: true,
         conversationId: state.lead,
@@ -301,6 +336,9 @@ export const createTeamRuntime = async (options: {
       receipt.receipt = { digest, taskId, accepted: true, reason: null };
       return { accepted: true, reason: null };
     }, piContext());
+    if (result.accepted && command.kind !== "cancel") {
+      await reconcileLead();
+    }
     await options.storage.sync();
     await holdAdmissions();
     if (command.kind === "cancel") {
