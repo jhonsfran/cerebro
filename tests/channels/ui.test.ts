@@ -198,6 +198,37 @@ test("an old HTTP denial cannot clear the current access generation or its draft
   assert.equal(storage.getItem(pendingKey), "current private draft");
 });
 
+test("an aborted request rejects a late denial without clearing current access", async () => {
+  const response = Promise.withResolvers<Response>();
+  const controller = new AbortController();
+  installFetch(() => response.promise);
+  const pending = assert.rejects(
+    request("/old/inspection", sourceSchema, { signal: controller.signal }),
+    { name: "AbortError" }
+  );
+  const generation = currentAccessGeneration();
+  storage.setItem(pendingKey, "current private draft");
+  controller.abort();
+  response.resolve(forbidden());
+  await pending;
+  assert.equal(currentAccessGeneration(), generation);
+  assert.equal(storage.getItem(pendingKey), "current private draft");
+});
+
+test("an aborted request rejects JSON that completes after its headers", async () => {
+  const response = delayedJson();
+  const controller = new AbortController();
+  installFetch(() => response.response);
+  const pending = assert.rejects(
+    request("/old/inspection", sourceSchema, { signal: controller.signal }),
+    { name: "AbortError" }
+  );
+  await delay(0);
+  controller.abort();
+  await response.finish({ text: "old private response" });
+  await pending;
+});
+
 test("unauthenticated requests clear private state", async () => {
   storage.setItem(pendingKey, "private pending message");
   installFetch(() => Response.json({ message: "Sign in." }, { status: 401 }));
@@ -501,7 +532,6 @@ test("native send retries retain the operation ID and Stop and approval use thei
   ]);
 });
 
-/* eslint-disable sort-keys -- These inputs deliberately change key order to test canonical retries. */
 test("operation intent remains stable for canonical retries and changes for new input or reset", () => {
   const intent: { current: OperationIntent | null } = { current: null };
   const first = operationFor(intent, {
@@ -546,8 +576,6 @@ test("operation intent remains stable for canonical retries and changes for new 
     reset
   );
 });
-
-/* eslint-enable sort-keys */
 
 test("explicit agent selections publish tool read/execute and source read grants", () => {
   assert.deepEqual(

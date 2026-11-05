@@ -9,6 +9,7 @@ import {
   ChatControl,
   ChatSnapshot,
 } from "../../packages/contracts/src/session-service.ts";
+import { inspectionOverview } from "./inspection-ui-data.ts";
 
 mock.module("../../apps/web/src/env.public", () => ({
   ENV: { VITE_SERVER_URL: "http://fixture.invalid" },
@@ -121,6 +122,12 @@ const installConversation = (
     writable: true,
     value: (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.endsWith("/inspection")) {
+        return Response.json({
+          ...inspectionOverview(),
+          address: initial.address,
+        });
+      }
       if (init?.method === "POST") {
         const body: unknown = JSON.parse(String(init.body));
         requests.push({ body, url });

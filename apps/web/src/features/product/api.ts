@@ -51,6 +51,10 @@ export const request = async <Value>(
     credentials: "include",
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
+  if (init?.signal?.aborted) {
+    await response.body?.cancel();
+    init.signal.throwIfAborted();
+  }
   if (generation !== currentAccessGeneration()) {
     await response.body?.cancel();
     assertCurrentAccess(generation);
@@ -79,6 +83,7 @@ export const request = async <Value>(
     throw new ProductError(response.status, message);
   }
   const body: unknown = await response.json();
+  init?.signal?.throwIfAborted();
   assertCurrentAccess(generation);
   return schema.parse(body);
 };

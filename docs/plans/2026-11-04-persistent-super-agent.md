@@ -20,7 +20,7 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 4c: Connect Slack primary events and exact event replies.
 - [x] Unit 4d: Preserve legacy admission and forward saved timers through controlled cutover.
 - [x] Unit 5a: Add protected saved-state inspection and safe terminal Team reads.
-- [ ] Unit 5b: Add the development Inspector UI with lazy detail loading.
+- [x] Unit 5b: Add the development Inspector UI with lazy detail loading.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
 - [ ] Phase D: Keep the audit trail throughout the run.
 - [ ] Phase E: Verify and hand back.
@@ -46,6 +46,8 @@ Unit 4c maps filtered Slack events to canonical primary conversations. Its exter
 Unit 4d closes fresh input on historical roots and forks while accepted inputs, controls, reports, history, and saved timers continue. Canonical schedules and fixed origins commit before raw timer arming. A generic existing wake recovers the arm. Legacy occurrence checks prevent a second execution after the old native-acceptance boundary. Fresh reviews also found and fixed a historical Slack reply authorization mismatch. The final native check retained archived fork history and pins and delivered one full 32,000-character routine after a same-volume process kill before any chat read. The actual old-binary upgrade also passed on all seven original volumes. A retained Slack request finished once on its archived source, and its saved timer sent one reply to the original thread through the primary. Stopped read-only copies proved the original native IDs and exact receipts before application reads. Ancient aborted inputs with no retained payload or accepted digest fail closed because exact replay cannot be proved.
 
 Unit 5a adds current-read inspection of owned work, events, and selected private roles through one existing Harness. Explicit bounded DTOs show saved models, safe tools, tasks, reservations, tokens, and results. Fresh reviews removed an overbroad private query type and a duplicate provenance rule. Actual app checks cover active inspection, missing-model unavailability, report delivery, and cold sealed reads after role and model removal. Repeated sealed reads preserve results and usage without added provider calls. The separate crash between report commit and unfinished role cleanup remains a final verification gate.
+
+Unit 5b adds the local Inspector below the chat toolbar. It loads one selected Team and bounded role pages, with one timer after completed reads. Independent mounted probes found and fixed a sealing transition that left partial output visible. The shared transport also rejects cancelled responses before they can clear current access. Browser layout and live-model verification remain final product gates.
 
 The approved architecture is the design baseline. Read-only grounding checks its integration points. A second architecture competition is unnecessary unless the implementation disproves the design.
 

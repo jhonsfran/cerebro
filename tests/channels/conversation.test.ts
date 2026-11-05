@@ -13,6 +13,7 @@ import {
 } from "../../apps/web/src/features/product/chat";
 import { decodeObservation } from "../../apps/web/src/features/product/observation";
 import { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
+import { inspectionOverview } from "./inspection-ui-data.ts";
 
 mock.module("../../apps/web/src/env.public", () => ({
   ENV: { VITE_SERVER_URL: "http://fixture.invalid" },
@@ -162,6 +163,12 @@ const installConversation = (
     configurable: true,
     value: async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.endsWith("/inspection")) {
+        return Response.json({
+          ...inspectionOverview(),
+          address: latest.address,
+        });
+      }
       const body: unknown = init?.body ? JSON.parse(String(init.body)) : null;
       requests.push({ body, url });
       if (init?.method === "POST") {

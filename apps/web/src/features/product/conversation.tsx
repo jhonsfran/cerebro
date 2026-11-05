@@ -40,6 +40,7 @@ import {
 } from "./chat-connection";
 import { useMessageDelivery } from "./chat-delivery";
 import { ConversationActivity } from "./conversation-activity";
+import { ConversationInspector } from "./conversation-inspector";
 import { ConversationTranscript } from "./conversation-transcript";
 import { ErrorAlert } from "./feedback";
 import { operationFor } from "./intent";
@@ -402,6 +403,11 @@ const ConversationSession = ({
         stop={async () => {
           await act(() => stopConversation(path));
         }}
+      />
+      <ConversationInspector
+        path={path}
+        conversation={conversation}
+        snapshot={snapshot}
       />
       {displayedError ? (
         <div className="mx-auto flex w-full max-w-(--measure-chat) flex-col items-start gap-2 px-4 pt-4">
