@@ -6,6 +6,8 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
+import { teamMessage } from "./persistent-responses.mjs";
+
 export const boundaries = ["before-tool-dispatch", "after-tool-dispatch"];
 const canonical = (value) => {
   if (Array.isArray(value)) {
@@ -350,76 +352,6 @@ const legacyMessage = (request, input, purpose, operationId) => {
       }
     : { content: text, role: "assistant" };
 };
-const teamMessage = (input, operationId, purpose) => {
-  const latest = input.messages.findLastIndex(
-    (message) => message.role === "user"
-  );
-  const prompt = messageText(input.messages[latest]);
-  if (purpose === "turn" && prompt.startsWith("Internal coordinator event.")) {
-    const event = JSON.parse(prompt.slice(prompt.indexOf("\n") + 1));
-    return {
-      content: `SLACK_TEAM_FIXTURE coordinator result: ${event.content.text}`,
-      role: "assistant",
-    };
-  }
-  if (purpose !== "turn" || !prompt.includes("SLACK_TEAM_FIXTURE")) {
-    return;
-  }
-  const results = input.messages
-    .slice(latest + 1)
-    .filter((message) => message.role === "tool")
-    .map(messageText);
-  const offered = new Set(
-    (input.tools ?? []).map((tool) => tool.function?.name)
-  );
-  const calls = (name, values) => ({
-    content: null,
-    role: "assistant",
-    tool_calls: values.map((value, index) => ({
-      function: { arguments: JSON.stringify(value), name },
-      id: `call_${digest({ operationId, name, index }).slice(0, 24)}`,
-      type: "function",
-    })),
-  });
-  if (offered.has("start_team")) {
-    return results.length > 0
-      ? {
-          content: "SLACK_TEAM_FIXTURE coordinator accepted background work.",
-          role: "assistant",
-        }
-      : calls("start_team", [
-          {
-            goal: "SLACK_TEAM_FIXTURE Analyze both worker checks and return a bounded summary.",
-          },
-        ]);
-  }
-  if (offered.has("delegate_worker")) {
-    return results.length > 0
-      ? {
-          content: `SLACK_TEAM_FIXTURE lead summary: ${results
-            .slice(0, 2)
-            .map((text) => text.slice(0, 1000))
-            .join(" ")}`,
-          role: "assistant",
-        }
-      : calls("delegate_worker", [
-          { text: "SLACK_TEAM_FIXTURE worker:one. Return one bounded result." },
-          { text: "SLACK_TEAM_FIXTURE worker:two. Return one bounded result." },
-        ]);
-  }
-  if (prompt.includes("SLACK_TEAM_FIXTURE worker:one")) {
-    return {
-      content: "SLACK_TEAM_FIXTURE worker one complete.",
-      role: "assistant",
-    };
-  }
-  if (prompt.includes("SLACK_TEAM_FIXTURE worker:two")) {
-    return {
-      content: "SLACK_TEAM_FIXTURE worker two complete.",
-      role: "assistant",
-    };
-  }
-};
 const validateModelControls = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Invalid model controls");
@@ -438,6 +370,35 @@ const validateModelControls = (value) => {
   }
   return value;
 };
+const slackUnknownControl = (value) => {
+  if (value === null) {
+    return null;
+  }
+  if (
+    !value ||
+    Object.keys(value).toSorted().join(",") !== "channel,textSha256,threadTs" ||
+    typeof value.channel !== "string" ||
+    value.channel.length === 0 ||
+    value.channel.length > 256 ||
+    !(
+      value.threadTs === null ||
+      (typeof value.threadTs === "string" &&
+        /^\d{1,16}\.\d{6}$/u.test(value.threadTs))
+    ) ||
+    typeof value.textSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(value.textSha256)
+  ) {
+    throw new Error("Invalid one-shot Slack post control");
+  }
+  return { ...value, consumedAt: null };
+};
+
+const matchesUnknownPost = (unknown, method, input) =>
+  method === "chat.postMessage" &&
+  unknown?.consumedAt === null &&
+  unknown.channel === input.channel &&
+  unknown.threadTs === (input.thread_ts ?? null) &&
+  unknown.textSha256 === createHash("sha256").update(input.text).digest("hex");
 
 const validSlackMessage = (input, method) =>
   input &&
@@ -491,6 +452,7 @@ export const createFixture = async ({
     }
   }
   state.controls.models ??= {};
+  state.controls.slackPostUnknown ??= null;
   state.slack ??= {
     calls: [],
     messages: [],
@@ -778,6 +740,11 @@ export const createFixture = async ({
     }
   };
   const applyControls = (input) => {
+    if (input.slackPostUnknown !== undefined) {
+      state.controls.slackPostUnknown = slackUnknownControl(
+        input.slackPostUnknown
+      );
+    }
     if (input.models !== undefined) {
       state.controls.models = validateModelControls(input.models);
     }
@@ -867,9 +834,21 @@ export const createFixture = async ({
               ts,
             };
     }
-    state.slack.calls.push({ method, request: input, response: result });
+    const unknown = state.controls.slackPostUnknown;
+    const acceptedUnknown = matchesUnknownPost(unknown, method, input);
+    if (acceptedUnknown) {
+      unknown.consumedAt = Date.now();
+      result = { error: "fatal_error", ok: false };
+    }
+    const status = acceptedUnknown ? 503 : 200;
+    state.slack.calls.push({
+      method,
+      request: input,
+      response: result,
+      status,
+    });
     await save();
-    json(response, 200, result);
+    json(response, status, result);
     return true;
   };
   const server = createServer(async (request, response) => {

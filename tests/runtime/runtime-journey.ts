@@ -98,6 +98,7 @@ export const runtimeJourney = (suite: string) => {
           arm: null,
           delayMs: 0,
           failFirst: false,
+          slackPostUnknown: null,
           release: true,
         });
         await run(stack);

@@ -29,6 +29,7 @@ COPY packages/runtime ./packages/runtime
 COPY packages/tools ./packages/tools
 COPY tests/runtime ./tests/runtime
 COPY tests/slice-1/provider.mjs ./tests/slice-1/provider.mjs
+COPY tests/slice-1/persistent-responses.mjs ./tests/slice-1/persistent-responses.mjs
 RUN mkdir -p node_modules/@cerebro && \
     ln -s ../../packages/channels node_modules/@cerebro/channels && \
     ln -s ../../packages/contracts node_modules/@cerebro/contracts && \

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,6 +12,17 @@ import { createSlackApi } from "../../packages/channels/src/slack-api.ts";
 import { createFixture } from "../slice-1/provider.mjs";
 
 const observationSchema = z.object({
+  controls: z.object({
+    slackPostUnknown: z
+      .object({
+        channel: z.string(),
+        threadTs: z.string().nullable(),
+        textSha256: z.string(),
+        consumedAt: z.number().nullable(),
+      })
+      .nullable()
+      .optional(),
+  }),
   model: z.array(z.object({ status: z.number().optional() })),
   slack: z.object({
     calls: z.array(
@@ -18,6 +30,7 @@ const observationSchema = z.object({
         method: z.string(),
         request: z.record(z.string(), z.unknown()),
         response: z.record(z.string(), z.unknown()),
+        status: z.number().optional(),
       })
     ),
     messages: z.array(
@@ -58,6 +71,18 @@ const openFixture = async (directory: string) => {
   return {
     api,
     baseUrl,
+    control: async (input: unknown) => {
+      const response = await fetch(`${baseUrl}/control`, {
+        body: JSON.stringify(input),
+        headers: {
+          "Content-Type": "application/json",
+          "X-Fixture-Control": "slice-1-control",
+        },
+        method: "POST",
+      });
+      await response.body?.cancel();
+      return response.status;
+    },
     close: async () => {
       if (fixture.server.listening) {
         const closed = once(fixture.server, "close");
@@ -190,6 +215,163 @@ test(
         afterRestart.slack.messages.at(-1)?.text,
         "Team result is ready."
       );
+    } finally {
+      await fixture.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
+  "an exact one-shot Slack post is accepted before 503 and stays consumed after reopen",
+  { timeout: 10_000 },
+  async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "cerebro-slack-unknown-")
+    );
+    let fixture = await openFixture(directory);
+    try {
+      const destination = {
+        channel: "D-unknown",
+        threadTs: "1700000000.000042",
+      };
+      const text = "The Slack admission recommendation is ready.";
+      const selector = {
+        ...destination,
+        textSha256: createHash("sha256").update(text).digest("hex"),
+      };
+      assert.equal(await fixture.control({ slackPostUnknown: selector }), 200);
+      const send = { ...destination, text };
+      assert.deepEqual(await fixture.api.send(send), { state: "unknown" });
+      const accepted = await fixture.persisted();
+      assert.equal(accepted.slack.calls.length, 1);
+      assert.deepEqual(accepted.slack.calls[0], {
+        method: "chat.postMessage",
+        request: { channel: "D-unknown", text, thread_ts: "1700000000.000042" },
+        response: { error: "fatal_error", ok: false },
+        status: 503,
+      });
+      assert.deepEqual(accepted.slack.messages, [
+        {
+          blocks: [],
+          ...destination,
+          kind: "message",
+          text,
+          ts: "1800000000.000000",
+        },
+      ]);
+      assert.equal(accepted.slack.nextTimestamp, 1_800_000_000_000_001);
+      assert.ok(accepted.controls.slackPostUnknown?.consumedAt);
+      assert.deepEqual(await fixture.observed(), accepted);
+      await fixture.close();
+      fixture = await openFixture(directory);
+      const restored = await fixture.persisted();
+      assert.deepEqual(restored.controls, accepted.controls);
+      assert.deepEqual(
+        await fixture.api.send({
+          ...destination,
+          text: "A distinct event can receive a reply.",
+        }),
+        { state: "sent", ts: "1800000000.000001" }
+      );
+      assert.deepEqual(await fixture.api.send(send), {
+        state: "sent",
+        ts: "1800000000.000002",
+      });
+      const reopened = await fixture.persisted();
+      assert.deepEqual(
+        reopened.slack.calls.map((call) => call.status),
+        [503, 200, 200]
+      );
+      assert.deepEqual(
+        reopened.slack.messages.map((message) => ({
+          text: message.text,
+          ts: message.ts,
+        })),
+        [
+          { text, ts: "1800000000.000000" },
+          {
+            text: "A distinct event can receive a reply.",
+            ts: "1800000000.000001",
+          },
+          { text, ts: "1800000000.000002" },
+        ]
+      );
+      assert.deepEqual(reopened.controls, accepted.controls);
+    } finally {
+      await fixture.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+);
+
+test(
+  "the unknown selector matches the method, channel, original thread, and exact text digest",
+  { timeout: 10_000 },
+  async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "cerebro-slack-selector-")
+    );
+    const fixture = await openFixture(directory);
+    try {
+      const send = {
+        channel: "D-exact",
+        threadTs: "1700000000.000043",
+        text: "Exact reply.",
+      };
+      const selector = {
+        channel: send.channel,
+        threadTs: send.threadTs,
+        textSha256: createHash("sha256").update(send.text).digest("hex"),
+      };
+      assert.equal(
+        await fixture.control({
+          slackPostUnknown: { ...selector, consumedAt: 1 },
+        }),
+        400
+      );
+      assert.equal(
+        await fixture.control({
+          slackPostUnknown: { ...selector, textSha256: "invalid" },
+        }),
+        400
+      );
+      assert.equal(await fixture.control({ slackPostUnknown: selector }), 200);
+      assert.deepEqual(
+        await fixture.api.send({ ...send, channel: "D-other" }),
+        { state: "sent", ts: "1800000000.000000" }
+      );
+      assert.deepEqual(
+        await fixture.api.send({ ...send, threadTs: "1700000000.000044" }),
+        { state: "sent", ts: "1800000000.000001" }
+      );
+      assert.deepEqual(
+        await fixture.api.send({ ...send, text: "Exact reply. " }),
+        { state: "sent", ts: "1800000000.000002" }
+      );
+      assert.deepEqual(
+        await fixture.api.sendEphemeral({ ...send, user: "U-owner" }),
+        { state: "sent", ts: "" }
+      );
+      assert.deepEqual(
+        await fixture.api.edit({ ...send, ts: "1800000000.000002" }),
+        { state: "sent", ts: "1800000000.000002" }
+      );
+      const before = await fixture.persisted();
+      assert.equal(before.controls.slackPostUnknown?.consumedAt, null);
+      assert.deepEqual(
+        before.slack.calls.map((call) => call.status),
+        [200, 200, 200, 200, 200]
+      );
+      assert.deepEqual(await fixture.api.send(send), { state: "unknown" });
+      const after = await fixture.persisted();
+      assert.equal(after.slack.calls.length, 6);
+      assert.equal(after.slack.messages.length, 5);
+      assert.equal(after.slack.messages.at(-1)?.ts, "1800000000.000004");
+      assert.ok(after.controls.slackPostUnknown?.consumedAt);
+      assert.equal(await fixture.control({ slackPostUnknown: null }), 200);
+      const cleared = await fixture.persisted();
+      assert.equal(cleared.controls.slackPostUnknown, null);
     } finally {
       await fixture.close();
       await rm(directory, { recursive: true, force: true });

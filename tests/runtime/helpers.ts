@@ -113,7 +113,13 @@ const sourceIdentity = () => {
       hash.update(readFileSync(`${directory}/${name}`));
     }
   }
-  hash.update(readFileSync("tests/slice-1/provider.mjs"));
+  for (const filename of [
+    "tests/slice-1/provider.mjs",
+    "tests/slice-1/persistent-responses.mjs",
+  ]) {
+    hash.update(`${filename}\n`);
+    hash.update(readFileSync(filename));
+  }
   return `${head}:sha256:${hash.digest("hex")}`;
 };
 interface SourceSnapshot {

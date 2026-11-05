@@ -25,7 +25,8 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 6b1: Repair native runtime verification at actual event and storage boundaries.
 - [x] Unit 6d1: Preserve later subscription mutations when native tools replay.
 - [x] Unit 6d2: Give Inspector tools distinct occurrence identity across native rounds.
-- [ ] Unit 6b2: Complete realistic Slack, subscription, queue, and Inspector application fixtures.
+- [x] Unit 6b2a: Add realistic provider and Slack fixtures with exact test cleanup.
+- [ ] Unit 6b2b: Prove persistent-agent routing, subscriptions, queue limits, and Inspector through the native application.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
 - [ ] Phase D: Keep the audit trail throughout the run.
 - [ ] Phase E: Verify and hand back.
@@ -92,6 +93,8 @@ Unit 6b1 repairs native verification at the actual saved event and storage bound
 Unit 6d1 saves each subscription mutation result with both relation directions in the existing native transaction. Exact native task replay returns its original result after current authority checks, without undoing a later subscription change. Real Pi and SQLite regressions cover both orders, no-ops, terminal Work, changed requests, revoked access, and rollback. All three fresh reviews pass. The 125 focused tests, normal workspace type checks, and 165 PostgreSQL channel tests pass. The receipt cannot reconstruct mutations made by intermediate unshipped development builds that never saved it. The pre-task release had no subscription tools; that development-state limit is retained explicitly. Inspector occurrence identity and the final product gates remain pending.
 
 Unit 6d2 gives each Inspector tool occurrence a stable native-entry key and a separate displayed provider call ID. Live status requires the exact current generation and full private call ID. One existing task read proves the round on a latest live page; historical and settled pages add none. Real Pi tests cover repeated IDs, pending calls, orphan results, full caps, and matching display prefixes. Mounted tests preserve distinct rows and prior output. Fresh reviews removed an unnecessary null state from the bounded result join. The final revision passes 16 runtime tests, 13 workspace type tasks, scoped lint, and all 166 PostgreSQL channel tests. All three final reviews pass. Final native and browser gates remain pending.
+
+Unit 6b2a adds distinct storage and Slack task fixtures with actual incoming tool-result joins and trusted event references. The Slack boundary can accept one exact post, persist it, then return an uncertain response. Reopening retains consumption without fake physical deduplication. Fresh reviews fixed failed-worker text that OpenAI transports without an error flag and replaced static-answer test echoes with independent contributions. All 16 focused cases pass. The public channel runner and its external-database path each pass all 166 tests. Controlled test-process failure also cleans up its exact owned database. The external path makes zero Docker calls. Test PostgreSQL uses labelled tmpfs and creates no volume. All final reviews pass. Actual test-image module bytes and full native, runtime, and browser gates remain pending.
 
 ## Cutover
 
