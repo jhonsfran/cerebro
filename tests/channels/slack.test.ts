@@ -2,10 +2,7 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { digest } from "../../packages/channels/src/security";
-import {
-  createSlackApi,
-  toSlackText,
-} from "../../packages/channels/src/slack-api";
+import { createSlackApi } from "../../packages/channels/src/slack-api";
 import type {
   SlackApi,
   SlackResult,
@@ -16,6 +13,7 @@ import {
 } from "../../packages/channels/src/slack-replies";
 import type { SlackDelivery } from "../../packages/channels/src/slack-replies";
 import { id } from "../../packages/contracts/src/index";
+import { toSlackText } from "../../packages/contracts/src/slack-text.ts";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
 import {
   channelConversation,
@@ -39,6 +37,7 @@ import {
 } from "../../packages/runtime/src/pi-harness";
 import { verificationUiRequest } from "../slice-1/provider.mjs";
 import { fixtureSubmissionCount } from "./fixture-session";
+import { saveLegacySlackDecision } from "./fixture-slack-events";
 import {
   createTestProduct,
   chatSnapshot,
@@ -68,7 +67,7 @@ const event = (
     channel_type: "im",
     text,
     ...(threadTimestamp ? { thread_ts: threadTimestamp } : {}),
-    ts: eventId === "link" ? "1.0" : "2.0",
+    ts: eventId === "link" ? "1.000000" : "2.000000",
     type: "message",
     user: "slack-user",
     ...overrides,
@@ -78,7 +77,6 @@ const event = (
   type: "event_callback",
 });
 
-// Records every Slack Web API call the product makes.
 const slackRecorder = () => {
   const calls: { method: string; body: Record<string, unknown> }[] = [];
   const fetch = (input: RequestInfo | URL, init?: RequestInit) => {
@@ -119,7 +117,7 @@ const linkedProduct = async () => {
   return { app, code, configuration, principalId, send, slack };
 };
 
-test("Slack linking, event replay, and thread sessions persist in PostgreSQL", async () => {
+test("Slack linking, event replay, and primary continuity persist in PostgreSQL", async () => {
   const { app, code, configuration, principalId, send, slack } =
     await linkedProduct();
   const linkEvent = event("link", `link ${code}`);
@@ -137,7 +135,6 @@ test("Slack linking, event replay, and thread sessions persist in PostgreSQL", a
     assert.equal(receipts.length, 1);
     assert.equal(JSON.stringify(receipts).includes(code), false);
   });
-  // Only the first delivery of the link event confirms it in Slack.
   assert.equal(
     slack.calls.filter((call) =>
       String(call.body.text).startsWith("Your Slack account is linked")
@@ -153,10 +150,11 @@ test("Slack linking, event replay, and thread sessions persist in PostgreSQL", a
   ]);
   assert.deepEqual(
     accepted.map((response) => response.status),
-    [200, 200]
+    [200, 200],
+    await accepted[0]?.clone().text()
   );
   assert.equal(fixtureSubmissionCount(), 1);
-  const followup = event("message-two", "Continue in this thread.", "2.0");
+  const followup = event("message-two", "Continue in this thread.", "2.000000");
   const continued = await send(followup);
   assert.equal(continued.status, 200);
   await app.options.withDatabase(async (db) => {
@@ -187,7 +185,7 @@ test("Slack linking, event replay, and thread sessions persist in PostgreSQL", a
       false
     )
   );
-  const denied = await send(event("denied", "Denied message", "2.0"));
+  const denied = await send(event("denied", "Denied message", "2.000000"));
   assert.equal(denied.status, 403);
 });
 
@@ -230,7 +228,6 @@ test("Slack answers unlinked people, bad link codes, and channel mentions with a
       ],
     ]
   );
-  // A retried event never repeats its hint.
   const retried = event("unlinked", "Hello");
   await send(retried, {
     ...(await signSlack(retried, slackConfiguration().signingSecret)),
@@ -265,7 +262,7 @@ test("Slack adapters without a queue await admission even when background work i
   const response = await submit(
     event("foreground", "Admit before responding.")
   );
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 200, await response.clone().text());
   assert.equal(object(await response.json()).accepted, true);
   assert.equal(fixtureSubmissionCount(), 1);
   assert.equal(pending.length, 0);
@@ -287,9 +284,14 @@ test("Slack adapters without a queue await admission even when background work i
   assert.equal(pending.length, 0);
 });
 
-test("a Slack button decides an approval as the linked person", async () => {
-  const { app, code, configuration, send } = await linkedProduct();
+test("a retained Slack decision keeps its exact approval thread and linked person", async () => {
+  const { app, code, configuration, principalId, send } = await linkedProduct();
   await send(event("link", `link ${code}`));
+  await saveLegacySlackDecision(
+    app.options,
+    event("approval", "Request approval before continuing."),
+    principalId
+  );
   const requested = await send(
     event("approval", "Request approval before continuing.")
   );

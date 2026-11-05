@@ -4,6 +4,8 @@ import { test } from "node:test";
 import {
   authenticateSessionRequest,
   signSessionRequest,
+  signIdentityRequest,
+  authenticateIdentityRequest,
 } from "../../apps/server/src/session/proof.ts";
 import { Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
@@ -20,6 +22,7 @@ const identity = {
   organizationId: address.organizationId,
   ownerPrincipalId: userEvent.context.actor.id,
 };
+const isDenied = (error: unknown): boolean => error instanceof Denied;
 const signedRequest = async (
   path: Parameters<typeof signSessionRequest>[2] = "/send",
   target = address,
@@ -57,6 +60,7 @@ test("native chat credentials authenticate every private operation with the comp
     "/stop",
     "/fork",
     "/control",
+    "/slack-event",
   ] as const;
   const results = await Promise.all(
     paths.map(async (path) => {
@@ -81,6 +85,85 @@ test("native chat credentials authenticate every private operation with the comp
     })
   );
   assert.deepEqual(results, paths);
+});
+
+test("Slack discovery authenticates an identity without a default conversation and binds its exact thread", async () => {
+  const body = JSON.stringify({
+    thread: {
+      workspaceId: "workspace-A",
+      channelId: "D-A",
+      rootTimestamp: "1800000000.000001",
+    },
+  });
+  const credential = await signIdentityRequest(
+    identity,
+    userEvent.context,
+    body,
+    secret
+  );
+  const request = (
+    payload = body,
+    path = "/slack-targets",
+    proof = credential
+  ) =>
+    new Request(`https://session.internal${path}`, {
+      method: "POST",
+      body: payload,
+      headers: { "x-cerebro-identity-proof": proof },
+    });
+  assert.deepEqual(
+    await authenticateIdentityRequest(request(), secret, identity),
+    userEvent.context
+  );
+  const decoded = JSON.parse(credential);
+  assert.equal("address" in decoded.proof, false);
+  await assert.rejects(
+    authenticateIdentityRequest(
+      request(body.replace("D-A", "D-foreign")),
+      secret,
+      identity
+    ),
+    isDenied
+  );
+  await assert.rejects(
+    authenticateIdentityRequest(request(body, "/send"), secret, identity),
+    isDenied
+  );
+  await assert.rejects(
+    authenticateIdentityRequest(request(), secret, {
+      ...identity,
+      ownerPrincipalId: id.principal("foreign"),
+    }),
+    isDenied
+  );
+  await assert.rejects(
+    authenticateIdentityRequest(request(), "wrong-signing-key", identity),
+    isDenied
+  );
+  await assert.rejects(
+    authenticateIdentityRequest(
+      request(body, "/slack-targets", ""),
+      secret,
+      identity
+    ),
+    isDenied
+  );
+  const source = await signedRequest("/slack-event", address, identity, {
+    eventKey: "slack:org:app:workspace:event",
+  });
+  await assert.rejects(
+    authenticateIdentityRequest(source, secret, identity),
+    isDenied
+  );
+  const changed = new Request(source.url, {
+    method: "POST",
+    headers: source.headers,
+    body: JSON.stringify({ eventKey: "slack:org:app:workspace:changed" }),
+  });
+  await assert.rejects(
+    authenticateSessionRequest(changed, secret, identity),
+    isDenied
+  );
 });
 
 test("fork and control credentials bind the command body, destination, source chat, and identity host", async () => {

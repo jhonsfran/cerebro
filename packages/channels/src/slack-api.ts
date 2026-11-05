@@ -18,7 +18,7 @@ const slackResponse = z.object({
 export type SlackResult =
   | { readonly state: "sent"; readonly ts: string }
   | { readonly state: "failed"; readonly error: string }
-  | { readonly state: "retry" }
+  | { readonly state: "retry"; readonly retryAt?: number }
   | { readonly state: "unknown" };
 
 export interface SlackBlock {
@@ -42,8 +42,6 @@ export interface SlackApi {
   ) => Promise<SlackResult>;
 }
 
-// A test or local deployment may point apiUrl at a fake; older configurations
-// named the chat.postMessage endpoint itself.
 const baseUrl = (configuration: SlackConfiguration): string =>
   (configuration.apiUrl ?? SLACK_API_URL)
     .replace(/\/chat\.postMessage$/u, "")
@@ -81,8 +79,17 @@ export const createSlackApi = (
         }
       );
       if (response.status === 429) {
+        const retryAfter = response.headers.get("Retry-After");
+        const seconds =
+          retryAfter && /^\d+$/u.test(retryAfter)
+            ? Number(retryAfter)
+            : Number.NaN;
+        const retryAt = Date.now() + seconds * 1000;
         await response.body?.cancel();
-        return { state: "retry" };
+        return {
+          state: "retry",
+          ...(Number.isSafeInteger(retryAt) ? { retryAt } : {}),
+        };
       }
       const parsed = slackResponse.safeParse(await response.json());
       if (response.ok && parsed.success && parsed.data.ok) {
@@ -113,20 +120,4 @@ export const createSlackApi = (
     sendEphemeral: (value) =>
       call("chat.postEphemeral", { ...message(value), user: value.user }),
   };
-};
-
-// Slack mrkdwn differs from Markdown: bold uses one asterisk and links use
-// <url|label>. Slack rejects text longer than 40,000 characters.
-const SLACK_TEXT_LIMIT = 39_000;
-export const toSlackText = (markdown: string): string => {
-  const converted = markdown
-    .replaceAll(/\*\*(?<bold>[^*\n]+)\*\*/gu, "*$<bold>*")
-    .replaceAll(/^#{1,6}\s+(?<heading>.+)$/gmu, "*$<heading>*")
-    .replaceAll(
-      /\[(?<label>[^\]\n]+)\]\((?<url>https?:\/\/[^\s)]+)\)/gu,
-      "<$<url>|$<label>>"
-    );
-  return converted.length > SLACK_TEXT_LIMIT
-    ? `${converted.slice(0, SLACK_TEXT_LIMIT)}…`
-    : converted;
 };

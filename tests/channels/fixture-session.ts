@@ -28,6 +28,10 @@ interface FixtureConversation {
 }
 const conversations = new Map<string, FixtureConversation>();
 const opening = new Map<string, Promise<FixtureConversation>>();
+const hiddenEvents = new Set<string>();
+export const hideFixtureEvent = (eventId: string): void => {
+  hiddenEvents.add(eventId);
+};
 const key = (address: EventAddress): string =>
   JSON.stringify([
     address.organizationId,
@@ -38,6 +42,7 @@ const key = (address: EventAddress): string =>
 export const resetFixtureSessions = (): void => {
   conversations.clear();
   opening.clear();
+  hiddenEvents.clear();
 };
 export const fixtureSubmissionCount = (): number =>
   [...conversations.values()].reduce(
@@ -412,9 +417,12 @@ export const createFixtureChatClient = (
           FIXTURE_TOOL_ID
         );
       }
-      return Schema.decodeUnknownSync(ChatSnapshot)(
-        structuredClone(selected.snapshot)
-      );
+      return Schema.decodeUnknownSync(ChatSnapshot)({
+        ...structuredClone(selected.snapshot),
+        messages: selected.snapshot.messages.filter(
+          (message) => message.role !== "user" || !hiddenEvents.has(message.id)
+        ),
+      });
     },
     async send(request) {
       await access(request, "execute");

@@ -2,16 +2,21 @@ import { test } from "bun:test";
 import assert from "node:assert/strict";
 
 import { eq } from "drizzle-orm";
+import { Schema } from "effect";
 
 import { createApiHandler } from "../../packages/api/src/handler";
 import { assertQueuePayloadSize } from "../../packages/channels/src/queue-payload";
 import { digest } from "../../packages/channels/src/security";
 import { receiveQueuedSlackEvent } from "../../packages/channels/src/slack";
+import { parseSlackEventDecision } from "../../packages/channels/src/slack-event-receipts";
 import {
   normalizeSlackDelivery,
   parseSlackQueueDelivery,
 } from "../../packages/channels/src/slack-events";
 import type { SlackQueueDelivery } from "../../packages/channels/src/slack-events";
+import type { ChannelOptions } from "../../packages/channels/src/types";
+import { BotEventAddressSchema } from "../../packages/contracts/src/bot-events";
+import type { EventAddress } from "../../packages/contracts/src/events";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
 import {
   channelConversation,
@@ -22,7 +27,8 @@ import {
   identitySlackLink,
 } from "../../packages/db/src/schema/identity";
 import { fixtureSubmissionCount } from "./fixture-session";
-import { createTestProduct, object, signSlack, string } from "./helpers";
+import { saveLegacySlackDecision } from "./fixture-slack-events";
+import { createTestProduct, object, array, signSlack, string } from "./helpers";
 
 const configuration = () => ({
   agentId: "agent-A",
@@ -32,6 +38,9 @@ const configuration = () => ({
   signingSecret: "private-slack-signing-secret",
   workspaceId: "workspace-A",
 });
+const primaryEvent = (value: unknown) => object(array(object(value).events)[0]);
+const primaryConversationId = (value: unknown) =>
+  string(object(primaryEvent(value).address).conversationId);
 const eventPayload = (eventId: string, text = "Read the policy.") => ({
   api_app_id: "app-A",
   event: {
@@ -47,7 +56,10 @@ const eventPayload = (eventId: string, text = "Read the policy.") => ({
   type: "event_callback",
 });
 const queuedProduct = async (
-  sessions?: Parameters<typeof createTestProduct>[2]
+  sessions?: Parameters<typeof createTestProduct>[2],
+  events?: (
+    base: NonNullable<ChannelOptions["slackEvents"]>
+  ) => NonNullable<ChannelOptions["slackEvents"]>
 ) => {
   const slack = configuration();
   const sent: unknown[] = [];
@@ -62,8 +74,15 @@ const queuedProduct = async (
     sessions
   );
   const deliveries: SlackQueueDelivery[] = [];
-  const handler = createApiHandler({
+  const options = {
     ...app.options,
+    slackEvents:
+      events && app.options.slackEvents
+        ? events(app.options.slackEvents)
+        : app.options.slackEvents,
+  };
+  const handler = createApiHandler({
+    ...options,
     enqueueSlackEvent: (delivery) => {
       deliveries.push(delivery);
       return Promise.resolve();
@@ -82,7 +101,7 @@ const queuedProduct = async (
     );
   const consume = (delivery: SlackQueueDelivery, redelivery = false) =>
     app.options.withDatabase((db) =>
-      receiveQueuedSlackEvent(db, app.options, delivery, redelivery)
+      receiveQueuedSlackEvent(db, options, delivery, redelivery)
     );
   const nextDelivery = () => {
     const delivery = deliveries.shift();
@@ -133,6 +152,181 @@ test("an ignored unlinked delivery stays ignored after normal account linking", 
   await linkOwner(product);
   assert.deepEqual(await product.consume(original, true), { linked: false });
   assert.equal(fixtureSubmissionCount(), 0);
+});
+
+const createBotSource = async (
+  product: Awaited<ReturnType<typeof queuedProduct>>,
+  name: string
+) => {
+  const created = await product.app.request("/api/product/agents", "POST", {
+    ...product.app.agentBody,
+    name,
+    operationId: `create-${name}`,
+  });
+  assert.equal(created.status, 200, await created.clone().text());
+  const agentId = string(object(await created.json()).agentId);
+  const opened = await product.app.request(
+    "/api/product/conversations",
+    "POST",
+    { agentId, operationId: `open-${name}` }
+  );
+  assert.equal(opened.status, 200, await opened.clone().text());
+  const conversationId = string(object(await opened.json()).conversationId);
+  const [row] = await product.app.options.withDatabase((database) =>
+    database
+      .select()
+      .from(channelConversation)
+      .where(eq(channelConversation.conversationId, conversationId))
+  );
+  assert.ok(row);
+  return Schema.decodeUnknownSync(BotEventAddressSchema)(row);
+};
+
+test("two explicit bots freeze one target each and replay after default and subscription changes", async () => {
+  let targets: readonly EventAddress[] = [];
+  let discoveries = 0;
+  const product = await queuedProduct(undefined, (base) => ({
+    ...base,
+    discover: () => {
+      discoveries += 1;
+      return Promise.resolve(targets);
+    },
+  }));
+  await linkOwner(product);
+  const second = await createBotSource(product, "second");
+  const third = await createBotSource(product, "third");
+  targets = [second, third, second];
+  await product.request(eventPayload("frozen-fanout"));
+  const delivery = product.nextDelivery();
+  const first = object(await product.consume(delivery));
+  assert.deepEqual(
+    array(first.events).map((value) => object(object(value).address)),
+    [second, third]
+  );
+  assert.equal(fixtureSubmissionCount(), 2);
+  assert.equal(discoveries, 1);
+  targets = [];
+  product.slack.agentId = "a-new-unconfigured-default";
+  const replay = object(await product.consume(delivery, true));
+  assert.deepEqual(
+    array(replay.events).map((value) => object(object(value).address)),
+    [second, third]
+  );
+  assert.equal(discoveries, 1);
+  assert.equal(fixtureSubmissionCount(), 2);
+  await product.request(eventPayload("frozen-fanout"), true);
+  await product.consume(product.nextDelivery(), true);
+  assert.equal(discoveries, 1);
+  assert.equal(fixtureSubmissionCount(), 2);
+  await assert.rejects(
+    product.consume(
+      {
+        ...delivery,
+        event: { ...delivery.event, text: "Changed physical callback." },
+      },
+      true
+    ),
+    /changed/u
+  );
+});
+
+test("an empty explicit lookup chooses the same primary as web and a second Slack thread", async () => {
+  const product = await queuedProduct();
+  await linkOwner(product);
+  await product.request(eventPayload("default-one"));
+  const first = await product.consume(product.nextDelivery());
+  const secondPayload = eventPayload("default-two");
+  await product.request({
+    ...secondPayload,
+    event: { ...secondPayload.event, ts: "1800000002.000001" },
+  });
+  const second = await product.consume(product.nextDelivery());
+  const web = await product.app.request("/api/product/conversations", "POST", {
+    agentId: product.slack.agentId,
+    operationId: "web-open-shared",
+  });
+  assert.equal(web.status, 200);
+  const opened = object(await web.json());
+  assert.equal(primaryConversationId(first), primaryConversationId(second));
+  assert.equal(opened.conversationId, primaryConversationId(first));
+  const rows = await product.app.options.withDatabase((database) =>
+    database.select().from(channelConversation)
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.kind, "web");
+});
+
+test("a historical subscribed source selects that bot's canonical primary without rewriting old work sources", async () => {
+  let targets: readonly EventAddress[] = [];
+  const product = await queuedProduct(undefined, (base) => ({
+    ...base,
+    discover: () => Promise.resolve(targets),
+  }));
+  const ownerPrincipalId = await linkOwner(product);
+  const bot = await createBotSource(product, "historical-bot");
+  const legacyOptions = {
+    ...product.app.options,
+    slack: { ...product.slack, agentId: bot.agentId },
+  };
+  const legacy = await saveLegacySlackDecision(
+    legacyOptions,
+    eventPayload("retained-thread"),
+    ownerPrincipalId
+  );
+  targets = [Schema.decodeUnknownSync(BotEventAddressSchema)(legacy.address)];
+  await product.request(eventPayload("fresh-event"));
+  const accepted = await product.consume(product.nextDelivery());
+  assert.equal(primaryConversationId(accepted), bot.conversationId);
+  assert.notEqual(
+    primaryConversationId(accepted),
+    legacy.address.conversationId
+  );
+  const [old] = await product.app.options.withDatabase((database) =>
+    database
+      .select()
+      .from(channelConversation)
+      .where(
+        eq(channelConversation.conversationId, legacy.address.conversationId)
+      )
+  );
+  assert.equal(old?.kind, "slack");
+});
+
+test("literal legacy decisions keep their original digest and reject a changed default", async () => {
+  const product = await queuedProduct();
+  const owner = await linkOwner(product);
+  const payload = eventPayload("literal-legacy");
+  const retained = await saveLegacySlackDecision(
+    product.app.options,
+    payload,
+    owner
+  );
+  await product.request(payload);
+  const delivery = product.nextDelivery();
+  const accepted = object(await product.consume(delivery));
+  assert.equal(accepted.conversationId, retained.address.conversationId);
+  const [before] = await product.app.options.withDatabase((database) =>
+    database
+      .select()
+      .from(channelSlackEventReceipt)
+      .where(eq(channelSlackEventReceipt.eventKey, retained.eventKey))
+  );
+  assert.ok(before);
+  assert.equal(parseSlackEventDecision(before.decision).kind, "admit");
+  product.slack.agentId = "new-default";
+  await assert.rejects(product.consume(delivery, true), /configured agent/u);
+  await product.request(payload, true);
+  await assert.rejects(
+    product.consume(product.nextDelivery(), true),
+    /changed/u
+  );
+  const [after] = await product.app.options.withDatabase((database) =>
+    database
+      .select()
+      .from(channelSlackEventReceipt)
+      .where(eq(channelSlackEventReceipt.eventKey, retained.eventKey))
+  );
+  assert.deepEqual(after, before);
 });
 
 test("the provider event ID cannot be reused with a different logical payload", async () => {
@@ -201,7 +395,7 @@ test("an operator link change cannot retarget an admitted provider event", async
     return { receipt, rows };
   });
   assert.equal(after.rows.length, 1);
-  assert.equal(after.rows[0]?.conversationId, admitted.conversationId);
+  assert.equal(after.rows[0]?.conversationId, primaryConversationId(admitted));
   assert.deepEqual(after.receipt?.decision, before.decision);
   assert.equal(fixtureSubmissionCount(), 1);
 });
@@ -231,10 +425,10 @@ test("a committed routing decision retries Pi admission after interruption and c
     product.consume(original, true),
     product.consume(original, true),
   ]);
-  assert.deepEqual(
-    outcomes.map((outcome) => object(outcome).conversationId),
-    [bindings[0]?.conversationId, bindings[0]?.conversationId]
-  );
+  assert.deepEqual(outcomes.map(primaryConversationId), [
+    bindings[0]?.conversationId,
+    bindings[0]?.conversationId,
+  ]);
   assert.equal(fixtureSubmissionCount(), 1);
 });
 
@@ -364,12 +558,7 @@ test("queued Slack retries keep the provider ID and reuse current durable input 
     await consume({ ...original, receivedAt: original.receivedAt - 600_000 })
   );
   const second = object(await consume(retried, true));
-  assert.equal(
-    object(first.receipt).operationId,
-    object(second.receipt).operationId
-  );
-  assert.equal(object(first.receipt).accepted, true);
-  assert.equal(object(second.receipt).accepted, false);
+  assert.equal(primaryEvent(first).eventId, primaryEvent(second).eventId);
   assert.equal(fixtureSubmissionCount(), 1);
   await app.options.withDatabase((db) =>
     createIdentityRepository(db).setManualGrant(

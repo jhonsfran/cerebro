@@ -1,6 +1,9 @@
 import type { Database } from "@cerebro/db";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
-import { channelLinkEvent } from "@cerebro/db/schema/agents";
+import {
+  channelLinkEvent,
+  channelSlackEventReceipt,
+} from "@cerebro/db/schema/agents";
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
@@ -10,8 +13,10 @@ import { createSlackApi } from "./slack-api";
 import {
   readSlackEventTarget,
   resolveSlackEventDecision,
+  parseSlackEventDecision,
 } from "./slack-event-receipts";
 import { parseSlackCallback, parseSlackQueueDelivery } from "./slack-events";
+import { readSlackPrimaryEvent } from "./slack-primary-events";
 import { APPROVE_ACTION, DENY_ACTION } from "./slack-replies";
 import { ChannelError } from "./types";
 import type { ChannelOptions, SlackConfiguration } from "./types";
@@ -202,6 +207,36 @@ export const receiveSlackEvent = async (
       "The saved Slack event decision does not match its input."
     );
   }
+  if (decision.kind === "primary-events-v2") {
+    const port = options.slackEvents;
+    if (!port) {
+      throw new ChannelError(
+        503,
+        "unavailable",
+        "Slack event routing is unavailable."
+      );
+    }
+    const context = await contextByPrincipal(
+      database,
+      options.organizationId,
+      decision.ownerPrincipalId
+    );
+    const events = await Promise.all(
+      decision.targets.map(async (address) => {
+        await readSlackPrimaryEvent({
+          database,
+          configuration,
+          address,
+          eventKey,
+        });
+        return {
+          address,
+          ...(await port.admit({ address, context, eventKey })),
+        };
+      })
+    );
+    return { accepted: true, events };
+  }
   const conversation = await readSlackEventTarget(
     database,
     options,
@@ -239,14 +274,30 @@ export const receiveQueuedSlackEvent = async (
     !slack ||
     delivery.organizationId !== options.organizationId ||
     delivery.appId !== slack.appId ||
-    delivery.workspaceId !== slack.workspaceId ||
-    delivery.agentId !== slack.agentId
+    delivery.workspaceId !== slack.workspaceId
   ) {
     throw new ChannelError(
       403,
       "forbidden",
       "The saved Slack delivery no longer matches its configuration."
     );
+  }
+  if (delivery.agentId !== slack.agentId) {
+    const eventKey = `slack:${options.organizationId}:${slack.appId}:${slack.workspaceId}:${delivery.eventId}`;
+    const [saved] = await database
+      .select()
+      .from(channelSlackEventReceipt)
+      .where(eq(channelSlackEventReceipt.eventKey, eventKey));
+    if (
+      !saved ||
+      parseSlackEventDecision(saved.decision).kind !== "primary-events-v2"
+    ) {
+      throw new ChannelError(
+        403,
+        "forbidden",
+        "The saved Slack delivery no longer matches its configured agent."
+      );
+    }
   }
   return await receiveSlackEvent(
     database,

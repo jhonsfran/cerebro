@@ -10,16 +10,18 @@ import { ChannelError } from "./types";
 
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 type Conversation = typeof channelConversation.$inferSelect;
-interface OpenConversation {
+export interface PrimaryConversationOwner {
   readonly agentId: string;
-  readonly operationId: string;
   readonly organizationId: string;
   readonly ownerPrincipalId: string;
+}
+interface OpenConversation extends PrimaryConversationOwner {
+  readonly operationId: string;
 }
 
 const requireBinding = (
   row: Conversation | undefined,
-  input: OpenConversation
+  input: PrimaryConversationOwner
 ): Conversation => {
   if (
     !row ||
@@ -63,9 +65,9 @@ export const isPrimaryConversation = async (
   );
 };
 
-const primaryConversation = async (
+export const resolvePrimaryConversationIn = async (
   tx: Transaction,
-  input: OpenConversation
+  input: PrimaryConversationOwner
 ): Promise<Conversation> => {
   const owner = {
     agentId: input.agentId,
@@ -152,7 +154,7 @@ export const openPrimaryConversation = async (
       .where(eq(channelConversation.bindingKey, legacyKey));
     const conversation = legacy
       ? requireBinding(legacy, input)
-      : await primaryConversation(tx, input);
+      : await resolvePrimaryConversationIn(tx, input);
     await tx.insert(channelConversationOperation).values({
       ...receiptKey,
       agentId: conversation.agentId,

@@ -1,12 +1,20 @@
+import type { BotEvent } from "@cerebro/contracts/bot-events";
 import { normalizeEventAdmission } from "@cerebro/contracts/bot-routing";
-import { Denied } from "@cerebro/contracts/failures";
+import { Denied, NotFound } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
-import type { Conversation } from "@earendil-works/pi-durable";
+import type { ContentDependencies } from "@cerebro/contracts/session";
+import type { SlackReplyDestination } from "@cerebro/contracts/slack-events";
+import type { Conversation, Tx } from "@earendil-works/pi-durable";
 import { Effect, Result } from "effect";
 
 import { Bindings, ProfileChanged } from "./conversation-bindings.ts";
 import type { ConversationProfile } from "./conversation-profile.ts";
+import { eventOf } from "./coordinator-event-state.ts";
 import type { BotEventScope, EventRouteIn } from "./coordinator-events.ts";
+import type {
+  CoordinatorReplyOutbox,
+  ReplyAnswer,
+} from "./coordinator-replies.ts";
 
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
@@ -21,6 +29,7 @@ export const createConversationEventScope = async (
   profile: ConversationProfile,
   options: {
     readonly native: Conversation;
+    readonly replies?: CoordinatorReplyOutbox;
     readonly publication: boolean;
     readonly isCurrent: () => boolean;
     readonly advancePublication: (eventId: string) => Promise<boolean>;
@@ -47,6 +56,69 @@ export const createConversationEventScope = async (
       await runtime.guardIn(tx);
       return await operation(tx);
     };
+  const prepareReply = async (
+    event: BotEvent
+  ): Promise<(tx: Tx, answer: ReplyAnswer) => Promise<void>> => {
+    const outbox = options.replies;
+    if (!outbox) {
+      return () => Promise.resolve();
+    }
+    const origin = await coherent(() => outbox.origin(event));
+    if (!origin) {
+      return () => Promise.resolve();
+    }
+    const recorded = await coherent(
+      () =>
+        configuration.contentDependencies?.() ??
+        Promise.resolve({ sourceIds: [], toolIds: [] })
+    );
+    const dependencies: ContentDependencies = {
+      sourceIds: [
+        ...new Set([...recorded.sourceIds, ...event.dependencies.sourceIds]),
+      ],
+      toolIds: [
+        ...new Set([...recorded.toolIds, ...event.dependencies.toolIds]),
+      ],
+    };
+    let destination: SlackReplyDestination | null = null;
+    let blocked = false;
+    try {
+      const port = configuration.eventReplies;
+      if (!port) {
+        throw new Denied({
+          code: "revoked",
+          reason: "Reply delivery is unavailable.",
+        });
+      }
+      await coherent(async () => {
+        const caller = await run(configuration.ownerContext());
+        await runtime.authorize(caller, "read");
+        await run(
+          configuration.checkDependencies(caller, dependencies, {
+            deadlineAt: Date.now() + 30_000,
+          })
+        );
+        destination = await port.destination(origin);
+        await port.authorize(destination);
+      });
+    } catch (error) {
+      if (!(error instanceof Denied || error instanceof NotFound)) {
+        throw error;
+      }
+      blocked = true;
+    }
+    return async (tx, answer) => {
+      await runtime.guardIn(tx);
+      await outbox.enqueueIn(tx, {
+        event,
+        nativeId: options.native.id,
+        answer,
+        destination,
+        dependencies,
+        blocked,
+      });
+    };
+  };
   return {
     native: options.native,
     requireCurrent,
@@ -87,7 +159,53 @@ export const createConversationEventScope = async (
         return guarded(() => Promise.resolve({ kind: "coordinator" as const }));
       }),
     prepareLocalControl: (...args) =>
-      coherent(async () => guarded(await web.prepareLocalControl(...args))),
+      coherent(async () => {
+        const replyIn = await prepareReply(args[0]);
+        const localIn = await web.prepareLocalControl(...args, (tx, answer) =>
+          replyIn(tx, { kind: "local", entryId: answer.id, text: answer.text })
+        );
+        return guarded(localIn);
+      }),
+    prepareSettlement: (receipt, result) =>
+      coherent(async () => {
+        const replyIn = await prepareReply(eventOf(receipt));
+        return async (tx) => {
+          await runtime.guardIn(tx);
+          if (result.type === "input" && result.status === "done") {
+            await replyIn(tx, { kind: "native", entryId: result.answer });
+          }
+        };
+      }),
+    deliverReply: (record, store, signal) =>
+      coherent(async () => {
+        const port = configuration.eventReplies;
+        const { destination } = record;
+        if (!port || !destination) {
+          throw new Denied({
+            code: "revoked",
+            reason: "Reply delivery is unavailable.",
+          });
+        }
+        await port.deliver({
+          destination,
+          key: record.key,
+          text: record.text,
+          store,
+          beforePost: () =>
+            coherent(async () => {
+              signal?.throwIfAborted();
+              const caller = await run(configuration.ownerContext());
+              await runtime.authorize(caller, "read");
+              await run(
+                configuration.checkDependencies(caller, record.dependencies, {
+                  deadlineAt: Date.now() + 30_000,
+                })
+              );
+              await port.authorize(destination);
+              signal?.throwIfAborted();
+            }),
+        });
+      }),
     routingAccess: (context, dependencies) =>
       coherent(async () => {
         if (!configuration.coordination) {

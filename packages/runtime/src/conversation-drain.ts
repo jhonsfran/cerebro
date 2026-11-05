@@ -68,7 +68,8 @@ export const nativeDrainIn = async (
         page.items.some(
           (task) =>
             task.state.status !== "terminal" &&
-            task.kind !== "cerebro.bot-event-delivery"
+            task.kind !== "cerebro.bot-event-delivery" &&
+            task.kind !== "cerebro.coordinator-reply"
         )
       ) {
         return false;

@@ -22,7 +22,12 @@ import type { WorkerEnv } from "../bindings";
 type Conversation = typeof channelConversation.$inferSelect;
 const deliverySchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("sent"), text: z.string(), ts: z.string() }),
-  z.object({ state: z.enum(["unknown", "failed", "retry"]), text: z.string() }),
+  z.object({ state: z.enum(["unknown", "failed"]), text: z.string() }),
+  z.object({
+    state: z.literal("retry"),
+    text: z.string(),
+    retryAt: z.number().int().nonnegative().optional(),
+  }),
 ]);
 const options = (): ReadOptions => ({ deadlineAt: Date.now() + 10_000 });
 

@@ -1,4 +1,5 @@
 import type { AuthorityService } from "@cerebro/contracts/authority-service";
+import type { EventAdmission } from "@cerebro/contracts/bot-routing";
 import type { EventAddress } from "@cerebro/contracts/events";
 import {
   Denied,
@@ -18,6 +19,7 @@ import type {
 import type { ChatSnapshot } from "@cerebro/contracts/session-service";
 import { ChatForkReceipt } from "@cerebro/contracts/session-service";
 import type { ToolExecutor } from "@cerebro/contracts/tool-service";
+import type { SlackThread } from "@cerebro/contracts/work";
 import { createModels } from "@earendil-works/pi-ai/models";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
 import {
@@ -49,6 +51,7 @@ import { ConversationScope } from "./conversation-scope.ts";
 import type { SearchResult } from "./conversation-work.ts";
 import { terminalNoticeIn } from "./coordinator-event-content.ts";
 import { webEventForkPointIn } from "./coordinator-event-input.ts";
+import { eventOf } from "./coordinator-event-state.ts";
 import {
   BotEventReceipts,
   createCoordinatorEvents,
@@ -56,6 +59,11 @@ import {
 import type { CoordinatorEvents } from "./coordinator-events.ts";
 import type { ScanWorkKeys } from "./coordinator-history.ts";
 import { WorkDocuments } from "./coordinator-ledger.ts";
+import { createCoordinatorReplies } from "./coordinator-replies.ts";
+import type {
+  CoordinatorReplyOutbox,
+  EventReplyServices,
+} from "./coordinator-replies.ts";
 import { wakeCoordinatorJob } from "./coordinator-work.ts";
 import type { CoordinationServices } from "./coordinator-work.ts";
 import { readImportedContent } from "./imported-content.ts";
@@ -71,7 +79,21 @@ export type SessionEnvironment = Readonly<Record<string, unknown>>;
 export type MetadataTransaction = <A>(
   operation: () => A | Promise<A>
 ) => Promise<A>;
+export type ResolvedSessionRequest =
+  | { readonly address: EventAddress; readonly context: ExecutionContext }
+  | {
+      readonly kind: "subscribed-bots";
+      readonly thread: SlackThread;
+      readonly context: ExecutionContext;
+    }
+  | {
+      readonly kind: "owned-event";
+      readonly address: EventAddress;
+      readonly context: ExecutionContext;
+      readonly admission: EventAdmission;
+    };
 export interface SessionHostConfiguration {
+  readonly eventReplies?: EventReplyServices;
   readonly publicationPolicy?: "primary" | "pinned";
   readonly contentState?: ReturnType<typeof createSourceDependencyStore>;
   readonly reconcileVersion?: (version: number) => Promise<void>;
@@ -120,6 +142,7 @@ export interface SessionHostConfiguration {
 interface NativeHost {
   restoring: boolean;
   readonly events: CoordinatorEvents;
+  readonly replies: CoordinatorReplyOutbox;
   readonly scanWorkKeys: ScanWorkKeys;
   readonly pi: Harness;
   readonly models: MutableModels;
@@ -215,14 +238,26 @@ export class SessionAgent<
             ...(page.next ? { next: page.next } : {}),
           };
         }, piContext());
+      const waitUntil = (promise: Promise<unknown>) => {
+        if (!this.lifecycle.trackAlarmWork(promise)) {
+          this.ctx.waitUntil(promise);
+        }
+      };
       const host: NativeHost = {
         models,
         pi,
         registry,
         scanWorkKeys,
         restoring: true,
+        replies: createCoordinatorReplies({
+          pi,
+          persist: () => this.ctx.storage.sync(),
+          resolve: (address) => this.botEventScope(address, host),
+          waitUntil,
+        }),
         events: createCoordinatorEvents({
           pi,
+          holdReplies: () => host.replies.hold(),
           targetIn: async (tx, address) => {
             const bindings = await tx.doc(Bindings);
             const binding = bindings.conversations[address.sessionId];
@@ -231,15 +266,7 @@ export class SessionAgent<
             }
             return binding;
           },
-          resolve: async (address) => {
-            const bindings = await pi.snapshot(Bindings, piContext());
-            const scope = await this.openScope(
-              address,
-              host,
-              bindings?.conversations[address.sessionId]
-            );
-            return await scope.eventScope();
-          },
+          resolve: (address) => this.botEventScope(address, host),
           scan: (cursor) =>
             pi.commit(async () => {
               const page = await storage.scanDocuments(
@@ -259,17 +286,13 @@ export class SessionAgent<
                 ...(page.next ? { next: page.next } : {}),
               };
             }, piContext()),
-          waitUntil: (promise) => {
-            if (!this.lifecycle.trackAlarmWork(promise)) {
-              this.ctx.waitUntil(promise);
-            }
-          },
+          waitUntil,
         }),
       };
       const { events } = host;
       registry.install({
         name: "cerebro.bot-events",
-        tasks: [events.definition],
+        tasks: [events.definition, host.replies.definition],
       });
       const resetFailedIdentity = async () => {
         const end = await pi.closed;
@@ -299,6 +322,7 @@ export class SessionAgent<
         }
         this.active = host;
         await events.restore();
+        await host.replies.hold();
         return pi;
       } catch (error) {
         this.scopes.clear();
@@ -310,13 +334,9 @@ export class SessionAgent<
   readonly lifecycle = Lifecycle.install(this).use(this.harness);
 
   // oxlint-disable-next-line class-methods-use-this -- Server and fixture subclasses authenticate the full conversation address.
-  protected resolve(_request: Request): Effect.Effect<
-    {
-      readonly address: EventAddress;
-      readonly context: ExecutionContext;
-    },
-    ContractFailure
-  > {
+  protected resolve(
+    _request: Request
+  ): Effect.Effect<ResolvedSessionRequest, ContractFailure> {
     return Effect.fail(
       new Unavailable({
         reason: "Identity request authentication is not configured.",
@@ -376,6 +396,16 @@ export class SessionAgent<
         this.openings.delete(address.sessionId);
       }
     }
+  }
+
+  private async botEventScope(address: EventAddress, host: NativeHost) {
+    const bindings = await host.pi.snapshot(Bindings, piContext());
+    const scope = await this.openScope(
+      address,
+      host,
+      bindings?.conversations[address.sessionId]
+    );
+    return await scope.eventScope();
   }
 
   private async createScope(
@@ -461,6 +491,7 @@ export class SessionAgent<
         },
         harness: this.harness,
         events: host.events,
+        replies: host.replies,
         install: (extension) => host.registry.install(extension),
         jobs: this.lifecycle.jobs,
         metadata,
@@ -754,7 +785,10 @@ export class SessionAgent<
               : undefined,
           });
           const pending = await this.active?.events.wake(binding.nativeId);
-          return pending
+          const pendingReplies = await this.active?.replies.hold(
+            binding.nativeId
+          );
+          return pending || pendingReplies
             ? {
                 rescheduleAt: Math.min(
                   typeof outcome === "object" ? outcome.rescheduleAt : Infinity,
@@ -799,8 +833,38 @@ export class SessionAgent<
 
   async onRequest(request: Request): Promise<Response> {
     try {
-      const { address, context } = await run(this.resolve(request));
+      const resolved = await run(this.resolve(request));
+      if ("kind" in resolved && resolved.kind === "subscribed-bots") {
+        await this.harness.pi();
+        if (!this.active) {
+          throw new Unavailable({
+            reason: "The identity runtime is unavailable.",
+          });
+        }
+        const targets = await this.active.events.listSubscribedBotSources(
+          resolved.thread,
+          resolved.context
+        );
+        return Response.json({ status: "ok", value: targets });
+      }
+      const { address, context } = resolved;
       const scope = await this.scope(address);
+      if ("kind" in resolved && resolved.kind === "owned-event") {
+        if (!this.active) {
+          throw new Unavailable({
+            reason: "The identity runtime is unavailable.",
+          });
+        }
+        const receipt = await this.active.events.admit(
+          resolved.admission,
+          context
+        );
+        await this.ctx.storage.sync();
+        return Response.json({
+          status: "ok",
+          value: { eventId: eventOf(receipt).id },
+        });
+      }
       if (new URL(request.url).pathname === "/fork") {
         const command = await run(
           Effect.tryPromise({

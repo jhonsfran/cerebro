@@ -14,6 +14,7 @@ import { catalogTools } from "./catalog";
 import { runtimeConfiguration } from "./config";
 import { createConnectorAdmin } from "./connectors";
 import { createSessionClient } from "./session/client";
+import { createSlackEventClient } from "./session/slack-event-client";
 
 const slackConfiguration = z
   .object({
@@ -92,6 +93,7 @@ export const createChannelOptions = (env: WorkerEnv) => {
     ) => readSource(env, database, context, input.sourceId),
     sessions: () => createSessionClient(env),
     slack,
+    slackEvents: createSlackEventClient(env),
     trustedOwnerUserId: config.trustedOwnerUserId,
     withDatabase: <T>(run: (database: Database) => Promise<T>) =>
       withDatabase(env, run),

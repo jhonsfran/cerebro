@@ -10,11 +10,7 @@ import {
   NotFound,
   Unavailable,
 } from "@cerebro/contracts/failures";
-import type {
-  ExecutionContext,
-  PrincipalId,
-} from "@cerebro/contracts/identity";
-import type { ContentDependencies } from "@cerebro/contracts/session";
+import type { ExecutionContext } from "@cerebro/contracts/identity";
 import { TeamEventReturnSchema } from "@cerebro/contracts/team-events";
 import type {
   TeamEventCommand,
@@ -25,7 +21,6 @@ import { BoundedContentDependenciesSchema } from "@cerebro/contracts/work";
 import type { SlackThread } from "@cerebro/contracts/work";
 import { defineTask } from "@earendil-works/pi-durable";
 import type {
-  Conversation,
   ConversationId,
   Cursor,
   Harness,
@@ -35,7 +30,6 @@ import type {
 import { Schema } from "effect";
 
 import { ProfileChanged } from "./conversation-bindings.ts";
-import type { createCoordinatorAdmissions } from "./coordinator-admission.ts";
 import { authorizeEventDelivery } from "./coordinator-event-access.ts";
 import {
   botEventInput,
@@ -43,6 +37,11 @@ import {
   pendingWebInputs,
   eventHasPredecessorIn,
 } from "./coordinator-event-input.ts";
+import type {
+  BotEventScope,
+  EventRouteIn,
+  EventTargetIn,
+} from "./coordinator-event-scope.ts";
 import {
   BotEventReceipts,
   BotEventQueue,
@@ -54,7 +53,6 @@ import type {
   BotEventAdmission,
   BotEventReceipt,
   CoordinatorEventDelivery,
-  EventSkip,
 } from "./coordinator-event-state.ts";
 import {
   WorkDocuments,
@@ -68,6 +66,11 @@ import { piContext } from "./pi-harness.ts";
 import type { PiContext } from "./pi-harness.ts";
 
 export { BotEventReceipts, BotEventQueue } from "./coordinator-event-state.ts";
+export type {
+  BotEventScope,
+  EventRouteIn,
+  EventTargetIn,
+} from "./coordinator-event-scope.ts";
 export type {
   BotEventAdmission,
   BotEventReceipt,
@@ -115,58 +118,6 @@ const finishIn = async (tx: Tx, id: string): Promise<void> => {
   const queue = await tx.doc(BotEventQueue);
   Reflect.deleteProperty(queue.pending, id);
 };
-export interface BotEventScope {
-  readonly native: Conversation;
-  readonly requireCurrent?: () => void;
-  readonly agentVersion: number;
-  readonly policyVersion?: 0 | 1;
-  readonly ownerPrincipalId: PrincipalId;
-  readonly prepareAdmission?: (eventId: string) => Promise<boolean>;
-  readonly claimIn?: (tx: Tx, eventId: string) => Promise<boolean>;
-  readonly admissions: ReturnType<typeof createCoordinatorAdmissions>;
-  readonly readAccess: (context: ExecutionContext) => Promise<void>;
-  readonly prepareRoute?: (
-    input: EventAdmission,
-    context: ExecutionContext
-  ) => Promise<EventRouteIn>;
-  readonly prepareLocalControl?: (
-    event: BotEvent,
-    action: "status" | "stop",
-    context: ExecutionContext
-  ) => Promise<EventRouteIn>;
-  readonly prepareSettlement?: (
-    receipt: BotEventReceipt,
-    result: SettledSubmissionRecord,
-    signal?: AbortSignal
-  ) => Promise<(tx: Tx) => Promise<void>>;
-  readonly routingAccess?: (
-    context: ExecutionContext,
-    dependencies: ContentDependencies
-  ) => Promise<void>;
-  readonly authorize: (
-    event: BotEvent,
-    context?: ExecutionContext,
-    signal?: AbortSignal,
-    action?: "admit" | "deliver" | "read" | "control"
-  ) => Promise<void>;
-}
-export type EventRouteIn = (
-  tx: Tx
-) => Promise<
-  | { kind: "coordinator"; skipped?: EventSkip[] }
-  | Extract<
-      BotEventReceipt["route"],
-      { kind: "teams" | "control" | "local-answer" }
-    >
->;
-export type EventTargetIn = (
-  tx: Tx,
-  address: EventAddress
-) => Promise<{
-  readonly nativeId: ConversationId;
-  readonly agentVersion: number;
-  readonly policyVersion?: 0 | 1;
-}>;
 const requireScope = (receipt: BotEventReceipt, scope: BotEventScope): void => {
   if (
     scope.native.id !== receipt.nativeId ||
@@ -200,6 +151,7 @@ export const createCoordinatorEvents = (options: {
     cursor?: Cursor
   ) => Promise<{ readonly keys: readonly string[]; readonly next?: Cursor }>;
   readonly waitUntil: (promise: Promise<unknown>) => void;
+  readonly holdReplies?: () => Promise<boolean>;
 }) => {
   const read = async (id: string) => {
     const document = await options.pi.snapshot(
@@ -591,6 +543,7 @@ export const createCoordinatorEvents = (options: {
             context.abortSignal
           );
           await settle(settlementIn);
+          await options.holdReplies?.();
         } catch (error) {
           if (runtime.signal.aborted || context.abortSignal?.aborted) {
             throw error;
@@ -880,6 +833,7 @@ export const createCoordinatorEvents = (options: {
         (tx) => returnIn(tx, delivery)
       );
       await hold(scope.native.id);
+      await options.holdReplies?.();
       return {
         eventId: delivery.eventId,
         key: delivery.work.key,
@@ -937,6 +891,9 @@ export const createCoordinatorEvents = (options: {
         return enqueueIn(tx, input, routeIn);
       });
       await hold(scope.native.id);
+      if (receipt.route.kind === "local-answer") {
+        await options.holdReplies?.();
+      }
       return receipt;
     },
     restore: hold,

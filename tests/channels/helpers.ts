@@ -20,6 +20,7 @@ import {
   FIXTURE_TOOL_ID,
   resetFixtureSessions,
 } from "./fixture-session";
+import { createFixtureSlackEvents } from "./fixture-slack-events";
 
 export const TEST_BOOTSTRAP_TOKEN = "channel-test-bootstrap-token-0123456789";
 
@@ -79,6 +80,7 @@ export const createTestProduct = async (
       return sessions ? sessions(client) : client;
     },
     slack,
+    slackEvents: createFixtureSlackEvents(() => options),
     withDatabase: database,
   };
   resetFixtureSessions();
@@ -121,8 +123,6 @@ export const createTestProduct = async (
         method,
       })
     );
-  // The owner receives the test tool and source grants that an operator
-  // would configure for real connectors.
   const install = async () => {
     const response = await request("/api/product/setup", "POST", {
       bootstrapToken: TEST_BOOTSTRAP_TOKEN,

@@ -5,6 +5,7 @@ import type {
 } from "@cerebro/contracts";
 import type { EventAddress } from "@cerebro/contracts/events";
 import type { ChatClient } from "@cerebro/contracts/session-service";
+import type { SlackThread } from "@cerebro/contracts/work";
 import type { Database } from "@cerebro/db";
 
 import type { SlackQueueDelivery } from "./slack-events";
@@ -102,6 +103,17 @@ export interface ChannelOptions {
   ) => Promise<T>;
   readonly slack?: SlackConfiguration;
   readonly enqueueSlackEvent?: (delivery: SlackQueueDelivery) => Promise<void>;
+  readonly slackEvents?: {
+    readonly discover: (input: {
+      readonly context: ExecutionContext;
+      readonly thread: SlackThread;
+    }) => Promise<readonly EventAddress[]>;
+    readonly admit: (input: {
+      readonly address: EventAddress;
+      readonly context: ExecutionContext;
+      readonly eventKey: string;
+    }) => Promise<{ readonly eventId: string }>;
+  };
   readonly bootstrapToken?: string;
   readonly trustedOwnerUserId?: string;
   readonly catalog?: ChannelCatalog;

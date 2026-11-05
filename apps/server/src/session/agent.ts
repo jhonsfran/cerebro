@@ -1,4 +1,10 @@
 import { isPrimaryConversation } from "@cerebro/channels/primary-conversations";
+import { contextByPrincipal } from "@cerebro/channels/security";
+import {
+  primarySlackBotEvent,
+  readSlackPrimaryEvent,
+} from "@cerebro/channels/slack-primary-events";
+import { RoutedEventAdmissionSchema } from "@cerebro/contracts/bot-routing";
 import type { EventAddress } from "@cerebro/contracts/events";
 import {
   Denied,
@@ -14,8 +20,12 @@ import type {
   ContentDependencies,
 } from "@cerebro/contracts/session";
 import { ConversationForkOrigin } from "@cerebro/contracts/session-service";
+import { SlackEventReferenceSchema } from "@cerebro/contracts/slack-events";
 import { TeamEventReturnSchema } from "@cerebro/contracts/team-events";
-import { TeamReportDeliverySchema } from "@cerebro/contracts/work";
+import {
+  SlackThreadSchema,
+  TeamReportDeliverySchema,
+} from "@cerebro/contracts/work";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { channelConversation } from "@cerebro/db/schema/agents";
@@ -37,9 +47,16 @@ import {
   requireLegacySourceMatch,
 } from "./coordination";
 import { createExecutionComposition } from "./execution";
-import { authenticateSessionRequest } from "./proof";
+import {
+  authenticateIdentityRequest,
+  authenticateSessionRequest,
+} from "./proof";
 import type { SessionIdentity } from "./proof";
 import { createSlackNotifier } from "./slack";
+import {
+  createSlackEventReplies,
+  withCurrentSlackAccess,
+} from "./slack-event-replies";
 
 const readOptions = (): ReadOptions => ({ deadlineAt: Date.now() + 10_000 });
 const identityName = z.tuple([
@@ -204,6 +221,7 @@ export const createRuntimeComposition = (
         await storage.sync();
       },
       conversationKind: conversation.kind,
+      eventReplies: createSlackEventReplies(env, slack, primary),
       ...(forkOrigin
         ? {
             origin: {
@@ -259,6 +277,41 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
   protected override resolve(request: Request) {
     return Effect.gen({ self: this }, function* resolveRequest() {
       const identity = yield* resolveIdentity(this.ctx.id.name);
+      const path = new URL(request.url).pathname;
+      if (path === "/slack-targets") {
+        yield* tryAdapter(() =>
+          authenticateIdentityRequest(
+            request,
+            runtimeConfiguration(this.env).gatewaySigningKey,
+            identity
+          )
+        );
+        const input = yield* Effect.tryPromise({
+          catch: () =>
+            new InvalidInput({ reason: "The Slack target query is invalid." }),
+          try: async () =>
+            Schema.decodeUnknownSync(
+              Schema.Struct({ thread: SlackThreadSchema }),
+              { onExcessProperty: "error" }
+            )(await request.clone().json()),
+        });
+        const context = yield* tryAdapter(() =>
+          withCurrentSlackAccess(() =>
+            withDatabase(this.env, (database) =>
+              contextByPrincipal(
+                database,
+                identity.organizationId,
+                identity.ownerPrincipalId
+              )
+            )
+          )
+        );
+        return {
+          kind: "subscribed-bots" as const,
+          context,
+          thread: input.thread,
+        };
+      }
       const resolved = yield* tryAdapter(() =>
         authenticateSessionRequest(
           request,
@@ -271,6 +324,61 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
         resolved.address,
         identity
       );
+      if (path === "/slack-event") {
+        const slack = slackSettings(this.env);
+        if (!slack) {
+          return yield* Effect.fail(
+            new Denied({ code: "revoked", reason: "Slack is not configured." })
+          );
+        }
+        const input = yield* Effect.tryPromise({
+          catch: () =>
+            new InvalidInput({
+              reason: "The Slack event reference is invalid.",
+            }),
+          try: async () =>
+            Schema.decodeUnknownSync(SlackEventReferenceSchema, {
+              onExcessProperty: "error",
+            })(await request.clone().json()),
+        });
+        const { decision } = yield* tryAdapter(() =>
+          withCurrentSlackAccess(() =>
+            withDatabase(this.env, (database) =>
+              readSlackPrimaryEvent({
+                database,
+                configuration: slack,
+                address: resolved.address,
+                eventKey: input.eventKey,
+              })
+            )
+          )
+        );
+        if (
+          decision.ownerPrincipalId !== identity.ownerPrincipalId ||
+          resolved.context.actor.id !== decision.ownerPrincipalId
+        ) {
+          return yield* Effect.fail(
+            new Denied({
+              code: "unauthorized",
+              reason: "The Slack event belongs to another owner.",
+            })
+          );
+        }
+        const event = yield* tryAdapter(() =>
+          primarySlackBotEvent(decision, resolved.address)
+        );
+        const action = event.content.text;
+        const admission = Schema.decodeUnknownSync(RoutedEventAdmissionSchema)({
+          version: 2,
+          kind: "event-admission",
+          event,
+          routing:
+            action === "status" || action === "stop"
+              ? { kind: "local-control", action }
+              : { kind: "automatic" },
+        });
+        return { kind: "owned-event" as const, ...resolved, admission };
+      }
       if (new URL(request.url).pathname === "/team-report") {
         yield* tryAdapter(async () => {
           const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {

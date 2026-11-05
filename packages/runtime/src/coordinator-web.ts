@@ -91,7 +91,14 @@ export const createCoordinatorWeb = (options: {
   const prepareLocalControl = async (
     event: BotEvent,
     action: "status" | "stop",
-    context: ExecutionContext
+    context: ExecutionContext,
+    saveAnswerIn?: (
+      tx: Tx,
+      answer: {
+        readonly id: Awaited<ReturnType<typeof appendPassiveAnswer>>["id"];
+        readonly text: string;
+      }
+    ) => Promise<void>
   ): Promise<EventRouteIn> => {
     await runtime.authorize(context, "coordinate");
     await runtime.authorize(context, "transfer");
@@ -183,6 +190,7 @@ export const createCoordinatorWeb = (options: {
         answer,
         runtime.configuration.provider.model
       );
+      await saveAnswerIn?.(tx, { id: entry.id, text: answer });
       return { kind: "local-answer", action, answerEntryId: entry.id };
     };
   };

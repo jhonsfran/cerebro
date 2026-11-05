@@ -66,6 +66,7 @@ import type { SearchResult } from "./conversation-work.ts";
 import type { BotEventScope, CoordinatorEvents } from "./coordinator-events.ts";
 import type { ScanWorkKeys } from "./coordinator-history.ts";
 import { sameWorkSource, CoordinatorAdmissions } from "./coordinator-ledger.ts";
+import type { CoordinatorReplyOutbox } from "./coordinator-replies.ts";
 import { piContext } from "./pi-harness.ts";
 import type {
   MetadataTransaction,
@@ -108,6 +109,7 @@ export interface ConversationScopeServices {
     readonly uninstall: (extension: Extension) => void;
   };
   readonly events: CoordinatorEvents;
+  readonly replies?: CoordinatorReplyOutbox;
   readonly scanWorkKeys: ScanWorkKeys;
   readonly jobs: LifecycleJobs;
   readonly install: (extension: Extension) => void;
@@ -637,6 +639,7 @@ export class ConversationScope {
     const { profile } = this;
     return await createConversationEventScope(profile, {
       native: this.native,
+      replies: this.services.replies,
       publication: !!this.services.publication,
       isCurrent: () => this.current === profile && !this.unavailable,
       advancePublication: (eventId) => this.advancePublication(eventId),

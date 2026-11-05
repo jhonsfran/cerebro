@@ -9,6 +9,7 @@ import { id } from "../../packages/contracts/src/identity.ts";
 import { configure } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import { Bindings } from "../../packages/runtime/src/conversation-bindings.ts";
 import { createCoordinatorEvents } from "../../packages/runtime/src/coordinator-events.ts";
+import { createCoordinatorReplies } from "../../packages/runtime/src/coordinator-replies.ts";
 import type { SessionHostConfiguration } from "../../packages/runtime/src/session-agent.ts";
 import { context, setup } from "./coordinator-fixture.ts";
 
@@ -138,9 +139,25 @@ export const setupWeb = async (
       },
     });
     let latest = configuration;
+    let replyHoldCalls = 0;
     const definitions = new Map([[1, configuration]]);
+    const replies = createCoordinatorReplies({
+      pi: fixture.pi(),
+      persist: () => storage.sync(),
+      resolve: async () => {
+        const current = await ready.promise;
+        return await current.eventScope();
+      },
+      waitUntil: (promise) => {
+        progress.push(settleProgress(promise));
+      },
+    });
     const events = createCoordinatorEvents({
       pi: fixture.pi(),
+      holdReplies: () => {
+        replyHoldCalls += 1;
+        return replies.hold();
+      },
       targetIn: async (tx) => {
         if (!refresh) {
           return { nativeId: source.native.id, agentVersion: 1 };
@@ -170,9 +187,10 @@ export const setupWeb = async (
         progress.push(settleProgress(promise));
       },
     });
-    fixture
-      .registry()
-      .install({ name: "fixture.bot-events", tasks: [events.definition] });
+    fixture.registry().install({
+      name: "fixture.bot-events",
+      tasks: [events.definition, replies.definition],
+    });
     let aborts = 0;
     const harness = {
       abort: async () => {
@@ -232,6 +250,7 @@ export const setupWeb = async (
             }
           : {}),
         events,
+        replies,
         scanWorkKeys: () => Promise.resolve({ keys: [] }),
         install: (extension) => fixture.registry().install(extension),
         metadata: (operation) => fixture.pi().commit(operation, context),
@@ -286,6 +305,8 @@ export const setupWeb = async (
       source,
       scope,
       events,
+      replies,
+      replyHoldCalls: () => replyHoldCalls,
       setModelEnabled: (value: boolean) => {
         modelEnabled = value;
       },

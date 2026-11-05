@@ -55,6 +55,7 @@ const proofSchema = z.strictObject({
     "/control",
     "/team-report",
     "/team-event-return",
+    "/slack-event",
   ]),
 });
 const signedSchema = z.strictObject({
@@ -70,7 +71,7 @@ const key = (secret: string) =>
     ["sign", "verify"]
   );
 const encode = (bytes: Uint8Array) => btoa(String.fromCodePoint(...bytes));
-const sign = async (secret: string, proof: z.infer<typeof proofSchema>) =>
+const sign = async (secret: string, proof: unknown) =>
   encode(
     new Uint8Array(
       await crypto.subtle.sign(
@@ -147,4 +148,71 @@ export const signSessionRequest = async (
     path,
   };
   return JSON.stringify({ proof, signature: await sign(secret, proof) });
+};
+
+const identityProofSchema = z.strictObject({
+  identity: identitySchema,
+  context: contextSchema,
+  digest: z.string(),
+  expiresAt: z.number().finite(),
+  path: z.literal("/slack-targets"),
+});
+const signedIdentitySchema = z.strictObject({
+  proof: identityProofSchema,
+  signature: z.string(),
+});
+
+export const signIdentityRequest = async (
+  identity: SessionIdentity,
+  context: ExecutionContext,
+  body: string,
+  secret: string
+): Promise<string> => {
+  const proof = {
+    identity,
+    context,
+    digest: await digestToolArguments(body),
+    expiresAt: Date.now() + 50_000,
+    path: "/slack-targets" as const,
+  };
+  return JSON.stringify({ proof, signature: await sign(secret, proof) });
+};
+
+export const authenticateIdentityRequest = async (
+  request: Request,
+  secret: string,
+  identity: SessionIdentity
+): Promise<ExecutionContext> => {
+  try {
+    const { proof, signature } = signedIdentitySchema.parse(
+      JSON.parse(request.headers.get("x-cerebro-identity-proof") ?? "null")
+    );
+    const valid = await crypto.subtle.verify(
+      "HMAC",
+      await key(secret),
+      Uint8Array.from(atob(signature), (value) => value.codePointAt(0) ?? 0),
+      new TextEncoder().encode(canonicalToolArguments(proof))
+    );
+    if (
+      !valid ||
+      proof.expiresAt <= Date.now() ||
+      proof.expiresAt > Date.now() + 60_000 ||
+      proof.path !== new URL(request.url).pathname ||
+      canonicalToolArguments(proof.identity) !==
+        canonicalToolArguments(identity) ||
+      proof.digest !==
+        (await digestToolArguments(await request.clone().text())) ||
+      proof.context.actor.id !== identity.ownerPrincipalId ||
+      proof.context.actor.organizationId !== identity.organizationId ||
+      "delegation" in proof.context
+    ) {
+      throw new Error("Invalid private identity credential");
+    }
+    return proof.context;
+  } catch {
+    throw new Denied({
+      code: "unauthorized",
+      reason: "The private identity credential is invalid.",
+    });
+  }
 };
