@@ -91,14 +91,20 @@ export const createCoordinatorReport =
     readonly runtime: Pick<
       ReturnType<typeof createConversationResources>,
       "authorize"
-    > & {
-      readonly configuration: Pick<
-        SessionHostConfiguration,
-        "coordination" | "checkImportedDependencies" | "importDependencies"
+    > &
+      Partial<
+        Pick<ReturnType<typeof createConversationResources>, "guardIn">
       > & {
-        readonly provider: Pick<SessionHostConfiguration["provider"], "model">;
+        readonly configuration: Pick<
+          SessionHostConfiguration,
+          "coordination" | "checkImportedDependencies" | "importDependencies"
+        > & {
+          readonly provider: Pick<
+            SessionHostConfiguration["provider"],
+            "model"
+          >;
+        };
       };
-    };
     readonly coordination: ReturnType<typeof createCoordinatorWork>;
     readonly events: CoordinatorEvents;
     readonly notify: () => Promise<void>;
@@ -169,6 +175,7 @@ export const createCoordinatorReport =
     const result = await options.coordination.admissions.commit(
       `report:${key}`,
       async (tx) => {
+        await options.runtime.guardIn?.(tx);
         const record = await requireCoordinatorWork(
           tx,
           binding,

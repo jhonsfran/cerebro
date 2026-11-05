@@ -23,19 +23,18 @@ export const createRuntimeContent = (
   agent: AgentDefinition,
   authority: AuthorityService,
   metadata: MetadataTransaction,
-  bounded = false
+  bounded = false,
+  existingSources?: ReturnType<typeof createSourceDependencyStore>
 ) => {
-  const sources = createSourceDependencyStore(
-    storage,
-    address.sessionId,
-    metadata,
-    bounded
-  );
+  const sources =
+    existingSources ??
+    createSourceDependencyStore(storage, address.sessionId, metadata, bounded);
   const dependencies = async () => ({
     sourceIds: await sources.all(),
     toolIds: await sources.tools(),
   });
   return {
+    sources,
     dependencies,
     importDependencies: sources.importDependencies,
     historyDependencies: sources.history,
@@ -116,7 +115,8 @@ export const sessionContentLayer = (
   address: EventAddress,
   agent: AgentDefinition,
   metadata: MetadataTransaction,
-  bounded = false
+  bounded = false,
+  existingSources?: ReturnType<typeof createSourceDependencyStore>
 ) =>
   Layer.effect(
     SessionContent,
@@ -135,7 +135,8 @@ export const sessionContentLayer = (
             agent,
             authority,
             metadata,
-            bounded
+            bounded,
+            existingSources
           ),
       });
     })

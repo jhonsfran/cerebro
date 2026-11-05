@@ -4,9 +4,10 @@ import type { Provider } from "@earendil-works/pi-ai/models";
 export const conversationProvider = (
   sessionId: string,
   model: Model<Api>,
-  provider: Provider
+  provider: Provider,
+  profile?: string
 ): Provider => {
-  const alias = `cerebro:${sessionId}`;
+  const alias = `cerebro:${sessionId}${profile ? `:${profile}` : ""}`;
   const physicalModel = <A extends Api>(value: Model<A>): Model<A> => {
     if (value.provider !== alias || value.id !== model.id) {
       throw new Error("Conversation model does not match its provider scope.");

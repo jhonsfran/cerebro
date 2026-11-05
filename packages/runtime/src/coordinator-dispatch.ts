@@ -34,6 +34,14 @@ const RETRY_ATTEMPTS = 5;
 export const createCoordinatorDispatch = (options: {
   readonly address: EventAddress;
   readonly nativeId: ConversationId;
+  readonly access?: () => Promise<{
+    readonly services?: CoordinationServices;
+    readonly authorize: (signal?: AbortSignal) => Promise<void>;
+    readonly checkDependencies: (
+      dependencies: ContentDependencies,
+      signal?: AbortSignal
+    ) => Promise<void>;
+  }>;
   readonly services?: CoordinationServices;
   readonly pi: Harness;
   readonly authorize: (signal?: AbortSignal) => Promise<void>;
@@ -91,15 +99,16 @@ export const createCoordinatorDispatch = (options: {
       send: async (task, runtime, context) => {
         const { command, wire, event } = normalizeTeamCommand(task.input);
         try {
+          const access = options.access ? await options.access() : options;
           if (runtime.conversationId !== options.nativeId) {
             throw new Denied({
               code: "unauthorized",
               reason: "The dispatch task belongs to another conversation.",
             });
           }
-          await options.authorize(context.abortSignal);
+          await access.authorize(context.abortSignal);
           if (command.kind === "input") {
-            await options.checkDependencies(
+            await access.checkDependencies(
               command.contentDependencies,
               context.abortSignal
             );
@@ -151,7 +160,7 @@ export const createCoordinatorDispatch = (options: {
             }, context);
             return;
           }
-          const { services } = options;
+          const { services } = access;
           if (!services) {
             throw new Denied({
               code: "revoked",

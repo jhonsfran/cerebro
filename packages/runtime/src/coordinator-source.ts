@@ -23,11 +23,20 @@ export const createCoordinatorSource =
     readonly runtime: Pick<
       ReturnType<typeof createConversationResources>,
       "authorize"
-    > & {
-      readonly configuration: Pick<SessionHostConfiguration, "coordination"> & {
-        readonly provider: Pick<SessionHostConfiguration["provider"], "model">;
+    > &
+      Partial<
+        Pick<ReturnType<typeof createConversationResources>, "guardIn">
+      > & {
+        readonly configuration: Pick<
+          SessionHostConfiguration,
+          "coordination"
+        > & {
+          readonly provider: Pick<
+            SessionHostConfiguration["provider"],
+            "model"
+          >;
+        };
       };
-    };
     readonly coordination: ReturnType<typeof createCoordinatorWork>;
     readonly notify: () => Promise<void>;
   }) =>
@@ -68,6 +77,7 @@ export const createCoordinatorSource =
     const handled = await coordination.admissions.commit(
       operationId,
       async (tx) => {
+        await options.runtime.guardIn?.(tx);
         const operation = await tx.doc(
           SourceOperations,
           native.id,

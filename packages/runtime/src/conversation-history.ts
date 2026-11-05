@@ -171,10 +171,11 @@ export const searchConversationHistory = async (
     });
   }
   const { target } = services;
+  const { runtime } = target;
   const { address, agent, authority, inheritDependencies } =
-    target.runtime.configuration;
-  const owner = await run(target.runtime.configuration.ownerContext());
-  await target.runtime.authorize(owner, "send", signal);
+    runtime.configuration;
+  const owner = await run(runtime.configuration.ownerContext());
+  await runtime.authorize(owner, "send", signal);
   const matches: Match[] = [];
   const budget = { entries: 2000, matches: 30 };
   let truncated = services.addresses.length > 100;
@@ -249,7 +250,7 @@ export const searchConversationHistory = async (
           inheritDependencies?.(candidate, toolIds, true)
         );
         await services.persist();
-        await target.runtime.authorize(owner, "send", signal);
+        await runtime.authorize(owner, "send", signal);
         matches.push(...found.matches);
       }
     } catch (error) {

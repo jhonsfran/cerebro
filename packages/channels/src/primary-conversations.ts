@@ -39,6 +39,30 @@ const requireBinding = (
   return row;
 };
 
+export const isPrimaryConversation = async (
+  conversation: Pick<
+    Conversation,
+    | "agentId"
+    | "organizationId"
+    | "ownerPrincipalId"
+    | "bindingKey"
+    | "conversationId"
+    | "forkOrigin"
+  >
+): Promise<boolean> => {
+  const owner = {
+    agentId: conversation.agentId,
+    organizationId: conversation.organizationId,
+    ownerPrincipalId: conversation.ownerPrincipalId,
+  };
+  const bindingKey = `primary:${await digest(owner)}`;
+  return (
+    !conversation.forkOrigin &&
+    conversation.bindingKey === bindingKey &&
+    conversation.conversationId === `conversation:${await digest(bindingKey)}`
+  );
+};
+
 const primaryConversation = async (
   tx: Transaction,
   input: OpenConversation

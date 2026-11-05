@@ -378,7 +378,7 @@ test("accepted legacy native input replays before placement without a new event 
 test("local status and stop retain exact answer entries without model access or a native submission", async () => {
   const subject = await setupWeb();
   try {
-    subject.setExecute(false);
+    subject.setModelEnabled(false);
     await Promise.all(
       (["status", "stop"] as const).map(async (action) => {
         const response = await subject.send(`local-${action}`, action);
@@ -432,7 +432,14 @@ test("local status and stop retain exact answer entries without model access or 
       "new-question",
       "Please research this."
     );
-    assert.equal(sendResponse7.status, 403);
+    assert.equal(sendResponse7.status, 200);
+    const blocked = await settled(subject, "new-question");
+    assert.ok(
+      blocked.delivery.kind === "coordinator" &&
+        blocked.delivery.admission.kind === "settled" &&
+        blocked.delivery.admission.outcome === "blocked"
+    );
+    assert.equal(subject.source.faux.state.callCount, 0);
   } finally {
     await subject.close();
   }

@@ -71,14 +71,15 @@ export const createCoordinatorWeb = (options: {
   readonly runtime: Pick<
     ReturnType<typeof createConversationResources>,
     "authorize"
-  > & {
-    readonly configuration: Pick<
-      SessionHostConfiguration,
-      "address" | "agent" | "ownerContext" | "checkDependencies"
-    > & {
-      readonly provider: Pick<SessionHostConfiguration["provider"], "model">;
+  > &
+    Partial<Pick<ReturnType<typeof createConversationResources>, "guardIn">> & {
+      readonly configuration: Pick<
+        SessionHostConfiguration,
+        "address" | "agent" | "ownerContext" | "checkDependencies"
+      > & {
+        readonly provider: Pick<SessionHostConfiguration["provider"], "model">;
+      };
     };
-  };
   readonly replayHandled: (
     operationId: string,
     text: string,
@@ -123,6 +124,7 @@ export const createCoordinatorWeb = (options: {
       )
     );
     return async (tx) => {
+      await runtime.guardIn?.(tx);
       const currentIds = await sourceWorkIdsIn(tx, event);
       if (JSON.stringify(currentIds) !== JSON.stringify(prepared.ids)) {
         throw new Unavailable({
@@ -258,9 +260,6 @@ export const createCoordinatorWeb = (options: {
       };
     }
     const local = text === "status" || text === "stop";
-    if (!local) {
-      await runtime.authorize(context, "send", signal);
-    }
     const owner = await Effect.runPromise(runtime.configuration.ownerContext());
     const source = {
       kind: "web",

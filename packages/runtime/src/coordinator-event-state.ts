@@ -16,10 +16,11 @@ import type {
 } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
-interface Claim extends JsonObject {
+type Claim = JsonObject & {
   agentVersion: number;
+  policyVersion?: 0 | 1;
   requestId: string;
-}
+};
 export type BotEventAdmission =
   | { kind: "held" }
   | ({ kind: "claimed" } & Claim)
@@ -99,6 +100,7 @@ const nativeId = <A extends number>() =>
   );
 const claim = {
   agentVersion: Schema.Int.check(Schema.isGreaterThan(0)),
+  policyVersion: Schema.optional(Schema.Literals([0, 1])),
   requestId: Schema.String,
 };
 const legacyAdmission = Schema.Union([

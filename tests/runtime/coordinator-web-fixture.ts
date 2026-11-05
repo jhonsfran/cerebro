@@ -6,6 +6,8 @@ import { Effect } from "effect";
 import type { BotEvent } from "../../packages/contracts/src/bot-events.ts";
 import { Denied, InvalidInput } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
+import { configure } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
+import { Bindings } from "../../packages/runtime/src/conversation-bindings.ts";
 import { createCoordinatorEvents } from "../../packages/runtime/src/coordinator-events.ts";
 import type { SessionHostConfiguration } from "../../packages/runtime/src/session-agent.ts";
 import { context, setup } from "./coordinator-fixture.ts";
@@ -53,7 +55,12 @@ export const actor = {
 
 export const setupWeb = async (
   team = false,
-  conversationKind: "web" | "slack" = "web"
+  conversationKind: "web" | "slack" = "web",
+  refresh = false,
+  customize: (
+    configuration: SessionHostConfiguration
+  ) => SessionHostConfiguration = (configuration) => configuration,
+  initialPolicy: 0 | 1 = 0
 ) => {
   const fixture = await setup();
   try {
@@ -61,7 +68,7 @@ export const setupWeb = async (
     const ready =
       Promise.withResolvers<InstanceType<typeof ConversationScope>>();
     fixture.registry().uninstall({ name: "source-a" });
-    let execute = true;
+    let modelEnabled = true;
     let read = true;
     let content = true;
     let deliveryAuthorization: ((event: BotEvent) => Promise<void>) | undefined;
@@ -78,7 +85,7 @@ export const setupWeb = async (
       },
       sync: () => Promise.resolve(),
     } as unknown as DurableObjectStorage;
-    const configuration: SessionHostConfiguration = {
+    const configuration: SessionHostConfiguration = customize({
       address: source.address,
       conversationKind,
       ...(team ? { coordination: source.coordinator.services } : {}),
@@ -95,7 +102,7 @@ export const setupWeb = async (
       authority: {
         require: (request) =>
           (request.action === "read" && !read) ||
-          (request.action === "execute" && request.model && !execute)
+          (request.action === "execute" && request.model && !modelEnabled)
             ? Effect.fail(
                 new Denied({
                   code: "revoked",
@@ -129,11 +136,22 @@ export const setupWeb = async (
         maxInputBytes: 1_048_576,
         maxResponseBytes: 1_048_576,
       },
-    };
+    });
+    let latest = configuration;
+    const definitions = new Map([[1, configuration]]);
     const events = createCoordinatorEvents({
       pi: fixture.pi(),
-      targetIn: () =>
-        Promise.resolve({ nativeId: source.native.id, agentVersion: 1 }),
+      targetIn: async (tx) => {
+        if (!refresh) {
+          return { nativeId: source.native.id, agentVersion: 1 };
+        }
+        const bindings = await tx.doc(Bindings);
+        const binding = bindings.conversations[source.address.sessionId];
+        if (!binding) {
+          throw new Error("Missing fixture binding.");
+        }
+        return binding;
+      },
       resolve: async () => {
         const scope = await ready.promise;
         const current = await scope.eventScope();
@@ -155,8 +173,10 @@ export const setupWeb = async (
     fixture
       .registry()
       .install({ name: "fixture.bot-events", tasks: [events.definition] });
+    let aborts = 0;
     const harness = {
       abort: async () => {
+        aborts += 1;
         await source.native.abort(context);
         return true;
       },
@@ -172,9 +192,45 @@ export const setupWeb = async (
         };
       },
     } as unknown as PiHarness;
+    const recoveries: string[] = [];
     const scope = await ConversationScope.open(
       configuration,
       {
+        ...(refresh
+          ? {
+              publication: {
+                identity: { agentVersion: 1, policyVersion: initialPolicy },
+                legacy: initialPolicy === 0,
+                primary: true,
+                resolve: (version: number | "latest") => {
+                  if (
+                    version === "latest" ||
+                    version === latest.agent.version
+                  ) {
+                    return Promise.resolve(latest);
+                  }
+                  const saved = definitions.get(version);
+                  if (saved) {
+                    return Promise.resolve(saved);
+                  }
+                  throw new Error("The fixture definition does not exist.");
+                },
+                reconcile: () => Promise.resolve(),
+                recover: () => {
+                  recoveries.push("requested");
+                },
+                setProvider: (
+                  value: Parameters<
+                    ReturnType<typeof fixture.models>["setProvider"]
+                  >[0]
+                ) => fixture.models().setProvider(value),
+                deleteProvider: (value: string) =>
+                  fixture.models().deleteProvider(value),
+                uninstall: (value: { name: string }) =>
+                  fixture.registry().uninstall(value),
+              },
+            }
+          : {}),
         events,
         scanWorkKeys: () => Promise.resolve({ keys: [] }),
         install: (extension) => fixture.registry().install(extension),
@@ -195,7 +251,24 @@ export const setupWeb = async (
           fixture.registry().install(extension);
         }
         fixture.models().setProvider(registration.provider);
-        await source.native.configure(registration.agent, context);
+        if (!refresh) {
+          await source.native.configure(registration.agent, context);
+          return source.native;
+        }
+        await fixture.pi().commit(async (tx) => {
+          await configure(tx, source.native.id, registration.agent);
+          const bindings = await tx.doc(Bindings);
+          bindings.conversations[source.address.sessionId] = {
+            address: { ...source.address },
+            agentVersion: 1,
+            policyVersion: initialPolicy,
+            nativeId: source.native.id,
+            origin: null,
+            legacyVersion: initialPolicy === 0 ? 1 : null,
+            refresh: null,
+            releaseEvent: null,
+          };
+        }, context);
         return source.native;
       }
     );
@@ -203,11 +276,18 @@ export const setupWeb = async (
     await scope.restore();
     return {
       fixture,
+      configuration,
+      recoveries,
+      nativeAborts: () => aborts,
+      publish: (value: SessionHostConfiguration) => {
+        latest = value;
+        definitions.set(value.agent.version, value);
+      },
       source,
       scope,
       events,
-      setExecute: (value: boolean) => {
-        execute = value;
+      setModelEnabled: (value: boolean) => {
+        modelEnabled = value;
       },
       setRead: (value: boolean) => {
         read = value;

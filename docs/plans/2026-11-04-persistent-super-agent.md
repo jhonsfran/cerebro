@@ -15,7 +15,8 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 3c: Make private-team provenance imports atomic and recoverable.
 - [x] Unit 3b: Route explicit task subscriptions and one-time team handback.
 - [x] Unit 4a: Connect ordered web events, work causes, controls, and recall.
-- [ ] Unit 4b: Apply published coordinator definitions safely within the same conversation.
+- [x] Unit 4b: Apply published coordinator definitions safely within the same conversation.
+- [ ] Unit 4 context: Preserve native compaction when the model request reaches its byte limit.
 - [ ] Unit 4c: Connect Slack primary events and exact event replies.
 - [ ] Unit 4d: Preserve legacy admission and forward saved timers through controlled cutover.
 - [ ] Unit 5a: Add protected saved-state inspection and safe terminal Team reads.
@@ -35,6 +36,10 @@ Unit 4b fixes the permanent definition pin exposed by a persistent conversation.
 Unit 4 uses separate runtime, profile, Slack, and cutover commits. The runtime commit keeps current tool selections. The profile commit then adopts coordinator-only tools after old native calls drain, including when the published definition is unchanged. Slack and timer adapters build on that coherent profile gate.
 
 Unit 4a sends web input through owned events and preserves the original operation ID in receipts, pending input, and history. Foreground Stop marks pending event tasks before acknowledgement. Native causes prevent reports from authorizing new work. Independent reviews also fixed permanent settlement rejection and two legacy replay cases. The actual HTTP and celld probe passed on the final source, and its disposable stack was removed.
+
+Unit 4b adopts the complete definition and capability policy after native work drains. Owned event admission checks source and content access while model access is checked for execution. Review and native tests fixed failed staging, stale authorization denials, and publication races. The HTTP probe preserves chat identity, replay, saved fork pins, and the adopted model over a process kill. All three final reviews pass.
+
+Long-chat verification found an existing model-boundary error. A ninth full-length input reaches the serialized request byte cap before Pi's token threshold. The adapter treats the thrown local error as a connection failure. A separate repair must preserve the supported overflow response so Pi can use its existing compaction task. This repair keeps the byte limit and adds no scheduler or guessed token conversion.
 
 The approved architecture is the design baseline. Read-only grounding checks its integration points. A second architecture competition is unnecessary unless the implementation disproves the design.
 

@@ -21,7 +21,10 @@ import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { listSkills } from "@cerebro/db/repositories/skills";
 import { channelConversation } from "@cerebro/db/schema/agents";
 import { sendToAuditSink } from "@cerebro/runtime/audit-sink";
-import type { MetadataTransaction } from "@cerebro/runtime/session-agent";
+import type {
+  SessionHostConfiguration,
+  MetadataTransaction,
+} from "@cerebro/runtime/session-agent";
 import { connectorAccountId, openCredentials } from "@cerebro/tools/accounts";
 import { createConnectorExecutor } from "@cerebro/tools/connector";
 import { bindRegisteredTool } from "@cerebro/tools/registry";
@@ -50,7 +53,8 @@ export const createExecutionComposition = (
   ownerPrincipalId: string,
   metadata: MetadataTransaction,
   readOnly = false,
-  importedDependencies?: () => Promise<ContentDependencies>
+  importedDependencies?: () => Promise<ContentDependencies>,
+  contentState?: SessionHostConfiguration["contentState"]
 ) =>
   Effect.gen(function* composeExecution() {
     const config = runtimeConfiguration(env);
@@ -170,7 +174,15 @@ export const createExecutionComposition = (
     const authority = currentAuthority;
     const content = yield* SessionContent.pipe(
       Effect.provide(
-        sessionContentLayer(env, storage, address, agent, metadata, readOnly)
+        sessionContentLayer(
+          env,
+          storage,
+          address,
+          agent,
+          metadata,
+          readOnly,
+          contentState
+        )
       ),
       Effect.provideService(AuthorityService, authority)
     );
@@ -409,6 +421,7 @@ export const createExecutionComposition = (
           )
         ),
       executor,
+      contentState: content.sources,
       contentDependencies: async () => {
         const recorded = await content.dependencies();
         const imported = (await importedDependencies?.()) ?? {

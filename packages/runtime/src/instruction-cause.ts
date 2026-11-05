@@ -38,6 +38,7 @@ const eventData = Schema.Struct({
   eventId: Schema.NonEmptyString,
   source: Schema.String,
   agentVersion: Schema.Int,
+  policyVersion: Schema.optional(Schema.Literals([0, 1])),
 });
 interface EventCauseTarget extends InstructionTarget {
   readonly candidate: InstructionCandidate;
@@ -79,6 +80,7 @@ const eventInstructionCauseIn = async (
   if (
     claim.requestId !== candidate.operationId ||
     claim.agentVersion !== data.agentVersion ||
+    (claim.policyVersion ?? 0) !== (data.policyVersion ?? 0) ||
     (claim.kind !== "claimed" && claim.submissionId !== candidate.submissionId)
   ) {
     return;
@@ -132,6 +134,7 @@ export const requireInstructionCauseIn = async (
     readonly ownerPrincipalId: PrincipalId;
     readonly nativeId: ConversationId;
     readonly candidates: readonly InstructionCandidate[];
+    readonly allowLegacyUser?: boolean;
   }
 ): Promise<InstructionCause> => {
   const live = await tx.doc(LiveDoc, options.nativeId);
@@ -161,7 +164,8 @@ export const requireInstructionCauseIn = async (
             candidate.operationId
           );
           return operation.operationId === candidate.operationId &&
-            operation.route?.kind === "coordinator"
+            (operation.route?.kind === "coordinator" ||
+              (options.allowLegacyUser === true && operation.route === null))
             ? { ...candidate, kind: "human", eventId: null }
             : undefined;
         }
@@ -195,6 +199,7 @@ export const prepareInstructionCause = async (options: {
   readonly nativeId: ConversationId;
   readonly address: EventAddress;
   readonly ownerPrincipalId: PrincipalId;
+  readonly allowLegacyUser?: boolean;
 }): Promise<(tx: Tx) => Promise<InstructionCause>> => {
   const candidates = await currentInstructionCandidates(
     options.pi,

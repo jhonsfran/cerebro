@@ -27,6 +27,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
 import type {
   ConversationId,
+  Cursor,
   Harness,
   ToolExecutionApi,
   ToolRegistration,
@@ -81,6 +82,14 @@ const HEARTBEAT_MS = 5000;
 const MAX_QUEUED_WORK = 16;
 
 export const createCoordinatorWork = (options: {
+  readonly shared?: {
+    readonly admissions: ReturnType<typeof createCoordinatorAdmissions>;
+    readonly dispatch: ReturnType<typeof createCoordinatorDispatch>;
+  };
+  readonly guardIn?: (tx: Tx) => Promise<void>;
+  readonly dispatchAccess?: Parameters<
+    typeof createCoordinatorDispatch
+  >[0]["access"];
   readonly address: EventAddress;
   readonly scanWorkKeys: ScanWorkKeys;
   readonly contentAccess: WorkContentAccess;
@@ -148,18 +157,21 @@ export const createCoordinatorWork = (options: {
     );
   };
 
-  const dispatch = createCoordinatorDispatch({
-    address: options.address,
-    nativeId: options.nativeId,
-    services: options.services,
-    pi: options.pi,
-    authorize: options.authorize,
-    binding,
-    now,
-    terminalNoticeIn: options.terminalNoticeIn,
-    checkDependencies: options.contentAccess.check,
-    returnEventIn: options.returnEventIn,
-  });
+  const dispatch =
+    options.shared?.dispatch ??
+    createCoordinatorDispatch({
+      access: options.dispatchAccess,
+      address: options.address,
+      nativeId: options.nativeId,
+      services: options.services,
+      pi: options.pi,
+      authorize: options.authorize,
+      binding,
+      now,
+      terminalNoticeIn: options.terminalNoticeIn,
+      checkDependencies: options.contentAccess.check,
+      returnEventIn: options.returnEventIn,
+    });
 
   const pendingDispatches = () =>
     options.pi.commit(async (tx) => {
@@ -170,19 +182,28 @@ export const createCoordinatorWork = (options: {
         "completing",
       ];
       const pages = await Promise.all(
-        states.map((status) =>
-          tx.scanTasks(
-            {
-              conversationId: options.nativeId,
-              background: true,
-              kind: dispatch.definition.name,
-              status,
-            },
-            16
-          )
-        )
+        states.map(async (status) => {
+          const tasks = [];
+          let cursor: Cursor | undefined;
+          do {
+            // oxlint-disable-next-line no-await-in-loop -- Each cursor continues the same persisted dispatch scan.
+            const page = await tx.scanTasks(
+              {
+                conversationId: options.nativeId,
+                background: true,
+                kind: dispatch.definition.name,
+                status,
+              },
+              16,
+              cursor
+            );
+            tasks.push(...page.items.map((task) => task.id));
+            cursor = page.next;
+          } while (cursor);
+          return tasks;
+        })
       );
-      return pages.flatMap((page) => page.items.map((task) => task.id));
+      return pages.flat();
     }, piContext());
   const holdDispatches = async (): Promise<void> => {
     trackNativeProgress(
@@ -200,19 +221,21 @@ export const createCoordinatorWork = (options: {
       now,
       publicWork,
     });
-  const admissions = createCoordinatorAdmissions({
-    pi: options.pi,
-    nativeId: options.nativeId,
-    sessionId: options.address.sessionId,
-    jobs: options.jobs,
-    metadata: options.metadata,
-    persist: async () => {
-      await options.persist();
-      await holdDispatches();
-    },
-    now,
-    timeoutMs: options.services?.profile.timeoutMs ?? 600_000,
-  });
+  const admissions =
+    options.shared?.admissions ??
+    createCoordinatorAdmissions({
+      pi: options.pi,
+      nativeId: options.nativeId,
+      sessionId: options.address.sessionId,
+      jobs: options.jobs,
+      metadata: options.metadata,
+      persist: async () => {
+        await options.persist();
+        await holdDispatches();
+      },
+      now,
+      timeoutMs: options.services?.profile.timeoutMs ?? 600_000,
+    });
 
   const start = async (
     goal: string,
@@ -558,6 +581,7 @@ export const createCoordinatorWork = (options: {
     binding,
     services: options.services,
     tools,
+    dispatch,
     tasks: [dispatch],
     admissions,
     notifyExpiredIn: async (
@@ -607,6 +631,7 @@ export const createCoordinatorWork = (options: {
         JSON.stringify({ kind: "stop-work", workId: input.workId })
       );
       return await admissions.commit(input.operationId, async (tx) => {
+        await options.guardIn?.(tx);
         const operation = await tx.doc(
           SourceOperations,
           options.nativeId,
@@ -631,6 +656,7 @@ export const createCoordinatorWork = (options: {
       }
       const key = await coordinatorOperationKey(operationId);
       await options.pi.commit(async (tx) => {
+        await options.guardIn?.(tx);
         const ledger = await tx.doc(WorkLedger);
         requireWorkIdentity(ledger, binding());
         const operation = await tx.doc(
@@ -671,6 +697,7 @@ export const createCoordinatorWork = (options: {
         }
       }
       await options.pi.commit(async (tx) => {
+        await options.guardIn?.(tx);
         const ledger = await tx.doc(WorkLedger);
         const terminal: CoordinatorWorkRecord[] = [];
         const expired = Object.entries(ledger.active).filter(

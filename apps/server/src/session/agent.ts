@@ -1,3 +1,4 @@
+import { isPrimaryConversation } from "@cerebro/channels/primary-conversations";
 import type { EventAddress } from "@cerebro/contracts/events";
 import {
   Denied,
@@ -20,6 +21,7 @@ import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { channelConversation } from "@cerebro/db/schema/agents";
 import { SessionAgent as SessionHost } from "@cerebro/runtime/session-agent";
 import type {
+  DefinitionSelection,
   MetadataTransaction,
   SessionHostConfiguration,
 } from "@cerebro/runtime/session-agent";
@@ -99,9 +101,13 @@ export const createRuntimeComposition = (
   address: EventAddress,
   conversation: typeof channelConversation.$inferSelect,
   metadata: MetadataTransaction,
-  importedDependencies?: () => Promise<ContentDependencies>
+  importedDependencies?: () => Promise<ContentDependencies>,
+  selection?: DefinitionSelection
 ): Effect.Effect<SessionHostConfiguration, ContractFailure> =>
   Effect.gen(function* composeSession() {
+    const primary = yield* tryAdapter(() =>
+      isPrimaryConversation(conversation)
+    );
     const config = runtimeConfiguration(env);
     const slack = slackSettings(env);
     storage.sql.exec(
@@ -143,7 +149,10 @@ export const createRuntimeComposition = (
         })
       : undefined;
     const loadedAgent = yield* loadAgent(
-      persisted?.agent_version ?? forkOrigin?.agentVersion ?? "latest"
+      selection?.version ??
+        persisted?.agent_version ??
+        forkOrigin?.agentVersion ??
+        "latest"
     );
     storage.sql.exec(
       "INSERT OR IGNORE INTO cerebro_session_metadata VALUES (?, ?, ?, ?, ?)",
@@ -168,7 +177,7 @@ export const createRuntimeComposition = (
       );
     }
     const agent: AgentDefinition =
-      pin.agent_version === loadedAgent.version
+      selection || pin.agent_version === loadedAgent.version
         ? loadedAgent
         : yield* loadAgent(pin.agent_version);
     const execution = yield* createExecutionComposition(
@@ -180,10 +189,20 @@ export const createRuntimeComposition = (
       ownerPrincipalId,
       metadata,
       false,
-      importedDependencies
+      importedDependencies,
+      selection?.contentState
     );
     return {
       ...execution,
+      publicationPolicy: primary ? "primary" : "pinned",
+      reconcileVersion: async (version: number) => {
+        storage.sql.exec(
+          "UPDATE cerebro_session_metadata SET agent_version=? WHERE session_id=?",
+          version,
+          address.sessionId
+        );
+        await storage.sync();
+      },
       conversationKind: conversation.kind,
       ...(forkOrigin
         ? {
@@ -275,7 +294,8 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
   protected override configure(
     address: EventAddress,
     metadata: MetadataTransaction,
-    importedDependencies: () => Promise<ContentDependencies>
+    importedDependencies: () => Promise<ContentDependencies>,
+    selection?: DefinitionSelection
   ) {
     return Effect.gen({ self: this }, function* configureConversation() {
       const identity = yield* resolveIdentity(this.ctx.id.name);
@@ -290,7 +310,8 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
         address,
         conversation,
         metadata,
-        importedDependencies
+        importedDependencies,
+        selection
       );
     });
   }

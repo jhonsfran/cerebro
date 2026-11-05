@@ -34,7 +34,9 @@ import type {
 } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
+import { ProfileChanged } from "./conversation-bindings.ts";
 import type { createCoordinatorAdmissions } from "./coordinator-admission.ts";
+import { authorizeEventDelivery } from "./coordinator-event-access.ts";
 import {
   botEventInput,
   abortPendingEvents,
@@ -80,6 +82,14 @@ type EventCheckpoint =
       attempt: number;
       until: number;
     };
+const admissionWait = (attempt: number) => ({
+  status: "running" as const,
+  checkpoint: {
+    phase: "admission-wait" as const,
+    attempt,
+    until: Date.now() + 1000,
+  },
+});
 const settledAdmission = (
   claim: { agentVersion: number; requestId: string },
   result: SettledSubmissionRecord
@@ -107,8 +117,12 @@ const finishIn = async (tx: Tx, id: string): Promise<void> => {
 };
 export interface BotEventScope {
   readonly native: Conversation;
+  readonly requireCurrent?: () => void;
   readonly agentVersion: number;
+  readonly policyVersion?: 0 | 1;
   readonly ownerPrincipalId: PrincipalId;
+  readonly prepareAdmission?: (eventId: string) => Promise<boolean>;
+  readonly claimIn?: (tx: Tx, eventId: string) => Promise<boolean>;
   readonly admissions: ReturnType<typeof createCoordinatorAdmissions>;
   readonly readAccess: (context: ExecutionContext) => Promise<void>;
   readonly prepareRoute?: (
@@ -133,7 +147,7 @@ export interface BotEventScope {
     event: BotEvent,
     context?: ExecutionContext,
     signal?: AbortSignal,
-    action?: "deliver" | "read" | "control"
+    action?: "admit" | "deliver" | "read" | "control"
   ) => Promise<void>;
 }
 export type EventRouteIn = (
@@ -151,6 +165,7 @@ export type EventTargetIn = (
 ) => Promise<{
   readonly nativeId: ConversationId;
   readonly agentVersion: number;
+  readonly policyVersion?: 0 | 1;
 }>;
 const requireScope = (receipt: BotEventReceipt, scope: BotEventScope): void => {
   if (
@@ -292,11 +307,25 @@ export const createCoordinatorEvents = (options: {
               reason: "The saved coordinator event changed.",
             });
           }
-          const scope = await options.resolve(eventOf(receipt).coordinator);
+          const event = eventOf(receipt);
+          let scope = await options.resolve(event.coordinator);
+          if (deliveryOf(receipt).admission.kind === "held") {
+            if (
+              (await scope.prepareAdmission?.(eventOf(receipt).id)) === false
+            ) {
+              await runtime.commit(
+                () => admissionWait(task.state.checkpoint.attempt),
+                context
+              );
+              return;
+            }
+            scope = await options.resolve(eventOf(receipt).coordinator);
+          }
           requireScope(receipt, scope);
-          await scope.authorize(
-            eventOf(receipt),
-            undefined,
+          await authorizeEventDelivery(
+            scope,
+            event,
+            deliveryOf(receipt).admission.kind === "held",
             context.abortSignal
           );
           await runtime.commit(async (tx) => {
@@ -314,38 +343,42 @@ export const createCoordinatorEvents = (options: {
               .filter(([, item]) => item.nativeId === saved.nativeId)
               .map(([id]) => id);
             if (await eventHasPredecessorIn(tx, saved, pendingIds)) {
-              return {
-                status: "running",
-                checkpoint: {
-                  phase: "admission-wait",
-                  attempt: task.state.checkpoint.attempt,
-                  until: Date.now() + 1000,
-                },
-              };
+              return admissionWait(task.state.checkpoint.attempt);
             }
             const target = await options.targetIn(
               tx,
               eventOf(saved).coordinator
             );
-            if (
-              target.nativeId !== saved.nativeId ||
-              target.agentVersion !== scope.agentVersion
-            ) {
+            if (target.nativeId !== saved.nativeId) {
               throw new InvalidInput({
-                reason: "The coordinator event configuration changed.",
+                reason: "The coordinator event binding changed.",
               });
             }
+            if (
+              target.agentVersion !== scope.agentVersion ||
+              (target.policyVersion ?? 0) !== (scope.policyVersion ?? 0)
+            ) {
+              throw new ProfileChanged();
+            }
             if (deliveryOf(saved).admission.kind === "held") {
+              if (
+                scope.claimIn &&
+                !(await scope.claimIn(tx, eventOf(saved).id))
+              ) {
+                return admissionWait(task.state.checkpoint.attempt);
+              }
               deliveryOf(saved).admission = {
                 kind: "claimed",
                 agentVersion: target.agentVersion,
+                policyVersion: target.policyVersion ?? 0,
                 requestId: eventOf(saved).id,
               };
             }
             const claim = deliveryOf(saved).admission;
             if (
               (claim.kind === "claimed" || claim.kind === "submitted") &&
-              claim.agentVersion !== target.agentVersion
+              (claim.agentVersion !== target.agentVersion ||
+                (claim.policyVersion ?? 0) !== (target.policyVersion ?? 0))
             ) {
               throw new InvalidInput({
                 reason: "The event claim configuration changed.",
@@ -393,6 +426,7 @@ export const createCoordinatorEvents = (options: {
                     eventId: inputEvent.id,
                     source: inputEvent.source.kind,
                     agentVersion: claimed.agentVersion,
+                    policyVersion: claimed.policyVersion ?? 0,
                     ...(inputEvent.source.kind === "web"
                       ? { operationId: inputEvent.source.operationId }
                       : {}),
@@ -425,6 +459,13 @@ export const createCoordinatorEvents = (options: {
         } catch (error) {
           if (runtime.signal.aborted || context.abortSignal?.aborted) {
             throw error;
+          }
+          if (error instanceof ProfileChanged) {
+            await runtime.commit(
+              () => admissionWait(task.state.checkpoint.attempt),
+              context
+            );
+            return;
           }
           const attempt = task.state.checkpoint.attempt + 1;
           if (!permanent(error) && attempt < 5) {
@@ -524,7 +565,8 @@ export const createCoordinatorEvents = (options: {
               if (
                 saved.requestId !== claim.requestId ||
                 saved.submissionId !== claim.submissionId ||
-                saved.agentVersion !== claim.agentVersion
+                saved.agentVersion !== claim.agentVersion ||
+                (saved.policyVersion ?? 0) !== (claim.policyVersion ?? 0)
               ) {
                 throw new InvalidInput({
                   reason: "The event settlement claim changed.",
@@ -860,7 +902,7 @@ export const createCoordinatorEvents = (options: {
         event,
         context,
         undefined,
-        routing.kind === "local-control" ? "control" : "deliver"
+        routing.kind === "local-control" ? "control" : "admit"
       );
       const previous = await options.pi.snapshot(
         BotEventReceipts,
@@ -890,9 +932,10 @@ export const createCoordinatorEvents = (options: {
           reason: "External event routing is unavailable.",
         });
       }
-      const receipt = await scope.admissions.commit(event.id, (tx) =>
-        enqueueIn(tx, input, routeIn)
-      );
+      const receipt = await scope.admissions.commit(event.id, (tx) => {
+        scope.requireCurrent?.();
+        return enqueueIn(tx, input, routeIn);
+      });
       await hold(scope.native.id);
       return receipt;
     },
@@ -919,6 +962,7 @@ export const createCoordinatorEvents = (options: {
       const scope = await options.resolve(eventOf(receipt).coordinator);
       requireScope(receipt, scope);
       await scope.authorize(eventOf(receipt), context, undefined, "read");
+      scope.requireCurrent?.();
       return receipt;
     },
     list: async (
@@ -939,6 +983,7 @@ export const createCoordinatorEvents = (options: {
           await scope.authorize(eventOf(receipt), context, undefined, "read");
         })
       );
+      scope.requireCurrent?.();
       return { items, ...(page.next ? { next: page.next } : {}) };
     },
   };

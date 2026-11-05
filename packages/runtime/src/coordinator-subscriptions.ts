@@ -190,6 +190,7 @@ const relationIn = async (
 };
 
 export const createCoordinatorSubscriptions = (options: {
+  readonly guardIn?: (tx: Tx) => Promise<void>;
   readonly pi: Harness;
   readonly nativeId: ConversationId;
   readonly coordination: ReturnType<typeof createCoordinatorWork>;
@@ -267,6 +268,7 @@ export const createCoordinatorSubscriptions = (options: {
     return await options.coordination.admissions.commit(
       `subscription:${api.taskId}`,
       async (tx) => {
+        await options.guardIn?.(tx);
         const record = await requireCoordinatorWork(tx, binding(), workId);
         if (subscribe && !workAcceptsEvents(record, Date.now())) {
           throw new InvalidInput({
@@ -404,6 +406,7 @@ export const createCoordinatorSubscriptions = (options: {
     const digest = await digestToolArguments(wire);
     const suffix = await coordinatorOperationKey(event.id);
     return async (tx) => {
+      await options.guardIn?.(tx);
       if (key && thread) {
         const current = await tx.doc(ThreadSubscriptions, key, null);
         if (current.record) {

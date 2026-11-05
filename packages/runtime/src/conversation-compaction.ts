@@ -5,18 +5,18 @@ import {
   NotFound,
 } from "@cerebro/contracts/failures";
 import type { ChatControl } from "@cerebro/contracts/session-service";
-import { CompactionTask, LiveDoc, defineDoc } from "@earendil-works/pi-durable";
 import type {
+  Tx,
   ConversationId,
   Harness,
   JsonObject,
   TaskId,
 } from "@earendil-works/pi-durable";
+import { CompactionTask, LiveDoc, defineDoc } from "@earendil-works/pi-durable";
 import type { LifecycleJobs, LifecycleJobOutcome } from "agents/lifecycle";
 import { Schema } from "effect";
 
 import { piContext } from "./pi-harness.ts";
-import type { MetadataTransaction } from "./session-agent.ts";
 
 export const CompactPayload = Schema.Struct({
   instructions: Schema.optional(Schema.String),
@@ -62,9 +62,9 @@ const validate = (command: CompactCommand): void => {
 };
 
 export const createConversationCompaction = (options: {
+  readonly guardIn?: (tx: Tx) => Promise<void>;
   readonly authorize: () => Promise<void>;
   readonly jobs: LifecycleJobs;
-  readonly metadata: MetadataTransaction;
   readonly nativeId: ConversationId;
   readonly persist: () => Promise<void>;
   readonly pi: Harness;
@@ -87,6 +87,7 @@ export const createConversationCompaction = (options: {
         requireSameInstructions(existing, command);
         return existing.taskId;
       }
+      await options.guardIn?.(tx);
       const instructions = command.instructions ?? "";
       const taskId = await tx.createTask(
         CompactionTask,
@@ -122,7 +123,10 @@ export const createConversationCompaction = (options: {
         }
       }
       const id = `cerebro-compact:${options.sessionId}:${command.operationId}`;
-      await options.metadata(async () => {
+      await options.pi.commit(async (tx) => {
+        if (!previous) {
+          await options.guardIn?.(tx);
+        }
         const existing = options.jobs.get(id);
         if (existing) {
           requireSameInstructions(
@@ -145,7 +149,7 @@ export const createConversationCompaction = (options: {
               : { instructions: command.instructions }),
           },
         });
-      });
+      }, piContext());
       const taskId = await admit(command);
       await options.persist();
       options.pi.resume();

@@ -24,16 +24,10 @@ import {
   Harness,
   configure,
   createRegistry,
-  defineDoc,
   UserEntry,
   AssistantEntry,
 } from "@earendil-works/pi-durable";
-import type {
-  ConversationId as NativeConversationId,
-  EntryId,
-  JsonObject,
-  Registry,
-} from "@earendil-works/pi-durable";
+import type { EntryId, Registry } from "@earendil-works/pi-durable";
 import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
 import type {
@@ -44,7 +38,11 @@ import { DurableObject } from "cloudflare:workers";
 import { Effect, Result, Schema } from "effect";
 
 import type { CompanySkill } from "./company-skills.ts";
+import type { createSourceDependencyStore } from "./content-dependency-store.ts";
+import { Bindings } from "./conversation-bindings.ts";
+import type { ConversationBinding } from "./conversation-bindings.ts";
 import { CompactPayload } from "./conversation-compaction.ts";
+import { selectedRegistrationsIn } from "./conversation-drain.ts";
 import { searchConversationHistory } from "./conversation-history.ts";
 import { ReminderPayload } from "./conversation-reminders.ts";
 import { ConversationScope } from "./conversation-scope.ts";
@@ -65,11 +63,18 @@ import { piContext, snapshotToolIds } from "./pi-harness.ts";
 import type { ControlledProviderConfiguration } from "./pi-provider.ts";
 import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
 
+export interface DefinitionSelection {
+  readonly version: number | "latest";
+  readonly contentState?: ReturnType<typeof createSourceDependencyStore>;
+}
 export type SessionEnvironment = Readonly<Record<string, unknown>>;
 export type MetadataTransaction = <A>(
   operation: () => A | Promise<A>
 ) => Promise<A>;
 export interface SessionHostConfiguration {
+  readonly publicationPolicy?: "primary" | "pinned";
+  readonly contentState?: ReturnType<typeof createSourceDependencyStore>;
+  readonly reconcileVersion?: (version: number) => Promise<void>;
   readonly address: EventAddress;
   readonly conversationKind?: "web" | "slack";
   readonly coordination?: CoordinationServices;
@@ -112,20 +117,6 @@ export interface SessionHostConfiguration {
   ) => Effect.Effect<void, ContractFailure>;
 }
 
-interface ConversationBinding extends JsonObject {
-  address: { [Key in keyof EventAddress]: EventAddress[Key] };
-  agentVersion: number;
-  nativeId: NativeConversationId;
-  origin: string | null;
-}
-const Bindings = defineDoc({
-  initial: (): { conversations: Record<string, ConversationBinding> } => ({
-    conversations: {},
-  }),
-  kind: "cerebro.conversation-bindings",
-  scope: "session",
-  version: 1,
-});
 interface NativeHost {
   restoring: boolean;
   readonly events: CoordinatorEvents;
@@ -337,7 +328,8 @@ export class SessionAgent<
   protected configure(
     _address: EventAddress,
     _metadata: MetadataTransaction,
-    _importedDependencies: () => Promise<ContentDependencies>
+    _importedDependencies: () => Promise<ContentDependencies>,
+    _selection?: DefinitionSelection
   ): Effect.Effect<SessionHostConfiguration, ContractFailure> {
     return Effect.fail(
       new Unavailable({
@@ -397,8 +389,11 @@ export class SessionAgent<
       host.pi.commit(operation, piContext());
     const configuration = await metadata(() =>
       run(
-        this.configure(address, metadata, () =>
-          readImportedContent(host.pi, importedNativeId)
+        this.configure(
+          address,
+          metadata,
+          () => readImportedContent(host.pi, importedNativeId),
+          binding ? { version: binding.agentVersion } : undefined
         )
       )
     );
@@ -432,6 +427,38 @@ export class SessionAgent<
     const scope = await ConversationScope.open(
       configuration,
       {
+        publication: {
+          identity: {
+            agentVersion: configuration.agent.version,
+            policyVersion:
+              binding?.policyVersion ??
+              (configuration.publicationPolicy === "primary" ? 1 : 0),
+          },
+          legacy: binding
+            ? binding.legacyVersion === binding.agentVersion &&
+              binding.policyVersion === 0
+            : configuration.publicationPolicy !== "primary",
+          primary: configuration.publicationPolicy === "primary",
+          resolve: (version) =>
+            run(
+              this.configure(
+                address,
+                metadata,
+                () => readImportedContent(host.pi, importedNativeId),
+                { version, contentState: configuration.contentState }
+              )
+            ),
+          reconcile: async (version) => {
+            await configuration.reconcileVersion?.(version);
+          },
+          recover: () =>
+            this.ctx.abort(
+              "Conversation profile adoption failed. Reopen the identity runtime."
+            ),
+          setProvider: (provider) => host.models.setProvider(provider),
+          deleteProvider: (id) => host.models.deleteProvider(id),
+          uninstall: (extension) => host.registry.uninstall(extension),
+        },
         harness: this.harness,
         events: host.events,
         install: (extension) => host.registry.install(extension),
@@ -501,6 +528,14 @@ export class SessionAgent<
             bindings.conversations[address.sessionId] = {
               address: { ...address },
               agentVersion: configuration.agent.version,
+              policyVersion:
+                configuration.publicationPolicy === "primary" ? 1 : 0,
+              legacyVersion:
+                configuration.publicationPolicy === "primary"
+                  ? null
+                  : configuration.agent.version,
+              refresh: null,
+              releaseEvent: null,
               nativeId: created.id,
               origin: originKey,
             };
@@ -515,10 +550,34 @@ export class SessionAgent<
       }
     );
     this.scopes.set(address.sessionId, scope);
+    if (binding) {
+      await this.restoreSelections(scope, host, binding);
+    }
     if (!host.restoring) {
       await scope.restore();
     }
     return scope;
+  }
+
+  private async restoreSelections(
+    scope: ConversationScope,
+    host: NativeHost,
+    binding: ConversationBinding
+  ): Promise<void> {
+    const selections = await host.pi.commit(
+      (tx) => selectedRegistrationsIn(tx, binding.nativeId),
+      piContext()
+    );
+    try {
+      await scope.restoreProfiles([...selections], binding.legacyVersion);
+    } catch {
+      this.scopes.delete(binding.address.sessionId);
+      throw new Unavailable({
+        reason:
+          "A stored native profile could not be restored before scheduling.",
+      });
+    }
+    await scope.runtime.configuration.reconcileVersion?.(binding.agentVersion);
   }
 
   private async forkSource(
@@ -548,11 +607,6 @@ export class SessionAgent<
         bindings?.conversations[origin.address.sessionId],
         new Set([...ancestors, address.sessionId])
       ));
-    if (parent.runtime.configuration.agent.version !== origin.agentVersion) {
-      throw new InvalidInput({
-        reason: "The fork agent version differs from its source.",
-      });
-    }
     const owner = await run(configuration.ownerContext());
     const snapshot = await parent.read(owner);
     const toolIds = snapshotToolIds(snapshot);
@@ -608,6 +662,7 @@ export class SessionAgent<
       throw new NotFound({ resource: "Search conversation" });
     }
     const bindings = await host.pi.snapshot(Bindings, piContext(signal));
+    const { runtime } = target;
     return searchConversationHistory(
       {
         target,
@@ -621,7 +676,11 @@ export class SessionAgent<
             host,
             bindings?.conversations[source.sessionId]
           )),
-        metadata: (operation) => host.pi.commit(operation, piContext(signal)),
+        metadata: (operation) =>
+          host.pi.commit(async (tx) => {
+            await runtime.guardIn(tx);
+            return await operation();
+          }, piContext(signal)),
         persist: () => this.ctx.storage.sync(),
       },
       term,

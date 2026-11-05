@@ -103,6 +103,13 @@ export const createApprovalStore = (
   };
   const read = (approvalId: string) => publicValue(readRow(approvalId));
   return {
+    hasPending: (): boolean =>
+      storage.sql
+        .exec<{ approval_id: string }>(
+          "SELECT approval_id FROM cerebro_approval WHERE session_id=? AND state='pending' LIMIT 1",
+          sessionId
+        )
+        .toArray().length > 0,
     all: () =>
       storage.sql
         .exec<ApprovalRow>(

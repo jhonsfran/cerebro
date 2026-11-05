@@ -2,6 +2,7 @@ import { Unavailable } from "@cerebro/contracts/failures";
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { ReadOptions } from "@cerebro/contracts/port";
+import type { Tx } from "@earendil-works/pi-durable";
 import { Effect, Result } from "effect";
 
 import { createApprovalStore } from "./approval-store.ts";
@@ -46,12 +47,16 @@ const operationAction = {
 export const createConversationResources = (
   configuration: SessionHostConfiguration,
   storage: DurableObjectStorage,
-  metadata: MetadataTransaction
+  metadata: MetadataTransaction,
+  stable?: {
+    readonly approvals: ReturnType<typeof createApprovalStore>;
+    readonly guardIn: (tx: Tx) => Promise<void>;
+    readonly requireCurrent: () => void;
+  }
 ) => {
-  const approvals = createApprovalStore(
-    storage,
-    configuration.address.sessionId
-  );
+  const approvals =
+    stable?.approvals ??
+    createApprovalStore(storage, configuration.address.sessionId);
   const authorize = async (
     context: ExecutionContext,
     operation: ChatOperation,
@@ -106,6 +111,15 @@ export const createConversationResources = (
           options(signal)
         )
       );
+    }
+  };
+  const authorizeCurrent = async (
+    ...args: Parameters<typeof authorize>
+  ): Promise<void> => {
+    try {
+      await authorize(...args);
+    } finally {
+      stable?.requireCurrent();
     }
   };
   const provider = createControlledProvider({
@@ -199,5 +213,13 @@ export const createConversationResources = (
       }),
     tools: configuration.tools,
   });
-  return { approvals, authorize, configuration, provider, tools };
+  const guardIn = stable?.guardIn ?? (() => Promise.resolve());
+  return {
+    approvals,
+    authorize: authorizeCurrent,
+    configuration,
+    provider,
+    tools,
+    guardIn,
+  };
 };

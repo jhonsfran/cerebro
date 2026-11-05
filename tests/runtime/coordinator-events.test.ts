@@ -221,6 +221,7 @@ for (const point of ["before", "after"] as const) {
       assert.deepEqual(claimed.delivery.admission, {
         kind: "claimed",
         agentVersion: 1,
+        policyVersion: 0,
         requestId: event.id,
       });
       fixture.clearEventPause();
@@ -612,38 +613,48 @@ test("saved event reads require current read and content access without executio
     let contentAllowed = true;
     const operations: string[] = [];
     const scope = await ConversationScope.prototype.eventScope.call({
-      native: source.native,
-      coordination: source.coordinator,
-      subscriptions: source.subscriptions,
-      web: {
-        prepareLocalControl: () =>
-          Promise.reject(
-            new Error("Local controls are outside this read check.")
-          ),
+      get current() {
+        return this.profile;
       },
-      runtime: {
-        authorize: (_caller: unknown, operation: string) => {
-          operations.push(operation);
-          if (operation !== "read" || !readAllowed) {
-            return Promise.reject(
-              new Denied({ code: "revoked", reason: "Execution is denied." })
-            );
-          }
-          return Promise.resolve();
+      services: {},
+      native: source.native,
+      profile: {
+        identity: { agentVersion: 1, policyVersion: 0 },
+        coordination: source.coordinator,
+        subscriptions: source.subscriptions,
+        web: {
+          prepareLocalControl: () =>
+            Promise.reject(
+              new Error("Local controls are outside this read check.")
+            ),
         },
-        configuration: {
-          agent: { version: 1 },
-          coordination: source.coordinator.services,
-          ownerContext: () => Effect.succeed(actor),
-          checkDependencies: (
-            _caller: unknown,
-            dependencies: BotEvent["dependencies"]
-          ) =>
-            contentAllowed || dependencies.sourceIds.length === 0
-              ? Effect.void
-              : Effect.fail(
-                  new Denied({ code: "revoked", reason: "Content is denied." })
-                ),
+        runtime: {
+          authorize: (_caller: unknown, operation: string) => {
+            operations.push(operation);
+            if (operation !== "read" || !readAllowed) {
+              return Promise.reject(
+                new Denied({ code: "revoked", reason: "Execution is denied." })
+              );
+            }
+            return Promise.resolve();
+          },
+          configuration: {
+            agent: { version: 1 },
+            coordination: source.coordinator.services,
+            ownerContext: () => Effect.succeed(actor),
+            checkDependencies: (
+              _caller: unknown,
+              dependencies: BotEvent["dependencies"]
+            ) =>
+              contentAllowed || dependencies.sourceIds.length === 0
+                ? Effect.void
+                : Effect.fail(
+                    new Denied({
+                      code: "revoked",
+                      reason: "Content is denied.",
+                    })
+                  ),
+          },
         },
       },
     });

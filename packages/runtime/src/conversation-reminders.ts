@@ -7,12 +7,13 @@ import {
 import { ChatRecurrence } from "@cerebro/contracts/session-service";
 import type { ChatReminder } from "@cerebro/contracts/session-service";
 import { Type } from "@earendil-works/pi-ai";
-import { defineDoc, defineTool } from "@earendil-works/pi-durable";
 import type {
+  Tx,
   ConversationId,
   Harness,
   JsonObject,
 } from "@earendil-works/pi-durable";
+import { defineDoc, defineTool } from "@earendil-works/pi-durable";
 import type { LifecycleJobOutcome, LifecycleJobs } from "agents/lifecycle";
 import { Schema } from "effect";
 
@@ -140,19 +141,7 @@ const normalize = (
   return parsed;
 };
 
-export const createConversationReminders = (services: {
-  readonly pi: Harness;
-  readonly nativeId: ConversationId;
-  readonly sessionId: string;
-  readonly jobs: LifecycleJobs;
-  readonly authorize: () => Promise<void>;
-  readonly authorizeCancel?: () => Promise<void>;
-  readonly submit: (text: string, operationId: string) => Promise<unknown>;
-  readonly metadata: MetadataTransaction;
-  readonly persist: () => Promise<void>;
-  readonly now?: () => number;
-}) => {
-  const now = services.now ?? Date.now;
+export const createReminderSerialization = () => {
   const lanes = new Map<string, Promise<unknown>>();
   const serial = async <A>(
     id: string,
@@ -173,6 +162,26 @@ export const createConversationReminders = (services: {
       }
     }
   };
+  return serial;
+};
+
+export const createConversationReminders = (services: {
+  readonly serialize?: ReturnType<typeof createReminderSerialization>;
+  readonly guardIn?: (tx: Tx) => Promise<void>;
+  readonly prepareScheduleCause?: () => Promise<(tx: Tx) => Promise<unknown>>;
+  readonly pi: Harness;
+  readonly nativeId: ConversationId;
+  readonly sessionId: string;
+  readonly jobs: LifecycleJobs;
+  readonly authorize: () => Promise<void>;
+  readonly authorizeCancel?: () => Promise<void>;
+  readonly submit: (text: string, operationId: string) => Promise<unknown>;
+  readonly metadata: MetadataTransaction;
+  readonly persist: () => Promise<void>;
+  readonly now?: () => number;
+}) => {
+  const now = services.now ?? Date.now;
+  const serial = services.serialize ?? createReminderSerialization();
   const jobId = (id: string): string =>
     `cerebro-reminder:${services.sessionId}:${id}`;
   const read = async (id: string): Promise<StoredReminder | undefined> => {
@@ -201,6 +210,7 @@ export const createConversationReminders = (services: {
     });
   const admit = (id: string, input: ReminderInput): Promise<StoredReminder> =>
     services.pi.commit(async (tx) => {
+      await services.guardIn?.(tx);
       const doc = await tx.doc(Reminders, services.nativeId);
       const existing = doc.reminders[id];
       const digest = fingerprint(input);
@@ -238,7 +248,8 @@ export const createConversationReminders = (services: {
   const schedule = async (
     input: ReminderInput,
     operationId: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    toolCommit?: <A>(change: (tx: Tx) => Promise<A>) => Promise<A>
   ): Promise<ChatReminder> => {
     await services.authorize();
     signal?.throwIfAborted();
@@ -271,7 +282,17 @@ export const createConversationReminders = (services: {
         }
         return publicReminder(existing);
       }
-      await services.metadata(async () => {
+      const cause = toolCommit
+        ? await services.prepareScheduleCause?.()
+        : undefined;
+      const firstWrite =
+        toolCommit ??
+        ((change) => services.pi.commit(change, piContext(signal)));
+      await firstWrite(async (tx) => {
+        await services.guardIn?.(tx);
+        if (!retained) {
+          await cause?.(tx);
+        }
         signal?.throwIfAborted();
         const pending = services.jobs.get(jobId(id));
         if (pending) {
@@ -333,6 +354,7 @@ export const createConversationReminders = (services: {
         }
       }
       const cancelled = await services.pi.commit(async (tx) => {
+        await services.guardIn?.(tx);
         const doc = await tx.doc(Reminders, services.nativeId);
         const reminder = doc.reminders[id];
         if (!reminder) {
@@ -389,6 +411,7 @@ export const createConversationReminders = (services: {
           return { rescheduleAt: now() + RETRY_MS };
         }
         await services.pi.commit(async (tx) => {
+          await services.guardIn?.(tx);
           const doc = await tx.doc(Reminders, services.nativeId);
           const value = doc.reminders[id];
           if (value?.state === "scheduled" && value.runAt === occurrence) {
@@ -399,6 +422,7 @@ export const createConversationReminders = (services: {
         return;
       }
       const updated = await services.pi.commit(async (tx) => {
+        await services.guardIn?.(tx);
         const doc = await tx.doc(Reminders, services.nativeId);
         const value = doc.reminders[id];
         if (
@@ -513,7 +537,8 @@ export const createConversationReminders = (services: {
         const value = await schedule(
           input,
           `tool:${api.taskId}`,
-          context.abortSignal
+          context.abortSignal,
+          (change) => api.commit(change, context)
         );
         return {
           details: value,

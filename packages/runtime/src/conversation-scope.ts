@@ -1,8 +1,9 @@
-import { normalizeEventAdmission } from "@cerebro/contracts/bot-routing";
+/* oxlint-disable no-await-in-loop -- Profile retries and exact restoration depend on the previous native boundary. */
 import type { EventAddress } from "@cerebro/contracts/events";
 import {
   Denied,
   InvalidInput,
+  Unavailable,
   NotFound,
   failureToHttp,
   toContractFailure,
@@ -10,47 +11,62 @@ import {
 import type { ContractFailure } from "@cerebro/contracts/failures";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type {
-  ChatActivity,
   ChatControl as ChatControlValue,
-  ChatObservation,
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
 import { ChatControl } from "@cerebro/contracts/session-service";
 import { TeamEventReturnSchema } from "@cerebro/contracts/team-events";
 import { TeamReportDeliverySchema } from "@cerebro/contracts/work";
-import { isInternalToolName } from "@cerebro/tools/tool-names";
 import type { Provider } from "@earendil-works/pi-ai/models";
-import { LiveDoc } from "@earendil-works/pi-durable";
+import { configure } from "@earendil-works/pi-durable";
 import type {
   AgentChange,
   Conversation,
-  ConversationView,
   Extension,
   Harness,
+  Tx,
 } from "@earendil-works/pi-durable";
 import type { PiHarness } from "agents/harness/pi";
 import type { LifecycleJobs } from "agents/lifecycle";
 import { Effect, Result, Schema } from "effect";
 
+import type { createApprovalStore } from "./approval-store.ts";
 import { companySkillsExtension } from "./company-skills.ts";
-import { createConversationCompaction } from "./conversation-compaction.ts";
+import {
+  Bindings,
+  ProfileChanged,
+  profileKey,
+  requireProfileIn,
+  sameProfile,
+} from "./conversation-bindings.ts";
+import type { ProfileIdentity } from "./conversation-bindings.ts";
+import {
+  nativeDrainIn,
+  oldestHeldEventIn,
+  selectedRegistrationsIn,
+} from "./conversation-drain.ts";
+import { createConversationEventScope } from "./conversation-event-scope.ts";
+import { observeConversation } from "./conversation-observation.ts";
+import {
+  createConversationProfile,
+  profileInstructions,
+} from "./conversation-profile.ts";
+import type {
+  ConversationProfile,
+  ProfileState,
+} from "./conversation-profile.ts";
 import { conversationProvider } from "./conversation-provider.ts";
-import { createConversationReminders } from "./conversation-reminders.ts";
+import { createReminderSerialization } from "./conversation-reminders.ts";
 import { createConversationResources } from "./conversation-resources.ts";
-import { createConversationWork } from "./conversation-work.ts";
+import {
+  conversationSnapshot,
+  snapshotAccessTools,
+} from "./conversation-snapshot.ts";
 import type { SearchResult } from "./conversation-work.ts";
-import { terminalNoticeIn } from "./coordinator-event-content.ts";
 import type { BotEventScope, CoordinatorEvents } from "./coordinator-events.ts";
 import type { ScanWorkKeys } from "./coordinator-history.ts";
-import { sameWorkSource } from "./coordinator-ledger.ts";
-import { createCoordinatorReport } from "./coordinator-report.ts";
-import { createCoordinatorSource } from "./coordinator-source.ts";
-import { createCoordinatorSubscriptions } from "./coordinator-subscriptions.ts";
-import { createCoordinatorWeb } from "./coordinator-web.ts";
-import { createCoordinatorWork } from "./coordinator-work.ts";
-import { createGenerativeUiTool } from "./generative-ui-tool.ts";
-import { chatSnapshot, piContext, snapshotToolIds } from "./pi-harness.ts";
-import { createRunLimits } from "./run-limits.ts";
+import { sameWorkSource, CoordinatorAdmissions } from "./coordinator-ledger.ts";
+import { piContext } from "./pi-harness.ts";
 import type {
   MetadataTransaction,
   SessionHostConfiguration,
@@ -77,7 +93,20 @@ const decisionSchema = Schema.Struct({
   decision: Schema.Literals(["allow", "deny"]),
 });
 
-interface ConversationScopeServices {
+export interface ConversationScopeServices {
+  readonly publication?: {
+    readonly identity: ProfileIdentity;
+    readonly legacy: boolean;
+    readonly primary: boolean;
+    readonly resolve: (
+      version: number | "latest"
+    ) => Promise<SessionHostConfiguration>;
+    readonly reconcile: (version: number) => Promise<void>;
+    readonly recover: () => void;
+    readonly setProvider: (provider: Provider) => void;
+    readonly deleteProvider: (id: string) => void;
+    readonly uninstall: (extension: Extension) => void;
+  };
   readonly events: CoordinatorEvents;
   readonly scanWorkKeys: ScanWorkKeys;
   readonly jobs: LifecycleJobs;
@@ -103,70 +132,160 @@ export interface ConversationRegistration {
 }
 
 export class ConversationScope {
-  readonly runtime: ReturnType<typeof createConversationResources>;
   readonly native: Conversation;
   private readonly services: ConversationScopeServices;
-  readonly work: ReturnType<typeof createConversationWork>;
-  readonly reminders: ReturnType<typeof createConversationReminders>;
-  readonly compaction: ReturnType<typeof createConversationCompaction>;
-  readonly coordination: ReturnType<typeof createCoordinatorWork>;
-  readonly routeHuman: ReturnType<typeof createCoordinatorSource>;
-  readonly receiveReport: ReturnType<typeof createCoordinatorReport>;
-  readonly subscriptions: ReturnType<typeof createCoordinatorSubscriptions>;
-  readonly web: ReturnType<typeof createCoordinatorWeb>;
+  private readonly shared: ProfileState;
+  private current: ConversationProfile | undefined;
+  private unavailable = false;
+  private readonly profiles = new Map<string, ConversationProfile>();
+  private readonly nativeOperations = new Set<symbol>();
+  private advancing: Promise<void> | undefined;
+
+  private get profile(): ConversationProfile {
+    if (this.unavailable || !this.current) {
+      throw new Unavailable({
+        reason: "The conversation profile is unavailable.",
+      });
+    }
+    return this.current;
+  }
+  private recoverProfile(): void {
+    this.unavailable = true;
+    queueMicrotask(() => this.services.publication?.recover());
+  }
+  get runtime() {
+    return this.profile.runtime;
+  }
+  get work() {
+    return this.profile.work;
+  }
+  get reminders() {
+    return this.profile.reminders;
+  }
+  get compaction() {
+    return this.profile.compaction;
+  }
+  get coordination() {
+    return this.profile.coordination;
+  }
 
   private constructor(
-    runtime: ReturnType<typeof createConversationResources>,
     native: Conversation,
     services: ConversationScopeServices,
-    work: ReturnType<typeof createConversationWork>,
-    reminders: ReturnType<typeof createConversationReminders>,
-    compaction: ReturnType<typeof createConversationCompaction>,
-    coordination: ReturnType<typeof createCoordinatorWork>
+    approvals: ReturnType<typeof createApprovalStore>
   ) {
-    this.runtime = runtime;
     this.native = native;
     this.services = services;
-    this.work = work;
-    this.reminders = reminders;
-    this.compaction = compaction;
-    this.coordination = coordination;
-    const source = {
-      pi: services.pi,
-      native,
-      runtime,
-      coordination,
-      notify: () => this.scheduleNotify(),
-    };
-    this.routeHuman = createCoordinatorSource(source);
-    this.web = createCoordinatorWeb({
-      pi: services.pi,
-      native,
-      runtime,
-      events: services.events,
-      replayHandled: this.routeHuman,
-    });
-    this.receiveReport = createCoordinatorReport({
-      ...source,
-      persist: () => services.storage.sync(),
-      events: services.events,
-    });
-    this.subscriptions = createCoordinatorSubscriptions({
-      pi: services.pi,
-      nativeId: native.id,
-      coordination,
-      ownerContext: () => run(runtime.configuration.ownerContext()),
-      authorize: (context) => runtime.authorize(context, "coordinate"),
-      checkDependencies: async (context, dependencies) => {
-        await runtime.authorize(context, "transfer");
-        await run(
-          runtime.configuration.checkDependencies(context, dependencies, {
-            deadlineAt: Date.now() + 30_000,
-          })
-        );
+    this.shared = {
+      approvals,
+      serialize: createReminderSerialization(),
+      guardIn: (identity) => (tx) => this.guardIn(tx, identity),
+      requireCurrent: (identity) => {
+        if (!sameProfile(this.profile.identity, identity)) {
+          throw new ProfileChanged();
+        }
       },
-      readEvent: services.events.read,
-    });
+      nativeGuardIn: (identity) => (tx) => this.guardIn(tx, identity, true),
+      submit: (text, operationId) =>
+        this.nativeOperation(
+          async (profile) => {
+            await profile.runtime.authorize(
+              await run(profile.runtime.configuration.ownerContext()),
+              "send"
+            );
+          },
+          () =>
+            services.harness.submit(text, {
+              operationId,
+              session: String(native.id),
+            }),
+          true
+        ),
+      dispatchAccess: () => {
+        const { runtime } = this.profile;
+        const currentConfiguration = runtime.configuration;
+        return Promise.resolve({
+          services: currentConfiguration.coordination,
+          authorize: async (signal) =>
+            runtime.authorize(
+              await run(currentConfiguration.ownerContext()),
+              "coordinate",
+              signal
+            ),
+          checkDependencies: async (dependencies, signal) => {
+            const owner = await run(currentConfiguration.ownerContext());
+            await runtime.authorize(owner, "transfer", signal);
+            await run(
+              currentConfiguration.checkDependencies(owner, dependencies, {
+                deadlineAt: Date.now() + 30_000,
+                signal,
+              })
+            );
+          },
+        });
+      },
+    };
+  }
+
+  private async guardIn(
+    tx: Tx,
+    identity: ProfileIdentity,
+    native = false
+  ): Promise<void> {
+    if (this.unavailable) {
+      throw new Unavailable({
+        reason: "The conversation profile is unavailable.",
+      });
+    }
+    if (this.services.publication) {
+      const binding = await requireProfileIn(
+        tx,
+        this.runtime.configuration.address.sessionId,
+        identity
+      );
+      if (native && binding.refresh) {
+        throw new Unavailable({
+          reason: "The conversation is waiting for a safe profile boundary.",
+          retryAfter: 1,
+        });
+      }
+    } else if (this.current && !sameProfile(this.current.identity, identity)) {
+      throw new ProfileChanged();
+    }
+  }
+
+  private async nativeOperation<A>(
+    authorize: (profile: ConversationProfile) => Promise<void>,
+    operation: () => Promise<A>,
+    admission = false,
+    signal?: AbortSignal
+  ): Promise<A> {
+    for (;;) {
+      const { profile } = this;
+      const token = Symbol("native-profile-operation");
+      try {
+        try {
+          signal?.throwIfAborted();
+          await authorize(profile);
+          await this.services.pi.commit(async (tx) => {
+            signal?.throwIfAborted();
+            await this.guardIn(tx, profile.identity, admission);
+            this.nativeOperations.add(token);
+          }, piContext());
+        } catch (error) {
+          if (profile !== this.profile) {
+            if (admission) {
+              throw new ProfileChanged();
+            }
+            continue;
+          }
+          throw error;
+        }
+        return await operation();
+      } finally {
+        this.nativeOperations.delete(token);
+      }
+    }
   }
 
   static async open(
@@ -174,155 +293,332 @@ export class ConversationScope {
     services: ConversationScopeServices,
     bind: (registration: ConversationRegistration) => Promise<Conversation>
   ): Promise<ConversationScope> {
-    const runtime = await services.metadata(() =>
-      createConversationResources(
-        configuration,
-        services.storage,
-        services.metadata
-      )
+    const identity = services.publication?.identity ?? {
+      agentVersion: configuration.agent.version,
+      policyVersion: 0,
+    };
+    const legacy = services.publication?.legacy ?? true;
+    const runtime = createConversationResources(
+      configuration,
+      services.storage,
+      services.metadata
     );
-    const extensions: Extension[] = [
-      {
-        name: `cerebro-tools:${configuration.address.sessionId}`,
-        tools: runtime.tools,
-      },
-    ];
-    const companySkills = configuration.skills ?? [];
-    if (companySkills.length > 0) {
-      const extension = await companySkillsExtension(companySkills);
-      extensions.push({
-        ...extension,
-        name: `cerebro-skills:${configuration.address.sessionId}`,
-      });
-    }
+    const suffix = legacy ? undefined : profileKey(identity);
     const provider = conversationProvider(
       configuration.address.sessionId,
       configuration.provider.model,
-      runtime.provider
+      runtime.provider,
+      suffix
     );
+    const extension = {
+      name: `cerebro-tools:${configuration.address.sessionId}${suffix ? `:${suffix}` : ""}`,
+      tools: runtime.tools,
+    };
+    const initialExtensions: Extension[] = [extension];
+    if (configuration.skills?.length) {
+      initialExtensions.push({
+        ...(await companySkillsExtension(configuration.skills)),
+        name: `cerebro-skills:${configuration.address.sessionId}${suffix ? `:${suffix}` : ""}`,
+      });
+    }
     const native = await bind({
       agent: {
-        extensions,
-        instructions: configuration.agent.instructions,
+        extensions: initialExtensions,
+        instructions: profileInstructions(configuration, identity),
+        tools: null,
+        modelTools: null,
         model: {
           modelId: configuration.provider.model.id,
           provider: provider.id,
         },
       },
-      extensions,
+      extensions: initialExtensions,
       provider,
     });
-    const authorize = async (signal?: AbortSignal) => {
-      const owner = await run(configuration.ownerContext());
-      await runtime.authorize(owner, "send", signal);
-    };
-    const work = createConversationWork({
-      address: configuration.address,
-      authorize,
-      ensureDeadline: (childId, deadlineAt) =>
-        services.metadata(async () => {
-          const id = `cerebro-child:${configuration.address.sessionId}:${childId}`;
-          if (!services.jobs.get(id)) {
-            await services.jobs.push({
-              id,
-              fn: "cerebro-child",
-              time: deadlineAt,
-              payload: { sessionId: configuration.address.sessionId, childId },
-              singleflight: true,
-            });
-          }
-        }),
-      nativeId: native.id,
-      pi: services.pi,
-      search: services.search,
-    });
-    const reminders = createConversationReminders({
-      authorize,
-      authorizeCancel: async () =>
-        runtime.authorize(await run(configuration.ownerContext()), "stop"),
-      jobs: services.jobs,
-      metadata: services.metadata,
-      nativeId: native.id,
-      persist: () => services.storage.sync(),
-      pi: services.pi,
-      sessionId: configuration.address.sessionId,
-      submit: (text, operationId) =>
-        services.harness.submit(text, {
-          operationId,
-          session: String(native.id),
-        }),
-    });
-    const compaction = createConversationCompaction({
-      authorize,
-      jobs: services.jobs,
-      metadata: services.metadata,
-      nativeId: native.id,
-      persist: () => services.storage.sync(),
-      pi: services.pi,
-      sessionId: configuration.address.sessionId,
-      waitUntil: services.waitUntil,
-    });
-    const coordination = createCoordinatorWork({
-      terminalNoticeIn: terminalNoticeIn(services.events),
-      returnEventIn: services.events.returnEventIn,
-      address: configuration.address,
-      authorize: async (signal) =>
-        runtime.authorize(
-          await run(configuration.ownerContext()),
-          "coordinate",
-          signal
-        ),
-      jobs: services.jobs,
-      metadata: services.metadata,
-      nativeId: native.id,
-      persist: () => services.storage.sync(),
-      pi: services.pi,
-      services: configuration.coordination,
-      scanWorkKeys: services.scanWorkKeys,
-      contentAccess: {
-        check: async (dependencies, signal) => {
-          const context = await run(configuration.ownerContext());
-          await runtime.authorize(context, "transfer", signal);
-          await run(
-            configuration.checkDependencies(context, dependencies, {
-              deadlineAt: Date.now() + 30_000,
-              signal,
-            })
-          );
-        },
-        retain: (dependencies) =>
-          configuration.importDependencies?.(dependencies),
-      },
-      waitUntil: services.waitUntil,
-    });
-    const scope = new ConversationScope(
-      runtime,
-      native,
-      services,
-      work,
-      reminders,
-      compaction,
-      coordination
-    );
+    const scope = new ConversationScope(native, services, runtime.approvals);
+    const profile = await scope.prepare(configuration, identity, legacy);
+    scope.current = profile;
     services.install({
-      name: `cerebro-tools:${configuration.address.sessionId}`,
-      hooks: [...scope.work.hooks, ...createRunLimits({ pi: services.pi })],
-      tasks: scope.coordination.tasks,
-      tools: [
-        ...runtime.tools,
-        ...scope.work.tools,
-        ...scope.reminders.tools,
-        ...scope.coordination.tools,
-        ...scope.subscriptions.tools,
-        createGenerativeUiTool({ authorize }),
-      ],
+      name: `cerebro-state:${configuration.address.sessionId}`,
+      tasks: profile.coordination.tasks,
     });
+    if (services.publication) {
+      services.pi.subscribeCommits((publication) => {
+        for (const change of publication.changes) {
+          if (
+            change.type !== "document" ||
+            change.record.kind !== Bindings.definition.kind ||
+            !change.value
+          ) {
+            continue;
+          }
+          try {
+            const versions = Schema.decodeUnknownSync(
+              Schema.Struct({
+                conversations: Schema.Record(
+                  Schema.String,
+                  Schema.Struct({
+                    agentVersion: Schema.Number,
+                    policyVersion: Schema.Literals([0, 1]),
+                  })
+                ),
+              })
+            )(change.value);
+            const next =
+              versions.conversations[configuration.address.sessionId];
+            if (!next || sameProfile(scope.profile.identity, next)) {
+              continue;
+            }
+            const prepared = scope.profiles.get(profileKey(next));
+            if (!prepared) {
+              throw new Error(
+                "The adopted conversation profile was not prepared."
+              );
+            }
+            scope.current = prepared;
+          } catch {
+            scope.recoverProfile();
+          }
+        }
+      });
+    }
     if (configuration.notify) {
       const watch = await native.watch(piContext());
       watch.start(() => scope.scheduleNotify());
       await scope.scheduleNotify();
     }
     return scope;
+  }
+
+  private async prepare(
+    configuration: SessionHostConfiguration,
+    identity: ProfileIdentity,
+    legacy = false
+  ): Promise<ConversationProfile> {
+    if (configuration.agent.version !== identity.agentVersion) {
+      throw new Unavailable({
+        reason: "The prepared definition does not match its profile identity.",
+      });
+    }
+    const profile = await createConversationProfile(
+      configuration,
+      this.services,
+      this.native,
+      this.shared,
+      identity,
+      () => this.scheduleNotify(),
+      legacy
+    );
+    for (const extension of profile.registration.extensions) {
+      this.services.install(extension);
+    }
+    this.services.publication?.setProvider(profile.registration.provider);
+    this.profiles.set(profileKey(identity), profile);
+    return profile;
+  }
+
+  private async prepareTarget(
+    target: ProfileIdentity
+  ): Promise<ConversationProfile> {
+    try {
+      const prepared = this.profiles.get(profileKey(target));
+      if (prepared) {
+        return prepared;
+      }
+      const configuration = await this.services.publication?.resolve(
+        target.agentVersion
+      );
+      if (!configuration) {
+        throw new Unavailable({ reason: "The publication is unavailable." });
+      }
+      return await this.prepare(configuration, target);
+    } catch (error) {
+      this.recoverProfile();
+      throw error;
+    }
+  }
+
+  async restoreProfiles(
+    providers: readonly (string | undefined)[],
+    legacyVersion: number | null
+  ): Promise<void> {
+    const { publication } = this.services;
+    if (!publication) {
+      return;
+    }
+    const { sessionId } = this.runtime.configuration.address;
+    const prefixes = [
+      `cerebro:${sessionId}`,
+      `cerebro-tools:${sessionId}`,
+      `cerebro-skills:${sessionId}`,
+    ];
+    for (const provider of new Set(providers)) {
+      const prefix = prefixes.find(
+        (value) => provider === value || provider?.startsWith(`${value}:`)
+      );
+      if (!provider || !prefix) {
+        continue;
+      }
+      const parts = provider
+        .slice(prefix.length)
+        .match(/^:v(?<version>[0-9]+):p(?<policy>[01])$/u);
+      if (provider !== prefix && !parts) {
+        throw new Unavailable({
+          reason: "A native profile selection is invalid.",
+        });
+      }
+      const identity: ProfileIdentity = parts
+        ? {
+            agentVersion: Number(parts.groups?.version),
+            policyVersion: parts.groups?.policy === "1" ? 1 : 0,
+          }
+        : { agentVersion: legacyVersion ?? 0, policyVersion: 0 };
+      if (identity.agentVersion <= 0) {
+        throw new Unavailable({
+          reason: "A native profile registration has no saved definition.",
+        });
+      }
+      if (this.profiles.has(profileKey(identity))) {
+        continue;
+      }
+      await this.prepare(
+        await publication.resolve(identity.agentVersion),
+        identity,
+        provider === prefix
+      );
+    }
+  }
+
+  async advancePublication(eventId: string): Promise<boolean> {
+    if (!this.services.publication?.primary) {
+      return true;
+    }
+    this.advancing ??= this.advance(eventId);
+    const { advancing } = this;
+    try {
+      await advancing;
+    } finally {
+      if (this.advancing === advancing) {
+        this.advancing = undefined;
+      }
+    }
+    const bindings = await this.services.pi.snapshot(Bindings, piContext());
+    const binding =
+      bindings?.conversations[this.runtime.configuration.address.sessionId];
+    return (
+      !!binding &&
+      !binding.refresh &&
+      (!binding.releaseEvent || binding.releaseEvent === eventId)
+    );
+  }
+
+  private async advance(_eventId: string): Promise<void> {
+    const { publication } = this.services;
+    if (!publication) {
+      return;
+    }
+    const { address } = this.runtime.configuration;
+    const initialBindings = await this.services.pi.snapshot(
+      Bindings,
+      piContext()
+    );
+    let binding = initialBindings?.conversations[address.sessionId];
+    if (!binding) {
+      return;
+    }
+    if (binding.releaseEvent) {
+      await this.services.pi.commit(async (tx) => {
+        const bindings = await tx.doc(Bindings);
+        const current = bindings.conversations[address.sessionId];
+        if (current?.releaseEvent) {
+          current.releaseEvent = await oldestHeldEventIn(tx, this.native.id);
+        }
+      }, piContext());
+      return;
+    }
+    if (!binding.refresh) {
+      const latest = await publication.resolve("latest");
+      const target: ProfileIdentity = {
+        agentVersion: latest.agent.version,
+        policyVersion: 1,
+      };
+      if (sameProfile(binding, target)) {
+        return;
+      }
+      await this.services.pi.commit(async (tx) => {
+        const bindings = await tx.doc(Bindings);
+        const current = bindings.conversations[address.sessionId];
+        if (
+          current &&
+          !current.refresh &&
+          !current.releaseEvent &&
+          !sameProfile(current, target)
+        ) {
+          current.refresh = target;
+        }
+      }, piContext());
+      const frozenBindings = await this.services.pi.snapshot(
+        Bindings,
+        piContext()
+      );
+      binding = frozenBindings?.conversations[address.sessionId];
+    }
+    const target = binding?.refresh;
+    if (!target) {
+      return;
+    }
+    const candidate = await this.prepareTarget(target);
+    const activated = await this.services.pi.commit(async (tx) => {
+      const bindings = await tx.doc(Bindings);
+      const current = bindings.conversations[address.sessionId];
+      if (
+        !current?.refresh ||
+        !sameProfile(current.refresh, target) ||
+        this.nativeOperations.size ||
+        this.shared.approvals.hasPending()
+      ) {
+        return false;
+      }
+      const leases = await tx.doc(CoordinatorAdmissions, this.native.id);
+      if (
+        Object.values(leases.leases).some((until) => until > Date.now()) ||
+        !(await nativeDrainIn(tx, this.native.id))
+      ) {
+        return false;
+      }
+      const releaseEvent = await oldestHeldEventIn(tx, this.native.id);
+      await configure(tx, this.native.id, candidate.registration.agent);
+      current.agentVersion = target.agentVersion;
+      current.policyVersion = target.policyVersion;
+      current.refresh = null;
+      current.releaseEvent = releaseEvent;
+      return true;
+    }, piContext());
+    if (activated) {
+      await publication.reconcile(target.agentVersion);
+      const selected = await this.services.pi.commit(
+        (tx) => selectedRegistrationsIn(tx, this.native.id),
+        piContext()
+      );
+      for (const [key, profile] of this.profiles) {
+        if (
+          profile === this.current ||
+          (profile.identity.policyVersion === 0 &&
+            profile.identity.agentVersion === binding?.legacyVersion) ||
+          profile.registration.extensions.some((extension) =>
+            selected.has(extension.name)
+          ) ||
+          selected.has(profile.registration.provider.id)
+        ) {
+          continue;
+        }
+        for (const extension of profile.registration.extensions) {
+          publication.uninstall(extension);
+        }
+        publication.deleteProvider(profile.registration.provider.id);
+        this.profiles.delete(key);
+      }
+    }
   }
 
   async restore(): Promise<void> {
@@ -338,208 +634,67 @@ export class ConversationScope {
   }
 
   async eventScope(): Promise<BotEventScope> {
-    const { configuration } = this.runtime;
-    const owner = await run(configuration.ownerContext());
-    return {
+    const { profile } = this;
+    return await createConversationEventScope(profile, {
       native: this.native,
-      agentVersion: configuration.agent.version,
-      ownerPrincipalId: owner.represented?.id ?? owner.actor.id,
-      admissions: this.coordination.admissions,
-      prepareRoute: async (input, context) => {
-        if (configuration.coordination) {
-          return await this.subscriptions.prepare(input, context);
-        }
-        if (normalizeEventAdmission(input).routing.kind !== "automatic") {
-          throw new Denied({
-            code: "revoked",
-            reason: "Team coordination is disabled.",
-          });
-        }
-        return () => Promise.resolve({ kind: "coordinator" as const });
-      },
-      prepareLocalControl: this.web.prepareLocalControl,
-      routingAccess: async (context, dependencies) => {
-        if (!configuration.coordination) {
-          throw new Denied({
-            code: "revoked",
-            reason: "Team coordination is disabled.",
-          });
-        }
-        await this.runtime.authorize(context, "coordinate");
-        await this.runtime.authorize(context, "transfer");
-        await run(
-          configuration.checkDependencies(context, dependencies, {
-            deadlineAt: Date.now() + 30_000,
-          })
-        );
-      },
-      readAccess: (context) => this.runtime.authorize(context, "read"),
-      authorize: async (event, context, signal, action = "deliver") => {
-        const caller = context ?? (await run(configuration.ownerContext()));
-        let permission: "read" | "coordinate" | "send" = "send";
-        if (action === "read") {
-          permission = "read";
-        } else if (configuration.coordination || action === "control") {
-          permission = "coordinate";
-        }
-        await this.runtime.authorize(caller, permission, signal);
-        if (action !== "read") {
-          await this.runtime.authorize(caller, "transfer", signal);
-        }
-        await run(
-          configuration.checkDependencies(caller, event.dependencies, {
-            deadlineAt: Date.now() + 30_000,
-            signal,
-          })
-        );
-      },
-    };
+      publication: !!this.services.publication,
+      isCurrent: () => this.current === profile && !this.unavailable,
+      advancePublication: (eventId) => this.advancePublication(eventId),
+    });
   }
 
   async notify(): Promise<void> {
-    const { configuration } = this.runtime;
-    if (!configuration.notify) {
+    for (;;) {
+      const { profile } = this;
+      const { configuration } = profile.runtime;
+      if (!configuration.notify) {
+        return;
+      }
+      const owner = await run(configuration.ownerContext());
+      const snapshot = await this.read(owner);
+      if (profile !== this.profile) {
+        continue;
+      }
+      await configuration.notify(snapshot);
       return;
     }
-    const owner = await run(configuration.ownerContext());
-    const snapshot = await this.read(owner);
-    await configuration.notify(snapshot);
   }
-  private async snapshot(view: ConversationView): Promise<ChatSnapshot> {
-    const { runtime } = this;
-    const { pi } = this.services;
-    const approvals = await pi.commit(
-      () => runtime.approvals.all(),
-      piContext()
-    );
-    const [children, known, reminders, inspection, live, backgroundWork] =
-      await Promise.all([
-        this.work.children(),
-        this.work.known(),
-        this.reminders.list(),
-        pi.inspect(piContext()),
-        pi.snapshot(LiveDoc, this.native.id, piContext()),
-        this.coordination.current(),
-      ]);
-    const childrenByNativeId = new Map(
-      known.map((child) => [child.nativeId, child])
-    );
-    const activity: ChatActivity = {
-      ...(backgroundWork ? { backgroundWork } : {}),
-      children,
-      reminders,
-      compactions: (live?.compactions ?? []).map((compaction) => ({
-        id: String(compaction.taskId),
-        reason: compaction.reason,
-        attempt: compaction.attempt,
-        blocking: compaction.blocking,
-        ...(compaction.retry ? { retryAt: compaction.retry.at } : {}),
-      })),
-      ...(live?.compactionFailure
-        ? {
-            compactionFailure:
-              "Context compaction failed. Try again after checking model access.",
-          }
-        : {}),
-      ...(runtime.configuration.origin
-        ? {
-            origin: {
-              conversationId:
-                runtime.configuration.origin.address.conversationId,
-              entryId: runtime.configuration.origin.entryId,
-            },
-          }
-        : {}),
-      tasks: inspection.tasks
-        .filter(
-          ({ record }) =>
-            record.conversationId === this.native.id ||
-            childrenByNativeId.has(record.conversationId)
-        )
-        .map(({ record }) => {
-          const child = childrenByNativeId.get(record.conversationId);
-          const ownerTaskId = record.owner ?? child?.ownerTaskId;
-          return {
-            id: String(record.id),
-            conversationId:
-              child?.id ?? runtime.configuration.address.conversationId,
-            kind: record.kind,
-            background: record.background === true,
-            ...(ownerTaskId === undefined
-              ? {}
-              : { ownerTaskId: String(ownerTaskId) }),
-            state:
-              record.state.status === "terminal"
-                ? "completing"
-                : record.state.status,
-          };
-        }),
-    };
-    const snapshot = chatSnapshot({
-      address: runtime.configuration.address,
-      agentVersion: runtime.configuration.agent.version,
-      approvals,
-      view,
-    });
-    const visibleOperations = new Set([
-      ...snapshot.messages.map((message) => message.operationId),
-      ...snapshot.queuedInputs.map((input) => input.operationId),
-    ]);
-    const pendingInputs = await this.services.events.pendingWeb(this.native.id);
-    const pending = pendingInputs.filter(
-      (input) => !visibleOperations.has(input.operationId)
-    );
-    return {
-      ...snapshot,
-      queuedInputs: [...snapshot.queuedInputs, ...pending],
-      activity,
-      busy:
-        snapshot.busy ||
-        pending.length > 0 ||
-        activity.compactions.some(
-          (compaction) => compaction.reason === "manual"
-        ),
-    };
-  }
-
-  private async accessTools(
-    snapshot: ChatSnapshot
-  ): Promise<readonly string[]> {
-    return [
-      ...new Set([
-        ...snapshotToolIds(snapshot),
-        ...(await this.work.toolIds()),
-      ]),
-    ].filter((name) => !isInternalToolName(name));
-  }
-
   private async control(
     command: ChatControlValue,
     context: ExecutionContext,
     signal?: AbortSignal
   ) {
+    const { profile } = this;
+    const { runtime, coordination, reminders, compaction } = profile;
+    let permission: "coordinate" | "stop" | "send" = "send";
     if (command.kind === "stop-work") {
-      await this.runtime.authorize(context, "coordinate", signal);
-      await this.coordination.cancel({ ...command, signal });
+      permission = "coordinate";
+    } else if (
+      command.kind === "stop-child" ||
+      command.kind === "cancel-schedule"
+    ) {
+      permission = "stop";
+    }
+    await runtime.authorize(context, permission, signal);
+    if (command.kind === "stop-work") {
+      await coordination.cancel({ ...command, signal });
       return { id: command.workId, kind: command.kind };
     }
-    await this.runtime.authorize(
-      context,
-      command.kind === "stop-child" || command.kind === "cancel-schedule"
-        ? "stop"
-        : "send",
-      signal
-    );
     if (command.kind === "stop-child") {
-      await this.work.stop(command.childId);
+      await this.nativeOperation(
+        (active) => active.runtime.authorize(context, "stop", signal),
+        () => this.work.stop(command.childId),
+        false,
+        signal
+      );
       return { id: command.childId, kind: command.kind };
     }
     if (command.kind === "cancel-schedule") {
-      const value = await this.reminders.cancel(command.scheduleId);
+      const value = await reminders.cancel(command.scheduleId);
       return { id: value.id, kind: command.kind };
     }
     if (command.kind === "schedule") {
-      const value = await this.reminders.schedule(
+      const value = await reminders.schedule(
         command,
         command.operationId,
         signal
@@ -547,7 +702,7 @@ export class ConversationScope {
       return { id: value.id, kind: command.kind };
     }
     return {
-      id: String(await this.compaction.request(command)),
+      id: String(await compaction.request(command)),
       kind: command.kind,
     };
   }
@@ -556,151 +711,72 @@ export class ConversationScope {
     context: ExecutionContext,
     signal?: AbortSignal
   ): Promise<ChatSnapshot> {
-    const { runtime } = this;
-    await runtime.authorize(context, "read", signal);
-    const watch = await this.native.watch(piContext(signal));
-    try {
-      const snapshot = await this.snapshot(watch.value);
-      await runtime.authorize(
-        context,
-        "read",
-        signal,
-        await this.accessTools(snapshot)
-      );
-      return snapshot;
-    } finally {
-      await watch.stop();
-    }
+    return await this.readFrame(context, signal);
   }
 
-  private async observe(
+  private async readFrame(
     context: ExecutionContext,
-    signal: AbortSignal
-  ): Promise<Response> {
-    const { runtime } = this;
-    await runtime.authorize(context, "read", signal);
-    const abort = new AbortController();
-    const nativeContext = piContext(AbortSignal.any([signal, abort.signal]));
-    const watch = await this.native.watch(nativeContext);
-    let initial: ChatSnapshot;
-    try {
-      initial = await this.snapshot(watch.value);
-      await runtime.authorize(
-        context,
-        "read",
-        signal,
-        await this.accessTools(initial)
-      );
-    } catch (error) {
-      await watch.stop();
-      throw error;
+    signal?: AbortSignal,
+    emit?: (snapshot: ChatSnapshot) => void
+  ): Promise<ChatSnapshot> {
+    for (;;) {
+      const { profile } = this;
+      let snapshot: ChatSnapshot;
+      try {
+        await profile.runtime.authorize(context, "read", signal);
+        const watch = await this.native.watch(piContext(signal));
+        try {
+          snapshot = await conversationSnapshot(
+            {
+              pi: this.services.pi,
+              events: this.services.events,
+              native: this.native,
+            },
+            watch.value,
+            profile
+          );
+          await profile.runtime.authorize(
+            context,
+            "read",
+            signal,
+            await snapshotAccessTools(snapshot, profile)
+          );
+        } finally {
+          await watch.stop();
+        }
+      } catch (error) {
+        if (profile !== this.profile) {
+          continue;
+        }
+        throw error;
+      }
+      if (profile !== this.profile) {
+        continue;
+      }
+      emit?.(snapshot);
+      return snapshot;
     }
-    const encoder = new TextEncoder();
-    let resumeReader: (() => void) | undefined;
-    let closed = false;
-    let publishing = Promise.resolve();
-    let pendingUpdate = false;
-    let lastFrame = JSON.stringify(initial);
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const close = async () => {
-      if (closed) {
-        return;
-      }
-      closed = true;
-      if (timer) {
-        clearInterval(timer);
-      }
-      resumeReader?.();
-      abort.abort();
-      await watch.stop();
-    };
-    const stream = new ReadableStream<Uint8Array>({
-      cancel: close,
-      pull: () => {
-        resumeReader?.();
-        resumeReader = undefined;
-      },
-      start: (controller) => {
-        const emit = (frame: ChatObservation) =>
-          controller.enqueue(encoder.encode(`${JSON.stringify(frame)}\n`));
-        const denied = async (error: unknown) => {
-          if (closed) {
-            return;
-          }
-          if (error instanceof Denied) {
-            runtime.approvals.revalidate();
-            emit({
-              reason:
-                error.code === "unauthorized" ? "unauthorized" : "revoked",
-              type: "access-denied",
-            });
-            controller.close();
-          } else {
-            controller.error(toContractFailure(error));
-          }
-          await close();
-        };
-        emit({ snapshot: initial, type: "snapshot" });
-        const publish = () => {
-          if (pendingUpdate || closed) {
-            return publishing;
-          }
-          pendingUpdate = true;
-          const previous = publishing;
-          publishing = (async () => {
-            await previous;
-            pendingUpdate = false;
-            try {
-              if ((controller.desiredSize ?? 0) <= 0) {
-                const pending = Promise.withResolvers<boolean>();
-                resumeReader = () => pending.resolve(true);
-                await pending.promise;
-              }
-              if (closed) {
-                return;
-              }
-              const snapshot = await this.snapshot(watch.value);
-              const accessTools = await this.accessTools(snapshot);
-              await runtime.authorize(context, "read", signal, accessTools);
-              const frame = JSON.stringify(snapshot);
-              if (frame !== lastFrame) {
-                emit({ snapshot, type: "snapshot" });
-                lastFrame = frame;
-              }
-            } catch (error) {
-              await denied(error);
-            }
-          })();
-          return publishing;
-        };
-        watch.start(() => publish());
-        timer = setInterval(() => {
-          void publish();
-        }, 1000);
-        const waitForClose = async () => {
-          await watch.closed;
-          if (!closed) {
-            controller.close();
-            await close();
-          }
-        };
-        void waitForClose();
-      },
-    });
-    return new Response(stream, {
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Type": "application/x-ndjson",
-      },
-    });
   }
 
   async handle(request: Request, context: ExecutionContext): Promise<Response> {
+    const retryBody =
+      request.method === "POST" ? await request.clone().text() : undefined;
     try {
-      const { runtime } = this;
+      const { profile } = this;
+      const { runtime } = profile;
       const path = new URL(request.url).pathname;
       if (path === "/observe") {
-        return await this.observe(context, request.signal);
+        return await observeConversation(
+          {
+            native: this.native,
+            pi: this.services.pi,
+            revalidate: this.shared.approvals.revalidate,
+            readFrame: (caller, signal, emit) =>
+              this.readFrame(caller, signal, emit),
+          },
+          context,
+          request.signal
+        );
       }
       if (path === "/read") {
         return Response.json({
@@ -709,11 +785,18 @@ export class ConversationScope {
         });
       }
       if (path === "/stop") {
-        await runtime.authorize(context, "stop", request.signal);
-        const [stopped] = await Promise.all([
-          this.services.harness.abort({ session: String(this.native.id) }),
-          this.services.events.abortPending(this.native.id),
-        ]);
+        const stopped = await this.nativeOperation(
+          (active) => active.runtime.authorize(context, "stop", request.signal),
+          async () => {
+            const [value] = await Promise.all([
+              this.services.harness.abort({ session: String(this.native.id) }),
+              this.services.events.abortPending(this.native.id),
+            ]);
+            return value;
+          },
+          false,
+          request.signal
+        );
         return Response.json({
           status: "ok",
           value: {
@@ -732,7 +815,7 @@ export class ConversationScope {
           onExcessProperty: "error",
         })(body);
         return Response.json(
-          await this.receiveReport(delivery, context, request.signal)
+          await profile.receiveReport(delivery, context, request.signal)
         );
       }
       if (path === "/team-event-return") {
@@ -766,7 +849,7 @@ export class ConversationScope {
         if (runtime.configuration.conversationKind !== "slack") {
           return Response.json({
             status: "ok",
-            value: await this.web.send(
+            value: await profile.web.send(
               command.operationId,
               command.text,
               context,
@@ -775,7 +858,7 @@ export class ConversationScope {
           });
         }
         if (
-          await this.routeHuman(
+          await profile.routeHuman(
             command.operationId,
             command.text,
             context,
@@ -791,12 +874,20 @@ export class ConversationScope {
             },
           });
         }
-        await runtime.authorize(context, "send", request.signal);
-        await this.coordination.rememberHumanOperation(command.operationId);
-        const receipt = await this.services.harness.submit(command.text, {
-          session: String(this.native.id),
-          operationId: command.operationId,
-        });
+        const receipt = await this.nativeOperation(
+          async (active) => {
+            await active.runtime.authorize(context, "send", request.signal);
+          },
+          async () => {
+            await this.coordination.rememberHumanOperation(command.operationId);
+            return await this.services.harness.submit(command.text, {
+              session: String(this.native.id),
+              operationId: command.operationId,
+            });
+          },
+          true,
+          request.signal
+        );
         this.services.waitUntil(this.native.waitForIdle(piContext()));
         return Response.json({ status: "ok", value: receipt });
       }
@@ -835,10 +926,10 @@ export class ConversationScope {
           request.signal
         );
         const { pi } = this.services;
-        const value = await pi.commit(
-          () => runtime.approvals.decide(command.approvalId, command.decision),
-          piContext(request.signal)
-        );
+        const value = await pi.commit(async (tx) => {
+          await runtime.guardIn(tx);
+          return runtime.approvals.decide(command.approvalId, command.decision);
+        }, piContext(request.signal));
         await this.services.storage.sync();
         return Response.json({
           status: "ok",
@@ -847,8 +938,19 @@ export class ConversationScope {
       }
       throw new NotFound({ resource: "Chat route" });
     } catch (error) {
+      if (error instanceof ProfileChanged && !request.signal.aborted) {
+        return await this.handle(
+          new Request(request.url, {
+            method: request.method,
+            headers: request.headers,
+            body: retryBody,
+            signal: request.signal,
+          }),
+          context
+        );
+      }
       if (error instanceof Denied) {
-        this.runtime.approvals.revalidate();
+        this.shared.approvals.revalidate();
       }
       const response = failureToHttp(
         toContractFailure(error, "The native chat request is unavailable.")
