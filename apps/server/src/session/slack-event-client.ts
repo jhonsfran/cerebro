@@ -3,6 +3,7 @@ import { BotEventAddressSchema } from "@cerebro/contracts/bot-events";
 import type { EventAddress } from "@cerebro/contracts/events";
 import { Denied, Unavailable } from "@cerebro/contracts/failures";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
+import { ChatReceipt } from "@cerebro/contracts/session-service";
 import { Schema } from "effect";
 
 import type { WorkerEnv } from "../bindings";
@@ -21,7 +22,8 @@ export const createSlackEventClient = (
   const request = async (
     context: ExecutionContext,
     body: object,
-    address?: EventAddress
+    address?: EventAddress,
+    sourcePath: "/slack-event" | "/legacy-slack-input" = "/slack-event"
   ): Promise<unknown> => {
     if ("delegation" in context || context.actor.state !== "active") {
       throw new Denied({
@@ -35,12 +37,12 @@ export const createSlackEventClient = (
     };
     const text = JSON.stringify(body);
     const secret = runtimeConfiguration(env).gatewaySigningKey;
-    const path = address ? "/slack-event" : "/slack-targets";
+    const path = address ? sourcePath : "/slack-targets";
     const proof = address
       ? await signSessionRequest(
           address,
           context,
-          "/slack-event",
+          sourcePath,
           text,
           secret,
           identity
@@ -81,6 +83,15 @@ export const createSlackEventClient = (
     }
   };
   return {
+    admitLegacy: async ({ context, address, eventKey, callback }) =>
+      Schema.decodeUnknownSync(ChatReceipt)(
+        await request(
+          context,
+          { eventKey, callback },
+          address,
+          "/legacy-slack-input"
+        )
+      ),
     discover: async ({ context, thread }) =>
       Schema.decodeUnknownSync(
         Schema.Array(BotEventAddressSchema).check(Schema.isMaxLength(18))

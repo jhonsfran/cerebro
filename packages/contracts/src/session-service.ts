@@ -207,6 +207,16 @@ export const ConversationForkOrigin = Schema.Struct({
 export type ConversationForkOrigin = typeof ConversationForkOrigin.Type;
 
 export const ChatSnapshot = Schema.Struct({
+  admission: Schema.optional(
+    Schema.Union([
+      Schema.Struct({ kind: Schema.Literal("open") }),
+      Schema.Struct({
+        kind: Schema.Literal("closed"),
+        phase: Schema.Literals(["paused", "forwarding", "archived"]),
+        primary: address,
+      }),
+    ])
+  ),
   activity: Schema.optional(ChatActivity),
   address,
   agentVersion: Schema.Int.check(Schema.isGreaterThan(0)),

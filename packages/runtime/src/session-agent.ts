@@ -18,6 +18,7 @@ import type {
 } from "@cerebro/contracts/session";
 import type { ChatSnapshot } from "@cerebro/contracts/session-service";
 import { ChatForkReceipt } from "@cerebro/contracts/session-service";
+import type { LegacyTimerReplyOrigin } from "@cerebro/contracts/timer-events";
 import type { ToolExecutor } from "@cerebro/contracts/tool-service";
 import type { SlackThread } from "@cerebro/contracts/work";
 import { createModels } from "@earendil-works/pi-ai/models";
@@ -91,8 +92,17 @@ export type ResolvedSessionRequest =
       readonly address: EventAddress;
       readonly context: ExecutionContext;
       readonly admission: EventAdmission;
+    }
+  | {
+      readonly kind: "accepted-legacy-input";
+      readonly address: EventAddress;
+      readonly context: ExecutionContext;
+      readonly operationId: string;
+      readonly text: string;
     };
 export interface SessionHostConfiguration {
+  readonly primaryAddress?: EventAddress;
+  readonly legacyTimerOrigin?: LegacyTimerReplyOrigin;
   readonly eventReplies?: EventReplyServices;
   readonly publicationPolicy?: "primary" | "pinned";
   readonly contentState?: ReturnType<typeof createSourceDependencyStore>;
@@ -315,6 +325,9 @@ export class SessionAgent<
             reportPiFailure(this.ctx.id.name, error, binding.address);
           }
         }
+        await Promise.all(
+          [...this.scopes.values()].map((scope) => scope.prepareAdmission())
+        );
         host.restoring = false;
         for (const scope of this.scopes.values()) {
           // oxlint-disable-next-line no-await-in-loop -- Install all saved definitions before progress APIs enable Pi scheduling.
@@ -760,6 +773,7 @@ export class SessionAgent<
         "cerebro-reminder",
         "cerebro-compact",
         "cerebro-coordination",
+        "cerebro-source-cutover",
       ].includes(job.fn)
     ) {
       return;
@@ -773,6 +787,8 @@ export class SessionAgent<
       const binding = bindings?.conversations[sessionId];
       if (binding) {
         if (job.fn === "cerebro-coordination") {
+          const source = await this.scope(binding.address);
+          await source.reminders.restore();
           const outcome = await wakeCoordinatorJob({
             pi,
             address: binding.address,
@@ -798,6 +814,9 @@ export class SessionAgent<
             : outcome;
         }
         const scope = await this.scope(binding.address);
+        if (job.fn === "cerebro-source-cutover") {
+          return await scope.admission.advance();
+        }
         if (job.fn === "cerebro-child") {
           const payload = Schema.decodeUnknownSync(childPayload)(job.payload);
           await scope.work.stop(payload.childId);
@@ -849,6 +868,15 @@ export class SessionAgent<
       }
       const { address, context } = resolved;
       const scope = await this.scope(address);
+      if ("kind" in resolved && resolved.kind === "accepted-legacy-input") {
+        const receipt = await scope.acceptLegacyInput(
+          resolved,
+          context,
+          request.signal
+        );
+        await this.ctx.storage.sync();
+        return Response.json({ status: "ok", value: receipt });
+      }
       if ("kind" in resolved && resolved.kind === "owned-event") {
         if (!this.active) {
           throw new Unavailable({

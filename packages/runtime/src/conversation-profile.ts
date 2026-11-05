@@ -22,7 +22,10 @@ import { createCoordinatorWork } from "./coordinator-work.ts";
 import { createGenerativeUiTool } from "./generative-ui-tool.ts";
 import { prepareInstructionCause } from "./instruction-cause.ts";
 import { createRunLimits } from "./run-limits.ts";
+import { saveReminderOriginIn } from "./saved-timer-state.ts";
+import type { SavedTimerOccurrence } from "./saved-timer-state.ts";
 import type { SessionHostConfiguration } from "./session-agent.ts";
+import { requireFreshSourceIn } from "./source-admission.ts";
 
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
@@ -54,6 +57,9 @@ export interface ProfileState {
     identity: ProfileIdentity
   ) => (tx: Tx) => Promise<void>;
   readonly submit: (text: string, operationId: string) => Promise<unknown>;
+  readonly submitOccurrence: (
+    occurrence: SavedTimerOccurrence
+  ) => Promise<void>;
   readonly dispatchAccess: NonNullable<
     Parameters<typeof createCoordinatorWork>[0]["dispatchAccess"]
   >;
@@ -77,6 +83,9 @@ export const createConversationProfile = async (
       requireCurrent: () => shared.requireCurrent(identity),
     }
   );
+  const identityOwner = await run(configuration.ownerContext());
+  const ownerPrincipalId =
+    identityOwner.represented?.id ?? identityOwner.actor.id;
   const authorize = async (signal?: AbortSignal) => {
     const owner = await run(configuration.ownerContext());
     await runtime.authorize(owner, "send", signal);
@@ -104,6 +113,16 @@ export const createConversationProfile = async (
   const reminders = createConversationReminders({
     serialize: shared.serialize,
     guardIn: runtime.guardIn,
+    guardNewScheduleIn: (tx) => requireFreshSourceIn(tx, native.id),
+    saveOriginIn: (tx, reminderId, cause) =>
+      saveReminderOriginIn(tx, {
+        nativeId: native.id,
+        reminderId,
+        address: configuration.address,
+        ownerPrincipalId,
+        cause,
+        legacy: configuration.legacyTimerOrigin,
+      }),
     prepareScheduleCause: async () => {
       const owner = await run(configuration.ownerContext());
       return await prepareInstructionCause({
@@ -115,6 +134,16 @@ export const createConversationProfile = async (
       });
     },
     authorize,
+    ...(configuration.primaryAddress
+      ? {
+          authorizeDelivery: async () =>
+            runtime.authorize(
+              await run(configuration.ownerContext()),
+              "transfer"
+            ),
+          submitOccurrence: shared.submitOccurrence,
+        }
+      : {}),
     authorizeCancel: async () =>
       runtime.authorize(await run(configuration.ownerContext()), "stop"),
     jobs: services.jobs,

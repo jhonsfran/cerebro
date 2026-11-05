@@ -23,6 +23,7 @@ import type { CoordinatorWorkRecord } from "./coordinator-ledger.ts";
 import { appendPassiveAnswer } from "./passive-history.ts";
 import { piContext } from "./pi-harness.ts";
 import type { SessionHostConfiguration } from "./session-agent.ts";
+import { requireInputAdmissionIn } from "./source-admission.ts";
 
 const sourceWorkIdsIn = async (tx: Tx, event: BotEvent): Promise<string[]> => {
   const ledger = await tx.doc(WorkLedger);
@@ -228,6 +229,13 @@ export const createCoordinatorWeb = (options: {
         });
       }
       const replay = await pi.commit(async (tx) => {
+        await runtime.guardIn?.(tx);
+        await requireInputAdmissionIn(tx, {
+          nativeId: native.id,
+          address: runtime.configuration.address,
+          operationId,
+          text,
+        });
         const current = await tx.submissionByRequest(native.id, operationId);
         if (!current) {
           return;

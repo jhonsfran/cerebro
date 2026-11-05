@@ -40,7 +40,7 @@ const { deliverSlackMessage } =
   await import("../../packages/channels/src/slack-replies.ts");
 hooks.deregister();
 
-export const setupReplies = async (team = false) => {
+export const setupReplies = async (team = false, timers = false) => {
   let linked = true;
   let beforePost: (() => Promise<void>) | undefined;
   let loseSentOutcome = false;
@@ -54,6 +54,7 @@ export const setupReplies = async (team = false) => {
     true,
     (configuration) => ({
       ...configuration,
+      ...(timers ? { primaryAddress: configuration.address } : {}),
       checkImportedDependencies: configuration.checkDependencies,
       contentDependencies: () =>
         Promise.resolve({ sourceIds: [...sourceIds], toolIds: [...toolIds] }),

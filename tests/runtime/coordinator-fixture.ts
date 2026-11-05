@@ -102,7 +102,11 @@ const fakeJobs = () => {
   return { jobs, rows };
 };
 
-export const setup = async (timeoutMs = 600_000, notices = false) => {
+export const setup = async (
+  timeoutMs = 600_000,
+  notices = false,
+  agentIds: Readonly<Record<string, string>> = {}
+) => {
   const directory = await mkdtemp(path.join(tmpdir(), "cerebro-coordinator-"));
   const databasePath = path.join(directory, "state.sqlite");
   const queued = fakeJobs();
@@ -142,7 +146,7 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
     name,
     address: {
       organizationId: id.organization("org-A"),
-      agentId: id.agent(`coordinator-${name.toUpperCase()}`),
+      agentId: id.agent(agentIds[name] ?? `coordinator-${name.toUpperCase()}`),
       conversationId: id.conversation(`public-${name}`),
       sessionId: id.session(`source-${name}`),
     },

@@ -7,11 +7,11 @@ import {
 import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { receiveAcceptedLegacySlackInput } from "./legacy-slack-input";
 import { contextByPrincipal, digest } from "./security";
 import { createChannelService } from "./service";
 import { createSlackApi } from "./slack-api";
 import {
-  readSlackEventTarget,
   resolveSlackEventDecision,
   parseSlackEventDecision,
 } from "./slack-event-receipts";
@@ -237,29 +237,13 @@ export const receiveSlackEvent = async (
     );
     return { accepted: true, events };
   }
-  const conversation = await readSlackEventTarget(
+  return await receiveAcceptedLegacySlackInput({
     database,
     options,
     configuration,
-    decision,
-    input.message
-  );
-  const context = await contextByPrincipal(
-    database,
-    options.organizationId,
-    decision.ownerPrincipalId
-  );
-  const receipt = await createChannelService(database, options).admit(
-    conversation,
-    context,
     eventKey,
-    input.message.text
-  );
-  return {
-    accepted: true,
-    conversationId: conversation.conversationId,
-    receipt,
-  };
+    callback,
+  });
 };
 
 export const receiveQueuedSlackEvent = async (

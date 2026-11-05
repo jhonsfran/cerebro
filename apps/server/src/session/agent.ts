@@ -1,3 +1,4 @@
+import { readAcceptedLegacySlackInput } from "@cerebro/channels/legacy-slack-input";
 import { isPrimaryConversation } from "@cerebro/channels/primary-conversations";
 import { contextByPrincipal } from "@cerebro/channels/security";
 import {
@@ -57,6 +58,7 @@ import {
   createSlackEventReplies,
   withCurrentSlackAccess,
 } from "./slack-event-replies";
+import { sourcePrimaryAddress, legacyTimerOrigin } from "./source-primary";
 
 const readOptions = (): ReadOptions => ({ deadlineAt: Date.now() + 10_000 });
 const identityName = z.tuple([
@@ -124,6 +126,9 @@ export const createRuntimeComposition = (
   Effect.gen(function* composeSession() {
     const primary = yield* tryAdapter(() =>
       isPrimaryConversation(conversation)
+    );
+    const primaryAddress = yield* tryAdapter(() =>
+      sourcePrimaryAddress(env, conversation, primary)
     );
     const config = runtimeConfiguration(env);
     const slack = slackSettings(env);
@@ -211,6 +216,8 @@ export const createRuntimeComposition = (
     );
     return {
       ...execution,
+      primaryAddress,
+      legacyTimerOrigin: legacyTimerOrigin(conversation, slack, address),
       publicationPolicy: primary ? "primary" : "pinned",
       reconcileVersion: async (version: number) => {
         storage.sql.exec(
@@ -221,7 +228,10 @@ export const createRuntimeComposition = (
         await storage.sync();
       },
       conversationKind: conversation.kind,
-      eventReplies: createSlackEventReplies(env, slack, primary),
+      eventReplies: createSlackEventReplies(env, slack, primary, {
+        agent,
+        owner: () => Effect.runPromise(execution.ownerContext()),
+      }),
       ...(forkOrigin
         ? {
             origin: {
@@ -324,6 +334,63 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
         resolved.address,
         identity
       );
+      if (path === "/legacy-slack-input") {
+        const slack = slackSettings(this.env);
+        if (!slack) {
+          return yield* Effect.fail(
+            new Denied({ code: "revoked", reason: "Slack is not configured." })
+          );
+        }
+        const body = yield* tryAdapter(async () =>
+          z
+            .strictObject({
+              eventKey: z.string().min(1).max(4096),
+              callback: z.unknown(),
+            })
+            .parse(await request.clone().json())
+        );
+        const accepted = yield* tryAdapter(() =>
+          withCurrentSlackAccess(() =>
+            withDatabase(this.env, (database) =>
+              readAcceptedLegacySlackInput({
+                database,
+                configuration: slack,
+                address: resolved.address,
+                eventKey: body.eventKey,
+                callback: body.callback,
+              })
+            )
+          )
+        );
+        if (
+          accepted.ownerPrincipalId !== identity.ownerPrincipalId ||
+          resolved.context.actor.id !== accepted.ownerPrincipalId ||
+          "delegation" in resolved.context
+        ) {
+          return yield* Effect.fail(
+            new Denied({
+              code: "unauthorized",
+              reason: "The legacy Slack input belongs to another owner.",
+            })
+          );
+        }
+        const context = yield* tryAdapter(() =>
+          withDatabase(this.env, (database) =>
+            contextByPrincipal(
+              database,
+              identity.organizationId,
+              identity.ownerPrincipalId
+            )
+          )
+        );
+        return {
+          kind: "accepted-legacy-input" as const,
+          address: resolved.address,
+          context,
+          operationId: accepted.operationId,
+          text: accepted.text,
+        };
+      }
       if (path === "/slack-event") {
         const slack = slackSettings(this.env);
         if (!slack) {

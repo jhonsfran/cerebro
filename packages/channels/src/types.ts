@@ -104,6 +104,12 @@ export interface ChannelOptions {
   readonly slack?: SlackConfiguration;
   readonly enqueueSlackEvent?: (delivery: SlackQueueDelivery) => Promise<void>;
   readonly slackEvents?: {
+    readonly admitLegacy: (input: {
+      readonly address: EventAddress;
+      readonly context: ExecutionContext;
+      readonly eventKey: string;
+      readonly callback: unknown;
+    }) => ReturnType<ChatClient["send"]>;
     readonly discover: (input: {
       readonly context: ExecutionContext;
       readonly thread: SlackThread;

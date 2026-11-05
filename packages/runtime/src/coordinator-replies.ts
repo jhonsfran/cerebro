@@ -13,6 +13,7 @@ import type {
   SlackReplyDestination,
 } from "@cerebro/contracts/slack-events";
 import { toSlackText } from "@cerebro/contracts/slack-text";
+import type { LegacyTimerReplyOrigin } from "@cerebro/contracts/timer-events";
 import { digestToolArguments } from "@cerebro/contracts/tools";
 import {
   defineDoc,
@@ -32,9 +33,19 @@ import { eventOf, BotEventReceipts } from "./coordinator-event-state.ts";
 import { WorkDocuments, sameWorkSource } from "./coordinator-ledger.ts";
 import { trackNativeProgress } from "./native-progress.ts";
 import { piContext } from "./pi-harness.ts";
+import { timerReplyDestination } from "./saved-timer-state.ts";
+
+export type ReplyOrigin =
+  | { readonly kind: "event"; readonly event: BotEvent }
+  | {
+      readonly kind: "saved-timer";
+      readonly destination: SlackReplyDestination;
+    };
 
 export interface EventReplyServices {
-  readonly destination: (event: BotEvent) => Promise<SlackReplyDestination>;
+  readonly destination: (
+    event: BotEvent | LegacyTimerReplyOrigin
+  ) => Promise<SlackReplyDestination>;
   readonly authorize: (destination: SlackReplyDestination) => Promise<void>;
   readonly deliver: (input: {
     readonly destination: SlackReplyDestination;
@@ -329,9 +340,13 @@ export const createCoordinatorReplies = (options: {
   return {
     definition,
     hold,
-    origin: async (event: BotEvent): Promise<BotEvent | null> => {
+    origin: async (event: BotEvent): Promise<ReplyOrigin | null> => {
       if (event.source.kind === "slack") {
-        return event;
+        return { kind: "event", event };
+      }
+      if (event.source.kind === "savedtimer") {
+        const destination = await timerReplyDestination(options.pi, event);
+        return destination ? { kind: "saved-timer", destination } : null;
       }
       if (
         event.source.kind !== "teamreport" &&
@@ -363,11 +378,17 @@ export const createCoordinatorReplies = (options: {
         return null;
       }
       const origin = eventOf(original.receipt);
-      return origin.source.kind === "slack" &&
-        sameWorkSource(origin.coordinator, event.coordinator) &&
-        origin.ownerPrincipalId === event.ownerPrincipalId
-        ? origin
-        : null;
+      if (
+        !sameWorkSource(origin.coordinator, event.coordinator) ||
+        origin.ownerPrincipalId !== event.ownerPrincipalId
+      ) {
+        return null;
+      }
+      if (origin.source.kind === "slack") {
+        return { kind: "event", event: origin };
+      }
+      const destination = await timerReplyDestination(options.pi, origin);
+      return destination ? { kind: "saved-timer", destination } : null;
     },
     enqueueIn: async (
       tx: Tx,

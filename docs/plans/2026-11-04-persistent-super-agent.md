@@ -18,7 +18,7 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 4b: Apply published coordinator definitions safely within the same conversation.
 - [x] Unit 4 context: Preserve native compaction when the model request reaches its byte limit.
 - [x] Unit 4c: Connect Slack primary events and exact event replies.
-- [ ] Unit 4d: Preserve legacy admission and forward saved timers through controlled cutover.
+- [x] Unit 4d: Preserve legacy admission and forward saved timers through controlled cutover.
 - [ ] Unit 5a: Add protected saved-state inspection and safe terminal Team reads.
 - [ ] Unit 5b: Add the development Inspector UI with lazy detail loading.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
@@ -42,6 +42,8 @@ Unit 4b adopts the complete definition and capability policy after native work d
 Long-chat verification found an existing model-boundary error. A ninth full-length input reaches the serialized request byte cap before Pi's token threshold. The adapter treated the thrown local error as a connection failure. The separate repair returns the supported local overflow response so Pi uses its existing compaction task. It keeps the byte limit and adds no scheduler or guessed token conversion. Actual Pi tests cover repeated compaction, retained entries, replay, reopen, and current authorization. The final HTTP build completed fourteen long inputs and their exact replays without added replay calls. Native recovery still requires a selectable cut and a summary that fits.
 
 Unit 4c maps filtered Slack events to canonical primary conversations. Its external receipt freezes exact owner and bot targets. Exact native settlement saves the reply intent in the same transaction, so concurrent web answers cannot reach Slack. Independent reviews found and fixed lost rate-limit deadlines and local reply progress. The final source passed the PostgreSQL suite and native signed Slack checks. A forced process stop during a delayed reply recovered through the existing alarm without a model or chat-reader wake. The reply checks current link and content access before each post and never repeats an uncertain post. Literal legacy decisions and their digests remain readable.
+
+Unit 4d closes fresh input on historical roots and forks while accepted inputs, controls, reports, history, and saved timers continue. Canonical schedules and fixed origins commit before raw timer arming. A generic existing wake recovers the arm. Legacy occurrence checks prevent a second execution after the old native-acceptance boundary. Fresh reviews also found and fixed a historical Slack reply authorization mismatch. The final native check retained archived fork history and pins and delivered one full 32,000-character routine after a same-volume process kill before any chat read. The actual old-binary upgrade remains a separate final verification gate. Ancient aborted inputs with no retained payload or accepted digest fail closed because exact replay cannot be proved.
 
 The approved architecture is the design baseline. Read-only grounding checks its integration points. A second architecture competition is unnecessary unless the implementation disproves the design.
 

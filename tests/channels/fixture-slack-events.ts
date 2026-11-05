@@ -1,3 +1,4 @@
+import { readAcceptedLegacySlackInput } from "../../packages/channels/src/legacy-slack-input";
 import { digest } from "../../packages/channels/src/security";
 import { parseSlackCallback } from "../../packages/channels/src/slack-events";
 import {
@@ -15,6 +16,26 @@ import { hideFixtureEvent } from "./fixture-session";
 export const createFixtureSlackEvents = (
   getOptions: () => ChannelOptions
 ): NonNullable<ChannelOptions["slackEvents"]> => ({
+  admitLegacy: ({ address, context, eventKey, callback }) =>
+    getOptions().withDatabase(async (database) => {
+      const options = getOptions();
+      if (!options.slack) {
+        throw new Error("The fixture Slack configuration is missing.");
+      }
+      const input = await readAcceptedLegacySlackInput({
+        database,
+        configuration: options.slack,
+        address,
+        eventKey,
+        callback,
+      });
+      return await options.sessions(database).send({
+        address,
+        context,
+        operationId: input.operationId,
+        text: input.text,
+      });
+    }),
   discover: () => Promise.resolve([]),
   admit: ({ address, context, eventKey }) =>
     getOptions().withDatabase(async (database) => {

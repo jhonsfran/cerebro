@@ -26,6 +26,7 @@ import {
 } from "@cerebro/ui/components/tooltip";
 import { ArrowUp, Clock, RotateCw, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 import { cacheKey, encoded, productPath, request } from "./api";
 import type { PendingChatMessage } from "./chat";
@@ -220,7 +221,13 @@ const ConversationToolbar = ({
 
 const EMPTY_CHAT: Pick<
   ChatSnapshot,
-  "messages" | "approvals" | "busy" | "queuedInputs" | "tools" | "activity"
+  | "messages"
+  | "approvals"
+  | "busy"
+  | "queuedInputs"
+  | "tools"
+  | "activity"
+  | "admission"
 > = {
   approvals: [],
   busy: false,
@@ -228,6 +235,33 @@ const EMPTY_CHAT: Pick<
   queuedInputs: [],
   tools: [],
 };
+
+const ConversationInput = ({
+  admission,
+  onOpenConversation,
+  children,
+}: {
+  admission: ChatSnapshot["admission"];
+  onOpenConversation?: () => void;
+  children: ReactNode;
+}) =>
+  admission?.kind === "closed" ? (
+    <div className="mx-auto w-full max-w-(--measure-chat) p-4">
+      <Alert role="note">
+        <AlertDescription>
+          This historical conversation accepts no new messages. Existing work
+          and scheduled follow-ups can still finish.
+        </AlertDescription>
+        {onOpenConversation ? (
+          <Button type="button" variant="outline" onClick={onOpenConversation}>
+            Open primary conversation
+          </Button>
+        ) : null}
+      </Alert>
+    </div>
+  ) : (
+    children
+  );
 
 const ConversationSession = ({
   conversationId,
@@ -398,6 +432,7 @@ const ConversationSession = ({
         disabled={controlsDisabled}
         control={control}
         onConversation={onConversation}
+        admission={snapshot.admission}
       />
       {pending ? (
         <div className="mx-auto w-full max-w-(--measure-chat) px-4">
@@ -426,15 +461,20 @@ const ConversationSession = ({
           </Alert>
         </div>
       ) : null}
-      <ConversationComposer
-        text={text}
-        setText={setText}
-        sending={delivery.sending}
-        connected={online}
-        pending={pending}
-        reject={setErrorMessage}
-        send={send}
-      />
+      <ConversationInput
+        admission={snapshot.admission}
+        onOpenConversation={onOpenConversation}
+      >
+        <ConversationComposer
+          text={text}
+          setText={setText}
+          sending={delivery.sending}
+          connected={online}
+          pending={pending}
+          reject={setErrorMessage}
+          send={send}
+        />
+      </ConversationInput>
     </section>
   );
 };

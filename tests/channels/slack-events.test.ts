@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { Schema } from "effect";
 
 import { createApiHandler } from "../../packages/api/src/handler";
+import { readAcceptedLegacySlackInput } from "../../packages/channels/src/legacy-slack-input";
 import { assertQueuePayloadSize } from "../../packages/channels/src/queue-payload";
 import { digest } from "../../packages/channels/src/security";
 import { receiveQueuedSlackEvent } from "../../packages/channels/src/slack";
@@ -327,6 +328,68 @@ test("literal legacy decisions keep their original digest and reject a changed d
       .where(eq(channelSlackEventReceipt.eventKey, retained.eventKey))
   );
   assert.deepEqual(after, before);
+});
+
+test("pre-placement legacy proof requires the exact saved decision, callback, address, and current owner link without writing receipts", async () => {
+  const product = await queuedProduct();
+  const owner = await linkOwner(product);
+  const payload = eventPayload(
+    "pre-placement-proof",
+    "The accepted old request."
+  );
+  const retained = await saveLegacySlackDecision(
+    product.app.options,
+    payload,
+    owner
+  );
+  const address = Schema.decodeUnknownSync(BotEventAddressSchema)(
+    retained.address
+  );
+  const read = (changes = {}) =>
+    product.app.options.withDatabase((database) =>
+      readAcceptedLegacySlackInput({
+        database,
+        configuration: product.slack,
+        address,
+        eventKey: retained.eventKey,
+        callback: payload,
+        ...changes,
+      })
+    );
+  const accepted = await read();
+  assert.equal(accepted.text, "The accepted old request.");
+  assert.equal(accepted.operationId, retained.eventKey);
+  assert.equal(fixtureSubmissionCount(), 0);
+  const snapshot = () =>
+    product.app.options.withDatabase(async (database) => {
+      const [saved] = await database
+        .select()
+        .from(channelSlackEventReceipt)
+        .where(eq(channelSlackEventReceipt.eventKey, retained.eventKey));
+      return saved;
+    });
+  const before = await snapshot();
+  await Promise.all([
+    assert.rejects(read({ eventKey: `${retained.eventKey}:missing` })),
+    assert.rejects(
+      read({
+        callback: eventPayload("pre-placement-proof", "Changed accepted text."),
+      })
+    ),
+    assert.rejects(
+      read({ address: { ...address, sessionId: "foreign-session" } })
+    ),
+    assert.rejects(read({ address: { ...address, agentId: "foreign-agent" } })),
+  ]);
+  assert.deepEqual(await snapshot(), before);
+  await product.app.options.withDatabase((database) =>
+    database
+      .delete(identitySlackLink)
+      .where(eq(identitySlackLink.principalId, owner))
+  );
+  await assert.rejects(read());
+  assert.deepEqual(await snapshot(), before);
+  assert.equal(fixtureSubmissionCount(), 0);
 });
 
 test("the provider event ID cannot be reused with a different logical payload", async () => {

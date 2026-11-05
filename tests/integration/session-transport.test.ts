@@ -61,6 +61,7 @@ test("native chat credentials authenticate every private operation with the comp
     "/fork",
     "/control",
     "/slack-event",
+    "/legacy-slack-input",
   ] as const;
   const results = await Promise.all(
     paths.map(async (path) => {
@@ -85,6 +86,56 @@ test("native chat credentials authenticate every private operation with the comp
     })
   );
   assert.deepEqual(results, paths);
+});
+
+test("accepted legacy Slack credentials bind the exact callback, event reference, source, and route", async () => {
+  const payload = {
+    eventKey: "slack:org:app:workspace:old",
+    callback: {
+      event_id: "old",
+      event: { text: "The accepted original text." },
+    },
+  };
+  const original = await signedRequest(
+    "/legacy-slack-input",
+    address,
+    identity,
+    payload
+  );
+  assert.deepEqual(
+    await authenticateSessionRequest(original.clone(), secret, identity),
+    { address, context: userEvent.context }
+  );
+  await Promise.all(
+    [
+      {
+        path: "/legacy-slack-input",
+        body: { ...payload, eventKey: "foreign-event" },
+      },
+      {
+        path: "/legacy-slack-input",
+        body: {
+          ...payload,
+          callback: { ...payload.callback, event: { text: "Changed text." } },
+        },
+      },
+      { path: "/send", body: payload },
+      { path: "/slack-event", body: payload },
+    ].map(async (changed) => {
+      await assert.rejects(
+        authenticateSessionRequest(
+          new Request(`https://session.internal${changed.path}`, {
+            method: "POST",
+            headers: original.headers,
+            body: JSON.stringify(changed.body),
+          }),
+          secret,
+          identity
+        ),
+        isDenied
+      );
+    })
+  );
 });
 
 test("Slack discovery authenticates an identity without a default conversation and binds its exact thread", async () => {

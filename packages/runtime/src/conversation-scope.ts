@@ -46,6 +46,7 @@ import {
   selectedRegistrationsIn,
 } from "./conversation-drain.ts";
 import { createConversationEventScope } from "./conversation-event-scope.ts";
+import { createNativeOperations } from "./conversation-native-operations.ts";
 import { observeConversation } from "./conversation-observation.ts";
 import {
   createConversationProfile,
@@ -67,11 +68,14 @@ import type { BotEventScope, CoordinatorEvents } from "./coordinator-events.ts";
 import type { ScanWorkKeys } from "./coordinator-history.ts";
 import { sameWorkSource, CoordinatorAdmissions } from "./coordinator-ledger.ts";
 import type { CoordinatorReplyOutbox } from "./coordinator-replies.ts";
+import { sendLegacyInput } from "./legacy-input.ts";
 import { piContext } from "./pi-harness.ts";
+import { submitSavedTimer } from "./saved-timer-submit.ts";
 import type {
   MetadataTransaction,
   SessionHostConfiguration,
 } from "./session-agent.ts";
+import { createSourceAdmission } from "./source-admission.ts";
 
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
@@ -140,7 +144,8 @@ export class ConversationScope {
   private current: ConversationProfile | undefined;
   private unavailable = false;
   private readonly profiles = new Map<string, ConversationProfile>();
-  private readonly nativeOperations = new Set<symbol>();
+  private readonly nativeOperations: ReturnType<typeof createNativeOperations>;
+  readonly admission: ReturnType<typeof createSourceAdmission>;
   private advancing: Promise<void> | undefined;
 
   private get profile(): ConversationProfile {
@@ -174,10 +179,17 @@ export class ConversationScope {
   private constructor(
     native: Conversation,
     services: ConversationScopeServices,
-    approvals: ReturnType<typeof createApprovalStore>
+    approvals: ReturnType<typeof createApprovalStore>,
+    configuration: SessionHostConfiguration
   ) {
     this.native = native;
     this.services = services;
+    this.nativeOperations = createNativeOperations({
+      pi: services.pi,
+      current: () => this.profile,
+      guardIn: (tx, profile, admission) =>
+        this.guardIn(tx, profile.identity, admission),
+    });
     this.shared = {
       approvals,
       serialize: createReminderSerialization(),
@@ -188,8 +200,16 @@ export class ConversationScope {
         }
       },
       nativeGuardIn: (identity) => (tx) => this.guardIn(tx, identity, true),
+      submitOccurrence: (occurrence) =>
+        submitSavedTimer({
+          pi: services.pi,
+          nativeId: native.id,
+          events: services.events,
+          current: () => this.profile,
+          occurrence,
+        }),
       submit: (text, operationId) =>
-        this.nativeOperation(
+        this.nativeOperations.run(
           async (profile) => {
             await profile.runtime.authorize(
               await run(profile.runtime.configuration.ownerContext()),
@@ -227,6 +247,16 @@ export class ConversationScope {
         });
       },
     };
+    this.admission = createSourceAdmission({
+      pi: services.pi,
+      nativeId: native.id,
+      address: configuration.address,
+      primary: configuration.primaryAddress,
+      busy: () =>
+        this.nativeOperations.pending() || this.shared.approvals.hasPending(),
+      jobs: services.jobs,
+      persist: () => services.storage.sync(),
+    });
   }
 
   private async guardIn(
@@ -253,40 +283,6 @@ export class ConversationScope {
       }
     } else if (this.current && !sameProfile(this.current.identity, identity)) {
       throw new ProfileChanged();
-    }
-  }
-
-  private async nativeOperation<A>(
-    authorize: (profile: ConversationProfile) => Promise<void>,
-    operation: () => Promise<A>,
-    admission = false,
-    signal?: AbortSignal
-  ): Promise<A> {
-    for (;;) {
-      const { profile } = this;
-      const token = Symbol("native-profile-operation");
-      try {
-        try {
-          signal?.throwIfAborted();
-          await authorize(profile);
-          await this.services.pi.commit(async (tx) => {
-            signal?.throwIfAborted();
-            await this.guardIn(tx, profile.identity, admission);
-            this.nativeOperations.add(token);
-          }, piContext());
-        } catch (error) {
-          if (profile !== this.profile) {
-            if (admission) {
-              throw new ProfileChanged();
-            }
-            continue;
-          }
-          throw error;
-        }
-        return await operation();
-      } finally {
-        this.nativeOperations.delete(token);
-      }
     }
   }
 
@@ -337,7 +333,12 @@ export class ConversationScope {
       extensions: initialExtensions,
       provider,
     });
-    const scope = new ConversationScope(native, services, runtime.approvals);
+    const scope = new ConversationScope(
+      native,
+      services,
+      runtime.approvals,
+      configuration
+    );
     const profile = await scope.prepare(configuration, identity, legacy);
     scope.current = profile;
     services.install({
@@ -576,7 +577,7 @@ export class ConversationScope {
       if (
         !current?.refresh ||
         !sameProfile(current.refresh, target) ||
-        this.nativeOperations.size ||
+        this.nativeOperations.pending() ||
         this.shared.approvals.hasPending()
       ) {
         return false;
@@ -623,7 +624,12 @@ export class ConversationScope {
     }
   }
 
+  async prepareAdmission(): Promise<void> {
+    await this.admission.restore();
+  }
+
   async restore(): Promise<void> {
+    await this.prepareAdmission();
     await this.reminders.restore();
     await this.coordination.restore();
   }
@@ -684,7 +690,7 @@ export class ConversationScope {
       return { id: command.workId, kind: command.kind };
     }
     if (command.kind === "stop-child") {
-      await this.nativeOperation(
+      await this.nativeOperations.run(
         (active) => active.runtime.authorize(context, "stop", signal),
         () => this.work.stop(command.childId),
         false,
@@ -738,6 +744,18 @@ export class ConversationScope {
             watch.value,
             profile
           );
+          const admission = await this.admission.read();
+          snapshot = {
+            ...snapshot,
+            admission:
+              admission.kind === "open"
+                ? { kind: "open" }
+                : {
+                    kind: "closed",
+                    phase: admission.kind,
+                    primary: admission.primary,
+                  },
+          };
           await profile.runtime.authorize(
             context,
             "read",
@@ -759,6 +777,35 @@ export class ConversationScope {
       emit?.(snapshot);
       return snapshot;
     }
+  }
+
+  private sendLegacy(
+    command: { operationId: string; text: string },
+    context: ExecutionContext,
+    authority: "ordinary" | "saved-slack",
+    signal?: AbortSignal
+  ) {
+    return sendLegacyInput(
+      {
+        pi: this.services.pi,
+        native: this.native,
+        harness: this.services.harness,
+        current: () => this.profile,
+        operations: this.nativeOperations,
+        waitUntil: this.services.waitUntil,
+      },
+      { ...command, authority },
+      context,
+      signal
+    );
+  }
+
+  acceptLegacyInput(
+    command: { operationId: string; text: string },
+    context: ExecutionContext,
+    signal?: AbortSignal
+  ) {
+    return this.sendLegacy(command, context, "saved-slack", signal);
   }
 
   async handle(request: Request, context: ExecutionContext): Promise<Response> {
@@ -788,7 +835,7 @@ export class ConversationScope {
         });
       }
       if (path === "/stop") {
-        const stopped = await this.nativeOperation(
+        const stopped = await this.nativeOperations.run(
           (active) => active.runtime.authorize(context, "stop", request.signal),
           async () => {
             const [value] = await Promise.all([
@@ -860,39 +907,15 @@ export class ConversationScope {
             ),
           });
         }
-        if (
-          await profile.routeHuman(
-            command.operationId,
-            command.text,
+        return Response.json({
+          status: "ok",
+          value: await this.sendLegacy(
+            command,
             context,
+            "ordinary",
             request.signal
-          )
-        ) {
-          return Response.json({
-            status: "ok",
-            value: {
-              accepted: true,
-              operationId: command.operationId,
-              session: String(this.native.id),
-            },
-          });
-        }
-        const receipt = await this.nativeOperation(
-          async (active) => {
-            await active.runtime.authorize(context, "send", request.signal);
-          },
-          async () => {
-            await this.coordination.rememberHumanOperation(command.operationId);
-            return await this.services.harness.submit(command.text, {
-              session: String(this.native.id),
-              operationId: command.operationId,
-            });
-          },
-          true,
-          request.signal
-        );
-        this.services.waitUntil(this.native.waitForIdle(piContext()));
-        return Response.json({ status: "ok", value: receipt });
+          ),
+        });
       }
       if (path === "/control") {
         const command = await run(

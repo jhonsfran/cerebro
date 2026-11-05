@@ -332,7 +332,7 @@ export const resolveSlackEventDecision = async (
 
 export const readSlackEventTarget = async (
   database: Database,
-  options: ChannelOptions,
+  options: Pick<ChannelOptions, "organizationId">,
   configuration: SlackConfiguration,
   decision: Extract<SlackEventDecision, { kind: "admit" }>,
   message: DirectMessage

@@ -17,8 +17,10 @@ import { defineDoc, defineTool } from "@earendil-works/pi-durable";
 import type { LifecycleJobOutcome, LifecycleJobs } from "agents/lifecycle";
 import { Schema } from "effect";
 
+import type { InstructionCause } from "./instruction-cause.ts";
 import { piContext } from "./pi-harness.ts";
 import { nextRecurrenceRunAt, validateRecurrence } from "./recurrence.ts";
+import type { SavedTimerOccurrence } from "./saved-timer-state.ts";
 import type { MetadataTransaction } from "./session-agent.ts";
 
 const MAX_DELAY_MS = 366 * 24 * 60 * 60 * 1000;
@@ -168,14 +170,26 @@ export const createReminderSerialization = () => {
 export const createConversationReminders = (services: {
   readonly serialize?: ReturnType<typeof createReminderSerialization>;
   readonly guardIn?: (tx: Tx) => Promise<void>;
-  readonly prepareScheduleCause?: () => Promise<(tx: Tx) => Promise<unknown>>;
+  readonly prepareScheduleCause?: () => Promise<
+    (tx: Tx) => Promise<InstructionCause>
+  >;
+  readonly saveOriginIn?: (
+    tx: Tx,
+    reminderId: string,
+    cause?: InstructionCause
+  ) => Promise<void>;
+  readonly guardNewScheduleIn?: (tx: Tx) => Promise<void>;
   readonly pi: Harness;
   readonly nativeId: ConversationId;
   readonly sessionId: string;
   readonly jobs: LifecycleJobs;
   readonly authorize: () => Promise<void>;
   readonly authorizeCancel?: () => Promise<void>;
+  readonly authorizeDelivery?: () => Promise<void>;
   readonly submit: (text: string, operationId: string) => Promise<unknown>;
+  readonly submitOccurrence?: (
+    occurrence: SavedTimerOccurrence
+  ) => Promise<void>;
   readonly metadata: MetadataTransaction;
   readonly persist: () => Promise<void>;
   readonly now?: () => number;
@@ -208,43 +222,48 @@ export const createConversationReminders = (services: {
         time: Math.max(now(), reminder.runAt),
       });
     });
-  const admit = (id: string, input: ReminderInput): Promise<StoredReminder> =>
-    services.pi.commit(async (tx) => {
-      await services.guardIn?.(tx);
-      const doc = await tx.doc(Reminders, services.nativeId);
-      const existing = doc.reminders[id];
-      const digest = fingerprint(input);
-      if (existing) {
-        if (existing.fingerprint !== digest) {
-          throw new Conflict({
-            code: "digest-mismatch",
-            reason: "The reminder operation names another schedule.",
-          });
-        }
-        return copyStored(existing);
-      }
-      if (
-        Object.values<StoredReminder>(doc.reminders).filter(
-          (value) => value.state === "scheduled"
-        ).length >= MAX_ACTIVE_REMINDERS
-      ) {
-        throw new InvalidInput({
-          reason: "This chat already has 100 active reminders.",
+  const admitIn = async (
+    tx: Tx,
+    id: string,
+    input: ReminderInput
+  ): Promise<StoredReminder> => {
+    await services.guardIn?.(tx);
+    const doc = await tx.doc(Reminders, services.nativeId);
+    const existing = doc.reminders[id];
+    const digest = fingerprint(input);
+    if (existing) {
+      if (existing.fingerprint !== digest) {
+        throw new Conflict({
+          code: "digest-mismatch",
+          reason: "The reminder operation names another schedule.",
         });
       }
-      const created: StoredReminder = {
-        fingerprint: digest,
-        id,
-        initialRunAt: input.runAt,
-        instruction: input.instruction,
-        lastDeliveredAt: null,
-        recurrence: input.recurrence ? { ...input.recurrence } : null,
-        runAt: input.runAt,
-        state: "scheduled",
-      };
-      doc.reminders[id] = created;
-      return created;
-    }, piContext());
+      return copyStored(existing);
+    }
+    if (
+      Object.values<StoredReminder>(doc.reminders).filter(
+        (value) => value.state === "scheduled"
+      ).length >= MAX_ACTIVE_REMINDERS
+    ) {
+      throw new InvalidInput({
+        reason: "This chat already has 100 active reminders.",
+      });
+    }
+    const created: StoredReminder = {
+      fingerprint: digest,
+      id,
+      initialRunAt: input.runAt,
+      instruction: input.instruction,
+      lastDeliveredAt: null,
+      recurrence: input.recurrence ? { ...input.recurrence } : null,
+      runAt: input.runAt,
+      state: "scheduled",
+    };
+    doc.reminders[id] = created;
+    return copyStored(created);
+  };
+  const admit = (id: string, input: ReminderInput): Promise<StoredReminder> =>
+    services.pi.commit((tx) => admitIn(tx, id, input), piContext());
   const schedule = async (
     input: ReminderInput,
     operationId: string,
@@ -288,12 +307,8 @@ export const createConversationReminders = (services: {
       const firstWrite =
         toolCommit ??
         ((change) => services.pi.commit(change, piContext(signal)));
-      await firstWrite(async (tx) => {
+      const created = await firstWrite(async (tx) => {
         await services.guardIn?.(tx);
-        if (!retained) {
-          await cause?.(tx);
-        }
-        signal?.throwIfAborted();
         const pending = services.jobs.get(jobId(id));
         if (pending) {
           const seed = Schema.decodeUnknownSync(payloadSchema)(pending.payload);
@@ -307,32 +322,26 @@ export const createConversationReminders = (services: {
               reason: "The reminder operation names another schedule.",
             });
           }
-          await services.jobs.rearm();
-          return;
+        } else {
+          if (!toolCommit) {
+            await services.guardNewScheduleIn?.(tx);
+          }
+          const origin = await cause?.(tx);
+          signal?.throwIfAborted();
+          await services.jobs.push({
+            fn: "cerebro-coordination",
+            id: `cerebro-coordination:${services.sessionId}`,
+            payload: { sessionId: services.sessionId },
+            recoveryLoop: true,
+            singleflight: true,
+            time: now(),
+          });
+          await services.saveOriginIn?.(tx, id, origin);
         }
-        await services.jobs.push({
-          fn: "cerebro-reminder",
-          id: jobId(id),
-          payload: {
-            input: normalized,
-            occurrence: normalized.runAt,
-            reminderId: id,
-            sessionId: services.sessionId,
-          },
-          recoveryLoop: true,
-          singleflight: true,
-          time: normalized.runAt,
-        });
+        signal?.throwIfAborted();
+        return await admitIn(tx, id, normalized);
       });
-      let created: StoredReminder;
-      try {
-        created = await admit(id, normalized);
-      } catch (error) {
-        if (error instanceof InvalidInput) {
-          await services.metadata(() => services.jobs.cancel(jobId(id)));
-        }
-        throw error;
-      }
+      await arm(created);
       await services.persist();
       return publicReminder(created);
     });
@@ -395,11 +404,18 @@ export const createConversationReminders = (services: {
         return { rescheduleAt: reminder.runAt };
       }
       try {
-        await services.authorize();
-        await services.submit(
-          `Scheduled instruction (${id}, ${new Date(occurrence).toISOString()}):\n${reminder.instruction}`,
-          `${id}:${occurrence}`
-        );
+        await (services.authorizeDelivery ?? services.authorize)();
+        await (services.submitOccurrence
+          ? services.submitOccurrence({
+              reminderId: id,
+              fingerprint: reminder.fingerprint,
+              occurrence,
+              instruction: reminder.instruction,
+            })
+          : services.submit(
+              `Scheduled instruction (${id}, ${new Date(occurrence).toISOString()}):\n${reminder.instruction}`,
+              `${id}:${occurrence}`
+            ));
       } catch (error) {
         if (
           !(

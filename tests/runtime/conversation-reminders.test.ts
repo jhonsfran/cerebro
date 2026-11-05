@@ -59,7 +59,7 @@ const fakeJobs = () => {
         time: options.time,
       };
       rows.set(job.id, job);
-      if (failAfterPush) {
+      if (failAfterPush && options.fn === "cerebro-reminder") {
         failAfterPush = false;
         return Promise.reject(new Error("Lost job admission response"));
       }
@@ -187,7 +187,11 @@ const setup = async () => {
         payload.input
       );
     },
-    jobs: queued.jobs,
+    jobs: {
+      ...queued.jobs,
+      list: () =>
+        queued.jobs.list().filter((job) => job.fn === "cerebro-reminder"),
+    },
     losePush: queued.failNextPush,
     loseSubmit: () => {
       lostSubmit = true;
@@ -320,7 +324,7 @@ test("native model tools schedule relative deadlines and cancel them", async () 
   }
 });
 
-test("a durable wake recovers creation interrupted before native reminder admission", async () => {
+test("lost timer arm response retains the accepted canonical schedule for recovery", async () => {
   const fixture = await setup();
   try {
     const runAt = fixture.now() + 1000;
@@ -333,7 +337,14 @@ test("a durable wake recovers creation interrupted before native reminder admiss
     );
     const [job] = fixture.jobs.list();
     assert.ok(job);
-    assert.deepEqual(await fixture.reminders().list(), []);
+    assert.deepEqual(await fixture.reminders().list(), [
+      {
+        id: "reminder:gap",
+        instruction: "Recover me.",
+        runAt,
+        state: "scheduled",
+      },
+    ]);
     await fixture.reopen();
     fixture.setTime(runAt);
     await fixture.due(job);
@@ -348,6 +359,44 @@ test("a durable wake recovers creation interrupted before native reminder admiss
     ]);
     assert.deepEqual(await fixture.submissions(), [
       { requestId: `reminder:gap:${runAt}`, status: "done" },
+    ]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a genuine legacy job-only seed recovers with its literal payload and original native occurrence ID", async () => {
+  const fixture = await setup();
+  try {
+    const runAt = fixture.now() + 1000;
+    const job = await fixture.jobs.push({
+      id: "cerebro-reminder:first:reminder:legacy-seed",
+      fn: "cerebro-reminder",
+      payload: {
+        input: { instruction: "Retained old seed.", runAt },
+        occurrence: runAt,
+        reminderId: "reminder:legacy-seed",
+        sessionId: "first",
+      },
+      time: runAt,
+      recoveryLoop: true,
+      singleflight: true,
+    });
+    assert.deepEqual(await fixture.reminders().list(), []);
+    await fixture.reopen();
+    fixture.setTime(runAt);
+    await fixture.due(job);
+    assert.deepEqual(await fixture.reminders().list(), [
+      {
+        id: "reminder:legacy-seed",
+        instruction: "Retained old seed.",
+        lastDeliveredAt: runAt,
+        runAt,
+        state: "completed",
+      },
+    ]);
+    assert.deepEqual(await fixture.submissions(), [
+      { requestId: `reminder:legacy-seed:${runAt}`, status: "done" },
     ]);
   } finally {
     await fixture.close();

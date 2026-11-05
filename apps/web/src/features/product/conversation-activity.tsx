@@ -3,6 +3,7 @@ import type {
   ChatChild,
   ChatControl,
   ChatRecurrence,
+  ChatSnapshot,
 } from "@cerebro/contracts/session-service";
 import { Badge } from "@cerebro/ui/components/badge";
 import { Button } from "@cerebro/ui/components/button";
@@ -300,11 +301,13 @@ export const ConversationActivity = ({
   disabled,
   control,
   onConversation,
+  admission,
 }: {
   activity: ChatActivity | undefined;
   disabled: boolean;
   control: Control;
   onConversation?: (conversationId: string) => void;
+  admission?: ChatSnapshot["admission"];
 }) => {
   const compactIntent = useRef<OperationIntent | null>(null);
   if (!activity) {
@@ -452,7 +455,9 @@ export const ConversationActivity = ({
             ) : (
               <p className="text-muted-foreground">No follow-ups scheduled.</p>
             )}
-            <ReminderForm control={control} disabled={disabled} />
+            {admission?.kind === "closed" ? null : (
+              <ReminderForm control={control} disabled={disabled} />
+            )}
           </section>
           <Separator />
           <section
