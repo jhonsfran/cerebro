@@ -48,7 +48,7 @@ interface WorkspaceBodyProps {
   claimSetup: () => Promise<void>;
   bootstrapToken: string;
   setBootstrapToken: (token: string) => void;
-  startConversation: () => Promise<void>;
+  openConversation: () => Promise<void>;
   refreshAgent: () => Promise<void>;
   onSaved: (agentId: string) => Promise<void>;
   onConversation: (conversationId: string) => void;
@@ -92,25 +92,25 @@ const WelcomePanel = ({
   setup,
   selected,
   busy,
-  startConversation,
+  openConversation,
   create,
 }: {
   setup: Setup;
   selected: AgentSummary | undefined;
   busy: boolean;
-  startConversation: () => Promise<void>;
+  openConversation: () => Promise<void>;
   create: () => void;
 }) => {
   let action: ReactNode = null;
   if (selected) {
     action = (
-      <Button disabled={busy} type="button" onClick={startConversation}>
+      <Button disabled={busy} type="button" onClick={openConversation}>
         {busy ? (
           <Spinner data-icon="inline-start" />
         ) : (
           <SquarePen data-icon="inline-start" aria-hidden="true" />
         )}
-        Start a conversation
+        Open conversation
       </Button>
     );
   } else if (setup.owner) {
@@ -126,8 +126,9 @@ const WelcomePanel = ({
       title="Answers with sources. Actions with control."
       action={action}
     >
-      {selected ? "Start" : "Choose an agent and start"} a private conversation.
-      Review its sources, tools, and approval requests in one place.
+      {selected ? "Open" : "Choose an agent and open"} your private
+      conversation. Review its sources, tools, and approval requests in one
+      place.
     </EmptyPage>
   );
 };
@@ -196,7 +197,7 @@ const AgentContent = (props: WorkspaceBodyProps & { setup: Setup }) => {
     conversationPending,
     userId,
     setView,
-    startConversation,
+    openConversation,
     refreshAgent,
     onSaved,
     onConversation,
@@ -247,8 +248,8 @@ const AgentContent = (props: WorkspaceBodyProps & { setup: Setup }) => {
         agentId={selected.agentId}
         agentName={selected.name}
         onConversation={onConversation}
-        onStartConversation={() => {
-          void startConversation();
+        onOpenConversation={() => {
+          void openConversation();
         }}
       />
     );
@@ -258,7 +259,7 @@ const AgentContent = (props: WorkspaceBodyProps & { setup: Setup }) => {
       setup={setup}
       selected={selected}
       busy={busy}
-      startConversation={startConversation}
+      openConversation={openConversation}
       create={() => {
         setView({ kind: "create" });
       }}
@@ -360,18 +361,18 @@ export const WorkspaceHeader = ({
   title,
   selected,
   creating,
-  offerNew,
+  offerOpen,
   busy,
   pending,
-  onNew,
+  onOpen,
 }: {
   title?: string;
   selected: AgentSummary | undefined;
   creating: boolean;
-  offerNew: boolean;
+  offerOpen: boolean;
   busy: boolean;
   pending: boolean;
-  onNew: () => Promise<void>;
+  onOpen: () => Promise<void>;
 }) => (
   <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
     <SidebarTrigger className="-ml-1" />
@@ -381,16 +382,16 @@ export const WorkspaceHeader = ({
     <h1 className="min-w-0 flex-1 truncate text-sm font-medium">
       {headerTitle(title, creating, selected)}
     </h1>
-    {selected && !creating && offerNew ? (
+    {selected && !creating && offerOpen ? (
       <Button
         variant="outline"
         size="sm"
         disabled={busy || pending}
         type="button"
-        onClick={onNew}
+        onClick={onOpen}
       >
         <SquarePen data-icon="inline-start" aria-hidden="true" />
-        New conversation
+        Open conversation
       </Button>
     ) : null}
   </header>

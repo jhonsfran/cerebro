@@ -199,7 +199,7 @@ export const useWorkspace = ({
     }
     setBusy(false);
   };
-  const startConversation = async () => {
+  const openConversation = async () => {
     if (!selectedId) {
       return;
     }
@@ -266,7 +266,7 @@ export const useWorkspace = ({
     selected,
     conversationPending,
     claimSetup,
-    startConversation,
+    openConversation,
     refreshAgent,
     selectAgent,
     agentSaved,

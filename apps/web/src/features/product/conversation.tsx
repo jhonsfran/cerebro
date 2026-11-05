@@ -234,14 +234,14 @@ const ConversationSession = ({
   userId,
   agentId,
   agentName,
-  onStartConversation,
+  onOpenConversation,
   onConversation,
 }: {
   conversationId: string;
   userId: string;
   agentId: string;
   agentName: string;
-  onStartConversation?: () => void;
+  onOpenConversation?: () => void;
   onConversation?: (conversationId: string) => void;
 }) => {
   const [conversation, setConversation] = useState<Conversation | null>(null);
@@ -372,13 +372,13 @@ const ConversationSession = ({
       {displayedError ? (
         <div className="mx-auto flex w-full max-w-(--measure-chat) flex-col items-start gap-2 px-4 pt-4">
           <ErrorAlert>{displayedError}</ErrorAlert>
-          {!conversation && onStartConversation ? (
+          {!conversation && onOpenConversation ? (
             <Button
               variant="outline"
               type="button"
-              onClick={onStartConversation}
+              onClick={onOpenConversation}
             >
-              Start new conversation
+              Open conversation
             </Button>
           ) : null}
         </div>

@@ -14,6 +14,7 @@ import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { channelConversation } from "@cerebro/db/schema/agents";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
+import { openPrimaryConversation } from "./primary-conversations";
 import { authorize, digest, principalContext, unwrap } from "./security";
 import { ChannelError, EFFECT_DEADLINE_MS } from "./types";
 import type { ChannelOptions } from "./types";
@@ -85,30 +86,12 @@ export const createConversationService = (
         readOptions()
       )
     );
-    const bindingKey = `pi-identity-v1:web:${await digest({ operationId, organizationId: options.organizationId, principalId: context.actor.id })}`;
-    const conversationId = `conversation:${await digest(bindingKey)}`;
-    await database
-      .insert(channelConversation)
-      .values({
-        agentId,
-        bindingKey,
-        conversationId,
-        engine: "pi-identity-v1",
-        kind: "web",
-        organizationId: options.organizationId,
-        ownerPrincipalId: context.actor.id,
-        sessionId: `session:${await digest({ agentId, conversationId, organizationId: options.organizationId })}`,
-      })
-      .onConflictDoNothing();
-    const row = await requireConversation(conversationId, context, "execute");
-    requireActive(row);
-    if (row.agentId !== agentId) {
-      throw new ChannelError(
-        409,
-        "conflict",
-        "The conversation operation names another agent."
-      );
-    }
+    const row = await openPrimaryConversation(database, {
+      agentId,
+      operationId,
+      organizationId: options.organizationId,
+      ownerPrincipalId: context.actor.id,
+    });
     return {
       agentId: row.agentId,
       conversationId: row.conversationId,

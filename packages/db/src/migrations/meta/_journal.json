@@ -134,6 +134,13 @@
       "when": 1793771998985,
       "tag": "0018_slack_event_receipt",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793851587832,
+      "tag": "0019_persistent_primary_conversations",
+      "breakpoints": true
     }
   ]
 }

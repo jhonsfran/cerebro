@@ -1,0 +1,6 @@
+ts	phase	decision	why	evidence	result
+2026-11-05T03:53:12Z	frame	Created codex/persistent-super-agent from the verified coordinator branch	The user requested a separate implementation branch	docs/plans/2026-11-04-persistent-super-agent.md	open
+2026-11-05T03:53:12Z	baseline	Verified 36 contract tests and 120 channel tests before implementation	The baseline distinguishes existing behavior from the new ownership model	tests/contracts;tests/channels	verified
+2026-11-05T04:05:57Z	unit1-review	Accepted removal of the redundant primary mapping table	The existing unique deterministic conversation binding already identifies the owner tuple	/private/tmp/persistent-super-agent/reviews/unit1-thermo.md	fix in progress
+2026-11-05T04:08:41Z	unit1	Verified primary binding and exact operation replay with one new receipt table	Concurrent opens must converge while old retries preserve their original result	artifacts/verification/persistent-super-agent/unit1/result.json	124 channel tests and 13 type tasks passed; fresh thermo passed after accepted simplification
+2026-11-05T04:09:26Z	unit1-hook	Formatted generated migration metadata after the commit hook rejected it	Scoped application formatting omitted two generated JSON files; parsed JSON remains identical	/private/tmp/persistent-super-agent/unit1/commit.log	format-only correction; rerunning hook

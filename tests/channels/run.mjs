@@ -89,6 +89,7 @@ try {
       "--timeout",
       "30000",
       "tests/channels/web.test.ts",
+      "tests/channels/primary-conversations.test.ts",
       "tests/channels/production.test.ts",
       "tests/channels/slack.test.ts",
       "tests/channels/slack-events.test.ts",

@@ -69,6 +69,25 @@ export const channelConversation = pgTable("channel_conversation", {
   slackUserId: text("slack_user_id"),
   workspaceId: text("workspace_id"),
 });
+export const channelConversationOperation = pgTable(
+  "channel_conversation_operation",
+  {
+    agentId: text("agent_id").notNull(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => channelConversation.conversationId),
+    digest: text("digest").notNull(),
+    operationId: text("operation_id").notNull(),
+    organizationId: text("organization_id").notNull(),
+    ownerPrincipalId: text("owner_principal_id").notNull(),
+    sessionId: text("session_id").notNull(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [t.organizationId, t.ownerPrincipalId, t.operationId],
+    }),
+  ]
+);
 export const channelEffect = pgTable("channel_effect", {
   digest: text("digest").notNull(),
   operationId: text("operation_id").primaryKey(),
@@ -90,6 +109,7 @@ export const agentSchema = {
   agentPublishOperation,
   agentVersion,
   channelConversation,
+  channelConversationOperation,
   channelEffect,
   channelLinkEvent,
   channelSlackEventReceipt,

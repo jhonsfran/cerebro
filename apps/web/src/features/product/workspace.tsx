@@ -37,7 +37,7 @@ export const ProductWorkspace = ({
     selected,
     conversationPending,
     claimSetup,
-    startConversation,
+    openConversation,
     refreshAgent,
     selectAgent,
     agentSaved,
@@ -58,7 +58,7 @@ export const ProductWorkspace = ({
           title={view.kind === "admin" ? adminTitles[view.view] : undefined}
           selected={view.kind === "admin" ? undefined : selected}
           creating={view.kind === "create"}
-          offerNew={
+          offerOpen={
             !(
               view.kind === "agent" &&
               view.tab === "conversation" &&
@@ -67,7 +67,7 @@ export const ProductWorkspace = ({
           }
           busy={busy}
           pending={conversationPending && !errorMessage}
-          onNew={startConversation}
+          onOpen={openConversation}
         />
         {errorMessage ? (
           <ErrorAlert className="mx-4 mt-4 w-auto">{errorMessage}</ErrorAlert>
@@ -88,7 +88,7 @@ export const ProductWorkspace = ({
             claimSetup={claimSetup}
             bootstrapToken={bootstrapToken}
             setBootstrapToken={setBootstrapToken}
-            startConversation={startConversation}
+            openConversation={openConversation}
             refreshAgent={refreshAgent}
             onSaved={agentSaved}
             onConversation={onConversation}
