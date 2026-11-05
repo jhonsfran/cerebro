@@ -1,12 +1,16 @@
 import { assertQueuePayloadSize } from "@cerebro/channels/queue-payload";
+import { contextByPrincipal } from "@cerebro/channels/security";
 import { prepareTeamReport } from "@cerebro/channels/team-reports";
 import { Denied, fromPortResult } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
+import type { ContentDependencies } from "@cerebro/contracts/session";
+import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
+import type { TeamEventReturn } from "@cerebro/contracts/team-events";
 import {
   canonicalToolArguments,
   digestToolArguments,
 } from "@cerebro/contracts/tools";
-import { TeamCommandSchema, workCellName } from "@cerebro/contracts/work";
+import { workCellName } from "@cerebro/contracts/work";
 import type {
   WorkAdmission,
   WorkReport,
@@ -17,8 +21,10 @@ import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import type { MetadataTransaction } from "@cerebro/runtime/session-agent";
 import { TeamAgent as TeamHost } from "@cerebro/runtime/team-agent";
 import type { ReadTeamRoleImports } from "@cerebro/runtime/team-content";
-import { Effect, Schema } from "effect";
+import { teamCommandDependencies } from "@cerebro/runtime/team-state";
+import { Effect } from "effect";
 
+import { checkContentDependencies, createCurrentAuthority } from "./access";
 import type { WorkerEnv } from "./bindings";
 import { slackSettings } from "./channels";
 import { runtimeConfiguration } from "./config";
@@ -31,6 +37,73 @@ import { createExecutionComposition } from "./session/execution";
 import { authenticateSessionRequest } from "./session/proof";
 
 export class TeamAgent extends TeamHost<WorkerEnv> {
+  private async authorizeEventSource(
+    work: WorkAdmission,
+    dependencies: ContentDependencies
+  ): Promise<void> {
+    const identity = {
+      organizationId: work.key.organizationId,
+      ownerPrincipalId: work.key.ownerPrincipalId,
+    };
+    const options = { deadlineAt: Date.now() + 10_000 };
+    const { conversation } = await Effect.runPromise(
+      resolveSessionAddress(this.env, work.sourceEventAddress, identity)
+    );
+    requireLegacySourceMatch(work, conversation);
+    const { context, definition } = await withDatabase(
+      this.env,
+      async (database) => ({
+        context: await contextByPrincipal(
+          database,
+          identity.organizationId,
+          identity.ownerPrincipalId
+        ),
+        definition: await createAgentRepository(database).get(
+          identity.organizationId,
+          work.sourceEventAddress.agentId,
+          "latest",
+          options
+        ),
+      })
+    );
+    const pinnedAgent = await Effect.runPromise(fromPortResult(definition));
+    await Effect.runPromise(
+      createCurrentAuthority(this.env).require(
+        {
+          action: "read",
+          address: work.sourceEventAddress,
+          context,
+          pinnedAgent,
+          resource: {
+            kind: "agent",
+            id: work.sourceEventAddress.agentId,
+            organizationId: identity.organizationId,
+          },
+        },
+        options
+      )
+    );
+    const result = await withDatabase(this.env, (database) =>
+      checkContentDependencies(
+        this.env,
+        database,
+        context,
+        dependencies,
+        options
+      )
+    );
+    await Effect.runPromise(fromPortResult(result));
+  }
+  protected override eventReturnTransport(work: WorkAdmission) {
+    return {
+      authorize: (dependencies: ContentDependencies) =>
+        this.authorizeEventSource(work, dependencies),
+      send: async (delivery: TeamEventReturn) => {
+        assertQueuePayloadSize(delivery);
+        await this.env.TEAM_REPORTS.send(delivery, { contentType: "json" });
+      },
+    };
+  }
   protected override reportTransport(work: WorkAdmission) {
     return {
       prepare: (report: WorkReport) => prepareTeamReport(work, report),
@@ -49,9 +122,7 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
     }
     const text = await request.clone().text();
     assertQueuePayloadSize(JSON.parse(text));
-    const command = Schema.decodeUnknownSync(TeamCommandSchema, {
-      onExcessProperty: "error",
-    })(JSON.parse(text));
+    const { command, wire, event } = normalizeTeamCommand(JSON.parse(text));
     if (this.ctx.id.name !== workCellName(command.work.key)) {
       throw new Denied({
         code: "unauthorized",
@@ -92,7 +163,13 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
       });
     }
     requireLegacySourceMatch(command.work, conversation);
-    return command;
+    if (event) {
+      await this.authorizeEventSource(
+        command.work,
+        teamCommandDependencies(command)
+      );
+    }
+    return wire;
   }
 
   protected override async configure(

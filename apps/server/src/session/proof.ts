@@ -54,6 +54,7 @@ const proofSchema = z.strictObject({
     "/fork",
     "/control",
     "/team-report",
+    "/team-event-return",
   ]),
 });
 const signedSchema = z.strictObject({

@@ -1,5 +1,8 @@
 import type { SlackQueueDelivery } from "@cerebro/channels/slack-events";
-import type { TeamCommand, TeamReportDelivery } from "@cerebro/contracts/work";
+import type {
+  TeamCommandTransport,
+  TeamReportTransportMessage,
+} from "@cerebro/contracts/team-events";
 
 import type { IdentityAgent } from "./session/agent";
 import type { TeamAgent } from "./team-agent";
@@ -15,8 +18,8 @@ export interface WorkerEnv {
   CHANNEL_ORGANIZATION_ID?: string;
   SLACK_CHANNEL_JSON?: string;
   SLACK_EVENTS: Queue<SlackQueueDelivery>;
-  TEAM_COMMANDS: Queue<TeamCommand>;
-  TEAM_REPORTS: Queue<TeamReportDelivery>;
+  TEAM_COMMANDS: Queue<TeamCommandTransport>;
+  TEAM_REPORTS: Queue<TeamReportTransportMessage>;
   SESSION: DurableObjectNamespace<IdentityAgent>;
   TEAM: DurableObjectNamespace<TeamAgent>;
   AUDIT_SINK: Fetcher;

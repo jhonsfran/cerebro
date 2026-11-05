@@ -10,6 +10,7 @@ import {
   WorkAdmissionSchema,
 } from "../../packages/contracts/src/work.ts";
 import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
+import { eventOf } from "../../packages/runtime/src/coordinator-event-state.ts";
 import { BotEventQueue } from "../../packages/runtime/src/coordinator-events.ts";
 import {
   WorkDocuments,
@@ -127,7 +128,7 @@ const subject = async () => {
     const page = await fixture.events().list(source.address, actor);
     await Promise.all(
       page.items.map((receipt) =>
-        fixture.pi().waitForTask(receipt.taskId, context)
+        fixture.pi().waitForTask(receipt.delivery.taskId, context)
       )
     );
   };
@@ -306,7 +307,7 @@ test("full reports stay in work storage while event input and recall remain boun
     const events = await f.fixture.events().list(f.source.address, actor);
     const [receipt] = events.items;
     assert.ok(receipt);
-    assert.equal(receipt.event.content.text.length, 2000);
+    assert.equal(eventOf(receipt).content.text.length, 2000);
     assert.equal(
       JSON.stringify(await f.source.native.context(context)).includes(
         "x".repeat(2100)

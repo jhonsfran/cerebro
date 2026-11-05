@@ -1,5 +1,11 @@
 import { InvalidInput } from "@cerebro/contracts/failures";
 import type { ContentDependencies } from "@cerebro/contracts/session";
+import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
+import type {
+  TeamCommandTransport,
+  TeamEventCommand,
+} from "@cerebro/contracts/team-events";
+import { digestToolArguments } from "@cerebro/contracts/tools";
 import { TeamCommandSchema } from "@cerebro/contracts/work";
 import type {
   BackgroundWorkSnapshot,
@@ -9,6 +15,7 @@ import type { ConversationId, Tx } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 import type { createCoordinatorDispatch } from "./coordinator-dispatch.ts";
+import type { EventRecipient, EventSkip } from "./coordinator-event-state.ts";
 import {
   CommandReceipts,
   SourceOperations,
@@ -16,11 +23,13 @@ import {
   coordinatorOperationKey,
   requireCoordinatorWork,
   workHoldsSlot,
+  workAcceptsEvents,
 } from "./coordinator-ledger.ts";
 import type {
   CoordinationBinding,
   CoordinatorWorkRecord,
 } from "./coordinator-ledger.ts";
+import { discardQueuedCommandsIn } from "./coordinator-retired-events.ts";
 
 type CoordinatorInput =
   | { readonly kind: "cancel" }
@@ -52,11 +61,12 @@ const acceptsCommands = (record: CoordinatorWorkRecord): boolean =>
 const bufferIn = async (
   tx: Tx,
   record: CoordinatorWorkRecord,
-  command: TeamCommand
+  transport: TeamCommandTransport
 ): Promise<void> => {
+  const { command } = normalizeTeamCommand(transport);
   if (command.kind === "cancel") {
+    await discardQueuedCommandsIn(tx, record, "cancelled");
     record.status = { kind: "cancelled", commandId: command.id };
-    record.queuedCommands = {};
     const ledger = await tx.doc(WorkLedger);
     ledger.queue = ledger.queue.filter(
       (entry) => entry.workId !== record.admission.key.workId
@@ -69,10 +79,32 @@ const bufferIn = async (
       reason: "This queued work already has its maximum pending updates.",
     });
   }
-  bufferedCommands[command.id] = command;
+  bufferedCommands[command.id] = transport;
   record.queuedCommands = bufferedCommands;
 };
 
+const prunePendingIn = async (
+  tx: Tx,
+  records: readonly CoordinatorWorkRecord[]
+) => {
+  await Promise.all(
+    records.map(async (record) => {
+      const pending = await Promise.all(
+        Object.entries(record.pendingCommands).map(
+          async ([commandId, receipt]) => ({
+            commandId,
+            task: await tx.task(receipt.taskId),
+          })
+        )
+      );
+      for (const item of pending) {
+        if (!item.task || item.task.state.status === "terminal") {
+          Reflect.deleteProperty(record.pendingCommands, item.commandId);
+        }
+      }
+    })
+  );
+};
 export const createCoordinatorCommands = (options: {
   readonly nativeId: ConversationId;
   readonly dispatch: ReturnType<typeof createCoordinatorDispatch>;
@@ -83,8 +115,9 @@ export const createCoordinatorCommands = (options: {
   ) => BackgroundWorkSnapshot;
 }) => {
   const { dispatch, binding, now, publicWork } = options;
-  const commandReceipt = async (tx: Tx, command: TeamCommand) => {
-    const digest = await coordinatorOperationKey(JSON.stringify(command));
+  const commandReceipt = async (tx: Tx, transport: TeamCommandTransport) => {
+    const { command, wire } = normalizeTeamCommand(transport);
+    const digest = await coordinatorOperationKey(JSON.stringify(wire));
     const document = await tx.doc(CommandReceipts, command.id, null);
     if (!document.receipt) {
       return { digest, document, taskId: undefined };
@@ -99,10 +132,10 @@ export const createCoordinatorCommands = (options: {
         reason: "The team command ID names another input.",
       });
     }
-    const saved = Schema.decodeUnknownSync(TeamCommandSchema, {
-      onExcessProperty: "error",
-    })(task.input);
-    if ((await coordinatorOperationKey(JSON.stringify(saved))) !== digest) {
+    const saved = normalizeTeamCommand(task.input);
+    if (
+      (await coordinatorOperationKey(JSON.stringify(saved.wire))) !== digest
+    ) {
       throw new InvalidInput({ reason: "The saved team command changed." });
     }
     return { digest, document, taskId: document.receipt.taskId };
@@ -111,7 +144,7 @@ export const createCoordinatorCommands = (options: {
     tx: Tx,
     items: readonly {
       readonly record: CoordinatorWorkRecord;
-      readonly command: TeamCommand;
+      readonly command: TeamCommandTransport;
     }[]
   ): Promise<void> => {
     const prepared = await Promise.all(
@@ -121,28 +154,13 @@ export const createCoordinatorCommands = (options: {
       }))
     );
     const records = [...new Set(items.map((item) => item.record))];
-    await Promise.all(
-      records.map(async (record) => {
-        const pending = await Promise.all(
-          Object.entries(record.pendingCommands).map(
-            async ([commandId, receipt]) => ({
-              commandId,
-              task: await tx.task(receipt.taskId),
-            })
-          )
-        );
-        for (const item of pending) {
-          if (!item.task || item.task.state.status === "terminal") {
-            Reflect.deleteProperty(record.pendingCommands, item.commandId);
-          }
-        }
-      })
-    );
+    await prunePendingIn(tx, records);
     for (const { record, command, previous } of prepared) {
+      const normalized = normalizeTeamCommand(command).command;
       if (previous.taskId !== undefined) {
         continue;
       }
-      const limit = command.kind === "cancel" ? 8 : 7;
+      const limit = normalized.kind === "cancel" ? 8 : 7;
       if (Object.keys(record.pendingCommands).length >= limit) {
         throw new InvalidInput({
           reason: "This work already has its maximum pending commands.",
@@ -156,13 +174,13 @@ export const createCoordinatorCommands = (options: {
       });
       const receipt = { digest: previous.digest, taskId };
       previous.document.receipt = receipt;
-      record.pendingCommands[command.id] = receipt;
+      record.pendingCommands[normalized.id] = receipt;
     }
   };
   const enqueueIn = async (
     tx: Tx,
     record: CoordinatorWorkRecord,
-    command: TeamCommand
+    command: TeamCommandTransport
   ): Promise<void> => {
     await enqueueAllIn(tx, [{ record, command }]);
   };
@@ -174,7 +192,7 @@ export const createCoordinatorCommands = (options: {
   ): Promise<boolean> => {
     const buffered = record.queuedCommands[commandId];
     if (buffered) {
-      if (!matchesCommandInput(buffered, input)) {
+      if (!matchesCommandInput(normalizeTeamCommand(buffered).command, input)) {
         throw new InvalidInput({
           reason: "The team command ID names another input.",
         });
@@ -184,11 +202,7 @@ export const createCoordinatorCommands = (options: {
     const receipt = await tx.doc(CommandReceipts, commandId, null);
     if (receipt.receipt) {
       const task = await tx.task(receipt.receipt.taskId);
-      const saved = task
-        ? Schema.decodeUnknownSync(TeamCommandSchema, {
-            onExcessProperty: "error",
-          })(task.input)
-        : undefined;
+      const saved = task ? normalizeTeamCommand(task.input).command : undefined;
       if (
         !saved ||
         saved.id !== commandId ||
@@ -270,5 +284,63 @@ export const createCoordinatorCommands = (options: {
     return { ...publicWork(record), accepted: true };
   };
 
-  return { commandIn, enqueueIn, enqueueAllIn };
+  const eventCommandsIn = async (
+    tx: Tx,
+    items: readonly {
+      record: CoordinatorWorkRecord;
+      command: TeamEventCommand;
+    }[]
+  ): Promise<{ recipients: EventRecipient[]; skipped: EventSkip[] }> => {
+    await prunePendingIn(
+      tx,
+      items.map(({ record }) => record)
+    );
+    const recipients: EventRecipient[] = [];
+    const skipped: EventSkip[] = [];
+    const active: {
+      record: CoordinatorWorkRecord;
+      command: TeamEventCommand;
+    }[] = [];
+    const queuedItems: typeof active = [];
+    const prepared = await Promise.all(
+      items.map(async (item) => ({
+        ...item,
+        digest: await digestToolArguments(item.record.admission),
+      }))
+    );
+    for (const item of prepared) {
+      const { record, command } = item;
+      const { workId } = record.admission.key;
+      const queued =
+        record.status.kind === "queued" && record.admission.deadlineAt > now();
+      if (!workAcceptsEvents(record, now())) {
+        skipped.push({ workId, reason: "terminal" });
+        continue;
+      }
+      const full = queued
+        ? Object.keys(record.queuedCommands).length >= 6
+        : Object.keys(record.pendingCommands).length >= 7;
+      if (full) {
+        skipped.push({ workId, reason: "full" });
+        continue;
+      }
+      recipients.push({
+        key: record.admission.key,
+        admissionDigest: item.digest,
+        commandId: command.command.id,
+        disposition: { kind: "admitted" },
+      });
+      if (queued) {
+        queuedItems.push(item);
+      } else {
+        active.push(item);
+      }
+    }
+    await Promise.all(
+      queuedItems.map(({ record, command }) => bufferIn(tx, record, command))
+    );
+    await enqueueAllIn(tx, active);
+    return { recipients, skipped };
+  };
+  return { commandIn, enqueueIn, enqueueAllIn, eventCommandsIn };
 };

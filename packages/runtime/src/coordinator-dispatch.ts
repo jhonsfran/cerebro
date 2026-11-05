@@ -1,13 +1,15 @@
 import type { EventAddress } from "@cerebro/contracts/events";
 import { Denied, InvalidInput, NotFound } from "@cerebro/contracts/failures";
-import {
-  TeamCommandSchema,
-  transitionWorkStatus,
-} from "@cerebro/contracts/work";
+import type { ContentDependencies } from "@cerebro/contracts/session";
+import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
+import type {
+  TeamCommandTransport,
+  TeamEventCommand,
+} from "@cerebro/contracts/team-events";
+import { transitionWorkStatus } from "@cerebro/contracts/work";
 import type { TeamCommand } from "@cerebro/contracts/work";
 import { defineTask } from "@earendil-works/pi-durable";
 import type { ConversationId, Harness, Tx } from "@earendil-works/pi-durable";
-import { Schema } from "effect";
 
 import type { TerminalNoticeIn } from "./coordinator-event-content.ts";
 import {
@@ -38,6 +40,11 @@ export const createCoordinatorDispatch = (options: {
   readonly binding: () => CoordinationBinding;
   readonly now: () => number;
   readonly terminalNoticeIn?: TerminalNoticeIn;
+  readonly checkDependencies: (
+    dependencies: ContentDependencies,
+    signal?: AbortSignal
+  ) => Promise<void>;
+  readonly returnEventIn?: (tx: Tx, command: TeamEventCommand) => Promise<void>;
 }) => {
   const { now } = options;
   const clearPending = async (tx: Tx, command: TeamCommand) => {
@@ -53,14 +60,12 @@ export const createCoordinatorDispatch = (options: {
       return document.record;
     }
   };
-  return defineTask<TeamCommand, DispatchCheckpoint, DispatchResult>({
+  return defineTask<TeamCommandTransport, DispatchCheckpoint, DispatchResult>({
     name: `cerebro.coordinator-dispatch:${options.address.sessionId}`,
     version: 1,
     initial: () => ({ attempt: 0, phase: "send" }),
     abort: async (task, runtime, context) => {
-      const command = Schema.decodeUnknownSync(TeamCommandSchema, {
-        onExcessProperty: "error",
-      })(task.input);
+      const { command } = normalizeTeamCommand(task.input);
       await runtime.commit(async (tx) => {
         await clearPending(tx, command);
         return {
@@ -84,9 +89,7 @@ export const createCoordinatorDispatch = (options: {
         );
       },
       send: async (task, runtime, context) => {
-        const command = Schema.decodeUnknownSync(TeamCommandSchema, {
-          onExcessProperty: "error",
-        })(task.input);
+        const { command, wire, event } = normalizeTeamCommand(task.input);
         try {
           if (runtime.conversationId !== options.nativeId) {
             throw new Denied({
@@ -95,6 +98,12 @@ export const createCoordinatorDispatch = (options: {
             });
           }
           await options.authorize(context.abortSignal);
+          if (command.kind === "input") {
+            await options.checkDependencies(
+              command.contentDependencies,
+              context.abortSignal
+            );
+          }
           const source = options.binding();
           const document = await options.pi.snapshot(
             WorkDocuments,
@@ -114,7 +123,7 @@ export const createCoordinatorDispatch = (options: {
           ) {
             throw new NotFound({ resource: "Team command" });
           }
-          const digest = await coordinatorOperationKey(JSON.stringify(command));
+          const digest = await coordinatorOperationKey(JSON.stringify(wire));
           if (
             receipt.receipt.digest !== digest ||
             JSON.stringify(record.admission) !== JSON.stringify(command.work)
@@ -132,6 +141,9 @@ export const createCoordinatorDispatch = (options: {
           ) {
             await runtime.commit(async (tx) => {
               await clearPending(tx, command);
+              if (event && wire.kind === "event-command") {
+                await options.returnEventIn?.(tx, wire);
+              }
               return {
                 status: "terminal",
                 outcome: { status: "completed", result: { kind: "skipped" } },
@@ -146,7 +158,7 @@ export const createCoordinatorDispatch = (options: {
               reason: "Team coordination is disabled.",
             });
           }
-          await services.sendCommand(command);
+          await services.sendCommand(wire);
           await runtime.commit(async (tx) => {
             await clearPending(tx, command);
             return {

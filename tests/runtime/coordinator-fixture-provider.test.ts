@@ -56,7 +56,7 @@ test("the coordinator fixture supplies its tool call, initial answer and one rep
         state: "active",
       },
     });
-    await fixture.pi().waitForTask(admitted.taskId, context);
+    await fixture.pi().waitForTask(admitted.delivery.taskId, context);
     const receipt = await fixture
       .pi()
       .snapshot(BotEventReceipts, event.id, context);
@@ -69,10 +69,10 @@ test("the coordinator fixture supplies its tool call, initial answer and one rep
       );
     assert.equal(calls, 3, JSON.stringify(errors));
     assert.ok(
-      receipt?.receipt?.admission.kind === "settled" &&
-        receipt.receipt.admission.outcome === "done"
+      receipt?.receipt?.delivery.admission.kind === "settled" &&
+        receipt.receipt.delivery.admission.outcome === "done"
     );
-    const { answer } = receipt.receipt.admission;
+    const { answer } = receipt.receipt.delivery.admission;
     const output = await source.native.entries(
       { minEntryId: answer, maxEntryId: answer },
       1,

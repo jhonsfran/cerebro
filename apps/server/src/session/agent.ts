@@ -13,6 +13,7 @@ import type {
   ContentDependencies,
 } from "@cerebro/contracts/session";
 import { ConversationForkOrigin } from "@cerebro/contracts/session-service";
+import { TeamEventReturnSchema } from "@cerebro/contracts/team-events";
 import { TeamReportDeliverySchema } from "@cerebro/contracts/work";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
@@ -256,6 +257,14 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
             onExcessProperty: "error",
           })(await request.clone().json());
           requireLegacySourceMatch(delivery, conversation);
+        });
+      }
+      if (new URL(request.url).pathname === "/team-event-return") {
+        yield* tryAdapter(async () => {
+          const delivery = Schema.decodeUnknownSync(TeamEventReturnSchema, {
+            onExcessProperty: "error",
+          })(await request.clone().json());
+          requireLegacySourceMatch(delivery.work, conversation);
         });
       }
       return resolved;

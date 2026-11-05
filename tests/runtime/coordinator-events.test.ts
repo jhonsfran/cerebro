@@ -24,6 +24,7 @@ import {
   fauxAssistantMessage,
   fauxToolCall,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
+import { eventOf } from "../../packages/runtime/src/coordinator-event-state.ts";
 import {
   BotEventQueue,
   BotEventReceipts,
@@ -104,7 +105,7 @@ const wait = async (
   event: BotEvent
 ) => {
   const receipt = await saved(fixture, event);
-  await fixture.pi().waitForTask(receipt.taskId, context);
+  await fixture.pi().waitForTask(receipt.delivery.taskId, context);
   return await saved(fixture, event);
 };
 
@@ -116,14 +117,14 @@ test("duplicate event IDs save one intent and one exact native answer reference"
       fixture.events().admit(event, actor),
       fixture.events().admit(event, actor),
     ]);
-    assert.equal(receipts[0]?.taskId, receipts[1]?.taskId);
+    assert.equal(receipts[0]?.delivery.taskId, receipts[1]?.delivery.taskId);
     const receipt = await wait(fixture, event);
     assert.equal(receipt.duplicates, 1);
     assert.equal(fixture.eventSubmissions.length, 1);
-    assert.equal(receipt.admission.kind, "settled");
+    assert.equal(receipt.delivery.admission.kind, "settled");
     assert.ok(
-      receipt.admission.kind === "settled" &&
-        receipt.admission.outcome === "done"
+      receipt.delivery.admission.kind === "settled" &&
+        receipt.delivery.admission.outcome === "done"
     );
     const exact = await fixture
       .pi()
@@ -131,12 +132,12 @@ test("duplicate event IDs save one intent and one exact native answer reference"
         (tx) => tx.submissionByRequest(fixture.source("a").native.id, event.id),
         context
       );
-    assert.equal(exact?.id, receipt.admission.submissionId);
+    assert.equal(exact?.id, receipt.delivery.admission.submissionId);
     assert.equal(exact?.status, "done");
     const entries = await fixture.source("a").native.entries(
       {
-        minEntryId: receipt.admission.answer,
-        maxEntryId: receipt.admission.answer,
+        minEntryId: receipt.delivery.admission.answer,
+        maxEntryId: receipt.delivery.admission.answer,
       },
       1,
       undefined,
@@ -148,9 +149,9 @@ test("duplicate event IDs save one intent and one exact native answer reference"
       .commit(
         (tx) =>
           tx.entry(
-            receipt.admission.kind === "settled" &&
-              receipt.admission.outcome === "done"
-              ? receipt.admission.entry
+            receipt.delivery.admission.kind === "settled" &&
+              receipt.delivery.admission.outcome === "done"
+              ? receipt.delivery.admission.entry
               : 0
           ),
         context
@@ -198,10 +199,10 @@ test("an intent committed before submission recovers on reopen without an observ
       .pi()
       .commit((tx) => fixture.events().enqueueIn(tx, event), context);
     const held = await saved(fixture, event);
-    assert.equal(held.admission.kind, "held");
+    assert.equal(held.delivery.admission.kind, "held");
     await fixture.reopen();
     const settled = await wait(fixture, event);
-    assert.equal(settled.admission.kind, "settled");
+    assert.equal(settled.delivery.admission.kind, "settled");
     assert.equal(fixture.eventSubmissions.length, 1);
   } finally {
     await fixture.close();
@@ -217,7 +218,7 @@ for (const point of ["before", "after"] as const) {
       await fixture.events().admit(event, actor);
       await entered;
       const claimed = await saved(fixture, event);
-      assert.deepEqual(claimed.admission, {
+      assert.deepEqual(claimed.delivery.admission, {
         kind: "claimed",
         agentVersion: 1,
         requestId: event.id,
@@ -226,10 +227,10 @@ for (const point of ["before", "after"] as const) {
       await fixture.reopen();
       const receipt = await wait(fixture, event);
       assert.ok(
-        receipt.admission.kind === "settled" &&
-          receipt.admission.outcome === "done"
+        receipt.delivery.admission.kind === "settled" &&
+          receipt.delivery.admission.outcome === "done"
       );
-      assert.equal(receipt.admission.agentVersion, 1);
+      assert.equal(receipt.delivery.admission.agentVersion, 1);
       assert.deepEqual(fixture.eventSubmissions, [event.id]);
     } finally {
       await fixture.close();
@@ -250,14 +251,16 @@ test("delivery rechecks dependencies and settles revoked events without native w
     fixture.revokeContent("private-source");
     await fixture.reopen();
     const receipt = await wait(fixture, event);
-    assert.equal(receipt.admission.kind, "settled");
+    assert.equal(receipt.delivery.admission.kind, "settled");
     assert.ok(
-      receipt.admission.kind === "settled" &&
-        receipt.admission.outcome === "blocked"
+      receipt.delivery.admission.kind === "settled" &&
+        receipt.delivery.admission.outcome === "blocked"
     );
     assert.equal(fixture.eventSubmissions.length, 0);
     assert.equal(
-      JSON.stringify(receipt.admission).includes("Event content revoked"),
+      JSON.stringify(receipt.delivery.admission).includes(
+        "Event content revoked"
+      ),
       false
     );
     assert.deepEqual(await pending(fixture), {});
@@ -424,18 +427,18 @@ test("queued expiry saves one terminal notice with its status and recovers its c
       .list(fixture.source("a").address, actor);
     const notices = page.items.filter(
       (receipt) =>
-        receipt.event.source.kind === "coordinator-terminalnotice" &&
-        receipt.event.source.key.workId === queued.admission.key.workId
+        eventOf(receipt).source.kind === "coordinator-terminalnotice" &&
+        eventOf(receipt).source.key.workId === queued.admission.key.workId
     );
     assert.equal(notices.length, 1);
     const [notice] = notices;
     assert.ok(notice);
     await fixture.reopen();
-    await wait(fixture, notice.event);
+    await wait(fixture, eventOf(notice));
     await fixture.source("a").coordinator.wake();
     assert.equal(
       fixture.eventSubmissions.filter(
-        (requestId) => requestId === notice.event.id
+        (requestId) => requestId === eventOf(notice).id
       ).length,
       1
     );
@@ -463,12 +466,12 @@ test("permanent dispatch failure saves one sanitized coordinator notice with the
     assert.equal(page.items.length, 1);
     const [notice] = page.items;
     assert.ok(notice);
-    assert.equal(notice.event.source.kind, "coordinator-terminalnotice");
+    assert.equal(eventOf(notice).source.kind, "coordinator-terminalnotice");
     assert.equal(
-      notice.event.content.text,
+      eventOf(notice).content.text,
       "The team command could not be delivered."
     );
-    await wait(fixture, notice.event);
+    await wait(fixture, eventOf(notice));
     await fixture.source("a").coordinator.wake();
     assert.equal(fixture.eventSubmissions.length, 1);
     assert.equal(JSON.stringify(notice).includes("Private transport"), false);
@@ -489,8 +492,8 @@ test("a claimed event revoked across restart settles without renewed native exec
     await fixture.reopen();
     const receipt = await wait(fixture, event);
     assert.ok(
-      receipt.admission.kind === "settled" &&
-        receipt.admission.outcome === "blocked"
+      receipt.delivery.admission.kind === "settled" &&
+        receipt.delivery.admission.outcome === "blocked"
     );
     assert.equal(fixture.eventSubmissions.length, 0);
   } finally {
@@ -509,11 +512,11 @@ test("a held event resolves the current source and applied version after later s
     await fixture.reopen();
     const receipt = await wait(fixture, event);
     assert.ok(
-      receipt.admission.kind === "settled" &&
-        receipt.admission.outcome === "done"
+      receipt.delivery.admission.kind === "settled" &&
+        receipt.delivery.admission.outcome === "done"
     );
-    assert.equal(receipt.admission.agentVersion, 2);
-    assert.equal(receipt.route.nativeId, fixture.source("c").native.id);
+    assert.equal(receipt.delivery.admission.agentVersion, 2);
+    assert.equal(receipt.nativeId, fixture.source("c").native.id);
   } finally {
     await fixture.close();
   }
@@ -546,7 +549,7 @@ test("submitted internal input retains capacity and cancellation withdraws it be
     let current = await saved(fixture, event);
     for (
       let attempt = 0;
-      current.admission.kind !== "submitted" && attempt < 100;
+      current.delivery.admission.kind !== "submitted" && attempt < 100;
       attempt += 1
     ) {
       // oxlint-disable-next-line no-await-in-loop -- Wait for the actual saved submission while the foreground model is held.
@@ -554,7 +557,7 @@ test("submitted internal input retains capacity and cancellation withdraws it be
       // oxlint-disable-next-line no-await-in-loop -- Inspect the durable receipt after each scheduler step.
       current = await saved(fixture, event);
     }
-    assert.equal(current.admission.kind, "submitted");
+    assert.equal(current.delivery.admission.kind, "submitted");
     assert.equal(Object.keys(await pending(fixture)).length, 1);
     const watch = await source.native.watch(context);
     try {
@@ -569,13 +572,13 @@ test("submitted internal input retains capacity and cancellation withdraws it be
     } finally {
       await watch.stop();
     }
-    await fixture.pi().abortTask(receipt.taskId, context);
-    await fixture.pi().waitForTask(receipt.taskId, context);
+    await fixture.pi().abortTask(receipt.delivery.taskId, context);
+    await fixture.pi().waitForTask(receipt.delivery.taskId, context);
     current = await saved(fixture, event);
     assert.ok(
-      current.admission.kind === "settled" &&
-        current.admission.outcome === "unanswered",
-      JSON.stringify(current.admission)
+      current.delivery.admission.kind === "settled" &&
+        current.delivery.admission.outcome === "unanswered",
+      JSON.stringify(current.delivery.admission)
     );
     assert.deepEqual(await pending(fixture), {});
     release.resolve(true);
@@ -603,6 +606,7 @@ test("saved event reads require current read and content access without executio
     const scope = await ConversationScope.prototype.eventScope.call({
       native: source.native,
       coordination: source.coordinator,
+      subscriptions: source.subscriptions,
       runtime: {
         authorize: (_caller: unknown, operation: string) => {
           operations.push(operation);

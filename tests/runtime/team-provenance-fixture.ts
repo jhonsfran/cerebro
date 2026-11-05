@@ -11,6 +11,8 @@ import { ChannelError } from "../../packages/channels/src/types.ts";
 import { Denied, tryAdapter } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { ContentDependencies } from "../../packages/contracts/src/session.ts";
+import type { TeamEventReturn } from "../../packages/contracts/src/team-events.ts";
+import type { WorkAdmission } from "../../packages/contracts/src/work.ts";
 import { WorkAdmissionSchema } from "../../packages/contracts/src/work.ts";
 import {
   createAssistantMessageEventStream,
@@ -33,6 +35,8 @@ import { createSourceDependencyStore } from "../../packages/runtime/src/content-
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
 import type { MetadataTransaction } from "../../packages/runtime/src/session-agent.ts";
 import { readTeamRoleImports } from "../../packages/runtime/src/team-content.ts";
+import { createTeamEvents } from "../../packages/runtime/src/team-events.ts";
+import type { TeamEvents } from "../../packages/runtime/src/team-events.ts";
 import type { TeamRoleConfiguration } from "../../packages/runtime/src/team-role.ts";
 import { createTeamRuntime } from "../../packages/runtime/src/team-runtime.ts";
 import type { TeamRuntime } from "../../packages/runtime/src/team-runtime.ts";
@@ -48,28 +52,41 @@ export const dependencies = (name: string): ContentDependencies => ({
   sourceIds: [id.source(`${name}-source`)],
   toolIds: [id.tool(`${name}-tool`)],
 });
+const settleProgress = async (promise: Promise<unknown>): Promise<unknown> => {
+  try {
+    return await promise;
+  } catch (error) {
+    return error;
+  }
+};
 
-export const teamProvenanceFixture = async () => {
+export const teamProvenanceFixture = async (fixtureOptions?: {
+  events?: boolean;
+  work?: WorkAdmission;
+  sendReturn?: (delivery: TeamEventReturn) => Promise<void>;
+}) => {
   const directory = await mkdtemp(path.join(tmpdir(), "team-provenance-"));
   const filename = path.join(directory, "native.sqlite");
   const admittedAt = Date.now();
-  const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
-    version: 2,
-    admittedAt,
-    deadlineAt: admittedAt + 600_000,
-    goal: "Answer a bounded private question.",
-    key: { organizationId: "org", ownerPrincipalId: "owner", workId: "work" },
-    lead: { agentId: "lead", agentVersion: 1 },
-    worker: { agentId: "worker", agentVersion: 1 },
-    limits: { maxTeams: 2, maxTurns: 8, maxWorkers: 1, timeoutMs: 600_000 },
-    sourceEventAddress: {
-      organizationId: "org",
-      agentId: "coordinator",
-      conversationId: "primary",
-      sessionId: "primary",
-    },
-    contentDependencies: empty(),
-  });
+  const work = Schema.decodeUnknownSync(WorkAdmissionSchema)(
+    fixtureOptions?.work ?? {
+      version: 2,
+      admittedAt,
+      deadlineAt: admittedAt + 600_000,
+      goal: "Answer a bounded private question.",
+      key: { organizationId: "org", ownerPrincipalId: "owner", workId: "work" },
+      lead: { agentId: "lead", agentVersion: 1 },
+      worker: { agentId: "worker", agentVersion: 1 },
+      limits: { maxTeams: 2, maxTurns: 8, maxWorkers: 1, timeoutMs: 600_000 },
+      sourceEventAddress: {
+        organizationId: "org",
+        agentId: "coordinator",
+        conversationId: "primary",
+        sessionId: "primary",
+      },
+      contentDependencies: empty(),
+    }
+  );
   const actor = {
     actor: {
       id: work.key.ownerPrincipalId,
@@ -81,6 +98,8 @@ export const teamProvenanceFixture = async () => {
   let pi: Harness;
   let database: DatabaseSync;
   let runtime: TeamRuntime;
+  let events: TeamEvents | undefined;
+  const returns: TeamEventReturn[] = [];
   let stores: ReturnType<typeof createSourceDependencyStore>[];
   let configurations: TeamRoleConfiguration[];
   let failAdmission = false;
@@ -148,7 +167,10 @@ export const teamProvenanceFixture = async () => {
       context
     );
     stores = await Promise.all(
-      [0, 1].map(
+      Array.from(
+        { length: 1 + work.limits.maxWorkers },
+        (_, index) => index
+      ).map(
         async (index) =>
           await metadata(() =>
             createSourceDependencyStore(
@@ -324,6 +346,37 @@ export const teamProvenanceFixture = async () => {
         return typeof value === "function" ? value.bind(target) : value;
       },
     });
+    const root = await pi.root(context);
+    events = fixtureOptions?.events
+      ? createTeamEvents({
+          pi,
+          registry,
+          nativeId: root.id,
+          work,
+          persist: () => Promise.resolve(),
+          waitUntil: (promise) => {
+            held.add(settleProgress(promise));
+          },
+          transport: {
+            authorize: (content) =>
+              deniedOwner ||
+              (deniedSource !== null &&
+                content.sourceIds.includes(deniedSource)) ||
+              (deniedTool !== null && content.toolIds.includes(deniedTool))
+                ? Promise.reject(
+                    new Denied({
+                      code: "revoked",
+                      reason: "The event source is revoked.",
+                    })
+                  )
+                : Promise.resolve(),
+            send: async (delivery) => {
+              await fixtureOptions.sendReturn?.(delivery);
+              returns.push(structuredClone(delivery));
+            },
+          },
+        })
+      : undefined;
     runtime = await createTeamRuntime({
       pi: proxy,
       work,
@@ -332,9 +385,10 @@ export const teamProvenanceFixture = async () => {
       metadata,
       models,
       registry,
+      events,
       ensureWake: () => Promise.resolve(),
       waitUntil: (promise) => {
-        held.add(promise);
+        held.add(settleProgress(promise));
       },
       submit: async (nativeId, text, requestId) => {
         const native = await pi.conversation(nativeId, context);
@@ -370,6 +424,11 @@ export const teamProvenanceFixture = async () => {
     errors,
     pi: () => pi,
     runtime: () => runtime,
+    events: () => {
+      assert.ok(events);
+      return events;
+    },
+    returns,
     configuration: (index: number) => configurations[index],
     store: (index: number) => stores[index],
     read,

@@ -1,12 +1,10 @@
 import { assertQueuePayloadSize } from "@cerebro/channels/queue-payload";
 import { contextByPrincipal } from "@cerebro/channels/security";
-import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import {
-  TeamReportDeliverySchema,
-  TeamReportReceiptSchema,
-} from "@cerebro/contracts/work";
+  normalizeTeamReport,
+  teamReportReceiptMatches,
+} from "@cerebro/contracts/team-events";
 import { withDatabase } from "@cerebro/db";
-import { Schema } from "effect";
 
 import type { WorkerEnv } from "./bindings";
 import { runtimeConfiguration } from "./config";
@@ -32,18 +30,16 @@ export const consumeTeamReports = async (
     batch.messages.map(async (message) => {
       try {
         assertQueuePayloadSize(message.body);
-        const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
-          onExcessProperty: "error",
-        })(message.body);
-        const { organizationId, ownerPrincipalId } = delivery.report.key;
+        const delivery = normalizeTeamReport(message.body);
+        const { organizationId, ownerPrincipalId } = delivery.key;
         const context = await withDatabase(env, (database) =>
           contextByPrincipal(database, organizationId, ownerPrincipalId)
         );
-        const body = JSON.stringify(delivery);
+        const body = JSON.stringify(delivery.wire);
         const proof = await signSessionRequest(
           delivery.sourceEventAddress,
           context,
-          "/team-report",
+          delivery.path,
           body,
           runtimeConfiguration(env).gatewaySigningKey,
           { organizationId, ownerPrincipalId }
@@ -54,7 +50,7 @@ export const consumeTeamReports = async (
           )
         );
         const response = await stub.fetch(
-          "https://session.internal/team-report",
+          `https://session.internal${delivery.path}`,
           {
             method: "POST",
             headers: {
@@ -67,14 +63,8 @@ export const consumeTeamReports = async (
         if (!response.ok) {
           throw new Error("Private report admission failed.");
         }
-        const receipt = Schema.decodeUnknownSync(TeamReportReceiptSchema, {
-          onExcessProperty: "error",
-        })(await response.json());
-        if (
-          receipt.reportId !== delivery.report.id ||
-          canonicalToolArguments(receipt.key) !==
-            canonicalToolArguments(delivery.report.key)
-        ) {
+        const result: unknown = await response.json();
+        if (!teamReportReceiptMatches(delivery, result)) {
           throw new Error("The source receipt does not match the report.");
         }
         message.ack();

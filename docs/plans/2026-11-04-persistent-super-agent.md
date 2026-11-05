@@ -13,12 +13,13 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 2: Admit independent work with two active teams and sixteen queued items per person.
 - [x] Unit 3a: Admit durable coordinator events and reports with atomic delivery intent.
 - [x] Unit 3c: Make private-team provenance imports atomic and recoverable.
-- [ ] Unit 3b: Route explicit task subscriptions and one-time team handback.
+- [x] Unit 3b: Route explicit task subscriptions and one-time team handback.
 - [ ] Unit 4a: Connect ordered web events, work causes, controls, and recall.
 - [ ] Unit 4b: Apply published coordinator definitions safely within the same conversation.
 - [ ] Unit 4c: Connect Slack primary events and exact event replies.
 - [ ] Unit 4d: Preserve legacy admission and forward saved timers through controlled cutover.
-- [ ] Unit 5: Add the protected development Inspector for private teams and workers.
+- [ ] Unit 5a: Add protected saved-state inspection and safe terminal Team reads.
+- [ ] Unit 5b: Add the development Inspector UI with lazy detail loading.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
 - [ ] Phase D: Keep the audit trail throughout the run.
 - [ ] Phase E: Verify and hand back.
@@ -88,6 +89,6 @@ Synthetic endpoints prove deterministic routing and recovery. Live models prove 
 
 ## Throughput checkpoint
 
-Six implementation units span contracts, channels, runtime, server, web, and native verification. The highest risks are atomic result delivery, queue recovery, source authority, and future reminders. One source owner writes at a time. Read-only investigation and reviews can run in parallel. Evidence and review findings are retained with each unit.
+The implementation spans contracts, channels, runtime, server, web, and native verification. Smaller commits separate event admission, provenance, subscriptions, source adapters, profile adoption, inspection reads, and UI. The highest risks are atomic result delivery, queue recovery, source authority, and future reminders. One source owner writes at a time. Read-only investigation and reviews can run in parallel. Evidence and review findings are retained with each unit.
 
 The decision trail is [persistent-super-agent-decisions.tsv](persistent-super-agent-decisions.tsv).

@@ -119,6 +119,7 @@ test("literal old pending dispatches reopen with their original stringify digest
   const create = async () => {
     const host = await open(file);
     const dispatch = createCoordinatorDispatch({
+      checkDependencies: () => Promise.resolve(),
       address: binding.address,
       nativeId: host.root.id,
       pi: host.pi,

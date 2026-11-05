@@ -1,11 +1,12 @@
 import { InvalidInput, toContractFailure } from "@cerebro/contracts/failures";
+import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
+import type { TeamCommandTransport } from "@cerebro/contracts/team-events";
 import { digestToolArguments } from "@cerebro/contracts/tools";
-import { TeamCommandSchema } from "@cerebro/contracts/work";
-import type { TeamCommand, WorkAdmission } from "@cerebro/contracts/work";
+import type { WorkAdmission } from "@cerebro/contracts/work";
 import { defineTask } from "@earendil-works/pi-durable";
 import type { ConversationId, Harness } from "@earendil-works/pi-durable";
-import { Schema } from "effect";
 
+import type { TeamEvents } from "./team-events.ts";
 import {
   TeamCommandReceipts,
   TeamState,
@@ -18,14 +19,15 @@ export const createTeamAdmission = (options: {
   readonly work: WorkAdmission;
   readonly now: () => number;
   readonly deliver: (
-    command: TeamCommand,
+    command: TeamCommandTransport,
     nativeId: ConversationId,
     signal?: AbortSignal
   ) => Promise<void>;
+  readonly events?: TeamEvents;
 }) => {
   const { pi, work, now } = options;
   return defineTask<
-    TeamCommand,
+    TeamCommandTransport,
     | { phase: "submit"; attempt: number }
     | { phase: "retry"; attempt: number; until: number },
     { delivered: boolean }
@@ -34,12 +36,26 @@ export const createTeamAdmission = (options: {
     version: 1,
     initial: () => ({ phase: "submit", attempt: 0 }),
     abort: (current, runtime, context) => {
-      const command = Schema.decodeUnknownSync(TeamCommandSchema, {
-        onExcessProperty: "error",
-      })(current.input);
+      const { command, wire } = normalizeTeamCommand(current.input);
       return runtime.commit(async (tx) => {
         const document = await tx.doc(TeamState);
         Reflect.deleteProperty(document.pending, command.id);
+        if (wire.kind === "event-command") {
+          const receipt = await tx.doc(TeamCommandReceipts, command.id, null);
+          if (
+            receipt.receipt?.taskId !== runtime.taskId ||
+            receipt.receipt.digest !== (await digestToolArguments(wire))
+          ) {
+            throw new InvalidInput({
+              reason: "The saved event admission changed before abort.",
+            });
+          }
+          await options.events?.returnIn(
+            tx,
+            wire,
+            "The subscribed work stopped before processing this event."
+          );
+        }
         return {
           status: "terminal",
           outcome: { status: "aborted", reason: "cancelled" },
@@ -61,9 +77,7 @@ export const createTeamAdmission = (options: {
         );
       },
       submit: async (current, runtime, context) => {
-        const command = Schema.decodeUnknownSync(TeamCommandSchema, {
-          onExcessProperty: "error",
-        })(current.input);
+        const { command, wire, event } = normalizeTeamCommand(current.input);
         const state = await pi.snapshot(TeamState, context);
         let delivered = false;
         try {
@@ -79,13 +93,13 @@ export const createTeamAdmission = (options: {
           );
           if (
             receipt?.receipt?.taskId !== runtime.taskId ||
-            receipt.receipt.digest !== (await digestToolArguments(command))
+            receipt.receipt.digest !== (await digestToolArguments(wire))
           ) {
             throw new InvalidInput({
               reason: "The saved team command changed.",
             });
           }
-          await options.deliver(command, state.lead, context.abortSignal);
+          await options.deliver(wire, state.lead, context.abortSignal);
           delivered = true;
         } catch (error) {
           if (context.abortSignal?.aborted) {
@@ -115,10 +129,17 @@ export const createTeamAdmission = (options: {
           }
           await runtime.commit(async (tx) => {
             const document = await tx.doc(TeamState);
-            if (document.phase === "running") {
+            if (!event && document.phase === "running") {
               document.phase = "failed";
             }
             Reflect.deleteProperty(document.pending, command.id);
+            if (wire.kind === "event-command") {
+              await options.events?.returnIn(
+                tx,
+                wire,
+                "The subscribed work could not process this event."
+              );
+            }
             return {
               status: "terminal",
               outcome: { status: "completed", result: { delivered: false } },

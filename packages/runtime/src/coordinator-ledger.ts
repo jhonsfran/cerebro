@@ -1,17 +1,19 @@
 import type { EventAddress } from "@cerebro/contracts/events";
 import { Conflict, Denied, NotFound } from "@cerebro/contracts/failures";
 import type { PrincipalId } from "@cerebro/contracts/identity";
+import type { TeamCommandTransport } from "@cerebro/contracts/team-events";
 import {
   WorkCommandIdSchema,
   WorkAdmissionSchema,
   WorkStatusSchema,
+  TeamCommandSchema,
+  WorkReportSchema,
   transitionWorkStatus,
 } from "@cerebro/contracts/work";
 import type {
   WorkAdmission,
   WorkReport,
   WorkStatus,
-  TeamCommand,
 } from "@cerebro/contracts/work";
 import {
   LiveDoc,
@@ -28,6 +30,7 @@ import type {
 } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
+import { discardQueuedCommandsIn } from "./coordinator-retired-events.ts";
 import { piContext } from "./pi-harness.ts";
 
 export interface CoordinationBinding {
@@ -45,7 +48,7 @@ export interface CoordinatorWorkRecord extends JsonObject {
   reportId: string | null;
   pendingCommands: Record<string, CoordinatorCommandReceipt>;
   dispatched: boolean;
-  queuedCommands: Record<string, TeamCommand>;
+  queuedCommands: Record<string, TeamCommandTransport>;
   terminalReport: WorkReport | null;
 }
 export interface WorkLedgerState extends JsonObject {
@@ -90,6 +93,13 @@ const legacyLedgerSchema = Schema.Struct({
     })
   ),
 });
+const version2RecordSchema = Schema.Struct({
+  ...legacyRecordSchema.fields,
+  humanOperationId: Schema.NullOr(Schema.String),
+  dispatched: Schema.Boolean,
+  queuedCommands: Schema.Record(Schema.String, TeamCommandSchema),
+  terminalReport: Schema.NullOr(WorkReportSchema),
+});
 export const WorkLedger = defineDoc({
   kind: "cerebro.coordinator-index",
   scope: "session",
@@ -104,8 +114,17 @@ export const WorkDocuments = defineDocFamily({
   kind: "cerebro.coordinator-work",
   scope: "session",
   family: true,
-  version: 2,
-  migrate: (value): { record: CoordinatorWorkRecord | null } => {
+  version: 3,
+  migrate: (value, fromVersion): { record: CoordinatorWorkRecord | null } => {
+    if (fromVersion === 2) {
+      return Schema.decodeUnknownSync(
+        Schema.Struct({ record: Schema.NullOr(version2RecordSchema) }),
+        { onExcessProperty: "error" }
+      )(value);
+    }
+    if (fromVersion !== 1) {
+      throw new Error("Unsupported coordinator work version.");
+    }
     const legacy = Schema.decodeUnknownSync(
       Schema.Struct({ record: Schema.NullOr(legacyRecordSchema) })
     )(value);
@@ -237,6 +256,15 @@ export const workHoldsSlot = (
   record.dispatched &&
   record.reportId === null &&
   record.admission.deadlineAt > now;
+export const workAcceptsEvents = (
+  record: CoordinatorWorkRecord,
+  now: number
+): boolean =>
+  record.reportId === null &&
+  record.admission.deadlineAt > now &&
+  (record.status.kind === "queued" ||
+    (record.dispatched &&
+      (record.status.kind === "accepted" || record.status.kind === "running")));
 export const requireCoordinatorWork = async (
   tx: Tx,
   binding: CoordinationBinding,
@@ -372,7 +400,7 @@ export const pruneWorkIndex = async (
               reason: "The team work deadline expired.",
             }
           );
-          document.record.queuedCommands = {};
+          await discardQueuedCommandsIn(tx, document.record, "expired");
         }
       })
   );

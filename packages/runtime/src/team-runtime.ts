@@ -1,10 +1,10 @@
 import { Denied, InvalidInput } from "@cerebro/contracts/failures";
+import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
 import {
   canonicalToolArguments,
   digestToolArguments,
 } from "@cerebro/contracts/tools";
 import {
-  TeamCommandSchema,
   TeamCommandReceiptSchema,
   WorkAdmissionSchema,
   workStartOperationId,
@@ -26,6 +26,7 @@ import { piContext } from "./pi-harness.ts";
 import type { MetadataTransaction } from "./session-agent.ts";
 import { createTeamAdmission } from "./team-admission.ts";
 import { createTeamCompletion } from "./team-completion.ts";
+import type { TeamEvents } from "./team-events.ts";
 import { createTeamRole } from "./team-role.ts";
 import type { TeamRoleConfiguration } from "./team-role.ts";
 import {
@@ -33,6 +34,7 @@ import {
   TeamState,
   requireTeamAdmission,
   teamCommandDependencies,
+  teamInputRejection,
 } from "./team-state.ts";
 import { createTeamWorkerTool } from "./team-workers.ts";
 
@@ -54,6 +56,7 @@ export const createTeamRuntime = async (options: {
   ) => Promise<unknown>;
   readonly persistReportIn: (tx: Tx, report: WorkReport) => Promise<void>;
   readonly emitReport?: (report: WorkReport) => Promise<void>;
+  readonly events?: TeamEvents;
 }) => {
   const { pi } = options;
   const work = Schema.decodeUnknownSync(WorkAdmissionSchema, {
@@ -104,19 +107,32 @@ export const createTeamRuntime = async (options: {
   };
   const agents = roles.map((role, index) =>
     role.install(
-      index === 0 ? [createTeamWorkerTool({ pi, lead, workers, now })] : []
+      index === 0
+        ? [
+            createTeamWorkerTool({ pi, lead, workers, now }),
+            ...(options.events ? [options.events.tool(lead.permit)] : []),
+          ]
+        : []
     )
   );
   const task = createTeamAdmission({
     pi,
     work,
     now,
-    deliver: async (command, nativeId, signal) => {
+    events: options.events,
+    deliver: async (input, nativeId, signal) => {
+      const { command, event } = normalizeTeamCommand(input);
       await lead.reconcileImports(nativeId, { kind: "handoff", signal });
       await lead.permit(teamCommandDependencies(command), signal);
       await options.submit(nativeId, work.goal, workStartOperationId(work.key));
       if (command.kind === "input") {
-        await options.submit(nativeId, command.text, command.id);
+        await options.submit(
+          nativeId,
+          event
+            ? `External event ${event.id}. Use return_event if it is unrelated to this work.\n${command.text}`
+            : command.text,
+          command.id
+        );
       }
     },
   });
@@ -195,9 +211,12 @@ export const createTeamRuntime = async (options: {
     );
   };
   const receive = async (input: unknown) => {
-    const command = Schema.decodeUnknownSync(TeamCommandSchema, {
-      onExcessProperty: "error",
-    })(input);
+    const { command, wire, event } = normalizeTeamCommand(input);
+    if (event && !options.events) {
+      throw new InvalidInput({
+        reason: "Team event delivery is not configured.",
+      });
+    }
     if (canonicalToolArguments(command.work) !== canonicalToolArguments(work)) {
       throw new InvalidInput({
         reason: "The command addresses another team admission.",
@@ -207,15 +226,13 @@ export const createTeamRuntime = async (options: {
     if (previous) {
       requireTeamAdmission(previous, command.work);
     }
-    const digest = await digestToolArguments(command);
+    const digest = await digestToolArguments(wire);
+    const rejection = teamInputRejection(previous, work, now());
+    if (wire.kind === "event-command" && options.events && rejection) {
+      return await options.events.fallback(wire, rejection);
+    }
     let revoked = false;
-    if (
-      command.kind !== "cancel" &&
-      previous?.phase !== "cancelled" &&
-      previous?.phase !== "completed" &&
-      previous?.phase !== "failed" &&
-      work.deadlineAt > now()
-    ) {
+    if (command.kind !== "cancel" && !rejection) {
       try {
         await lead.admitDependencies(teamCommandDependencies(command));
       } catch (error) {
@@ -225,7 +242,24 @@ export const createTeamRuntime = async (options: {
         revoked = true;
       }
     }
+    if (revoked && wire.kind === "event-command" && options.events) {
+      return await options.events.fallback(wire, "revoked");
+    }
     await options.ensureWake(work.deadlineAt);
+    const rejectedIn = async (
+      tx: Tx,
+      reason: "revoked" | "cancelled" | "terminal" | "expired"
+    ) => {
+      if (wire.kind === "event-command" && options.events) {
+        await options.events.saveIn(tx, wire);
+        await options.events.returnIn(
+          tx,
+          wire,
+          "The subscribed work no longer accepts this event."
+        );
+      }
+      return { digest, taskId: null, accepted: false, reason };
+    };
     const result = await pi.commit(async (tx) => {
       const state = await tx.doc(TeamState);
       requireTeamAdmission(state, command.work);
@@ -271,25 +305,13 @@ export const createTeamRuntime = async (options: {
         };
         return { accepted: false, reason: "revoked" };
       }
-      let reason: "cancelled" | "terminal" | "expired" | null = null;
-      if (state.phase === "cancelled") {
-        reason = "cancelled";
-      } else if (state.phase === "completed" || state.phase === "failed") {
-        reason = "terminal";
-      } else if (work.deadlineAt <= now()) {
-        reason = "expired";
-      }
+      const reason = teamInputRejection(state, work, now());
       if (reason) {
-        receipt.receipt = { digest, taskId: null, accepted: false, reason };
+        receipt.receipt = await rejectedIn(tx, reason);
         return { accepted: false, reason };
       }
       if (state.inputCount >= 8 || Object.keys(state.pending).length >= 8) {
-        receipt.receipt = {
-          digest,
-          taskId: null,
-          accepted: false,
-          reason: "terminal",
-        };
+        receipt.receipt = await rejectedIn(tx, "terminal");
         return { accepted: false, reason: "terminal" };
       }
       if (!state.lead) {
@@ -319,8 +341,11 @@ export const createTeamRuntime = async (options: {
       }
       state.phase = "running";
       state.inputCount += 1;
+      if (wire.kind === "event-command") {
+        await options.events?.saveIn(tx, wire);
+      }
       await importContentIn(tx, state.lead, teamCommandDependencies(command));
-      const taskId = await tx.createTask(task, command, {
+      const taskId = await tx.createTask(task, wire, {
         background: true,
         conversationId: state.lead,
         ownership: { kind: "conversation" },

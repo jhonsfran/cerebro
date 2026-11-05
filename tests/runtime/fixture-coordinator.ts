@@ -6,11 +6,14 @@ import { Denied, InvalidInput } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { ContentDependencies } from "../../packages/contracts/src/session.ts";
 import {
+  normalizeTeamCommand,
+  normalizeTeamReport,
+} from "../../packages/contracts/src/team-events.ts";
+import type { TeamCommandTransport } from "../../packages/contracts/src/team-events.ts";
+import {
   CoordinationProfileSchema,
-  TeamReportDeliverySchema,
   workCellName,
 } from "../../packages/contracts/src/work.ts";
-import type { TeamCommand } from "../../packages/contracts/src/work.ts";
 import { createSourceDependencyStore } from "../../packages/runtime/src/content-dependency-store.ts";
 import type { MetadataTransaction } from "../../packages/runtime/src/session-agent.ts";
 import { coordinatorFixtureResponses } from "./coordinator-fixture-responses.ts";
@@ -18,14 +21,14 @@ import { SessionAgent } from "./fixture-session.ts";
 
 export class CoordinatorFixture extends SessionAgent {
   protected override resolve(request: Request) {
-    if (new URL(request.url).pathname !== "/team-report") {
+    if (
+      new URL(request.url).pathname !== "/team-report" &&
+      new URL(request.url).pathname !== "/team-event-return"
+    ) {
       return super.resolve(request);
     }
     return Effect.tryPromise({
-      try: async () =>
-        Schema.decodeUnknownSync(TeamReportDeliverySchema)(
-          await request.clone().json()
-        ),
+      try: async () => normalizeTeamReport(await request.clone().json()),
       catch: () => new InvalidInput({ reason: "Invalid fixture report." }),
     }).pipe(
       Effect.flatMap((delivery) =>
@@ -134,12 +137,13 @@ export class CoordinatorFixture extends SessionAgent {
                 lead: { agentId: id.agent("lead"), agentVersion: 1 },
                 worker: { agentId: id.agent("worker"), agentVersion: 1 },
               }),
-            sendCommand: async (command: TeamCommand) => {
+            sendCommand: async (input: TeamCommandTransport) => {
+              const { command, wire } = normalizeTeamCommand(input);
               const count = await metadata(() => {
                 this.ctx.storage.sql.exec(
                   "INSERT INTO coordinator_fixture_transport(at, command) VALUES (?, ?)",
                   Date.now(),
-                  JSON.stringify(command)
+                  JSON.stringify(wire)
                 );
                 return this.ctx.storage.sql
                   .exec<{ count: number }>(
@@ -156,7 +160,7 @@ export class CoordinatorFixture extends SessionAgent {
                 ).fetch("https://team.internal/control", {
                   method: "POST",
                   headers: { "content-type": "application/json" },
-                  body: JSON.stringify(command),
+                  body: JSON.stringify(wire),
                 });
                 await this.ctx.storage.put("team-receipt", {
                   status: response.status,

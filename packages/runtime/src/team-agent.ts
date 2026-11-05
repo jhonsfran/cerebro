@@ -3,8 +3,10 @@ import {
   failureToHttp,
   toContractFailure,
 } from "@cerebro/contracts/failures";
+import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
+import type { TeamCommandTransport } from "@cerebro/contracts/team-events";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
-import type { WorkAdmission, TeamCommand } from "@cerebro/contracts/work";
+import type { WorkAdmission } from "@cerebro/contracts/work";
 import { WorkAdmissionSchema } from "@cerebro/contracts/work";
 import { createModels } from "@earendil-works/pi-ai/models";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
@@ -25,15 +27,23 @@ import type {
   MetadataTransaction,
   SessionEnvironment,
 } from "./session-agent.ts";
+import { createTeamAdmission } from "./team-admission.ts";
 import { readTeamRoleImports } from "./team-content.ts";
 import type { ReadTeamRoleImports } from "./team-content.ts";
+import { createTeamEvents } from "./team-events.ts";
+import type { TeamEventReturnTransport, TeamEvents } from "./team-events.ts";
 import { expireTeam, receiveExpiredTeam } from "./team-expiration.ts";
 import { createTeamReportOutbox } from "./team-report-outbox.ts";
 import type { TeamReportTransport } from "./team-report-outbox.ts";
 import type { TeamRoleConfiguration } from "./team-role.ts";
 import { createTeamRuntime } from "./team-runtime.ts";
 import type { TeamRuntime } from "./team-runtime.ts";
-import { TeamState } from "./team-state.ts";
+import {
+  TeamState,
+  requireTeamAdmission,
+  teamInputRejection,
+} from "./team-state.ts";
+import { drainTerminalTeam } from "./team-terminal.ts";
 
 const wakePayload = Schema.Struct({ deadlineAt: Schema.Int });
 
@@ -47,9 +57,13 @@ export abstract class TeamAgent<
   private opening: Promise<TeamRuntime> | undefined;
   private outbox: ReturnType<typeof createTeamReportOutbox> | undefined;
   private incoming: WorkAdmission | undefined;
+  private events: TeamEvents | undefined;
 
-  protected abstract resolve(request: Request): Promise<TeamCommand>;
+  protected abstract resolve(request: Request): Promise<TeamCommandTransport>;
   protected abstract reportTransport(work: WorkAdmission): TeamReportTransport;
+  protected abstract eventReturnTransport(
+    work: WorkAdmission
+  ): TeamEventReturnTransport;
   protected abstract configure(
     work: WorkAdmission,
     metadata: MetadataTransaction,
@@ -74,6 +88,10 @@ export abstract class TeamAgent<
         context
       );
       this.host = { pi, models, registry };
+      this.runtime = undefined;
+      this.opening = undefined;
+      this.outbox = undefined;
+      this.events = undefined;
       const close = async () => {
         const end = await pi.closed;
         if (end.reason === "failed") {
@@ -92,19 +110,24 @@ export abstract class TeamAgent<
           : undefined;
         if (work) {
           const outbox = await this.ensureReportOutbox(work);
-          await (state?.report || work.deadlineAt <= Date.now()
-            ? expireTeam(pi, registry, work, outbox.enqueueIn)
-            : this.open(work));
+          const events = await this.ensureEvents(work);
+          if (teamInputRejection(state, work, Date.now())) {
+            await this.finishTerminal(work);
+          } else {
+            try {
+              await this.open(work);
+            } catch (error) {
+              if (work.deadlineAt > Date.now()) {
+                throw error;
+              }
+              await this.finishTerminal(work);
+            }
+          }
           await outbox.wake();
+          await events.wake();
         }
         return pi;
       } catch (error) {
-        if (work && work.deadlineAt <= Date.now()) {
-          const outbox = await this.ensureReportOutbox(work);
-          await expireTeam(pi, registry, work, outbox.enqueueIn);
-          await outbox.wake();
-          return pi;
-        }
         await pi.close(context);
         this.host = undefined;
         throw error;
@@ -196,6 +219,56 @@ export abstract class TeamAgent<
     return this.outbox;
   }
 
+  private async ensureEvents(work: WorkAdmission): Promise<TeamEvents> {
+    if (this.events) {
+      return this.events;
+    }
+    if (!this.host) {
+      throw new InvalidInput({ reason: "The Team native host is not open." });
+    }
+    const root = await this.host.pi.root(piContext());
+    this.events = createTeamEvents({
+      ...this.host,
+      nativeId: root.id,
+      work,
+      transport: this.eventReturnTransport(work),
+      persist: () => this.ctx.storage.sync(),
+      waitUntil: (promise) => this.trackWork(promise),
+    });
+    return this.events;
+  }
+
+  private async finishTerminal(work: WorkAdmission): Promise<void> {
+    if (!this.host) {
+      throw new InvalidInput({ reason: "The Team native host is not open." });
+    }
+    const { pi, registry } = this.host;
+    const events = await this.ensureEvents(work);
+    const outbox = await this.ensureReportOutbox(work);
+    const admission = createTeamAdmission({
+      pi,
+      work,
+      now: Date.now,
+      events,
+      deliver: () =>
+        Promise.reject(
+          new InvalidInput({
+            reason: "Terminal Team work cannot accept input.",
+          })
+        ),
+    });
+    registry.install({ name: "cerebro-team-admission", tasks: [admission] });
+    await pi.commit(async (tx) => {
+      const state = await tx.doc(TeamState);
+      requireTeamAdmission(state, work);
+      if (state.phase === "running" || state.phase === "waiting") {
+        state.phase = state.report?.kind ?? "failed";
+      }
+    }, piContext());
+    await drainTerminalTeam(pi);
+    await expireTeam(pi, registry, work, outbox.enqueueIn);
+  }
+
   private async createRuntime(work: WorkAdmission): Promise<TeamRuntime> {
     const { host } = this;
     if (!host) {
@@ -204,6 +277,7 @@ export abstract class TeamAgent<
     const metadata: MetadataTransaction = (operation) =>
       host.pi.commit(operation, piContext());
     const outbox = await this.ensureReportOutbox(work);
+    const events = await this.ensureEvents(work);
     const configurations = await this.configure(work, metadata, (index) =>
       readTeamRoleImports(host.pi, work, index)
     );
@@ -211,6 +285,7 @@ export abstract class TeamAgent<
       ...host,
       work,
       configurations,
+      events,
       storage: this.ctx.storage,
       metadata,
       persistReportIn: outbox.enqueueIn,
@@ -223,7 +298,8 @@ export abstract class TeamAgent<
 
   async onRequest(request: Request): Promise<Response> {
     try {
-      const command = await this.resolve(request);
+      const input = await this.resolve(request);
+      const { command, wire } = normalizeTeamCommand(input);
       if (
         this.incoming &&
         canonicalToolArguments(this.incoming) !==
@@ -234,6 +310,17 @@ export abstract class TeamAgent<
       this.incoming = command.work;
       await this.harness.pi();
       const outbox = await this.ensureReportOutbox(command.work);
+      const state =
+        this.host && (await this.host.pi.snapshot(TeamState, piContext()));
+      const rejection = teamInputRejection(state, command.work, Date.now());
+      if (wire.kind === "event-command" && rejection) {
+        await this.finishTerminal(command.work);
+        const events = await this.ensureEvents(command.work);
+        const receipt = await events.fallback(wire, rejection);
+        await this.ensureWake(command.work.deadlineAt);
+        await events.wake();
+        return Response.json(receipt);
+      }
       if (command.work.deadlineAt <= Date.now() && this.host) {
         await this.ensureWake(command.work.deadlineAt);
         return Response.json(
@@ -246,7 +333,7 @@ export abstract class TeamAgent<
         );
       }
       const runtime = await this.open(command.work);
-      return Response.json(await runtime.receive(command));
+      return Response.json(await runtime.receive(wire));
     } catch (error) {
       this.reportFailure(error);
       const result = failureToHttp(
@@ -263,17 +350,20 @@ export abstract class TeamAgent<
     const { deadlineAt } = Schema.decodeUnknownSync(wakePayload)(job.payload);
     try {
       await this.harness.pi();
+      const running = await this.runtime?.wake(deadlineAt);
       const outboxWake = await this.outbox?.wake();
-      if (!this.runtime) {
-        if (outboxWake) {
-          return outboxWake;
-        }
-        return deadlineAt > Date.now()
-          ? { rescheduleAt: Math.min(deadlineAt, Date.now() + 5000) }
-          : undefined;
+      const eventWake = await this.events?.wake();
+      const times = [
+        running?.rescheduleAt,
+        outboxWake?.rescheduleAt,
+        eventWake?.rescheduleAt,
+      ].filter((value): value is number => value !== undefined);
+      if (times.length > 0) {
+        return { rescheduleAt: Math.min(...times) };
       }
-      const running = await this.runtime.wake(deadlineAt);
-      return running ?? (await this.outbox?.wake());
+      return !this.runtime && deadlineAt > Date.now()
+        ? { rescheduleAt: Math.min(deadlineAt, Date.now() + 5000) }
+        : undefined;
     } catch (error) {
       this.reportFailure(error);
       if (deadlineAt <= Date.now()) {

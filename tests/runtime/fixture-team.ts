@@ -14,6 +14,8 @@ import type { AuthorityService } from "../../packages/contracts/src/authority-se
 import { Denied, Unavailable } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { AgentDefinition } from "../../packages/contracts/src/session.ts";
+import { normalizeTeamCommand } from "../../packages/contracts/src/team-events.ts";
+import type { TeamEventReturn } from "../../packages/contracts/src/team-events.ts";
 import type {
   TeamReportDelivery,
   WorkReport,
@@ -21,7 +23,6 @@ import type {
 } from "../../packages/contracts/src/work.ts";
 import {
   BoundedContentDependenciesSchema,
-  TeamCommandSchema,
   workCellName,
 } from "../../packages/contracts/src/work.ts";
 import type { ConversationId } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
@@ -39,6 +40,33 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
   private readonly instanceId = crypto.randomUUID();
   private activeWork: WorkAdmission | undefined;
   private readonly modelHolds = new Map<string, () => void>();
+
+  protected override eventReturnTransport(work: WorkAdmission) {
+    return {
+      authorize: () => Promise.resolve(),
+      send: async (delivery: TeamEventReturn) => {
+        const response = await this.env.COORDINATOR.get(
+          this.env.COORDINATOR.idFromName(
+            JSON.stringify([work.key.organizationId, work.key.ownerPrincipalId])
+          )
+        ).fetch("https://source.internal/team-event-return", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-fixture-principal": work.key.ownerPrincipalId,
+          },
+          body: JSON.stringify(delivery),
+        });
+        if (!response.ok) {
+          throw new Error("Fixture event return admission failed.");
+        }
+        await this.ctx.storage.put(`fixture-event-return:${delivery.eventId}`, {
+          delivery,
+          at: Date.now(),
+        });
+      },
+    };
+  }
 
   protected override reportTransport(work: WorkAdmission) {
     return {
@@ -76,13 +104,11 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
   }
 
   protected override async resolve(request: Request) {
-    const command = Schema.decodeUnknownSync(TeamCommandSchema, {
-      onExcessProperty: "error",
-    })(await request.json());
+    const { command, wire } = normalizeTeamCommand(await request.json());
     if (this.ctx.id.name !== workCellName(command.work.key)) {
       throw new Denied({ code: "unauthorized", reason: "Wrong team fixture." });
     }
-    return command;
+    return wire;
   }
 
   protected override async configure(

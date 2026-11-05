@@ -255,7 +255,7 @@ test("accepted report replay repairs a partial raw mirror failure after reopen w
     assert.deepEqual(accepted.sources, reportDependencies.sourceIds);
     assert.deepEqual(accepted.tools, []);
     assert.ok(accepted.event?.receipt);
-    const eventTask = accepted.event.receipt.taskId;
+    const eventTask = accepted.event.receipt.delivery.taskId;
     const currentDependencies =
       await f.source.coordinator.services?.contentDependencies();
     assert.ok(
@@ -271,7 +271,7 @@ test("accepted report replay repairs a partial raw mirror failure after reopen w
     assert.deepEqual(repaired.canonical, reportDependencies);
     assert.deepEqual(repaired.sources, reportDependencies.sourceIds);
     assert.deepEqual(repaired.tools, reportDependencies.toolIds);
-    assert.equal(repaired.event?.receipt?.taskId, eventTask);
+    assert.equal(repaired.event?.receipt?.delivery.taskId, eventTask);
     assert.equal(
       f.fixture.eventSubmissions.filter((requestId) => requestId === f.eventId)
         .length,

@@ -14,6 +14,9 @@ const internalToolNames = new Set([
   "message_team",
   "stop_work",
   "delegate_worker",
+  "subscribe_work",
+  "unsubscribe_work",
+  "return_event",
 ]);
 
 export const isInternalToolName = (name: string): boolean =>

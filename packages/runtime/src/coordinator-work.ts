@@ -4,11 +4,13 @@ import {
   Denied,
   InvalidInput,
   NotFound,
-  failureToHttp,
-  toContractFailure,
 } from "@cerebro/contracts/failures";
 import type { PrincipalId } from "@cerebro/contracts/identity";
 import type { ContentDependencies } from "@cerebro/contracts/session";
+import type {
+  TeamCommandTransport,
+  TeamEventCommand,
+} from "@cerebro/contracts/team-events";
 import {
   TeamCommandSchema,
   WorkAdmissionSchema,
@@ -19,7 +21,6 @@ import type {
   BackgroundWorkSnapshot,
   CoordinationProfile,
   RolePin,
-  TeamCommand,
   WorkId,
 } from "@cerebro/contracts/work";
 import { Type } from "@earendil-works/pi-ai";
@@ -28,13 +29,13 @@ import type {
   ConversationId,
   Harness,
   ToolExecutionApi,
-  ToolExecutionResult,
   ToolRegistration,
   Tx,
 } from "@earendil-works/pi-durable";
 import type { LifecycleJobOutcome, LifecycleJobs } from "agents/lifecycle";
 import { Schema } from "effect";
 
+import { coordinationToolResult as output } from "./coordination-tool-result.ts";
 import { createCoordinatorAdmissions } from "./coordinator-admission.ts";
 import {
   canCancelWork,
@@ -75,26 +76,10 @@ export interface CoordinationServices {
     readonly worker: RolePin;
   }>;
   readonly contentDependencies: () => Promise<ContentDependencies>;
-  readonly sendCommand: (command: TeamCommand) => Promise<void>;
+  readonly sendCommand: (command: TeamCommandTransport) => Promise<void>;
 }
 const HEARTBEAT_MS = 5000;
 const MAX_QUEUED_WORK = 16;
-const output = async (
-  operation: () => Promise<unknown>
-): Promise<ToolExecutionResult> => {
-  try {
-    const value = await operation();
-    return { output: [{ type: "text", text: JSON.stringify(value) }] };
-  } catch (error) {
-    const failure = failureToHttp(
-      toContractFailure(error, "The team operation is unavailable.")
-    );
-    return {
-      isError: true,
-      output: [{ type: "text", text: failure.body.message }],
-    };
-  }
-};
 
 export const createCoordinatorWork = (options: {
   readonly address: EventAddress;
@@ -110,6 +95,7 @@ export const createCoordinatorWork = (options: {
   readonly persist: () => Promise<void>;
   readonly now?: () => number;
   readonly terminalNoticeIn?: TerminalNoticeIn;
+  readonly returnEventIn?: (tx: Tx, command: TeamEventCommand) => Promise<void>;
 }) => {
   const now = options.now ?? Date.now;
   const publicWork = (
@@ -172,6 +158,8 @@ export const createCoordinatorWork = (options: {
     binding,
     now,
     terminalNoticeIn: options.terminalNoticeIn,
+    checkDependencies: options.contentAccess.check,
+    returnEventIn: options.returnEventIn,
   });
 
   const pendingDispatches = () =>
@@ -205,13 +193,14 @@ export const createCoordinatorWork = (options: {
     );
   };
 
-  const { enqueueIn, enqueueAllIn, commandIn } = createCoordinatorCommands({
-    nativeId: options.nativeId,
-    dispatch,
-    binding,
-    now,
-    publicWork,
-  });
+  const { enqueueIn, enqueueAllIn, commandIn, eventCommandsIn } =
+    createCoordinatorCommands({
+      nativeId: options.nativeId,
+      dispatch,
+      binding,
+      now,
+      publicWork,
+    });
   const admissions = createCoordinatorAdmissions({
     pi: options.pi,
     nativeId: options.nativeId,
@@ -378,11 +367,15 @@ export const createCoordinatorWork = (options: {
 
   const promoteIn = async (
     tx: Tx
-  ): Promise<{ record: CoordinatorWorkRecord; command: TeamCommand }[]> => {
+  ): Promise<
+    { record: CoordinatorWorkRecord; command: TeamCommandTransport }[]
+  > => {
     const ledger = await tx.doc(WorkLedger);
     requireWorkIdentity(ledger, binding());
-    const commands: { record: CoordinatorWorkRecord; command: TeamCommand }[] =
-      [];
+    const commands: {
+      record: CoordinatorWorkRecord;
+      command: TeamCommandTransport;
+    }[] = [];
     for (;;) {
       const [head] = ledger.queue;
       if (!head || !sameWorkSource(head.source, options.address)) {
@@ -580,6 +573,7 @@ export const createCoordinatorWork = (options: {
       );
     },
     commandIn,
+    eventCommandsIn,
     current: async (): Promise<BackgroundWorkSnapshot | undefined> => {
       if (!options.services) {
         return;

@@ -1,5 +1,7 @@
-import { BotEventSchema, botEventId } from "@cerebro/contracts/bot-events";
+import { botEventId } from "@cerebro/contracts/bot-events";
 import type { BotEvent } from "@cerebro/contracts/bot-events";
+import { normalizeEventAdmission } from "@cerebro/contracts/bot-routing";
+import type { EventAdmission } from "@cerebro/contracts/bot-routing";
 import type { EventAddress } from "@cerebro/contracts/events";
 import {
   Conflict,
@@ -12,55 +14,56 @@ import type {
   ExecutionContext,
   PrincipalId,
 } from "@cerebro/contracts/identity";
+import type { ContentDependencies } from "@cerebro/contracts/session";
+import { TeamEventReturnSchema } from "@cerebro/contracts/team-events";
+import type {
+  TeamEventCommand,
+  TeamEventReturn,
+} from "@cerebro/contracts/team-events";
 import { digestToolArguments } from "@cerebro/contracts/tools";
-import {
-  defineDoc,
-  defineDocFamily,
-  defineTask,
-} from "@earendil-works/pi-durable";
+import { BoundedContentDependenciesSchema } from "@cerebro/contracts/work";
+import type { SlackThread } from "@cerebro/contracts/work";
+import { defineDoc, defineTask } from "@earendil-works/pi-durable";
 import type {
   Conversation,
   ConversationId,
   Cursor,
-  EntryId,
   Harness,
-  JsonObject,
   SettledSubmissionRecord,
-  SubmissionId,
   TaskId,
   Tx,
 } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 import type { createCoordinatorAdmissions } from "./coordinator-admission.ts";
-import { sameWorkSource } from "./coordinator-ledger.ts";
+import {
+  BotEventReceipts,
+  BotEventSequence,
+  copyEventReceipt,
+  eventOf,
+} from "./coordinator-event-state.ts";
+import type {
+  BotEventAdmission,
+  BotEventReceipt,
+  CoordinatorEventDelivery,
+  EventSkip,
+} from "./coordinator-event-state.ts";
+import {
+  WorkDocuments,
+  requireCoordinatorWork,
+  requireWorkSource,
+  sameWorkSource,
+} from "./coordinator-ledger.ts";
+import { listSubscribedBotSources } from "./coordinator-subscriptions.ts";
 import { trackNativeProgress } from "./native-progress.ts";
 import { piContext } from "./pi-harness.ts";
 import type { PiContext } from "./pi-harness.ts";
 
-interface Claim extends JsonObject {
-  agentVersion: number;
-  requestId: string;
-}
-export type BotEventAdmission =
-  | { kind: "held" }
-  | ({ kind: "claimed" } & Claim)
-  | ({ kind: "submitted"; submissionId: SubmissionId } & Claim)
-  | ({
-      kind: "settled";
-      outcome: "done";
-      submissionId: SubmissionId;
-      entry: EntryId;
-      answer: EntryId;
-    } & Claim)
-  | ({
-      kind: "settled";
-      outcome: "unanswered";
-      reason: string;
-      submissionId: SubmissionId;
-      entry: EntryId | null;
-    } & Claim)
-  | { kind: "settled"; outcome: "blocked"; reason: string };
+export { BotEventReceipts } from "./coordinator-event-state.ts";
+export type {
+  BotEventAdmission,
+  BotEventReceipt,
+} from "./coordinator-event-state.ts";
 type EventCheckpoint =
   | { phase: "deliver"; attempt: number }
   | { phase: "settle"; attempt: number }
@@ -71,7 +74,7 @@ type EventCheckpoint =
       until: number;
     };
 const settledAdmission = (
-  claim: Claim,
+  claim: { agentVersion: number; requestId: string },
   result: SettledSubmissionRecord
 ): BotEventAdmission =>
   result.type === "input" && result.status === "done"
@@ -91,23 +94,6 @@ const settledAdmission = (
         entry: result.type === "input" ? (result.entry ?? null) : null,
         reason: "The coordinator did not answer this event.",
       };
-export interface BotEventReceipt extends JsonObject {
-  event: BotEvent;
-  digest: string;
-  route: { kind: "coordinator"; nativeId: ConversationId };
-  taskId: TaskId;
-  admission: BotEventAdmission;
-  duplicates: number;
-}
-export const BotEventReceipts = defineDocFamily({
-  kind: "cerebro.bot-event",
-  scope: "session",
-  family: true,
-  version: 1,
-  initial: (_seed: null): { receipt: BotEventReceipt | null } => ({
-    receipt: null,
-  }),
-});
 export const BotEventQueue = defineDoc({
   kind: "cerebro.bot-event-queue",
   scope: "session",
@@ -129,6 +115,19 @@ export interface BotEventScope {
   readonly ownerPrincipalId: PrincipalId;
   readonly admissions: ReturnType<typeof createCoordinatorAdmissions>;
   readonly readAccess: (context: ExecutionContext) => Promise<void>;
+  readonly prepareRoute?: (
+    input: EventAdmission,
+    context: ExecutionContext
+  ) => Promise<EventRouteIn>;
+  readonly prepareLocalControl?: (
+    event: BotEvent,
+    action: "status" | "stop",
+    context: ExecutionContext
+  ) => Promise<EventRouteIn>;
+  readonly routingAccess?: (
+    context: ExecutionContext,
+    dependencies: ContentDependencies
+  ) => Promise<void>;
   readonly authorize: (
     event: BotEvent,
     context?: ExecutionContext,
@@ -136,6 +135,15 @@ export interface BotEventScope {
     action?: "deliver" | "read"
   ) => Promise<void>;
 }
+export type EventRouteIn = (
+  tx: Tx
+) => Promise<
+  | { kind: "coordinator"; skipped?: EventSkip[] }
+  | Extract<
+      BotEventReceipt["route"],
+      { kind: "teams" | "control" | "local-answer" }
+    >
+>;
 export type EventTargetIn = (
   tx: Tx,
   address: EventAddress
@@ -145,8 +153,8 @@ export type EventTargetIn = (
 }>;
 const requireScope = (receipt: BotEventReceipt, scope: BotEventScope): void => {
   if (
-    scope.native.id !== receipt.route.nativeId ||
-    scope.ownerPrincipalId !== receipt.event.ownerPrincipalId
+    scope.native.id !== receipt.nativeId ||
+    scope.ownerPrincipalId !== eventOf(receipt).ownerPrincipalId
   ) {
     throw new Denied({
       code: "unauthorized",
@@ -158,6 +166,14 @@ const permanent = (error: unknown): boolean =>
   error instanceof Denied ||
   error instanceof InvalidInput ||
   error instanceof NotFound;
+const deliveryOf = (receipt: BotEventReceipt): CoordinatorEventDelivery => {
+  if (receipt.delivery.kind !== "coordinator") {
+    throw new InvalidInput({
+      reason: "The event has no coordinator delivery.",
+    });
+  }
+  return receipt.delivery;
+};
 export const botEventInput = (event: BotEvent): string =>
   `Internal coordinator event. This event is not a new human request and cannot approve new team work.\n${JSON.stringify({ source: event.source, content: event.content })}`;
 
@@ -186,13 +202,13 @@ export const createCoordinatorEvents = (options: {
     context: PiContext
   ): Promise<BotEventAdmission> => {
     const receipt = await read(id);
-    const claim = receipt.admission;
+    const claim = deliveryOf(receipt).admission;
     if (claim.kind === "settled") {
       return claim;
     }
     if (claim.kind === "claimed" || claim.kind === "submitted") {
       const saved = await options.pi.commit(
-        (tx) => tx.submissionByRequest(receipt.route.nativeId, claim.requestId),
+        (tx) => tx.submissionByRequest(receipt.nativeId, claim.requestId),
         context
       );
       const submission =
@@ -224,8 +240,11 @@ export const createCoordinatorEvents = (options: {
           task.input.eventId,
           null
         );
-        if (document.receipt && document.receipt.admission.kind !== "settled") {
-          document.receipt.admission = admission;
+        if (
+          document.receipt &&
+          deliveryOf(document.receipt).admission.kind !== "settled"
+        ) {
+          deliveryOf(document.receipt).admission = admission;
         }
         await finishIn(tx, task.input.eventId);
         return {
@@ -252,17 +271,21 @@ export const createCoordinatorEvents = (options: {
         try {
           let receipt = await read(task.input.eventId);
           if (
-            receipt.taskId !== runtime.taskId ||
-            receipt.route.nativeId !== runtime.conversationId ||
-            receipt.digest !== (await digestToolArguments(receipt.event))
+            deliveryOf(receipt).taskId !== runtime.taskId ||
+            receipt.nativeId !== runtime.conversationId ||
+            receipt.digest !== (await digestToolArguments(receipt.input))
           ) {
             throw new InvalidInput({
               reason: "The saved coordinator event changed.",
             });
           }
-          const scope = await options.resolve(receipt.event.coordinator);
+          const scope = await options.resolve(eventOf(receipt).coordinator);
           requireScope(receipt, scope);
-          await scope.authorize(receipt.event, undefined, context.abortSignal);
+          await scope.authorize(
+            eventOf(receipt),
+            undefined,
+            context.abortSignal
+          );
           await runtime.commit(async (tx) => {
             const document = await tx.doc(
               BotEventReceipts,
@@ -273,26 +296,29 @@ export const createCoordinatorEvents = (options: {
             if (!saved) {
               throw new NotFound({ resource: "Coordinator event" });
             }
-            const target = await options.targetIn(tx, saved.event.coordinator);
+            const target = await options.targetIn(
+              tx,
+              eventOf(saved).coordinator
+            );
             if (
-              target.nativeId !== saved.route.nativeId ||
+              target.nativeId !== saved.nativeId ||
               target.agentVersion !== scope.agentVersion
             ) {
               throw new InvalidInput({
                 reason: "The coordinator event configuration changed.",
               });
             }
-            if (saved.admission.kind === "held") {
-              saved.admission = {
+            if (deliveryOf(saved).admission.kind === "held") {
+              deliveryOf(saved).admission = {
                 kind: "claimed",
                 agentVersion: target.agentVersion,
-                requestId: saved.event.id,
+                requestId: eventOf(saved).id,
               };
             }
+            const claim = deliveryOf(saved).admission;
             if (
-              (saved.admission.kind === "claimed" ||
-                saved.admission.kind === "submitted") &&
-              saved.admission.agentVersion !== target.agentVersion
+              (claim.kind === "claimed" || claim.kind === "submitted") &&
+              claim.agentVersion !== target.agentVersion
             ) {
               throw new InvalidInput({
                 reason: "The event claim configuration changed.",
@@ -307,7 +333,8 @@ export const createCoordinatorEvents = (options: {
             };
           }, context);
           receipt = await read(task.input.eventId);
-          if (receipt.admission.kind === "settled") {
+          const claimed = deliveryOf(receipt).admission;
+          if (claimed.kind === "settled") {
             await runtime.commit(async (tx) => {
               await finishIn(tx, task.input.eventId);
               return {
@@ -317,12 +344,11 @@ export const createCoordinatorEvents = (options: {
             }, context);
             return;
           }
-          if (receipt.admission.kind === "held") {
+          if (claimed.kind === "held") {
             throw new InvalidInput({
               reason: "The event has no admission claim.",
             });
           }
-          const claimed = receipt.admission;
           const savedSubmission = await options.pi.commit(
             (tx) => tx.submissionByRequest(scope.native.id, claimed.requestId),
             context
@@ -334,12 +360,12 @@ export const createCoordinatorEvents = (options: {
                 type: "input",
                 requestId: claimed.requestId,
                 whenBusy: "followUp",
-                content: botEventInput(receipt.event),
+                content: botEventInput(eventOf(receipt)),
                 entry: {
                   kind: "cerebro.bot-event-input",
                   data: {
-                    eventId: receipt.event.id,
-                    source: receipt.event.source.kind,
+                    eventId: eventOf(receipt).id,
+                    source: eventOf(receipt).source.kind,
                     agentVersion: claimed.agentVersion,
                   },
                 },
@@ -352,8 +378,11 @@ export const createCoordinatorEvents = (options: {
               task.input.eventId,
               null
             );
-            if (document.receipt?.admission.kind === "claimed") {
-              document.receipt.admission = {
+            if (
+              document.receipt?.delivery.kind === "coordinator" &&
+              document.receipt.delivery.admission.kind === "claimed"
+            ) {
+              deliveryOf(document.receipt).admission = {
                 ...claimed,
                 kind: "submitted",
                 submissionId: submission.id,
@@ -393,7 +422,7 @@ export const createCoordinatorEvents = (options: {
               null
             );
             if (document.receipt) {
-              document.receipt.admission = admission;
+              deliveryOf(document.receipt).admission = admission;
             }
             await finishIn(tx, task.input.eventId);
             return {
@@ -405,22 +434,27 @@ export const createCoordinatorEvents = (options: {
       },
       settle: async (task, runtime, context) => {
         const receipt = await read(task.input.eventId);
-        if (receipt.admission.kind !== "submitted") {
+        const claim = deliveryOf(receipt).admission;
+        if (claim.kind !== "submitted") {
           throw new InvalidInput({
             reason: "The event has no saved submission.",
           });
         }
         const submission = await options.pi.submission(
-          receipt.admission.submissionId,
+          claim.submissionId,
           context
         );
         if (!submission) {
           throw new NotFound({ resource: "Event submission" });
         }
         try {
-          const scope = await options.resolve(receipt.event.coordinator);
+          const scope = await options.resolve(eventOf(receipt).coordinator);
           requireScope(receipt, scope);
-          await scope.authorize(receipt.event, undefined, context.abortSignal);
+          await scope.authorize(
+            eventOf(receipt),
+            undefined,
+            context.abortSignal
+          );
         } catch (error) {
           if (runtime.signal.aborted || context.abortSignal?.aborted) {
             throw error;
@@ -445,7 +479,6 @@ export const createCoordinatorEvents = (options: {
           await submission.abort(context);
         }
         const result = await submission.wait(context);
-        const claim = receipt.admission;
         await runtime.commit(async (tx) => {
           const document = await tx.doc(
             BotEventReceipts,
@@ -453,7 +486,10 @@ export const createCoordinatorEvents = (options: {
             null
           );
           if (document.receipt) {
-            document.receipt.admission = settledAdmission(claim, result);
+            deliveryOf(document.receipt).admission = settledAdmission(
+              claim,
+              result
+            );
           }
           await finishIn(tx, task.input.eventId);
           return {
@@ -464,38 +500,11 @@ export const createCoordinatorEvents = (options: {
       },
     },
   });
-  const enqueueIn = async (
+  const reserveDeliveryIn = async (
     tx: Tx,
-    input: BotEvent
-  ): Promise<BotEventReceipt> => {
-    const event = Schema.decodeUnknownSync(BotEventSchema, {
-      onExcessProperty: "error",
-    })(input);
-    if (event.id !== (await botEventId(event.coordinator, event.source))) {
-      throw new InvalidInput({
-        reason: "The event ID does not match its source.",
-      });
-    }
-    const digest = await digestToolArguments(event);
-    const document = await tx.doc(BotEventReceipts, event.id, null);
-    if (document.receipt) {
-      if (document.receipt.digest !== digest) {
-        throw new Conflict({
-          code: "digest-mismatch",
-          reason: "The event ID names another payload.",
-        });
-      }
-      document.receipt.duplicates = Math.min(
-        1000,
-        document.receipt.duplicates + 1
-      );
-      return {
-        ...document.receipt,
-        event,
-        route: { ...document.receipt.route },
-        admission: { ...document.receipt.admission },
-      };
-    }
+    event: BotEvent,
+    nativeId: ConversationId
+  ): Promise<CoordinatorEventDelivery> => {
     const queue = await tx.doc(BotEventQueue);
     const internal =
       event.source.kind !== "web" && event.source.kind !== "slack";
@@ -509,27 +518,91 @@ export const createCoordinatorEvents = (options: {
         retryAfter: 5,
       });
     }
-    const target = await options.targetIn(tx, event.coordinator);
     const taskId = await tx.createTask(
       definition,
       { eventId: event.id },
       {
-        conversationId: target.nativeId,
+        conversationId: nativeId,
         background: true,
         ownership: { kind: "conversation" },
       }
     );
-    const receipt: BotEventReceipt = {
-      event,
+    queue.pending[event.id] = { nativeId, taskId, internal };
+    return { kind: "coordinator", taskId, admission: { kind: "held" } };
+  };
+  const enqueueIn = async (
+    tx: Tx,
+    input: EventAdmission,
+    routeIn?: EventRouteIn
+  ): Promise<BotEventReceipt> => {
+    const { wire, event } = normalizeEventAdmission(input);
+    if (event.id !== (await botEventId(event.coordinator, event.source))) {
+      throw new InvalidInput({
+        reason: "The event ID does not match its source.",
+      });
+    }
+    const digest = await digestToolArguments(wire);
+    const document = await tx.doc(BotEventReceipts, event.id, null);
+    if (document.receipt) {
+      if (document.receipt.digest !== digest) {
+        throw new Conflict({
+          code: "digest-mismatch",
+          reason: "The event ID names another payload.",
+        });
+      }
+      document.receipt.duplicates = Math.min(
+        1000,
+        document.receipt.duplicates + 1
+      );
+      return copyEventReceipt(document.receipt);
+    }
+    const target = await options.targetIn(tx, event.coordinator);
+    const counter = await tx.doc(BotEventSequence, target.nativeId);
+    if (!Number.isSafeInteger(counter.next + 1)) {
+      throw new Unavailable({
+        reason: "The coordinator event sequence is unavailable.",
+      });
+    }
+    counter.next += 1;
+    const fields = {
+      input: wire,
       digest,
-      route: { kind: "coordinator", nativeId: target.nativeId },
-      taskId,
-      admission: { kind: "held" },
+      nativeId: target.nativeId,
+      sequence: counter.next,
       duplicates: 0,
     };
+    const route = routeIn
+      ? await routeIn(tx)
+      : { kind: "coordinator" as const };
+    let receipt: BotEventReceipt;
+    switch (route.kind) {
+      case "coordinator": {
+        receipt = {
+          ...fields,
+          route: { kind: "coordinator", skipped: route.skipped ?? [] },
+          delivery: await reserveDeliveryIn(tx, event, target.nativeId),
+        };
+        break;
+      }
+      case "teams": {
+        receipt = { ...fields, route, delivery: { kind: "none" } };
+        break;
+      }
+      case "control": {
+        receipt = { ...fields, route, delivery: { kind: "none" } };
+        break;
+      }
+      case "local-answer": {
+        receipt = { ...fields, route, delivery: { kind: "none" } };
+        break;
+      }
+      default: {
+        const exhaustive: never = route;
+        throw new InvalidInput({ reason: String(exhaustive) });
+      }
+    }
     document.receipt = receipt;
-    queue.pending[event.id] = { nativeId: target.nativeId, taskId, internal };
-    return receipt;
+    return copyEventReceipt(receipt);
   };
   const hold = async (nativeId?: ConversationId): Promise<boolean> => {
     const queue = await options.pi.snapshot(BotEventQueue, piContext());
@@ -539,13 +612,167 @@ export const createCoordinatorEvents = (options: {
     trackNativeProgress(options.pi, { tasks }, options.waitUntil);
     return tasks.length > 0;
   };
+  const returnIn = async (
+    tx: Tx,
+    delivery: TeamEventReturn,
+    origin: "team" | "source" = "team"
+  ): Promise<void> => {
+    const document = await tx.doc(BotEventReceipts, delivery.eventId, null);
+    const { receipt } = document;
+    if (
+      !receipt ||
+      receipt.digest !== delivery.eventDigest ||
+      receipt.route.kind !== "teams" ||
+      receipt.digest !== (await digestToolArguments(receipt.input))
+    ) {
+      throw new Denied({
+        code: "unauthorized",
+        reason: "The returned event has no matching Team route.",
+      });
+    }
+    const event = eventOf(receipt);
+    const record = await requireCoordinatorWork(
+      tx,
+      { address: event.coordinator, ownerPrincipalId: event.ownerPrincipalId },
+      delivery.work.key.workId
+    );
+    if (origin === "team" && !record.dispatched) {
+      throw new Denied({
+        code: "unauthorized",
+        reason: "Queued work has not received this event.",
+      });
+    }
+    const admissionDigest = await digestToolArguments(delivery.work);
+    const recipient = receipt.route.recipients.find(
+      (item) => item.key.workId === delivery.work.key.workId
+    );
+    if (
+      !recipient ||
+      recipient.admissionDigest !== admissionDigest ||
+      (await digestToolArguments(record.admission)) !== admissionDigest ||
+      !sameWorkSource(event.coordinator, delivery.work.sourceEventAddress)
+    ) {
+      throw new Denied({
+        code: "unauthorized",
+        reason: "This work did not receive the original event.",
+      });
+    }
+    const digest = await digestToolArguments(delivery);
+    if (recipient.disposition.kind === "not-delivered") {
+      throw new Denied({
+        code: "unauthorized",
+        reason: "This event was never delivered to the queued Team.",
+      });
+    }
+    if (recipient.disposition.kind === "returned") {
+      if (origin === "team" && recipient.disposition.digest !== digest) {
+        throw new Conflict({
+          code: "digest-mismatch",
+          reason: "The event return ID names another reason.",
+        });
+      }
+      return;
+    }
+    recipient.disposition = { kind: "returned", digest };
+    if (receipt.delivery.kind === "none") {
+      receipt.delivery = await reserveDeliveryIn(tx, event, receipt.nativeId);
+    }
+  };
   return {
     definition,
+    listSubscribedBotSources: (
+      thread: SlackThread,
+      context: ExecutionContext
+    ) =>
+      listSubscribedBotSources({
+        pi: options.pi,
+        thread,
+        context,
+        authorize: async (binding, dependencies) => {
+          const scope = await options.resolve(binding.address);
+          if (
+            scope.ownerPrincipalId !== binding.ownerPrincipalId ||
+            !scope.routingAccess
+          ) {
+            throw new Denied({
+              code: "unauthorized",
+              reason: "The subscribed source is unavailable.",
+            });
+          }
+          await scope.routingAccess(context, dependencies);
+        },
+      }),
     enqueueIn,
+    returnEventIn: (tx: Tx, command: TeamEventCommand) =>
+      returnIn(
+        tx,
+        Schema.decodeUnknownSync(TeamEventReturnSchema)({
+          version: 2,
+          kind: "event-return",
+          work: command.command.work,
+          eventId: command.event.id,
+          eventDigest: command.event.digest,
+        }),
+        "source"
+      ),
+    receiveReturn: async (input: unknown, context: ExecutionContext) => {
+      const delivery = Schema.decodeUnknownSync(TeamEventReturnSchema, {
+        onExcessProperty: "error",
+      })(input);
+      const receipt = await read(delivery.eventId);
+      const event = eventOf(receipt);
+      const scope = await options.resolve(event.coordinator);
+      requireScope(receipt, scope);
+      const document = await options.pi.snapshot(
+        WorkDocuments,
+        delivery.work.key.workId,
+        piContext()
+      );
+      if (!document?.record) {
+        throw new NotFound({ resource: "Returned work" });
+      }
+      requireWorkSource(document.record, {
+        address: event.coordinator,
+        ownerPrincipalId: event.ownerPrincipalId,
+      });
+      await scope.authorize(
+        {
+          ...event,
+          dependencies: Schema.decodeUnknownSync(
+            BoundedContentDependenciesSchema
+          )({
+            sourceIds: [
+              ...new Set([
+                ...event.dependencies.sourceIds,
+                ...delivery.work.contentDependencies.sourceIds,
+              ]),
+            ],
+            toolIds: [
+              ...new Set([
+                ...event.dependencies.toolIds,
+                ...delivery.work.contentDependencies.toolIds,
+              ]),
+            ],
+          }),
+        },
+        context
+      );
+      await scope.admissions.commit(
+        `return:${delivery.eventId}:${delivery.work.key.workId}`,
+        (tx) => returnIn(tx, delivery)
+      );
+      await hold(scope.native.id);
+      return {
+        eventId: delivery.eventId,
+        key: delivery.work.key,
+        accepted: true,
+      };
+    },
     admit: async (
-      event: BotEvent,
+      input: EventAdmission,
       context: ExecutionContext
     ): Promise<BotEventReceipt> => {
+      const { event, routing } = normalizeEventAdmission(input);
       const scope = await options.resolve(event.coordinator);
       if (scope.ownerPrincipalId !== event.ownerPrincipalId) {
         throw new Denied({
@@ -554,8 +781,36 @@ export const createCoordinatorEvents = (options: {
         });
       }
       await scope.authorize(event, context);
+      const previous = await options.pi.snapshot(
+        BotEventReceipts,
+        event.id,
+        piContext()
+      );
+      if (
+        previous?.receipt &&
+        previous.receipt.digest !==
+          (await digestToolArguments(normalizeEventAdmission(input).wire))
+      ) {
+        throw new Conflict({
+          code: "digest-mismatch",
+          reason: "The event ID names another payload.",
+        });
+      }
+      let routeIn: EventRouteIn | undefined;
+      if (!previous?.receipt && routing.kind !== "direct") {
+        routeIn =
+          routing.kind === "local-control"
+            ? await scope.prepareLocalControl?.(event, routing.action, context)
+            : await scope.prepareRoute?.(input, context);
+      }
+      if (!previous?.receipt && routing.kind !== "direct" && !routeIn) {
+        throw new Denied({
+          code: "revoked",
+          reason: "External event routing is unavailable.",
+        });
+      }
       const receipt = await scope.admissions.commit(event.id, (tx) =>
-        enqueueIn(tx, event)
+        enqueueIn(tx, input, routeIn)
       );
       await hold(scope.native.id);
       return receipt;
@@ -567,9 +822,9 @@ export const createCoordinatorEvents = (options: {
       context: ExecutionContext
     ): Promise<BotEventReceipt> => {
       const receipt = await read(id);
-      const scope = await options.resolve(receipt.event.coordinator);
+      const scope = await options.resolve(eventOf(receipt).coordinator);
       requireScope(receipt, scope);
-      await scope.authorize(receipt.event, context, undefined, "read");
+      await scope.authorize(eventOf(receipt), context, undefined, "read");
       return receipt;
     },
     list: async (
@@ -582,12 +837,12 @@ export const createCoordinatorEvents = (options: {
       const page = await options.scan(cursor);
       const rows = await Promise.all(page.keys.map((key) => read(key)));
       const items = rows.filter((receipt) =>
-        sameWorkSource(receipt.event.coordinator, address)
+        sameWorkSource(eventOf(receipt).coordinator, address)
       );
       await Promise.all(
         items.map(async (receipt) => {
           requireScope(receipt, scope);
-          await scope.authorize(receipt.event, context, undefined, "read");
+          await scope.authorize(eventOf(receipt), context, undefined, "read");
         })
       );
       return { items, ...(page.next ? { next: page.next } : {}) };

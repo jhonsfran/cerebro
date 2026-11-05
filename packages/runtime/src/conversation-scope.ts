@@ -15,6 +15,7 @@ import type {
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
 import { ChatControl } from "@cerebro/contracts/session-service";
+import { TeamEventReturnSchema } from "@cerebro/contracts/team-events";
 import { TeamReportDeliverySchema } from "@cerebro/contracts/work";
 import { isInternalToolName } from "@cerebro/tools/tool-names";
 import type { Provider } from "@earendil-works/pi-ai/models";
@@ -40,8 +41,10 @@ import type { SearchResult } from "./conversation-work.ts";
 import { terminalNoticeIn } from "./coordinator-event-content.ts";
 import type { BotEventScope, CoordinatorEvents } from "./coordinator-events.ts";
 import type { ScanWorkKeys } from "./coordinator-history.ts";
+import { sameWorkSource } from "./coordinator-ledger.ts";
 import { createCoordinatorReport } from "./coordinator-report.ts";
 import { createCoordinatorSource } from "./coordinator-source.ts";
+import { createCoordinatorSubscriptions } from "./coordinator-subscriptions.ts";
 import { createCoordinatorWork } from "./coordinator-work.ts";
 import { createGenerativeUiTool } from "./generative-ui-tool.ts";
 import { chatSnapshot, piContext, snapshotToolIds } from "./pi-harness.ts";
@@ -104,6 +107,7 @@ export class ConversationScope {
   readonly coordination: ReturnType<typeof createCoordinatorWork>;
   readonly routeHuman: ReturnType<typeof createCoordinatorSource>;
   readonly receiveReport: ReturnType<typeof createCoordinatorReport>;
+  readonly subscriptions: ReturnType<typeof createCoordinatorSubscriptions>;
 
   private constructor(
     runtime: ReturnType<typeof createConversationResources>,
@@ -133,6 +137,22 @@ export class ConversationScope {
       ...source,
       persist: () => services.storage.sync(),
       events: services.events,
+    });
+    this.subscriptions = createCoordinatorSubscriptions({
+      pi: services.pi,
+      nativeId: native.id,
+      coordination,
+      ownerContext: () => run(runtime.configuration.ownerContext()),
+      authorize: (context) => runtime.authorize(context, "coordinate"),
+      checkDependencies: async (context, dependencies) => {
+        await runtime.authorize(context, "transfer");
+        await run(
+          runtime.configuration.checkDependencies(context, dependencies, {
+            deadlineAt: Date.now() + 30_000,
+          })
+        );
+      },
+      readEvent: services.events.read,
     });
   }
 
@@ -231,6 +251,7 @@ export class ConversationScope {
     });
     const coordination = createCoordinatorWork({
       terminalNoticeIn: terminalNoticeIn(services.events),
+      returnEventIn: services.events.returnEventIn,
       address: configuration.address,
       authorize: async (signal) =>
         runtime.authorize(
@@ -279,6 +300,7 @@ export class ConversationScope {
         ...scope.work.tools,
         ...scope.reminders.tools,
         ...scope.coordination.tools,
+        ...scope.subscriptions.tools,
         createGenerativeUiTool({ authorize }),
       ],
     });
@@ -310,6 +332,22 @@ export class ConversationScope {
       agentVersion: configuration.agent.version,
       ownerPrincipalId: owner.represented?.id ?? owner.actor.id,
       admissions: this.coordination.admissions,
+      prepareRoute: this.subscriptions.prepare,
+      routingAccess: async (context, dependencies) => {
+        if (!configuration.coordination) {
+          throw new Denied({
+            code: "revoked",
+            reason: "Team coordination is disabled.",
+          });
+        }
+        await this.runtime.authorize(context, "coordinate");
+        await this.runtime.authorize(context, "transfer");
+        await run(
+          configuration.checkDependencies(context, dependencies, {
+            deadlineAt: Date.now() + 30_000,
+          })
+        );
+      },
       readAccess: (context) => this.runtime.authorize(context, "read"),
       authorize: async (event, context, signal, action = "deliver") => {
         const caller = context ?? (await run(configuration.ownerContext()));
@@ -658,6 +696,25 @@ export class ConversationScope {
         })(body);
         return Response.json(
           await this.receiveReport(delivery, context, request.signal)
+        );
+      }
+      if (path === "/team-event-return") {
+        const delivery = Schema.decodeUnknownSync(TeamEventReturnSchema, {
+          onExcessProperty: "error",
+        })(body);
+        if (
+          !sameWorkSource(
+            delivery.work.sourceEventAddress,
+            this.runtime.configuration.address
+          )
+        ) {
+          throw new Denied({
+            code: "unauthorized",
+            reason: "The event return belongs to another source.",
+          });
+        }
+        return Response.json(
+          await this.services.events.receiveReturn(delivery, context)
         );
       }
       if (path === "/send") {

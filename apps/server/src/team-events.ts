@@ -1,8 +1,8 @@
 import { assertQueuePayloadSize } from "@cerebro/channels/queue-payload";
 import { contextByPrincipal } from "@cerebro/channels/security";
+import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import {
-  TeamCommandSchema,
   TeamCommandReceiptSchema,
   workCellName,
 } from "@cerebro/contracts/work";
@@ -34,14 +34,12 @@ export const consumeTeamCommands = async (
     batch.messages.map(async (message) => {
       try {
         assertQueuePayloadSize(message.body);
-        const command = Schema.decodeUnknownSync(TeamCommandSchema, {
-          onExcessProperty: "error",
-        })(message.body);
+        const { command, wire } = normalizeTeamCommand(message.body);
         const { organizationId, ownerPrincipalId } = command.work.key;
         const context = await withDatabase(env, (database) =>
           contextByPrincipal(database, organizationId, ownerPrincipalId)
         );
-        const body = JSON.stringify(command);
+        const body = JSON.stringify(wire);
         const proof = await signSessionRequest(
           command.work.sourceEventAddress,
           context,

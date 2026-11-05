@@ -110,6 +110,26 @@ export const requireTeamRunning = (
     onExcessProperty: "error",
   })(state.admission);
 };
+export const teamInputRejection = (
+  state: TeamStateValue | null | undefined,
+  work: WorkAdmission,
+  now: number
+): "cancelled" | "terminal" | "expired" | null => {
+  if (state?.phase === "cancelled") {
+    return "cancelled";
+  }
+  if (
+    state?.report ||
+    state?.phase === "completed" ||
+    state?.phase === "failed"
+  ) {
+    return "terminal";
+  }
+  if (work.deadlineAt <= now) {
+    return "expired";
+  }
+  return null;
+};
 export const teamCommandDependencies = (command: TeamCommand) =>
   Schema.decodeUnknownSync(BoundedContentDependenciesSchema)({
     sourceIds: [

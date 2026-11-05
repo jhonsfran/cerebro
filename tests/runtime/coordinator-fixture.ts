@@ -10,6 +10,8 @@ import { Schema } from "effect";
 import type { BotEvent } from "../../packages/contracts/src/bot-events.ts";
 import { Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
+import { normalizeTeamCommand } from "../../packages/contracts/src/team-events.ts";
+import type { TeamCommandTransport } from "../../packages/contracts/src/team-events.ts";
 import {
   CoordinationProfileSchema,
   SlackThreadSchema,
@@ -47,6 +49,7 @@ import {
   applyCoordinatorReport,
 } from "../../packages/runtime/src/coordinator-ledger.ts";
 import type { CoordinatorWorkRecord } from "../../packages/runtime/src/coordinator-ledger.ts";
+import { createCoordinatorSubscriptions } from "../../packages/runtime/src/coordinator-subscriptions.ts";
 import { createCoordinatorWork } from "../../packages/runtime/src/coordinator-work.ts";
 import { readImportedContent } from "../../packages/runtime/src/imported-content.ts";
 import {
@@ -106,6 +109,8 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
   const nativeIds = new Map<string, ConversationId>();
   const calls: TeamCommand[] = [];
   const delivered: TeamCommand[] = [];
+  const transports: TeamCommandTransport[] = [];
+  let localControl: BotEventScope["prepareLocalControl"];
   const progress: Promise<unknown>[] = [];
   let pinVersion = 1;
   let clock = Date.now();
@@ -173,6 +178,7 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
         name: string;
         native: Conversation;
         coordinator: ReturnType<typeof createCoordinatorWork>;
+        subscriptions: ReturnType<typeof createCoordinatorSubscriptions>;
       }
     >();
     const events: CoordinatorEvents = createCoordinatorEvents({
@@ -237,6 +243,18 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
           agentVersion: pinVersion,
           ownerPrincipalId,
           admissions: current.coordinator.admissions,
+          prepareRoute: current.subscriptions.prepare,
+          prepareLocalControl: localControl,
+          routingAccess: (_context, content) =>
+            allowed.get(current.name) &&
+            !content.sourceIds.some((sourceId) => revokedContent.has(sourceId))
+              ? Promise.resolve()
+              : Promise.reject(
+                  new Denied({
+                    code: "revoked",
+                    reason: "Subscribed source revoked.",
+                  })
+                ),
           authorize,
           readAccess: () =>
             allowed.get(current.name)
@@ -289,6 +307,7 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
         models.setProvider(faux.provider);
         faux.setResponses([fauxAssistantMessage("Coordinator result.")]);
         const coordinator = createCoordinatorWork({
+          returnEventIn: events.returnEventIn,
           terminalNoticeIn: notices ? terminalNoticeIn(events) : undefined,
           address: source.address,
           nativeId: native.id,
@@ -374,7 +393,9 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
                 },
               }),
             sendCommand: async (command) => {
-              calls.push(structuredClone(command));
+              const normalized = normalizeTeamCommand(command);
+              calls.push(structuredClone(normalized.command));
+              transports.push(structuredClone(normalized.wire));
               if (dispatchDenied) {
                 throw new Denied({
                   code: "revoked",
@@ -388,14 +409,48 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
               if (held) {
                 await held.promise;
               }
-              delivered.push(structuredClone(command));
+              delivered.push(structuredClone(normalized.command));
             },
           },
+        });
+        const owner = {
+          actor: {
+            id: ownerPrincipalId,
+            organizationId: id.organization("org-A"),
+            kind: "human" as const,
+            state: "active" as const,
+          },
+        };
+        const subscriptions = createCoordinatorSubscriptions({
+          pi,
+          nativeId: native.id,
+          coordination: coordinator,
+          ownerContext: () => Promise.resolve(owner),
+          authorize: () =>
+            allowed.get(source.name)
+              ? Promise.resolve()
+              : Promise.reject(
+                  new Denied({
+                    code: "revoked",
+                    reason: "Source access revoked.",
+                  })
+                ),
+          checkDependencies: (_context, content) =>
+            allowed.get(source.name) &&
+            !content.sourceIds.some((sourceId) => revokedContent.has(sourceId))
+              ? Promise.resolve()
+              : Promise.reject(
+                  new Denied({
+                    code: "revoked",
+                    reason: "Content access revoked.",
+                  })
+                ),
+          readEvent: events.read,
         });
         const extension = {
           name: `source-${source.name}`,
           tasks: coordinator.tasks,
-          tools: coordinator.tools,
+          tools: [...coordinator.tools, ...subscriptions.tools],
         };
         registry.install(extension);
         const model = faux.getModel();
@@ -410,8 +465,9 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
           name: source.name,
           native,
           coordinator,
+          subscriptions,
         });
-        return { ...source, native, coordinator, faux };
+        return { ...source, native, coordinator, subscriptions, faux };
       })
     );
     await Promise.all(scopes.map((scope) => scope.coordinator.restore()));
@@ -483,6 +539,10 @@ export const setup = async (timeoutMs = 600_000, notices = false) => {
     work,
     calls,
     delivered,
+    transports,
+    setLocalControl: (handler: BotEventScope["prepareLocalControl"]) => {
+      localControl = handler;
+    },
     jobs: queued.rows,
     waitDispatch,
     pi: () => host.pi,
