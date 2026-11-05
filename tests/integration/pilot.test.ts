@@ -1,4 +1,3 @@
-/* oxlint-disable no-await-in-loop -- Application requests and authorization changes must run in order. */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -8,9 +7,7 @@ import { test } from "node:test";
 import { Schema } from "effect";
 import { z } from "zod";
 
-import type { ChatApproval } from "../../packages/contracts/src/session-service.ts";
 import {
-  ChatDecisionReceipt,
   ChatReceipt,
   ChatSnapshot,
 } from "../../packages/contracts/src/session-service.ts";
@@ -39,17 +36,46 @@ const receiptSchema = z.object({
     .unknown()
     .transform((value) => Schema.decodeUnknownSync(ChatReceipt)(value)),
 });
-const approvalSchema = z.object({
-  approval: z
-    .unknown()
-    .transform((value) => Schema.decodeUnknownSync(ChatDecisionReceipt)(value)),
-});
 const providerSchema = z.object({
   model: z.array(
-    z.object({ completedAt: z.number().optional(), operationId: z.string() })
+    z.object({
+      completedAt: z.number().optional(),
+      operationId: z.string(),
+      toolNames: z.array(z.string()),
+    })
   ),
   tools: z.array(z.object({ operationId: z.string(), write: z.boolean() })),
 });
+const agentSchema = z.object({
+  agentId: z.string(),
+  name: z.string(),
+  definition: z.object({
+    agentId: z.string(),
+    organizationId: z.string(),
+    version: z.number().int().positive(),
+    instructions: z.string(),
+    model: z.string(),
+    enabledToolIds: z.array(z.string()),
+    grants: z.array(
+      z.object({
+        action: z.enum([
+          "read",
+          "execute",
+          "write",
+          "approve",
+          "manage",
+          "export",
+        ]),
+        resource: z.object({
+          id: z.string(),
+          kind: z.enum(["agent", "tool", "memory", "artifact", "audit"]),
+          organizationId: z.string(),
+        }),
+      })
+    ),
+  }),
+});
+const publishedSchema = z.object({ agentId: z.string(), version: z.number() });
 const applicationStateSchema = z.object({
   agent: z.object({
     agentId: z.string(),
@@ -123,8 +149,6 @@ test(
       ),
       "fixture-read,fixture_effect"
     );
-    // Discovered MCP tools: only the one runtime.json lists in readTools is a
-    // read without approval.
     assert.equal(
       await fixture.sql(
         "SELECT string_agg(id || ':' || (definition->>'effect') || ':' || (definition->>'requiresApproval'), ',' ORDER BY id COLLATE \"C\") FROM connector_tool WHERE source='mcp:fixture-mcp'"
@@ -143,7 +167,8 @@ test(
     await fixture.sql(
       `INSERT INTO identity_principal(id,organization_id,better_auth_user_id,kind,state) VALUES (${literal(supportPrincipal)},${literal(agent.organizationId)},${literal(support.userId)},'human','active')`
     );
-    const accessRoute = `/api/product/agents/${encodeURIComponent(agent.agentId)}/access/${encodeURIComponent(supportPrincipal)}`;
+    const agentRoute = `/api/product/agents/${encodeURIComponent(agent.agentId)}`;
+    const accessRoute = `${agentRoute}/access/${encodeURIComponent(supportPrincipal)}`;
     const access = (actions: readonly string[]) =>
       fixture.json(
         accessRoute,
@@ -162,59 +187,90 @@ test(
       conversation: z.infer<typeof conversationSchema>,
       cookie = owner.cookie
     ) => fixture.json(route(conversation), cookie, viewSchema);
-    const send = (
+    const send = async (
       conversation: z.infer<typeof conversationSchema>,
       text: string,
       operationId = randomUUID()
-    ) =>
-      fixture.json(
+    ) => {
+      const before = await read(conversation);
+      const sent = await fixture.json(
         `${route(conversation)}/messages`,
         owner.cookie,
         receiptSchema,
         { operationId, text }
       );
-    const completed = (conversation: z.infer<typeof conversationSchema>) =>
-      waitForFixture(
-        () => read(conversation),
-        (view) =>
-          !view.snapshot.busy &&
-          view.snapshot.messages.some(
+      assert.equal(sent.receipt.operationId, operationId);
+      return { conversation, baseline: before.snapshot, text, ...sent };
+    };
+    const completed = async (turn: Awaited<ReturnType<typeof send>>) => {
+      const entryIds = new Set(
+        turn.baseline.messages.flatMap((message) =>
+          message.entryId ? [message.entryId] : []
+        )
+      );
+      const view = await waitForFixture(
+        () => read(turn.conversation),
+        (value) => {
+          const { messages } = value.snapshot;
+          const input = messages.findIndex(
             (message) =>
+              message.role === "user" &&
+              message.operationId === turn.receipt.operationId &&
+              message.text === turn.text &&
+              Boolean(message.entryId && !entryIds.has(message.entryId))
+          );
+          const answer = messages.findIndex(
+            (message, index) =>
+              index > input &&
               message.role === "assistant" &&
               message.state === "complete" &&
-              message.text === "Cerebro slice 1 completed."
-          ),
+              message.outcome === "answered" &&
+              message.text === "Cerebro slice 1 completed." &&
+              Boolean(message.entryId && !entryIds.has(message.entryId))
+          );
+          return (
+            !value.snapshot.busy &&
+            input !== -1 &&
+            answer > input &&
+            !messages
+              .slice(input + 1, answer)
+              .some((message) => message.role === "user")
+          );
+        },
         60_000
       );
-    const pending = async (
-      conversation: z.infer<typeof conversationSchema>
-    ) => {
-      const view = await waitForFixture(
-        () => read(conversation),
-        (value) =>
-          value.snapshot.approvals.some(
-            (approval) => approval.state === "pending"
-          ),
-        60_000
+      const inputs = view.snapshot.messages.filter(
+        (message) =>
+          message.role === "user" &&
+          message.operationId === turn.receipt.operationId
       );
-      const approval = view.snapshot.approvals.find(
-        (value) => value.state === "pending"
+      assert.equal(inputs.length, 1);
+      const [input] = inputs;
+      assert.ok(input?.entryId);
+      assert.equal(entryIds.has(input.entryId), false);
+      const inputIndex = view.snapshot.messages.indexOf(input);
+      const answer = view.snapshot.messages.find(
+        (message, index) =>
+          index > inputIndex &&
+          message.role === "assistant" &&
+          message.state === "complete" &&
+          message.outcome === "answered" &&
+          message.text === "Cerebro slice 1 completed." &&
+          message.entryId !== undefined &&
+          !entryIds.has(message.entryId)
       );
-      assert.ok(approval);
-      return approval;
+      assert.ok(answer?.entryId);
+      assert.notEqual(answer.entryId, input.entryId);
+      assert.deepEqual(
+        view.snapshot.messages.slice(0, turn.baseline.messages.length),
+        turn.baseline.messages
+      );
+      return {
+        ...view,
+        inputEntryId: input.entryId,
+        answerEntryId: answer.entryId,
+      };
     };
-    const decision = (
-      conversation: z.infer<typeof conversationSchema>,
-      approval: ChatApproval,
-      value: "allow" | "deny",
-      cookie = owner.cookie
-    ) =>
-      fixture.json(
-        `${route(conversation)}/approvals/${encodeURIComponent(approval.approvalId)}`,
-        cookie,
-        approvalSchema,
-        { decision: value }
-      );
     const provider = async () =>
       providerSchema.parse(await fixture.observations());
     const writes = async () => {
@@ -231,7 +287,7 @@ test(
         `INSERT INTO identity_grant(organization_id,principal_id,action,resource_kind,resource_id,source) VALUES (${[agent.organizationId, principal, action, kind, resource, "native-api-test"].map(literal).join(",")}) ON CONFLICT DO NOTHING`
       );
     const conversation = await createConversation();
-    const approvedConversation = await createConversation();
+    assert.deepEqual(await createConversation(), conversation);
     const initialProvider = await provider();
     await mkdir(directory, { recursive: true });
     const statePath = `/tmp/${boot.fixtureId}-application.json`;
@@ -305,29 +361,16 @@ test(
         async () => {
           const operationId = randomUUID();
           const text = "Answer the refund policy question.";
+          const before = await provider();
           const first = await send(conversation, text, operationId);
-          assert.equal(first.receipt.operationId, operationId);
           assert.equal(first.receipt.accepted, true);
           assert.ok(first.receipt.session);
           const duplicate = await send(conversation, text, operationId);
-          assert.equal(duplicate.receipt.operationId, operationId);
-          assert.equal(duplicate.receipt.session, first.receipt.session);
-          assert.equal(duplicate.receipt.accepted, false);
-          const view = await completed(conversation);
-          assert.equal(
-            view.snapshot.messages.filter(
-              (message) => message.role === "user" && message.text === text
-            ).length,
-            1
-          );
-          assert.equal(
-            view.snapshot.messages.filter(
-              (message) =>
-                message.role === "assistant" &&
-                message.text === "Cerebro slice 1 completed."
-            ).length,
-            1
-          );
+          assert.deepEqual(duplicate.receipt, {
+            ...first.receipt,
+            accepted: false,
+          });
+          const view = await completed(first);
           const history = await fixture.json(
             `${route(conversation)}/history`,
             owner.cookie,
@@ -335,8 +378,19 @@ test(
           );
           assert.deepEqual(history.messages, view.snapshot.messages);
           const observed = await provider();
-          assert.equal(observed.model.length - initialProvider.model.length, 1);
-          evidence.send = { duplicate, first, view };
+          assert.equal(observed.model.length - before.model.length, 1);
+          const settledReplay = await send(conversation, text, operationId);
+          assert.deepEqual(settledReplay.receipt, duplicate.receipt);
+          const reloaded = await read(conversation);
+          assert.deepEqual(reloaded.snapshot.messages, view.snapshot.messages);
+          assert.deepEqual(await provider(), observed);
+          evidence.send = {
+            duplicate: duplicate.receipt,
+            first: first.receipt,
+            settledReplay: settledReplay.receipt,
+            view,
+            reloaded,
+          };
         }
       );
 
@@ -375,6 +429,14 @@ test(
           await grant(supportPrincipal, "read", "tool", "fixture-read");
           await grant(supportPrincipal, "read", "tool", "fixture_effect");
           const supportConversation = await createConversation(support.cookie);
+          assert.notEqual(
+            supportConversation.conversationId,
+            conversation.conversationId
+          );
+          assert.notEqual(
+            supportConversation.sessionId,
+            conversation.sessionId
+          );
           await read(supportConversation, support.cookie);
           await access(["execute", "approve"]);
           await expectStatus(
@@ -400,101 +462,65 @@ test(
       );
 
       await t.test(
-        "stored approval identity allows one write and rejects another owner",
+        "the primary completes a connector request without foreground execution",
         async () => {
-          const address = approvedConversation;
-          const beforeWrites = await writes();
-          await send(address, "Apply write fixture with fixture_effect once.");
-          const approval = await pending(address);
-          assert.equal(approval.toolId, "fixture_effect");
-          assert.deepEqual(approval.arguments, { value: "approved-fixture" });
-          await expectStatus(
-            await fixture.request(
-              `${route(address)}/approvals/${encodeURIComponent(approval.approvalId)}`,
-              support.cookie,
-              { decision: "allow" }
-            ),
-            404
+          const definition = await fixture.json(
+            agentRoute,
+            owner.cookie,
+            agentSchema
           );
-          const allowed = await decision(address, approval, "allow");
-          assert.equal(allowed.approval.approvalId, approval.approvalId);
-          assert.equal(allowed.approval.state, "allowed");
-          await decision(address, approval, "allow");
-          await completed(address);
-          assert.equal(await writes(), beforeWrites + 1);
-          await expectStatus(
-            await fixture.request(
-              `${route(address)}/approvals/${encodeURIComponent(approval.approvalId)}`,
-              owner.cookie,
-              { decision: "deny" }
-            ),
-            409
+          assert.ok(
+            ["fixture-read", "fixture_effect"].every((toolId) =>
+              definition.definition.enabledToolIds.includes(toolId)
+            )
           );
-          const view = await read(address);
-          evidence.allowed = {
-            approval,
-            snapshot: view.snapshot,
-          };
-        }
-      );
-
-      await t.test(
-        "denial and revoked current tool authority prevent writes",
-        async () => {
-          const beforeWrites = await writes();
-          const deniedConversation = await createConversation();
-          await send(
-            deniedConversation,
-            "Apply write fixture with fixture_effect but ask approval first."
+          const before = await provider();
+          const turn = await send(
+            conversation,
+            "Apply write fixture with fixture_effect once."
           );
-          const approval = await pending(deniedConversation);
-          const denied = await decision(deniedConversation, approval, "deny");
-          assert.equal(denied.approval.state, "denied");
-          await waitForFixture(
-            () => read(deniedConversation),
-            (view) => !view.snapshot.busy,
-            60_000
-          );
-          assert.equal(await writes(), beforeWrites);
-          const revokedConversation = await createConversation();
-          await send(
-            revokedConversation,
-            "Apply write fixture with fixture_effect after approval."
-          );
-          const revokedApproval = await pending(revokedConversation);
-          await fixture.sql(
-            `DELETE FROM identity_grant WHERE organization_id=${literal(agent.organizationId)} AND principal_id=${literal(agent.principalId)} AND action='execute' AND resource_kind='tool' AND resource_id='fixture_effect'`
-          );
-          try {
-            const response = await fixture.request(
-              `${route(revokedConversation)}/approvals/${encodeURIComponent(revokedApproval.approvalId)}`,
-              owner.cookie,
-              { decision: "allow" }
+          const view = await completed(turn);
+          const observed = await provider();
+          const calls = observed.model.slice(before.model.length);
+          assert.ok(calls.length > 0);
+          for (const call of calls) {
+            assert.ok(call.completedAt !== undefined);
+            assert.equal(
+              call.toolNames.some((name) =>
+                ["fixture_effect", "fixture-read", "subagent"].includes(name)
+              ),
+              false
             );
-            assert.ok(
-              [200, 403, 409].includes(response.status),
-              `Revoked tool approval returned HTTP ${response.status}`
-            );
-            await response.body?.cancel();
-            await waitForFixture(
-              () => read(revokedConversation),
-              (view) => !view.snapshot.busy,
-              60_000
-            );
-            assert.equal(await writes(), beforeWrites);
-          } finally {
-            await grant(agent.principalId, "execute", "tool", "fixture_effect");
           }
-          const deniedView = await read(deniedConversation);
-          evidence.denied = {
-            approval,
-            snapshot: deniedView.snapshot,
+          const approvals = new Set(
+            turn.baseline.approvals.map((approval) => approval.approvalId)
+          );
+          assert.deepEqual(
+            view.snapshot.approvals.filter(
+              (approval) => !approvals.has(approval.approvalId)
+            ),
+            []
+          );
+          assert.equal(observed.tools.length, before.tools.length);
+          assert.equal(
+            observed.tools.filter((tool) => tool.write).length,
+            before.tools.filter((tool) => tool.write).length
+          );
+          assert.deepEqual(
+            await fixture.json(agentRoute, owner.cookie, agentSchema),
+            definition
+          );
+          evidence.coordinatorPolicy = {
+            receipt: turn.receipt,
+            view,
+            calls,
+            writes: observed.tools.filter((tool) => tool.write).length,
           };
         }
       );
 
       await t.test(
-        "source revocation keeps Stop and Deny available without sharing protected content",
+        "source revocation keeps Stop available without sharing protected content",
         async () => {
           const stopConversation = await createConversation();
           const beforeStop = await provider();
@@ -549,167 +575,36 @@ test(
             () => read(stopConversation),
             (value) => !value.snapshot.busy
           );
-
-          const deniedConversation = await createConversation();
-          const beforeWrites = await writes();
-          await send(
-            deniedConversation,
-            "Apply write fixture with fixture_effect for the refund policy."
-          );
-          const approval = await pending(deniedConversation);
-          const approvalRoute = `${route(deniedConversation)}/approvals/${encodeURIComponent(approval.approvalId)}`;
-          let finalDecisionState: "denied" | "cancelled";
-          let decisionObservedAt: number;
-          await fixture.sql(
-            `DELETE FROM identity_grant WHERE organization_id=${literal(agent.organizationId)} AND principal_id=${literal(agent.principalId)} AND action='read' AND resource_kind='memory' AND resource_id='pilot-source'`
-          );
-          try {
-            await expectStatus(
-              await fixture.request(route(deniedConversation), owner.cookie),
-              403
-            );
-            await expectStatus(
-              await fixture.request(approvalRoute, owner.cookie, {
-                decision: "allow",
-              }),
-              403
-            );
-            await expectStatus(
-              await fixture.request(approvalRoute, "", { decision: "deny" }),
-              401
-            );
-            await expectStatus(
-              await fixture.request(approvalRoute, support.cookie, {
-                decision: "deny",
-              }),
-              404
-            );
-            const response = await fixture.request(
-              approvalRoute,
-              owner.cookie,
-              { decision: "deny" }
-            );
-            const denied = await response.json();
-            decisionObservedAt = Date.now();
-            assert.ok(approval.expiresAt > decisionObservedAt);
-            if (response.status === 200) {
-              assert.deepEqual(denied, {
-                approval: { approvalId: approval.approvalId, state: "denied" },
-              });
-              assert.deepEqual(approvalSchema.parse(denied).approval, {
-                approvalId: approval.approvalId,
-                state: "denied",
-              });
-              finalDecisionState = "denied";
-            } else {
-              assert.equal(response.status, 409);
-              assert.deepEqual(denied, {
-                code: "Conflict",
-                defined: false,
-                message: "The approval already has a final decision.",
-                status: 409,
-              });
-              finalDecisionState = "cancelled";
-            }
-            assert.equal(await writes(), beforeWrites);
-            evidence.sourceRevokedDeny = denied;
-          } finally {
-            await grant(agent.principalId, "read", "memory", "pilot-source");
-          }
-          const settled = await waitForFixture(
-            () => read(deniedConversation),
-            (value) => !value.snapshot.busy
-          );
-          assert.equal(
-            settled.snapshot.approvals.find(
-              (value) => value.approvalId === approval.approvalId
-            )?.state,
-            finalDecisionState
-          );
-          const nativeToolErrors = settled.snapshot.messages
-            .filter(
-              (message) =>
-                message.role === "tool" && message.text.includes("[error]")
-            )
-            .map(({ text, toolName }) => ({ reason: text, toolName }));
-          if (finalDecisionState === "cancelled") {
-            assert.ok(nativeToolErrors.length > 0);
-          }
-          evidence.sourceControlNative = {
-            approvalId: approval.approvalId,
-            busy: settled.snapshot.busy,
-            decisionObservedAt,
-            expiresAt: approval.expiresAt,
-            finalDecisionState,
-            nativeToolErrors,
-          };
-          assert.equal(await writes(), beforeWrites);
         }
       );
 
-      await t.test(
-        "current agent grants still authorize Stop and Deny",
-        async () => {
-          const idleConversation = await createConversation();
-          const beforeWrites = await writes();
-          await fixture.sql(
-            `DELETE FROM identity_grant WHERE organization_id=${literal(agent.organizationId)} AND principal_id=${literal(agent.principalId)} AND action='execute' AND resource_kind='agent' AND resource_id=${literal(agent.agentId)}`
-          );
-          try {
-            await expectStatus(
-              await fixture.request(
-                `${route(idleConversation)}/stop`,
-                owner.cookie,
-                {}
-              ),
-              403
-            );
-          } finally {
-            await grant(agent.principalId, "execute", "agent", agent.agentId);
-          }
-          const stopped = await fixture.json(
-            `${route(idleConversation)}/stop`,
-            owner.cookie,
-            z.strictObject({ stopped: z.boolean() }),
-            {}
-          );
-          assert.deepEqual(stopped, { stopped: true });
-          const view = await read(approvedConversation);
-          const approval = view.snapshot.approvals.find(
-            (value) => value.state === "allowed"
-          );
-          assert.ok(approval);
-          assert.equal(view.snapshot.busy, false);
-          const approvalRoute = `${route(approvedConversation)}/approvals/${encodeURIComponent(approval.approvalId)}`;
-          await fixture.sql(
-            `DELETE FROM identity_grant WHERE organization_id=${literal(agent.organizationId)} AND principal_id=${literal(agent.principalId)} AND action='approve' AND resource_kind='agent' AND resource_id=${literal(agent.agentId)}`
-          );
-          try {
-            await expectStatus(
-              await fixture.request(approvalRoute, owner.cookie, {
-                decision: "deny",
-              }),
-              403
-            );
-          } finally {
-            await grant(agent.principalId, "approve", "agent", agent.agentId);
-          }
+      await t.test("current agent grants still authorize Stop", async () => {
+        const idleConversation = await createConversation();
+        const beforeWrites = await writes();
+        await fixture.sql(
+          `DELETE FROM identity_grant WHERE organization_id=${literal(agent.organizationId)} AND principal_id=${literal(agent.principalId)} AND action='execute' AND resource_kind='agent' AND resource_id=${literal(agent.agentId)}`
+        );
+        try {
           await expectStatus(
-            await fixture.request(approvalRoute, owner.cookie, {
-              decision: "deny",
-            }),
-            409
+            await fixture.request(
+              `${route(idleConversation)}/stop`,
+              owner.cookie,
+              {}
+            ),
+            403
           );
-          const restored = await read(approvedConversation);
-          assert.equal(
-            restored.snapshot.approvals.find(
-              (value) => value.approvalId === approval.approvalId
-            )?.state,
-            "allowed"
-          );
-          assert.equal(await writes(), beforeWrites);
+        } finally {
+          await grant(agent.principalId, "execute", "agent", agent.agentId);
         }
-      );
+        const stopped = await fixture.json(
+          `${route(idleConversation)}/stop`,
+          owner.cookie,
+          z.strictObject({ stopped: z.boolean() }),
+          {}
+        );
+        assert.deepEqual(stopped, { stopped: true });
+        assert.equal(await writes(), beforeWrites);
+      });
 
       await t.test(
         "audit exports keep current company authorization and exclude transcript text",
@@ -841,7 +736,6 @@ test(
               catalog.connectorChoices.some((choice) => choice.id === toolId)
             )
           );
-          // Read and execute on both tools, and execute on the connector.
           assert.equal(
             await fixture.sql(
               "SELECT count(*) FROM identity_grant WHERE source='connector:crm'"
@@ -872,7 +766,7 @@ test(
         }
       );
       await t.test(
-        "administrators save skills that new conversations offer",
+        "published skills activate in the same primary conversation",
         async () => {
           const skill = {
             body: "Check the order date, then offer store credit.",
@@ -919,29 +813,81 @@ test(
             await fixture.json("/api/product/skills", owner.cookie, skillList),
             { skills: [{ ...skill, name: "refund-policy" }] }
           );
-          // Activation must leave the transcript readable, including after reload.
-          const before = await provider();
+          const current = await fixture.json(
+            agentRoute,
+            owner.cookie,
+            agentSchema
+          );
+          assert.equal(current.definition.agentId, agent.agentId);
+          assert.equal(current.definition.organizationId, agent.organizationId);
+          const idle = await read(conversation);
+          assert.equal(idle.snapshot.busy, false);
+          const published = await fixture.json(
+            agentRoute,
+            owner.cookie,
+            publishedSchema,
+            {
+              operationId: randomUUID(),
+              expectedVersion: current.definition.version,
+              name: current.name,
+              model: current.definition.model,
+              instructions: current.definition.instructions,
+              enabledToolIds: current.definition.enabledToolIds,
+              grants: current.definition.grants,
+            },
+            "PUT"
+          );
+          assert.equal(published.agentId, agent.agentId);
+          assert.equal(published.version, current.definition.version + 1);
           const skillConversation = await createConversation();
-          await send(skillConversation, "Activate skill refund-policy");
-          const activated = await completed(skillConversation);
-          assert.ok(
-            activated.snapshot.messages.some(
-              (message) =>
-                message.toolName === "activate_skill" &&
-                message.text.includes(skill.body)
-            )
+          assert.deepEqual(skillConversation, conversation);
+          const before = await provider();
+          const turn = await send(
+            skillConversation,
+            "Activate skill refund-policy"
           );
-          const calls = z
-            .object({
-              model: z.array(
-                z.object({ toolNames: z.array(z.string()).optional() })
-              ),
-            })
-            .parse(await fixture.observations())
-            .model.slice(before.model.length);
-          assert.ok(
-            calls.some((call) => call.toolNames?.includes("activate_skill"))
+          const activated = await completed(turn);
+          assert.equal(activated.snapshot.agentVersion, published.version);
+          const priorIds = new Set(
+            turn.baseline.messages.map((message) => message.id)
           );
+          const results = activated.snapshot.messages.filter(
+            (message) =>
+              !priorIds.has(message.id) &&
+              message.toolName === "activate_skill" &&
+              message.text.includes(skill.body)
+          );
+          assert.equal(results.length, 1);
+          const [result] = results;
+          assert.ok(result);
+          const { messages } = activated.snapshot;
+          const inputIndex = messages.findIndex(
+            (message) => message.entryId === activated.inputEntryId
+          );
+          const answerIndex = messages.findIndex(
+            (message) => message.entryId === activated.answerEntryId
+          );
+          assert.ok(messages.indexOf(result) > inputIndex);
+          assert.ok(messages.indexOf(result) < answerIndex);
+          const observed = await provider();
+          const calls = observed.model.slice(before.model.length);
+          assert.ok(
+            calls.some((call) => call.toolNames.includes("activate_skill"))
+          );
+          const reloaded = await read(skillConversation);
+          assert.deepEqual(
+            reloaded.snapshot.messages,
+            activated.snapshot.messages
+          );
+          evidence.skills = {
+            published,
+            conversation: skillConversation,
+            receipt: turn.receipt,
+            activated,
+            resultMessageId: result.id,
+            calls,
+            reloaded,
+          };
           await fixture.json(
             "/api/product/skills/refund-policy",
             owner.cookie,
