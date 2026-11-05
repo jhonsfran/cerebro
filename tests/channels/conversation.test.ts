@@ -863,6 +863,7 @@ test("streaming follows the latest content only while the reader stays near the 
   await waitFor(() =>
     assert.equal(view.getByText("First text").textContent, "First text")
   );
+  await waitFor(() => assert.equal(server.controllers.length, 1));
   const transcript = view.getByRole("log", { name: "Conversation messages" });
   const positions: ScrollToOptions[] = [];
   Object.defineProperties(transcript, {

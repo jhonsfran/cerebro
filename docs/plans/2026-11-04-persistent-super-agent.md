@@ -29,6 +29,7 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [ ] Unit 6b2b: Prove persistent-agent routing, subscriptions, queue limits, and Inspector through the native application.
 - [x] Unit 6 docs: Document primary continuity, event routing, private Teams, and development inspection.
 - [x] Unit 6 Stop verification: Observe a streamed partial before checking interrupted output.
+- [x] Unit 6 stream verification: Wait for the observation attachment before sending mocked frames.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
 - [ ] Phase D: Keep the audit trail throughout the run.
 - [ ] Phase E: Verify and hand back.
@@ -103,6 +104,8 @@ Unit 6 documentation describes one persistent primary, filtered Slack events, bo
 The first complete runtime run on the current source executes 374 Node cases with 372 passes, two Stop-precondition failures, and no skips. Bun does not run after that failure. The two new interrupted-output assertions required a native partial but waited only for a provider request. The separate Stop verification change waits for actual nonempty streaming text and preserves every interruption, input, sibling wake, notification, and resume assertion. A fresh specification, thermo, and comment review passes. Both exact native cases now pass with zero skips; both actual images match all 288 frozen runtime source paths. Their two owned stacks and every captured mount are removed. The full Node and Bun runtime command remains a final gate after fixture context repairs.
 
 Unit 6c updates the application pilot for the persistent primary. Each completion must join a new saved input and answer to its public operation, and replay adds no model request. The primary advertises no task connector tools. Published skills activate in the same chat after a safe version change. Fresh specification, thermo, and comment reviews pass. The actual isolated pilot passes all nine scenarios with no skips. All 403 captured source paths remain unchanged during that run. Both application images match 390 source paths and the fixture image matches its three modules. The original pilot deliberately retains its stack; the initial wrapper reports that retention separately. After live image verification, exact owned cleanup removes nine containers and all seven captured volumes. The complete integration glob and final browser checks remain pending.
+
+The final channel run exposed a separate existing test precondition. Initial chat text can render from GET before the observation stream attaches. The streaming-scroll case now waits for its actual mock stream controller. It retains every scroll and text assertion. Fresh specification, thermo, and comment reviews pass. The focused DOM file passes all 13 tests; the full PostgreSQL channel command passes all 166 tests on 215 unchanged captured paths. The exact labelled test database is removed and creates no volume. The initial 165-pass, one-failure run and its subsequent scheduler error remain saved separately. No product code changes in this repair.
 
 ## Cutover
 
