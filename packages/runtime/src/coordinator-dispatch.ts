@@ -9,6 +9,7 @@ import { defineTask } from "@earendil-works/pi-durable";
 import type { ConversationId, Harness, Tx } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
+import type { TerminalNoticeIn } from "./coordinator-event-content.ts";
 import {
   CommandReceipts,
   WorkDocuments,
@@ -36,6 +37,7 @@ export const createCoordinatorDispatch = (options: {
   readonly authorize: (signal?: AbortSignal) => Promise<void>;
   readonly binding: () => CoordinationBinding;
   readonly now: () => number;
+  readonly terminalNoticeIn?: TerminalNoticeIn;
 }) => {
   const { now } = options;
   const clearPending = async (tx: Tx, command: TeamCommand) => {
@@ -193,10 +195,16 @@ export const createCoordinatorDispatch = (options: {
             const reason = "The team command could not be delivered.";
             if (owned) {
               Reflect.deleteProperty(record.pendingCommands, command.id);
+              const notify =
+                record.status.kind === "accepted" ||
+                record.status.kind === "running";
               record.status = transitionWorkStatus(record.status, {
                 kind: "failed",
                 reason,
               });
+              if (notify) {
+                await options.terminalNoticeIn?.(tx, record, "dispatch-failed");
+              }
             }
             return {
               status: "terminal",

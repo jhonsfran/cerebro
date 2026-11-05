@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import type { LifecycleJob, LifecycleJobs } from "agents/lifecycle";
 import { Schema } from "effect";
 
+import type { BotEvent } from "../../packages/contracts/src/bot-events.ts";
 import { Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import {
@@ -24,8 +26,21 @@ import {
   Harness,
   createRegistry,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
-import type { ConversationId } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
-import { openNodeSqliteStorage } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/node.js";
+import type {
+  Conversation,
+  ConversationId,
+} from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
+import { NodeSqliteDatabase } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/node.js";
+import { SqliteStorage } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/storage.js";
+import { terminalNoticeIn } from "../../packages/runtime/src/coordinator-event-content.ts";
+import {
+  createCoordinatorEvents,
+  BotEventReceipts,
+} from "../../packages/runtime/src/coordinator-events.ts";
+import type {
+  CoordinatorEvents,
+  BotEventScope,
+} from "../../packages/runtime/src/coordinator-events.ts";
 import {
   WorkDocuments,
   WorkLedger,
@@ -38,6 +53,14 @@ import {
   chatPresentation,
   piContext,
 } from "../../packages/runtime/src/pi-harness.ts";
+
+const settleProgress = async (promise: Promise<unknown>): Promise<unknown> => {
+  try {
+    return await promise;
+  } catch (error) {
+    return error;
+  }
+};
 
 export const context = piContext();
 const fakeJobs = () => {
@@ -76,7 +99,7 @@ const fakeJobs = () => {
   return { jobs, rows };
 };
 
-export const setup = async (timeoutMs = 600_000) => {
+export const setup = async (timeoutMs = 600_000, notices = false) => {
   const directory = await mkdtemp(path.join(tmpdir(), "cerebro-coordinator-"));
   const databasePath = path.join(directory, "state.sqlite");
   const queued = fakeJobs();
@@ -87,6 +110,10 @@ export const setup = async (timeoutMs = 600_000) => {
   let pinVersion = 1;
   let clock = Date.now();
   let failures = 0;
+  let dispatchDenied = false;
+  const eventSubmissions: string[] = [];
+  let submitPause: "before" | "after" | undefined;
+  let submitEntered = Promise.withResolvers<boolean>();
   let dependencies = {
     sourceIds: [id.source("source-A")],
     toolIds: ["tool-A"],
@@ -120,7 +147,10 @@ export const setup = async (timeoutMs = 600_000) => {
     ownerPrincipalId,
   }));
   const open = async () => {
-    const storage = await openNodeSqliteStorage(databasePath);
+    const database = new DatabaseSync(databasePath, { timeout: 5000 });
+    database.exec("PRAGMA journal_mode = WAL");
+    database.exec("PRAGMA synchronous = NORMAL");
+    const storage = await SqliteStorage.open(new NodeSqliteDatabase(database));
     const models = createModels();
     const registry = createRegistry();
     const pi = await Harness.open(
@@ -130,12 +160,117 @@ export const setup = async (timeoutMs = 600_000) => {
         registry,
         settings: {
           extensions: [],
+          followUpMode: "one-at-a-time",
           compaction: { enabled: false },
           retry: { enabled: false },
         },
       },
       context
     );
+    const scopeSources = new Map<
+      string,
+      {
+        name: string;
+        native: Conversation;
+        coordinator: ReturnType<typeof createCoordinatorWork>;
+      }
+    >();
+    const events: CoordinatorEvents = createCoordinatorEvents({
+      pi,
+      targetIn: (_tx, address) => {
+        const source = sourceBindings.find(
+          (item) => item.address.sessionId === address.sessionId
+        );
+        const nativeId = source && nativeIds.get(source.name);
+        assert.ok(nativeId);
+        return Promise.resolve({ nativeId, agentVersion: pinVersion });
+      },
+      resolve: (address): Promise<BotEventScope> => {
+        const current = scopeSources.get(address.sessionId);
+        assert.ok(current);
+        const native = new Proxy(current.native, {
+          get: (target, property) => {
+            if (property === "submit") {
+              return async (
+                input: Parameters<typeof target.submit>[0],
+                invocation: Parameters<typeof target.submit>[1]
+              ) => {
+                const pause = async () => {
+                  submitEntered.resolve(true);
+                  const stopped = Promise.withResolvers<never>();
+                  invocation.abortSignal?.addEventListener(
+                    "abort",
+                    () => stopped.reject(new Error("Fixture process stopped.")),
+                    { once: true }
+                  );
+                  await stopped.promise;
+                };
+                if (submitPause === "before") {
+                  await pause();
+                }
+                eventSubmissions.push(input.requestId ?? "");
+                const submission = await target.submit(input, invocation);
+                if (submitPause === "after") {
+                  await pause();
+                }
+                return submission;
+              };
+            }
+            const value: unknown = Reflect.get(target, property);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        const authorize = (event: BotEvent) =>
+          allowed.get(current.name) &&
+          !event.dependencies.sourceIds.some((sourceId) =>
+            revokedContent.has(sourceId)
+          )
+            ? Promise.resolve()
+            : Promise.reject(
+                new Denied({
+                  code: "revoked",
+                  reason: "Event content revoked.",
+                })
+              );
+        return Promise.resolve({
+          native,
+          agentVersion: pinVersion,
+          ownerPrincipalId,
+          admissions: current.coordinator.admissions,
+          authorize,
+          readAccess: () =>
+            allowed.get(current.name)
+              ? Promise.resolve()
+              : Promise.reject(
+                  new Denied({ code: "revoked", reason: "Source revoked." })
+                ),
+        });
+      },
+      scan: (cursor) =>
+        pi.commit(async () => {
+          const page = await storage.scanDocuments(
+            {
+              scope: { kind: "session" },
+              at: "current",
+              kind: BotEventReceipts.definition.kind,
+            },
+            32,
+            cursor,
+            context
+          );
+          return {
+            keys: page.items.flatMap((item) => (item.key ? [item.key] : [])),
+            ...(page.next ? { next: page.next } : {}),
+          };
+        }, context),
+      waitUntil: (promise) => {
+        progress.push(settleProgress(promise));
+      },
+    });
+    registry.install({
+      name: "fixture.bot-events",
+      tasks: [events.definition],
+    });
     const scopes = await Promise.all(
       sourceBindings.map(async (source) => {
         const savedId = nativeIds.get(source.name);
@@ -152,7 +287,9 @@ export const setup = async (timeoutMs = 600_000) => {
           models: [{ id: "test" }],
         });
         models.setProvider(faux.provider);
+        faux.setResponses([fauxAssistantMessage("Coordinator result.")]);
         const coordinator = createCoordinatorWork({
+          terminalNoticeIn: notices ? terminalNoticeIn(events) : undefined,
           address: source.address,
           nativeId: native.id,
           authorize: () =>
@@ -168,7 +305,7 @@ export const setup = async (timeoutMs = 600_000) => {
           metadata: (operation) => pi.commit(operation, context),
           persist: () => Promise.resolve(),
           waitUntil: (promise) => {
-            progress.push(promise.catch((error: unknown) => error));
+            progress.push(settleProgress(promise));
           },
           now: () => clock,
           pi,
@@ -238,6 +375,12 @@ export const setup = async (timeoutMs = 600_000) => {
               }),
             sendCommand: async (command) => {
               calls.push(structuredClone(command));
+              if (dispatchDenied) {
+                throw new Denied({
+                  code: "revoked",
+                  reason: "Private transport failure details.",
+                });
+              }
               if (failures > 0) {
                 failures -= 1;
                 throw new Error("Queue unavailable");
@@ -263,11 +406,17 @@ export const setup = async (timeoutMs = 600_000) => {
           },
           context
         );
-        await coordinator.restore();
+        scopeSources.set(source.address.sessionId, {
+          name: source.name,
+          native,
+          coordinator,
+        });
         return { ...source, native, coordinator, faux };
       })
     );
-    return { pi, registry, scopes, storage };
+    await Promise.all(scopes.map((scope) => scope.coordinator.restore()));
+    await events.restore();
+    return { pi, registry, scopes, storage, events, database };
   };
   let host = await open();
   const source = (name: string) => {
@@ -337,12 +486,26 @@ export const setup = async (timeoutMs = 600_000) => {
     jobs: queued.rows,
     waitDispatch,
     pi: () => host.pi,
+    database: () => host.database,
+    events: () => host.events,
+    eventSubmissions,
+    pauseEventSubmit: (at: "before" | "after") => {
+      submitPause = at;
+      submitEntered = Promise.withResolvers<boolean>();
+      return submitEntered.promise;
+    },
+    clearEventPause: () => {
+      submitPause = undefined;
+    },
     now: () => clock,
     advance: (milliseconds: number) => {
       clock += milliseconds;
     },
     fail: (count: number) => {
       failures = count;
+    },
+    denyDispatch: () => {
+      dispatchDenied = true;
     },
     setPinVersion: (version: number) => {
       pinVersion = version;
@@ -429,6 +592,7 @@ export const setup = async (timeoutMs = 600_000) => {
     reopen: async () => {
       await host.pi.close(context);
       host = await open();
+      host.pi.resume();
     },
     close: async () => {
       held?.resolve(true);

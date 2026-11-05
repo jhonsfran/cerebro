@@ -11,9 +11,11 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [ ] Phase C: Run the loop.
 - [x] Unit 1: Bind each agent to one persistent conversation and open it from the web.
 - [x] Unit 2: Admit independent work with two active teams and sixteen queued items per person.
-- [ ] Unit 3a: Admit durable coordinator events and reports with atomic delivery intent.
+- [x] Unit 3a: Admit durable coordinator events and reports with atomic delivery intent.
+- [ ] Unit 3c: Make private-team provenance imports atomic and recoverable.
 - [ ] Unit 3b: Route explicit task subscriptions and one-time team handback.
 - [ ] Unit 4: Connect web, Slack, timers, and reports to the coordinator and its control tools.
+- [ ] Unit 4b: Apply published coordinator definitions safely within the same conversation.
 - [ ] Unit 5: Add the protected development Inspector for private teams and workers.
 - [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
 - [ ] Phase D: Keep the audit trail throughout the run.
@@ -21,7 +23,11 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 
 Each implementation unit ends with focused checks, a fresh specification review, a fresh thermo-nuclear review, accepted fixes, and a separate commit. Reviews cover comments and unnecessary abstractions. The parent checks the actual diff and evidence before each commit.
 
-Unit 3 has two commits because event admission and team handback have different crash and authorization boundaries. Each receives its own checks and fresh review.
+Event admission and team handback have different crash and authorization boundaries. Each receives its own checks and fresh review. The confirmed private-team provenance repair has a separate commit between them.
+
+Unit 3c repairs a confirmed existing transaction error before team event integration. Real Pi and SQLite probes showed that rejected team admissions and worker handoffs could retain raw dependency rows. Canonical role imports must commit with the handoff. The raw dependency store becomes an authorized, retryable mirror of accepted imports.
+
+Unit 4b fixes the permanent definition pin exposed by a persistent conversation. Its design keeps one scope and uses a complete immutable execution profile. A native applied-version change and Pi configuration commit together. New event delivery uses a durable version claim before native input admission. Design alternatives and the independent comparison are retained in the run's evidence.
 
 The approved architecture is the design baseline. Read-only grounding checks its integration points. A second architecture competition is unnecessary unless the implementation disproves the design.
 

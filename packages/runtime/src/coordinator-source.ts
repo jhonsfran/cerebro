@@ -89,7 +89,7 @@ export const createCoordinatorSource =
           return false;
         }
         const ledger = await tx.doc(WorkLedger);
-        await pruneWorkIndex(tx, ledger, Date.now());
+        const expired = await pruneWorkIndex(tx, ledger, Date.now());
         if (control) {
           const entries = [
             ...Object.entries(ledger.active).map(([workId, entry]) => ({
@@ -125,9 +125,11 @@ export const createCoordinatorSource =
             answer,
             runtime.configuration.provider.model
           );
+          await coordination.notifyExpiredIn(tx, expired);
           return true;
         }
         operation.route = { kind: "coordinator", workId: null };
+        await coordination.notifyExpiredIn(tx, expired);
         return false;
       }
     );

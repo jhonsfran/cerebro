@@ -10,8 +10,15 @@ import {
   WorkAdmissionSchema,
 } from "../../packages/contracts/src/work.ts";
 import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
-import { WorkDocuments } from "../../packages/runtime/src/coordinator-ledger.ts";
-import { createCoordinatorReport } from "../../packages/runtime/src/coordinator-report.ts";
+import { BotEventQueue } from "../../packages/runtime/src/coordinator-events.ts";
+import {
+  WorkDocuments,
+  coordinatorOperationKey,
+} from "../../packages/runtime/src/coordinator-ledger.ts";
+import {
+  createCoordinatorReport,
+  SourceReportReceipts,
+} from "../../packages/runtime/src/coordinator-report.ts";
 import { createCoordinatorSource } from "../../packages/runtime/src/coordinator-source.ts";
 import {
   ImportedContent,
@@ -37,6 +44,7 @@ const subject = async () => {
   assert.ok(services);
   let allowed = true;
   let importFails = false;
+  let eventFails = false;
   let importedAllowed = true;
   let notifyFails = false;
   let notifications = 0;
@@ -83,6 +91,16 @@ const subject = async () => {
   const receive = createCoordinatorReport({
     ...ports,
     persist: () => Promise.resolve(),
+    events: {
+      ...fixture.events(),
+      enqueueIn: async (tx, event) => {
+        const receipt = await fixture.events().enqueueIn(tx, event);
+        if (eventFails) {
+          throw new Error("Event intent failed after task creation.");
+        }
+        return receipt;
+      },
+    },
   });
   const route = createCoordinatorSource(ports);
   const record = await fixture.work("a");
@@ -105,6 +123,17 @@ const subject = async () => {
       await watch.stop();
     }
   };
+  const settleReports = async () => {
+    const page = await fixture.events().list(source.address, actor);
+    await Promise.all(
+      page.items.map((receipt) =>
+        fixture.pi().waitForTask(receipt.taskId, context)
+      )
+    );
+  };
+  source.faux.setResponses([
+    fauxAssistantMessage("Coordinator result. Result based on B."),
+  ]);
   return {
     fixture,
     source,
@@ -112,9 +141,13 @@ const subject = async () => {
     receive,
     route,
     messages,
+    settleReports,
     notifications: () => notifications,
     importFails: (value: boolean) => {
       importFails = value;
+    },
+    eventFails: (value: boolean) => {
+      eventFails = value;
     },
     notifyFails: (value: boolean) => {
       notifyFails = value;
@@ -128,20 +161,58 @@ const subject = async () => {
   };
 };
 
-test("reports atomically import native provenance and passive history, and retries repair notification scheduling without another model run", async () => {
+test("a failed report event task creation rolls back its receipt, provenance, terminal status and slot release", async () => {
+  const f = await subject();
+  try {
+    f.eventFails(true);
+    await assert.rejects(f.receive(f.delivery, actor), /Event intent failed/u);
+    const work = await f.fixture.work("a");
+    assert.equal(work.reportId, null);
+    assert.equal(work.terminalReport, null);
+    assert.equal(work.status.kind, "accepted");
+    const ledger = await f.fixture.ledger();
+    assert.ok(ledger.active[work.admission.key.workId]);
+    assert.deepEqual(
+      await readImportedContent(f.fixture.pi(), f.source.native.id),
+      { sourceIds: [], toolIds: [] }
+    );
+    const events = await f.fixture.events().list(f.source.address, actor);
+    assert.equal(events.items.length, 0);
+    assert.equal(
+      await f.fixture.pi().snapshot(BotEventQueue, context),
+      undefined
+    );
+    const key = await coordinatorOperationKey(
+      JSON.stringify([f.delivery.report.key, f.delivery.report.id])
+    );
+    assert.equal(
+      await f.fixture
+        .pi()
+        .snapshot(SourceReportReceipts, f.source.native.id, key, context),
+      undefined
+    );
+    f.eventFails(false);
+    await f.receive(f.delivery, actor);
+    await f.settleReports();
+    assert.equal(f.fixture.eventSubmissions.length, 1);
+  } finally {
+    await f.fixture.close();
+  }
+});
+
+test("reports atomically import provenance and event intent, and retries produce one coordinator answer", async () => {
   const f = await subject();
   try {
     const before = await f.messages();
     const calls = f.source.faux.state.callCount;
     f.importFails(true);
     await assert.rejects(f.receive(f.delivery, actor), /Import failed/u);
-    const failed = await f.fixture.work("a");
-    assert.equal(failed.reportId, null);
+    const accepted = await f.fixture.work("a");
+    assert.equal(accepted.reportId, f.delivery.report.id);
     assert.deepEqual(
       await readImportedContent(f.fixture.pi(), f.source.native.id),
-      { sourceIds: [], toolIds: [] }
+      { sourceIds: ["source-B"], toolIds: ["tool-B"] }
     );
-    assert.deepEqual(await f.messages(), before);
     f.importFails(false);
     f.notifyFails(true);
     await assert.rejects(
@@ -154,7 +225,8 @@ test("reports atomically import native provenance and passive history, and retri
     const replay = await f.receive(f.delivery, actor);
     assert.equal(replay.accepted, true);
     assert.equal(f.notifications(), 2);
-    assert.equal(f.source.faux.state.callCount, calls);
+    await f.settleReports();
+    assert.equal(f.source.faux.state.callCount, calls + 1);
     const after = await f.messages();
     assert.equal(after.length, before.length + 1);
     assert.deepEqual(
@@ -212,6 +284,54 @@ test("reports atomically import native provenance and passive history, and retri
   }
 });
 
+test("full reports stay in work storage while event input and recall remain bounded", async () => {
+  const f = await subject();
+  try {
+    const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema)({
+      ...f.delivery,
+      report: {
+        ...f.delivery.report,
+        kind: "completed",
+        text: "x".repeat(16_000),
+      },
+    });
+    f.source.faux.setResponses([
+      fauxAssistantMessage("The coordinator summarized the report."),
+    ]);
+    await f.receive(delivery, actor);
+    await f.settleReports();
+    const work = await f.fixture.work("a");
+    assert.ok(work.terminalReport?.kind === "completed");
+    assert.equal(work.terminalReport.text.length, 16_000);
+    const events = await f.fixture.events().list(f.source.address, actor);
+    const [receipt] = events.items;
+    assert.ok(receipt);
+    assert.equal(receipt.event.content.text.length, 2000);
+    assert.equal(
+      JSON.stringify(await f.source.native.context(context)).includes(
+        "x".repeat(2100)
+      ),
+      false
+    );
+    const recalled = await f.fixture.invoke(
+      "a",
+      "recall_work",
+      { workId: work.admission.key.workId },
+      "recall-full-report"
+    );
+    const result = Schema.decodeUnknownSync(
+      Schema.Struct({
+        report: Schema.Struct({ text: Schema.String }),
+        reportTruncated: Schema.Boolean,
+      })
+    )(JSON.parse(recalled.snapshot.tools.at(-1)?.output ?? "{}"));
+    assert.equal(result.report.text.length, 4000);
+    assert.equal(result.reportTruncated, true);
+  } finally {
+    await f.fixture.close();
+  }
+});
+
 test("exact controls list work and ordinary input returns to the coordinator", async () => {
   const f = await subject();
   try {
@@ -226,6 +346,7 @@ test("exact controls list work and ordinary input returns to the coordinator", a
       []
     );
     await f.receive(f.delivery, actor);
+    await f.settleReports();
     const before = await f.messages();
     assert.equal(await f.route("update-op", "status please", actor), false);
     assert.equal(await f.route("status-op", "status", actor), true);
@@ -235,7 +356,7 @@ test("exact controls list work and ordinary input returns to the coordinator", a
       (error: unknown) => error instanceof Conflict
     );
     assert.equal(await f.route("new-human", "Start fresh.", actor), false);
-    assert.equal(f.source.faux.state.callCount, calls);
+    assert.equal(f.source.faux.state.callCount, calls + 1);
   } finally {
     await f.fixture.close();
   }
@@ -425,6 +546,7 @@ test("a retained legacy work requires its legacy report and exact saved thread b
     );
     const first = await f.receive(delivery, actor);
     const replay = await f.receive(delivery, actor);
+    await f.settleReports();
     assert.equal(first.accepted, true);
     assert.equal(replay.accepted, true);
     await assert.rejects(
@@ -439,7 +561,8 @@ test("a retained legacy work requires its legacy report and exact saved thread b
     assert.equal(
       messages.filter(
         (message) =>
-          message.role === "assistant" && message.text === "Result based on B."
+          message.role === "assistant" &&
+          message.text === "Coordinator result. Result based on B."
       ).length,
       1
     );
@@ -448,7 +571,7 @@ test("a retained legacy work requires its legacy report and exact saved thread b
   }
 });
 
-test("passive reports and exact controls do not wait for a held foreground generation", async () => {
+test("report intents and exact controls do not wait for a held foreground generation", async () => {
   const f = await subject();
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
@@ -490,9 +613,10 @@ test("passive reports and exact controls do not wait for a held foreground gener
     );
     assert.equal(replay.accepted, true);
     const messages = await f.messages();
-    assert.match(JSON.stringify(messages), /Result based on B/u);
+    assert.doesNotMatch(JSON.stringify(messages), /Result based on B/u);
     release.resolve(true);
     await submission.wait(context);
+    await f.settleReports();
     const history = await f.source.native.context(context);
     assert.match(JSON.stringify(history), /Result based on B/u);
     assert.match(JSON.stringify(history), /Foreground finished/u);

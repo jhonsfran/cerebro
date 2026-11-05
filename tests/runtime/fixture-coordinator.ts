@@ -1,8 +1,4 @@
-import {
-  fauxAssistantMessage,
-  fauxProvider,
-  fauxToolCall,
-} from "@earendil-works/pi-ai";
+import { fauxProvider } from "@earendil-works/pi-ai";
 import { Effect, Schema } from "effect";
 
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
@@ -17,6 +13,7 @@ import {
 import type { TeamCommand } from "../../packages/contracts/src/work.ts";
 import { createSourceDependencyStore } from "../../packages/runtime/src/content-dependency-store.ts";
 import type { MetadataTransaction } from "../../packages/runtime/src/session-agent.ts";
+import { coordinatorFixtureResponses } from "./coordinator-fixture-responses.ts";
 import { SessionAgent } from "./fixture-session.ts";
 
 export class CoordinatorFixture extends SessionAgent {
@@ -79,21 +76,9 @@ export class CoordinatorFixture extends SessionAgent {
         if (address.conversationId.includes("held")) {
           goal = "report-flow hold-model";
         }
-        faux.setResponses([
-          async () => {
-            await recordModel();
-            return fauxAssistantMessage(
-              fauxToolCall("start_team", {
-                goal,
-              }),
-              { stopReason: "toolUse" }
-            );
-          },
-          async () => {
-            await recordModel();
-            return fauxAssistantMessage("The coordinator answer is complete.");
-          },
-        ]);
+        faux.setResponses(
+          coordinatorFixtureResponses({ goal, record: recordModel })
+        );
         const sources = createSourceDependencyStore(
           this.ctx.storage,
           address.sessionId,

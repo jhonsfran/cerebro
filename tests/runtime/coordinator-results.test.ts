@@ -29,7 +29,7 @@ const inspection = Schema.Struct({
   notifications: Schema.Array(Schema.Struct({ snapshot: Schema.String })),
 });
 journey(
-  "team reports finish through the real private host and existing notifier without another coordinator call",
+  "team reports finish through one additional coordinator turn and the existing notifier",
   async (stack) => {
     const address = addressFor("result-company", "notify-report-flow");
     const sentAt = Date.now();
@@ -51,7 +51,7 @@ journey(
         ),
       30_000
     );
-    assert.equal(inspected.models.length, 2);
+    assert.equal(inspected.models.length, 3);
     const started = inspected.transport
       .map((row) =>
         Schema.decodeUnknownSync(TeamCommandSchema)(JSON.parse(row.command))
@@ -66,7 +66,8 @@ journey(
     assert.equal(
       parsed.value.messages.filter(
         (message) =>
-          message.role === "assistant" && message.text === "Answer from lead."
+          message.role === "assistant" &&
+          message.text === "Coordinator result. Answer from lead."
       ).length,
       1
     );
@@ -84,7 +85,7 @@ journey(
     );
     const last = await call(stack, "inspect", { address });
     const observed = Schema.decodeUnknownSync(inspection)(await last.json());
-    assert.equal(observed.models.length, 2);
+    assert.equal(observed.models.length, 3);
     const teamResponse = await fetch(
       `http://127.0.0.1:${stack.apiPort}/team/published`,
       {

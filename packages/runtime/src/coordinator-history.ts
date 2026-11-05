@@ -17,7 +17,10 @@ import type {
   CoordinationBinding,
   CoordinatorWorkRecord,
 } from "./coordinator-ledger.ts";
-import { importContentIn } from "./imported-content.ts";
+import {
+  importContentIn,
+  reconcileImportedContent,
+} from "./imported-content.ts";
 import { piContext } from "./pi-harness.ts";
 
 export type ScanWorkKeys = (cursor?: Cursor) => Promise<{
@@ -71,20 +74,25 @@ export const createCoordinatorHistory = (options: {
 }) => {
   const retain = async (
     records: readonly CoordinatorWorkRecord[],
-    api: ToolExecutionApi,
+    api: Pick<ToolExecutionApi, "commit">,
     context: Parameters<ToolExecutionApi["agent"]>[0]
   ): Promise<void> => {
     const dependencies = dependenciesOf(records);
     await options.contentAccess.check(dependencies, context.abortSignal);
     await api.commit(async (tx) => {
       await importContentIn(tx, options.nativeId, dependencies);
-      options.contentAccess.retain(dependencies);
     }, context);
+    await reconcileImportedContent(
+      options.pi,
+      options.nativeId,
+      options.contentAccess.retain,
+      context.abortSignal
+    );
   };
   return {
     list: async (
       cursor: string | undefined,
-      api: ToolExecutionApi,
+      api: Pick<ToolExecutionApi, "commit">,
       context: Parameters<ToolExecutionApi["agent"]>[0]
     ) => {
       const page = await options.scanWorkKeys(
@@ -125,7 +133,7 @@ export const createCoordinatorHistory = (options: {
     },
     recall: async (
       workId: string,
-      api: ToolExecutionApi,
+      api: Pick<ToolExecutionApi, "commit">,
       context: Parameters<ToolExecutionApi["agent"]>[0]
     ) => {
       const document = await options.pi.snapshot(
@@ -138,12 +146,23 @@ export const createCoordinatorHistory = (options: {
       }
       requireWorkSource(document.record, options.binding());
       await retain([document.record], api, context);
+      let report = document.record.terminalReport;
+      const reportTruncated =
+        (report?.kind === "completed" && report.text.length > 4000) ||
+        (report?.kind === "failed" && report.reason.length > 4000);
+      if (report?.kind === "completed") {
+        report = { ...report, text: report.text.slice(0, 4000) };
+      }
+      if (report?.kind === "failed") {
+        report = { ...report, reason: report.reason.slice(0, 4000) };
+      }
       return {
         workId: document.record.admission.key.workId,
         goal: document.record.admission.goal.slice(0, 4000),
         status: boundedStatus(document.record),
         deadlineAt: document.record.admission.deadlineAt,
-        report: document.record.terminalReport,
+        report,
+        reportTruncated,
       };
     },
   };

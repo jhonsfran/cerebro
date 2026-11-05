@@ -45,3 +45,13 @@ export const importContentIn = async (
   stored.sourceIds = merged.sourceIds;
   stored.toolIds = merged.toolIds;
 };
+
+export const reconcileImportedContent = async (
+  pi: Harness,
+  nativeId: ConversationId,
+  retain: (dependencies: ContentDependencies) => void,
+  signal?: AbortSignal
+): Promise<void> => {
+  const imported = await readImportedContent(pi, nativeId);
+  await pi.commit(() => retain(imported), piContext(signal));
+};

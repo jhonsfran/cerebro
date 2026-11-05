@@ -37,6 +37,8 @@ import { createConversationReminders } from "./conversation-reminders.ts";
 import { createConversationResources } from "./conversation-resources.ts";
 import { createConversationWork } from "./conversation-work.ts";
 import type { SearchResult } from "./conversation-work.ts";
+import { terminalNoticeIn } from "./coordinator-event-content.ts";
+import type { BotEventScope, CoordinatorEvents } from "./coordinator-events.ts";
 import type { ScanWorkKeys } from "./coordinator-history.ts";
 import { createCoordinatorReport } from "./coordinator-report.ts";
 import { createCoordinatorSource } from "./coordinator-source.ts";
@@ -68,6 +70,7 @@ const decisionSchema = Schema.Struct({
 });
 
 interface ConversationScopeServices {
+  readonly events: CoordinatorEvents;
   readonly scanWorkKeys: ScanWorkKeys;
   readonly jobs: LifecycleJobs;
   readonly install: (extension: Extension) => void;
@@ -129,6 +132,7 @@ export class ConversationScope {
     this.receiveReport = createCoordinatorReport({
       ...source,
       persist: () => services.storage.sync(),
+      events: services.events,
     });
   }
 
@@ -226,6 +230,7 @@ export class ConversationScope {
       waitUntil: services.waitUntil,
     });
     const coordination = createCoordinatorWork({
+      terminalNoticeIn: terminalNoticeIn(services.events),
       address: configuration.address,
       authorize: async (signal) =>
         runtime.authorize(
@@ -277,8 +282,6 @@ export class ConversationScope {
         createGenerativeUiTool({ authorize }),
       ],
     });
-    await scope.reminders.restore();
-    await scope.coordination.restore();
     if (configuration.notify) {
       const watch = await native.watch(piContext());
       watch.start(() => scope.scheduleNotify());
@@ -287,11 +290,47 @@ export class ConversationScope {
     return scope;
   }
 
+  async restore(): Promise<void> {
+    await this.reminders.restore();
+    await this.coordination.restore();
+  }
+
   private scheduleNotify(): Promise<void> {
     return this.services.scheduleNotify(
       this.runtime.configuration.address,
       String(this.native.id)
     );
+  }
+
+  async eventScope(): Promise<BotEventScope> {
+    const { configuration } = this.runtime;
+    const owner = await run(configuration.ownerContext());
+    return {
+      native: this.native,
+      agentVersion: configuration.agent.version,
+      ownerPrincipalId: owner.represented?.id ?? owner.actor.id,
+      admissions: this.coordination.admissions,
+      readAccess: (context) => this.runtime.authorize(context, "read"),
+      authorize: async (event, context, signal, action = "deliver") => {
+        const caller = context ?? (await run(configuration.ownerContext()));
+        let permission: "read" | "coordinate" | "send" = "send";
+        if (action === "read") {
+          permission = "read";
+        } else if (configuration.coordination) {
+          permission = "coordinate";
+        }
+        await this.runtime.authorize(caller, permission, signal);
+        if (action === "deliver") {
+          await this.runtime.authorize(caller, "transfer", signal);
+        }
+        await run(
+          configuration.checkDependencies(caller, event.dependencies, {
+            deadlineAt: Date.now() + 30_000,
+            signal,
+          })
+        );
+      },
+    };
   }
 
   async notify(): Promise<void> {

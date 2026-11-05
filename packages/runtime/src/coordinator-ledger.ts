@@ -301,6 +301,13 @@ export const currentHumanOperation = async (
       ) {
         return;
       }
+      if (submission.status !== "placed" && submission.status !== "done") {
+        return;
+      }
+      const entry = await tx.entry(submission.entry);
+      if (entry?.kind !== "pi.user") {
+        return;
+      }
       const operation = await tx.doc(
         SourceOperations,
         nativeId,
@@ -326,13 +333,20 @@ export const pruneWorkIndex = async (
   tx: Tx,
   ledger: WorkLedgerState,
   now: number
-): Promise<void> => {
+): Promise<CoordinatorWorkRecord[]> => {
+  const expired: CoordinatorWorkRecord[] = [];
   await Promise.all(
     Object.entries(ledger.active)
       .filter(([, entry]) => entry.deadlineAt <= now)
       .map(async ([workId]) => {
         const document = await tx.doc(WorkDocuments, workId, null);
         if (document.record) {
+          if (
+            document.record.status.kind === "accepted" ||
+            document.record.status.kind === "running"
+          ) {
+            expired.push(document.record);
+          }
           document.record.status = transitionWorkStatus(
             document.record.status,
             { kind: "failed", reason: "The team work deadline expired." }
@@ -348,6 +362,9 @@ export const pruneWorkIndex = async (
       .map(async ({ workId }) => {
         const document = await tx.doc(WorkDocuments, workId, null);
         if (document.record) {
+          if (document.record.status.kind === "queued") {
+            expired.push(document.record);
+          }
           document.record.status = transitionWorkStatus(
             document.record.status,
             {
@@ -360,13 +377,15 @@ export const pruneWorkIndex = async (
       })
   );
   ledger.queue = queue.filter((entry) => entry.deadlineAt > now);
+  return expired;
 };
 export const applyCoordinatorReport = async (
   tx: Tx,
   binding: CoordinationBinding,
   report: WorkReport,
   admit: (tx: Tx, report: WorkReport) => Promise<void>,
-  now = Date.now()
+  now = Date.now(),
+  expired?: (tx: Tx, record: CoordinatorWorkRecord) => Promise<void>
 ): Promise<{ readonly accepted: boolean; readonly status: WorkStatus }> => {
   const record = await requireCoordinatorWork(tx, binding, report.key.workId);
   if (
@@ -388,10 +407,17 @@ export const applyCoordinatorReport = async (
     return { accepted: false, status: { ...record.status } };
   }
   if (record.admission.deadlineAt <= now) {
+    const notify =
+      record.status.kind === "queued" ||
+      record.status.kind === "accepted" ||
+      record.status.kind === "running";
     record.status = transitionWorkStatus(record.status, {
       kind: "failed",
       reason: "The team work deadline expired.",
     });
+    if (notify) {
+      await expired?.(tx, record);
+    }
   }
   const ledger = await tx.doc(WorkLedger);
   if (record.status.kind === "cancelled" || record.status.kind === "failed") {
@@ -400,13 +426,7 @@ export const applyCoordinatorReport = async (
     return { accepted: false, status: { ...record.status } };
   }
   await admit(tx, report);
-  if (report.kind === "completed") {
-    record.terminalReport = { ...report, text: report.text.slice(0, 4000) };
-  } else if (report.kind === "failed") {
-    record.terminalReport = { ...report, reason: report.reason.slice(0, 4000) };
-  } else {
-    record.terminalReport = report;
-  }
+  record.terminalReport = report;
   record.reportId = report.id;
   Reflect.deleteProperty(ledger.active, report.key.workId);
   if (report.kind === "completed") {

@@ -49,6 +49,12 @@ import { searchConversationHistory } from "./conversation-history.ts";
 import { ReminderPayload } from "./conversation-reminders.ts";
 import { ConversationScope } from "./conversation-scope.ts";
 import type { SearchResult } from "./conversation-work.ts";
+import { terminalNoticeIn } from "./coordinator-event-content.ts";
+import {
+  BotEventReceipts,
+  createCoordinatorEvents,
+} from "./coordinator-events.ts";
+import type { CoordinatorEvents } from "./coordinator-events.ts";
 import type { ScanWorkKeys } from "./coordinator-history.ts";
 import { WorkDocuments } from "./coordinator-ledger.ts";
 import { wakeCoordinatorJob } from "./coordinator-work.ts";
@@ -119,6 +125,8 @@ const Bindings = defineDoc({
   version: 1,
 });
 interface NativeHost {
+  restoring: boolean;
+  readonly events: CoordinatorEvents;
   readonly scanWorkKeys: ScanWorkKeys;
   readonly pi: Harness;
   readonly models: MutableModels;
@@ -191,6 +199,7 @@ export class SessionAgent<
           registry,
           settings: {
             extensions: [],
+            followUpMode: "one-at-a-time",
             stream: { maxRetries: 0, transport: "sse" },
           },
         },
@@ -213,7 +222,62 @@ export class SessionAgent<
             ...(page.next ? { next: page.next } : {}),
           };
         }, piContext());
-      const host = { models, pi, registry, scanWorkKeys };
+      const host: NativeHost = {
+        models,
+        pi,
+        registry,
+        scanWorkKeys,
+        restoring: true,
+        events: createCoordinatorEvents({
+          pi,
+          targetIn: async (tx, address) => {
+            const bindings = await tx.doc(Bindings);
+            const binding = bindings.conversations[address.sessionId];
+            if (!binding || !sameAddress(binding.address, address)) {
+              throw new NotFound({ resource: "Event coordinator binding" });
+            }
+            return binding;
+          },
+          resolve: async (address) => {
+            const bindings = await pi.snapshot(Bindings, piContext());
+            const scope = await this.openScope(
+              address,
+              host,
+              bindings?.conversations[address.sessionId]
+            );
+            return await scope.eventScope();
+          },
+          scan: (cursor) =>
+            pi.commit(async () => {
+              const page = await storage.scanDocuments(
+                {
+                  scope: { kind: "session" },
+                  at: "current",
+                  kind: BotEventReceipts.definition.kind,
+                },
+                32,
+                cursor,
+                piContext()
+              );
+              return {
+                keys: page.items.flatMap((entry) =>
+                  entry.key ? [entry.key] : []
+                ),
+                ...(page.next ? { next: page.next } : {}),
+              };
+            }, piContext()),
+          waitUntil: (promise) => {
+            if (!this.lifecycle.trackAlarmWork(promise)) {
+              this.ctx.waitUntil(promise);
+            }
+          },
+        }),
+      };
+      const { events } = host;
+      registry.install({
+        name: "cerebro.bot-events",
+        tasks: [events.definition],
+      });
       const resetFailedIdentity = async () => {
         const end = await pi.closed;
         if (end.reason === "failed") {
@@ -235,7 +299,13 @@ export class SessionAgent<
             reportPiFailure(this.ctx.id.name, error, binding.address);
           }
         }
+        host.restoring = false;
+        for (const scope of this.scopes.values()) {
+          // oxlint-disable-next-line no-await-in-loop -- Install all saved definitions before progress APIs enable Pi scheduling.
+          await scope.restore();
+        }
         this.active = host;
+        await events.restore();
         return pi;
       } catch (error) {
         this.scopes.clear();
@@ -361,6 +431,7 @@ export class SessionAgent<
       configuration,
       {
         harness: this.harness,
+        events: host.events,
         install: (extension) => host.registry.install(extension),
         jobs: this.lifecycle.jobs,
         metadata,
@@ -442,6 +513,9 @@ export class SessionAgent<
       }
     );
     this.scopes.set(address.sessionId, scope);
+    if (!host.restoring) {
+      await scope.restore();
+    }
     return scope;
   }
 
@@ -593,14 +667,26 @@ export class SessionAgent<
       const binding = bindings?.conversations[sessionId];
       if (binding) {
         if (job.fn === "cerebro-coordination") {
-          return await wakeCoordinatorJob({
+          const outcome = await wakeCoordinatorJob({
             pi,
             address: binding.address,
             restore: async () => {
               const { coordination } = await this.scope(binding.address);
               return coordination;
             },
+            terminalNoticeIn: this.active
+              ? terminalNoticeIn(this.active.events)
+              : undefined,
           });
+          const pending = await this.active?.events.wake(binding.nativeId);
+          return pending
+            ? {
+                rescheduleAt: Math.min(
+                  typeof outcome === "object" ? outcome.rescheduleAt : Infinity,
+                  Date.now() + 5000
+                ),
+              }
+            : outcome;
         }
         const scope = await this.scope(binding.address);
         if (job.fn === "cerebro-child") {

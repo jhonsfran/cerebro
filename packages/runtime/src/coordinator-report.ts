@@ -12,6 +12,8 @@ import type { Conversation, Harness } from "@earendil-works/pi-durable";
 import { Effect, Result, Schema } from "effect";
 
 import type { createConversationResources } from "./conversation-resources.ts";
+import { coordinatorReportEvent } from "./coordinator-event-content.ts";
+import type { CoordinatorEvents } from "./coordinator-events.ts";
 import {
   applyCoordinatorReport,
   WorkDocuments,
@@ -25,8 +27,10 @@ import type {
   CoordinatorWorkRecord,
 } from "./coordinator-ledger.ts";
 import type { createCoordinatorWork } from "./coordinator-work.ts";
-import { importContentIn } from "./imported-content.ts";
-import { appendPassiveAnswer } from "./passive-history.ts";
+import {
+  importContentIn,
+  reconcileImportedContent,
+} from "./imported-content.ts";
 import { piContext } from "./pi-harness.ts";
 import type { SessionHostConfiguration } from "./session-agent.ts";
 
@@ -96,6 +100,7 @@ export const createCoordinatorReport =
       };
     };
     readonly coordination: ReturnType<typeof createCoordinatorWork>;
+    readonly events: CoordinatorEvents;
     readonly notify: () => Promise<void>;
     readonly persist: () => Promise<void>;
   }) =>
@@ -161,62 +166,67 @@ export const createCoordinatorReport =
         })
       );
     }
-    const result = await options.pi.commit(async (tx) => {
-      const record = await requireCoordinatorWork(
-        tx,
-        binding,
-        report.key.workId
-      );
-      requireReportSource(record, delivery, binding);
-      const document = await tx.doc(
-        SourceReportReceipts,
-        options.native.id,
-        key,
-        null
-      );
-      if (document.receipt) {
-        if (document.receipt.digest !== digest) {
-          throw new Conflict({
-            code: "digest-mismatch",
-            reason: "The report ID names another payload.",
-          });
-        }
-        return document.receipt.accepted;
-      }
-      const applied = await applyCoordinatorReport(
-        tx,
-        binding,
-        report,
-        async (transaction, value) => {
-          if (!admitsContent || !importDependencies) {
-            throw new Denied({
-              code: "revoked",
-              reason: "The report was not authorized for import.",
+    const result = await options.coordination.admissions.commit(
+      `report:${key}`,
+      async (tx) => {
+        const record = await requireCoordinatorWork(
+          tx,
+          binding,
+          report.key.workId
+        );
+        requireReportSource(record, delivery, binding);
+        const document = await tx.doc(
+          SourceReportReceipts,
+          options.native.id,
+          key,
+          null
+        );
+        if (document.receipt) {
+          if (document.receipt.digest !== digest) {
+            throw new Conflict({
+              code: "digest-mismatch",
+              reason: "The report ID names another payload.",
             });
           }
-          await importContentIn(
-            transaction,
-            options.native.id,
-            value.contentDependencies
-          );
-          importDependencies(value.contentDependencies);
-          let text = "Team work cancelled.";
-          if (value.kind === "completed") {
-            ({ text } = value);
-          } else if (value.kind === "failed") {
-            text = value.reason;
-          }
-          await appendPassiveAnswer(
-            transaction,
-            options.native.id,
-            text,
-            configuration.provider.model
-          );
+          return document.receipt.accepted;
         }
+        const applied = await applyCoordinatorReport(
+          tx,
+          binding,
+          report,
+          async (transaction, value) => {
+            if (!admitsContent || !importDependencies) {
+              throw new Denied({
+                code: "revoked",
+                reason: "The report was not authorized for import.",
+              });
+            }
+            await importContentIn(
+              transaction,
+              options.native.id,
+              value.contentDependencies
+            );
+            await options.events.enqueueIn(
+              transaction,
+              await coordinatorReportEvent(record, value)
+            );
+          },
+          Date.now(),
+          (transaction, expired) =>
+            options.coordination.notifyExpiredIn(transaction, [expired])
+        );
+        document.receipt = { digest, accepted: applied.accepted };
+        return applied.accepted;
+      }
+    );
+    if (result && importDependencies) {
+      await reconcileImportedContent(
+        options.pi,
+        options.native.id,
+        importDependencies,
+        signal
       );
-      document.receipt = { digest, accepted: applied.accepted };
-      return applied.accepted;
-    }, piContext(signal));
+    }
     await options.persist();
     await options.notify();
     return Schema.decodeUnknownSync(TeamReportReceiptSchema)({

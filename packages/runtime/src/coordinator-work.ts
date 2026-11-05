@@ -41,6 +41,7 @@ import {
   createCoordinatorCommands,
 } from "./coordinator-commands.ts";
 import { createCoordinatorDispatch } from "./coordinator-dispatch.ts";
+import type { TerminalNoticeIn } from "./coordinator-event-content.ts";
 import { createCoordinatorHistory } from "./coordinator-history.ts";
 import type { ScanWorkKeys, WorkContentAccess } from "./coordinator-history.ts";
 import {
@@ -108,6 +109,7 @@ export const createCoordinatorWork = (options: {
   readonly authorize: (signal?: AbortSignal) => Promise<void>;
   readonly persist: () => Promise<void>;
   readonly now?: () => number;
+  readonly terminalNoticeIn?: TerminalNoticeIn;
 }) => {
   const now = options.now ?? Date.now;
   const publicWork = (
@@ -169,6 +171,7 @@ export const createCoordinatorWork = (options: {
     authorize: options.authorize,
     binding,
     now,
+    terminalNoticeIn: options.terminalNoticeIn,
   });
 
   const pendingDispatches = () =>
@@ -294,7 +297,7 @@ export const createCoordinatorWork = (options: {
         );
         const ledger = await tx.doc(WorkLedger);
         requireWorkIdentity(ledger, source);
-        await pruneWorkIndex(tx, ledger, now());
+        const expired = await pruneWorkIndex(tx, ledger, now());
         const { queue } = ledger;
         const queued =
           queue.length > 0 ||
@@ -364,6 +367,9 @@ export const createCoordinatorWork = (options: {
         }
         const sourceWork = await tx.doc(SourceWork, options.nativeId);
         sourceWork.workId = candidate;
+        await Promise.all(
+          expired.map((item) => options.terminalNoticeIn?.(tx, item, "expired"))
+        );
         return publicWork(record);
       },
       (change) => api.commit(change, context)
@@ -375,7 +381,6 @@ export const createCoordinatorWork = (options: {
   ): Promise<{ record: CoordinatorWorkRecord; command: TeamCommand }[]> => {
     const ledger = await tx.doc(WorkLedger);
     requireWorkIdentity(ledger, binding());
-    await pruneWorkIndex(tx, ledger, now());
     const commands: { record: CoordinatorWorkRecord; command: TeamCommand }[] =
       [];
     for (;;) {
@@ -564,6 +569,16 @@ export const createCoordinatorWork = (options: {
     tools,
     tasks: [dispatch],
     admissions,
+    notifyExpiredIn: async (
+      tx: Tx,
+      expired: readonly CoordinatorWorkRecord[]
+    ): Promise<void> => {
+      await Promise.all(
+        expired.map((record) =>
+          options.terminalNoticeIn?.(tx, record, "expired")
+        )
+      );
+    },
     commandIn,
     current: async (): Promise<BackgroundWorkSnapshot | undefined> => {
       if (!options.services) {
@@ -665,6 +680,7 @@ export const createCoordinatorWork = (options: {
       }
       await options.pi.commit(async (tx) => {
         const ledger = await tx.doc(WorkLedger);
+        const terminal: CoordinatorWorkRecord[] = [];
         const expired = Object.entries(ledger.active).filter(
           ([, entry]) =>
             sameWorkSource(entry.source, options.address) &&
@@ -675,6 +691,12 @@ export const createCoordinatorWork = (options: {
             const document = await tx.doc(WorkDocuments, workId, null);
             const { record } = document;
             if (record) {
+              if (
+                record.status.kind === "accepted" ||
+                record.status.kind === "running"
+              ) {
+                terminal.push(record);
+              }
               record.status = transitionWorkStatus(record.status, {
                 kind: "failed",
                 reason: "The team work deadline expired.",
@@ -693,9 +715,14 @@ export const createCoordinatorWork = (options: {
             return [];
           })
         );
-        await pruneWorkIndex(tx, ledger, now());
+        terminal.push(...(await pruneWorkIndex(tx, ledger, now())));
         const promotions = authorized ? await promoteIn(tx) : [];
         await enqueueAllIn(tx, [...cancellations.flat(), ...promotions]);
+        await Promise.all(
+          terminal.map((record) =>
+            options.terminalNoticeIn?.(tx, record, "expired")
+          )
+        );
       }, piContext());
       options.pi.resume();
       await holdDispatches();
@@ -725,6 +752,7 @@ export const wakeCoordinatorJob = async (options: {
     readonly wake: () => Promise<LifecycleJobOutcome>;
   }>;
   readonly now?: () => number;
+  readonly terminalNoticeIn?: TerminalNoticeIn;
 }): Promise<LifecycleJobOutcome> => {
   const now = options.now ?? Date.now;
   let coordinator: Awaited<ReturnType<typeof options.restore>>;
@@ -740,7 +768,12 @@ export const wakeCoordinatorJob = async (options: {
     }
     return await options.pi.commit(async (tx) => {
       const ledger = await tx.doc(WorkLedger);
-      await pruneWorkIndex(tx, ledger, now());
+      const expired = await pruneWorkIndex(tx, ledger, now());
+      await Promise.all(
+        expired.map((record) =>
+          options.terminalNoticeIn?.(tx, record, "expired")
+        )
+      );
       const remaining = [...Object.values(ledger.active), ...ledger.queue].some(
         (entry) => sameWorkSource(entry.source, options.address)
       );

@@ -108,6 +108,7 @@ const inboxSchema = Schema.Struct({
     Schema.Union([
       Schema.Struct({
         content: inputContent,
+        entry: Schema.optional(Schema.Struct({ kind: Schema.String })),
         id: Schema.Number,
         mode: Schema.Literals(["steer", "followUp"]),
       }),
@@ -118,7 +119,7 @@ const inboxSchema = Schema.Struct({
 
 const queuedInputs = (inbox: typeof inboxSchema.Type): ChatQueuedInput[] =>
   inbox.items.flatMap((item) =>
-    item.mode === "write"
+    item.mode === "write" || item.entry?.kind === "cerebro.bot-event-input"
       ? []
       : [
           {
@@ -336,6 +337,9 @@ export const chatPresentation = (
 ): Pick<ChatSnapshot, "busy" | "messages" | "queuedInputs" | "tools"> => {
   const messages: ChatMessage[] = [];
   for (const entry of view.entries) {
+    if (entry.kind === "cerebro.bot-event-input") {
+      continue;
+    }
     for (const [index, message] of (entry.model ?? []).entries()) {
       const presented = presentedMessage(
         message,

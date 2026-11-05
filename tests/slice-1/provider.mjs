@@ -306,6 +306,13 @@ const teamMessage = (input, operationId, purpose) => {
     (message) => message.role === "user"
   );
   const prompt = messageText(input.messages[latest]);
+  if (purpose === "turn" && prompt.startsWith("Internal coordinator event.")) {
+    const event = JSON.parse(prompt.slice(prompt.indexOf("\n") + 1));
+    return {
+      content: `SLACK_TEAM_FIXTURE coordinator result: ${event.content.text}`,
+      role: "assistant",
+    };
+  }
   if (purpose !== "turn" || !prompt.includes("SLACK_TEAM_FIXTURE")) {
     return;
   }
