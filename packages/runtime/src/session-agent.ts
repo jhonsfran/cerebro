@@ -240,9 +240,8 @@ export class SessionAgent<
       const scanWorkKeys: ScanWorkKeys = (cursor) =>
         scanInspectionKeys(pi, storage, WorkDocuments.definition.kind, cursor);
       const waitUntil = (promise: Promise<unknown>) => {
-        if (!this.lifecycle.trackAlarmWork(promise)) {
-          this.ctx.waitUntil(promise);
-        }
+        this.lifecycle.trackAlarmWork(promise);
+        this.ctx.waitUntil(promise);
       };
       const host: NativeHost = {
         store: storage,
@@ -509,9 +508,8 @@ export class SessionAgent<
           ),
         storage: this.ctx.storage,
         waitUntil: (promise) => {
-          if (!this.lifecycle.trackAlarmWork(promise)) {
-            this.ctx.waitUntil(promise);
-          }
+          this.lifecycle.trackAlarmWork(promise);
+          this.ctx.waitUntil(promise);
         },
       },
       async ({ agent, extensions, provider }) => {

@@ -209,9 +209,8 @@ export abstract class TeamAgent<
   }
 
   private trackWork(work: Promise<unknown>): void {
-    if (!this.lifecycle.trackAlarmWork(work)) {
-      this.ctx.waitUntil(work);
-    }
+    this.lifecycle.trackAlarmWork(work);
+    this.ctx.waitUntil(work);
   }
 
   protected reportFailure(error: unknown): void {

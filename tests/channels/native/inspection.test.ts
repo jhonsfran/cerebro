@@ -12,9 +12,14 @@ import { workCellName } from "../../../packages/contracts/src/work.ts";
 import { waitForFixture } from "../../slice-1/application.ts";
 import { cellInventory } from "./cell-evidence.ts";
 import { inspect, overview, waitTeamAdmission } from "./inspection-support.ts";
-import { matchingWorkReport, reportInputDigest } from "./team-queue-support.ts";
+import {
+  matchingWorkReport,
+  reportEvent,
+  reportInputDigest,
+} from "./team-queue-support.ts";
 import {
   compose,
+  completedCalls,
   configure,
   controlQueue,
   drained,
@@ -309,6 +314,7 @@ test(
           Promise.all([cellInventory(first.key), cellInventory(second.key)]),
         (values) => values.every((value) => value.local && value.bucket)
       );
+      const held = await waitForFixture(observed, (value) => value.held === 2);
       const cancelled = [];
       let absence;
       for (const index of Array.from({ length: 34 }, (_, value) => value)) {
@@ -407,12 +413,128 @@ test(
         assert.equal(invalid.status, 400);
         await invalid.body?.cancel();
       }
-      await retire(route, [first, second]);
+      const reports = await Promise.all(
+        [first, second].map(async (target) => {
+          const queued = await waitWorkReport(
+            "cerebro-team-reports",
+            target,
+            120_000
+          );
+          const delivery = matchingWorkReport(queued, target);
+          assert.ok(
+            delivery?.kind === "report" &&
+              delivery.wire.report.kind === "failed"
+          );
+          return {
+            target,
+            queued,
+            delivery,
+            event: await reportEvent(delivery.wire),
+            inputDigest: await reportInputDigest(delivery.wire, "pilot"),
+          };
+        })
+      );
+      const beforeRelease = await observed();
+      await fixture.controls({ models: {}, release: true });
+      await controlQueue("resume");
+      await drained("cerebro-team-reports");
+      const physical = await waitForFixture(
+        observed,
+        (value) =>
+          completedCalls(value, wireModels.coordinator).length ===
+            completedCalls(beforeRelease, wireModels.coordinator).length + 2 &&
+          reports.every(
+            (report) =>
+              completedCalls(value, wireModels.coordinator).filter(
+                (call) => call.messageTextDigests.at(-1) === report.inputDigest
+              ).length === 1
+          ),
+        120_000
+      );
+      const terminal = await waitForFixture(
+        async () => {
+          let page = await inspect(route, { kind: "history" });
+          assert.ok(page.kind === "history");
+          const pages = [page];
+          while (page.next !== null) {
+            assert.ok(pages.length < 4);
+            page = await inspect(route, { kind: "history", cursor: page.next });
+            assert.ok(page.kind === "history");
+            pages.push(page);
+          }
+          return pages;
+        },
+        (pages) =>
+          reports.every((report) =>
+            pages.some((page) =>
+              page.work.some(
+                (work) =>
+                  work.workId === report.target.key.workId &&
+                  work.status === "failed" &&
+                  !work.reservationHeld &&
+                  work.result?.id === report.delivery.wire.report.id &&
+                  work.result.kind === "failed"
+              )
+            )
+          )
+      );
+      const previousResults = new Set(
+        [...history.work, ...nextHistory.work].flatMap((work) =>
+          work.result ? [work.result.id] : []
+        )
+      );
+      assert.deepEqual(
+        terminal
+          .flatMap((page) => page.work)
+          .flatMap((work) =>
+            work.result && !previousResults.has(work.result.id)
+              ? [work.result.id]
+              : []
+          )
+          .toSorted(),
+        reports.map((report) => report.delivery.wire.report.id).toSorted()
+      );
+      const settled = await waitForFixture(
+        async () => {
+          let page = await inspect(route, { kind: "events" });
+          assert.ok(page.kind === "events");
+          const pages = [page];
+          while (
+            !reports.every((report) =>
+              pages.some((value) =>
+                value.events.some((item) => item.id === report.event.id)
+              )
+            )
+          ) {
+            assert.ok(pages.length < 4 && page.next !== null);
+            page = await inspect(route, { kind: "events", cursor: page.next });
+            assert.ok(page.kind === "events");
+            pages.push(page);
+          }
+          return pages;
+        },
+        (pages) =>
+          reports.every((report) =>
+            pages.some((page) =>
+              page.events.some(
+                (item) =>
+                  item.id === report.event.id &&
+                  item.source === "teamreport" &&
+                  item.route === "coordinator" &&
+                  item.admission === "settled" &&
+                  item.outcome === "done" &&
+                  item.duplicates === 0 &&
+                  item.reply === null
+              )
+            )
+          )
+      );
       await evidence("native-inspector-real-pages-queued-absence", {
         conversation,
         first,
         second,
         calibration,
+        held,
         absence,
         cancelled,
         history,
@@ -420,6 +542,11 @@ test(
         nextHistory,
         nextEvents,
         foreign: foreign.conversation,
+        reports,
+        beforeRelease,
+        physical,
+        terminal,
+        settled,
       });
     } finally {
       await fixture.controls({ models: {}, release: true });
