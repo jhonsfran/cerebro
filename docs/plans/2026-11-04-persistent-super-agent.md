@@ -8,7 +8,7 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Phase A: Frame.
 - [x] Create `codex/persistent-super-agent` from `4f73e008`.
 - [x] Phase B: Design the workflow.
-- [ ] Phase C: Run the loop.
+- [x] Phase C: Run the loop.
 - [x] Unit 1: Bind each agent to one persistent conversation and open it from the web.
 - [x] Unit 2: Admit independent work with two active teams and sixteen queued items per person.
 - [x] Unit 3a: Admit durable coordinator events and reports with atomic delivery intent.
@@ -26,13 +26,14 @@ Each agent owns one coordinator conversation per organization and person. Web ch
 - [x] Unit 6d1: Preserve later subscription mutations when native tools replay.
 - [x] Unit 6d2: Give Inspector tools distinct occurrence identity across native rounds.
 - [x] Unit 6b2a: Add realistic provider and Slack fixtures with exact test cleanup.
-- [ ] Unit 6b2b: Prove persistent-agent routing, subscriptions, queue limits, and Inspector through the native application.
+- [x] Unit 6b2b: Prove persistent-agent routing, subscriptions, queue limits, and Inspector through the native application.
 - [x] Unit 6 docs: Document primary continuity, event routing, private Teams, and development inspection.
 - [x] Unit 6 Stop verification: Observe a streamed partial before checking interrupted output.
 - [x] Unit 6 stream verification: Wait for the observation attachment before sending mocked frames.
-- [ ] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
-- [ ] Phase D: Keep the audit trail throughout the run.
-- [ ] Phase E: Verify and hand back.
+- [x] Unit 6 lifetime: Retain alarm-owned Pi work and prove reports finish before any Inspector reader.
+- [x] Unit 6: Complete the cutover, remove obsolete routing, and prove the full product flow.
+- [x] Phase D: Keep the audit trail throughout the run.
+- [x] Phase E: Verify and hand back.
 
 Each implementation unit ends with focused checks, a fresh specification review, a fresh thermo-nuclear review, accepted fixes, and a separate commit. Reviews cover comments and unnecessary abstractions. The parent checks the actual diff and evidence before each commit.
 
@@ -107,7 +108,19 @@ Unit 6c updates the application pilot for the persistent primary. Each completio
 
 The final channel run exposed a separate existing test precondition. Initial chat text can render from GET before the observation stream attaches. The streaming-scroll case now waits for its actual mock stream controller. It retains every scroll and text assertion. Fresh specification, thermo, and comment reviews pass. The focused DOM file passes all 13 tests; the full PostgreSQL channel command passes all 166 tests on 215 unchanged captured paths. The exact labelled test database is removed and creates no volume. The initial 165-pass, one-failure run and its subsequent scheduler error remain saved separately. No product code changes in this repair.
 
-Unit 6b2b adds realistic native verification for the persistent primary, filtered Slack events, independent Teams, and protected Inspector. Revision 3 passed the six original groups with 16 cases. Reuse records the later shared Inspector helper addition; it does not claim an identical complete import graph or one final 24-case run. Revision 8 passes all four subscription and all four Inspector cases, with zero skips and all 21 source pins unchanged. Both exact final projects have application images matching 390 source files and fixture images matching three modules. Independent cleanup confirms zero owned resources and all 14 captured volumes absent. The 74 focused offline and 19 actual fixture HTTP cases pass on their recorded source; the native import-graph diagnostic retains eight existing runtime-fixture errors and is not a passing type gate. Initial failures and revisions remain saved. The separate actual warm event-progress failure remains unresolved. The terminal report-before-private-abort race, final browser checks, and live-provider acceptance remain separate gates.
+Unit 6b2b adds realistic native verification for the persistent primary, filtered Slack events, independent Teams, and protected Inspector. Revision 3 passed the six original groups with 16 cases. Reuse records the later shared Inspector helper addition; it does not claim an identical complete import graph or one final 24-case run. Revision 8 passes all four subscription and all four Inspector cases, with zero skips and all 21 source pins unchanged. Both exact final projects have application images matching 390 source files and fixture images matching three modules. Independent cleanup confirms zero owned resources and all 14 captured volumes absent. The 74 focused offline and 19 actual fixture HTTP cases pass on their recorded source; the native import-graph diagnostic retains eight existing runtime-fixture errors and is not a passing type gate. Initial failures and revisions remain saved. At that checkpoint, the actual warm event-progress failure was unresolved. The later lifetime change below repairs that path. Final browser and live-provider results are recorded below. The extra exact terminal report-before-private-abort timing remains NOT_RUN by the explicit scope decision.
+
+## Final verification
+
+Unit 6 lifetime calls both the SDK alarm-work classifier and platform `waitUntil` for the existing pending Pi promises. The classifier does not retain an invocation. The pinned celld timer probe completed zero of ten jobs without platform retention and ten of ten with it. The application regression observes both real report completions at the physical model boundary before any source or Inspector read. All four native Inspector cases pass on 589 unchanged source and test paths. This repairs the observed warm report stall. Pending retries can still keep an identity active during an outage.
+
+The final public runtime command passes all 374 Node and six Bun tests with no failures or skips. All 288 source pins match the committed lifetime change, and eight actual runtime images match those pins. The complete integration glob passes all 83 tests on 416 unchanged paths. Web and celld images each match 390 committed source files; the fixture matches three modules. Exact cleanup confirms all captured runtime and integration resources are absent. Normal workspace type checks pass. The separate native import-graph diagnostic retains eight existing imported fixture errors and is not a passing type gate.
+
+The fresh browser run proves two independent Teams, responsive conversation, queued cancellation and promotion, saved results, recall, same-chat publication, protected lazy inspection, and reload persistence. A bounded actual OpenRouter run configures GPT-6 Luna for the coordinator and workers, and GPT-6.1 Sol for the lead. Both workers return distinct findings and the lead combines them into a useful reading-inbox design. Saved models, nonzero token usage, tool results, and the selected sealed Inspector view remain identical after reload. The disposable browser user is signed out, its tab is closed, and its nine containers and seven captured volumes are removed. No real Slack message is sent.
+
+Acceptance is qualified by an unresolved reliability risk. An earlier full runtime run passed 373 cases and failed one concurrent approved-write case. An unchanged focused run reproduced the failure. A Pi storage failure reset the identity; one intended write remained incomplete and recovery returned `UnknownOutcome`. No cross-agent contamination was observed in the captured failure. The underlying cause remains UNKNOWN. Later passing runs do not establish a repair. No ambiguous-write retry or weaker assertion was added. The extra exact application report-before-private-abort timing remains NOT_RUN; existing crash contracts cover durable recovery, as recorded in the acceptance scope decision.
+
+The local evidence package is `artifacts/verification/persistent-super-agent/unit6-lifetime/`. It preserves the failed runs, diagnostic limits, source reviews, exact image checks, current passing runs, cleanup, and scope decision. The runtime run began on the dirty candidate at `9f807b3`; its source bytes remained unchanged and all 288 pins match the later `6a8b7b3` commit. This mapping does not change the recorded run chronology.
 
 ## Cutover
 
