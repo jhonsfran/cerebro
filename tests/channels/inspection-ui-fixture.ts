@@ -67,7 +67,7 @@ export const installInspectionDom = () => {
   dom.window.HTMLElement.prototype.scrollTo = scrollInspectionElement;
 };
 installInspectionDom();
-export const { act, cleanup, render, waitFor } =
+export const { act, cleanup, fireEvent, render, waitFor } =
   await import("../../apps/web/node_modules/@testing-library/react");
 const { ConversationPanel } =
   await import("../../apps/web/src/features/product/conversation");
@@ -84,6 +84,15 @@ export const cleanupInspectionDom = () => {
       Reflect.deleteProperty(globalThis, name);
     }
   }
+};
+export const openInspector = async (view: ReturnType<typeof render>) => {
+  const trigger = await waitFor(() =>
+    view.getByRole("button", { name: "Inspector", exact: true })
+  );
+  await act(() => trigger.click());
+  await waitFor(() =>
+    assert.ok(view.getByRole("dialog", { name: "Inspector", exact: true }))
+  );
 };
 interface InspectionCall {
   readonly query: InspectionQuery;
@@ -103,6 +112,7 @@ export const inspectorFixture = ({
 } = {}) => {
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const calls: InspectionCall[] = [];
+  const observations: (AbortSignal | null | undefined)[] = [];
   const send = (value: ChatSnapshot) => {
     assert.ok(stream);
     stream.enqueue(
@@ -127,6 +137,7 @@ export const inspectorFixture = ({
         return await respond(call, calls.length);
       }
       if (url.endsWith("/observations")) {
+        observations.push(init?.signal);
         let open = true;
         return new Response(
           new ReadableStream({
@@ -162,6 +173,7 @@ export const inspectorFixture = ({
   };
   return {
     calls,
+    observations,
     send,
     mount: () => render(createElement(ConversationPanel, props)),
     element: (changes: Partial<typeof props> = {}) =>

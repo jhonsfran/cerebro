@@ -17,15 +17,17 @@ import {
   cleanupInspectionDom,
   clearProductCache,
   currentAccessGeneration,
+  fireEvent,
   inspectorFixture,
   installInspectionDom,
+  openInspector,
   waitFor,
 } from "./inspection-ui-fixture.ts";
 
 beforeEach(installInspectionDom);
 afterEach(cleanupInspectionDom);
 
-test("local Inspector opens with one overview, keeps the composer enabled and loads one selected Team lazily", async () => {
+test("local Inspector starts closed and opens one overview before loading a selected Team", async () => {
   const first = inspectionWork();
   const second = inspectionWork("work-b");
   const fixture = inspectorFixture({
@@ -37,6 +39,19 @@ test("local Inspector opens with one overview, keeps the composer enabled and lo
       ),
   });
   const view = fixture.mount();
+  const composer = await waitFor(() => {
+    const input = view.getByRole<HTMLTextAreaElement>("textbox", {
+      name: "Message",
+      exact: true,
+    });
+    assert.equal(input.disabled, false);
+    return input;
+  });
+  const trigger = view.getByRole("button", { name: "Inspector", exact: true });
+  assert.equal(trigger.getAttribute("aria-expanded"), "false");
+  assert.equal(view.queryByRole("dialog", { name: "Inspector" }), null);
+  assert.equal(fixture.calls.length, 0);
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );
@@ -44,19 +59,8 @@ test("local Inspector opens with one overview, keeps the composer enabled and lo
     fixture.calls.map(({ query }) => query),
     [{ kind: "overview" }]
   );
-  assert.equal(
-    view.getByRole<HTMLTextAreaElement>("textbox", {
-      name: "Message",
-      exact: true,
-    }).disabled,
-    false
-  );
-  assert.equal(
-    view
-      .getByRole("button", { name: "Inspector", exact: true })
-      .getAttribute("aria-expanded"),
-    "true"
-  );
+  assert.equal(composer.disabled, false);
+  assert.equal(trigger.getAttribute("aria-expanded"), "true");
   await act(() =>
     view.getByRole("button", { name: "Inspect work work-a" }).click()
   );
@@ -79,7 +83,7 @@ test("local Inspector opens with one overview, keeps the composer enabled and lo
   await waitFor(() => assert.ok(view.getByText("Saved result work-b")));
   assert.equal(view.queryByText("Saved result work-a"), null);
   await act(() =>
-    view.getByRole("button", { name: "Inspector", exact: true }).click()
+    view.getByRole("button", { name: "Close", exact: true }).click()
   );
   assert.equal(view.queryByText("Saved result work-b"), null);
 });
@@ -106,12 +110,95 @@ test("production Inspector stays closed and closed historical admission remains 
     null
   );
   assert.equal(fixture.calls.length, 0);
-  await act(() =>
-    view.getByRole("button", { name: "Inspector", exact: true }).click()
-  );
+  await openInspector(view);
   await waitFor(() => assert.equal(fixture.calls.length, 1));
   assert.ok(view.getByText("Select work to inspect"));
 });
+
+for (const dismissal of ["Close", "Escape"] as const) {
+  test(`${dismissal} cancels a pending Inspector read and preserves the chat draft and attachment`, async () => {
+    const held = Promise.withResolvers<Response>();
+    const initial = inspectionSnapshot();
+    const work = inspectionWork();
+    const fixture = inspectorFixture({
+      respond: ({ query }) =>
+        query.kind === "team"
+          ? held.promise
+          : Response.json(inspectionOverview([work])),
+    });
+    const view = fixture.mount();
+    const composer = await waitFor(() => {
+      const input = view.getByRole<HTMLTextAreaElement>("textbox", {
+        name: "Message",
+        exact: true,
+      });
+      assert.equal(input.disabled, false);
+      return input;
+    });
+    await act(() =>
+      fireEvent.change(composer, {
+        target: { value: "Keep my unsent request." },
+      })
+    );
+    const chat = view.getByRole("region", { name: "Conversation" });
+    const trigger = view.getByRole("button", {
+      name: "Inspector",
+      exact: true,
+    });
+    assert.equal(fixture.observations.length, 1);
+    await openInspector(view);
+    const selectWork = await waitFor(() =>
+      view.getByRole("button", { name: "Inspect work work-a" })
+    );
+    await act(() => selectWork.click());
+    await waitFor(() => assert.equal(fixture.calls.length, 2));
+    const pending = fixture.calls[1]?.signal;
+    assert.equal(pending?.aborted, false);
+    const dialog = view.getByRole("dialog", { name: "Inspector" });
+    assert.equal(chat.contains(dialog), false);
+    await act(() => {
+      if (dismissal === "Close") {
+        view.getByRole("button", { name: "Close", exact: true }).click();
+      } else {
+        fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+      }
+    });
+    await waitFor(() =>
+      assert.equal(view.queryByRole("dialog", { name: "Inspector" }), null)
+    );
+    assert.equal(pending?.aborted, true);
+    await waitFor(() => assert.equal(document.activeElement, trigger));
+    assert.equal(view.getByRole("region", { name: "Conversation" }), chat);
+    assert.equal(
+      view.getByRole("textbox", { name: "Message", exact: true }),
+      composer
+    );
+    assert.equal(composer.value, "Keep my unsent request.");
+    await act(async () => {
+      held.resolve(Response.json(inspectionTeam(work)));
+      await delay(0);
+      fixture.send({
+        ...initial,
+        messages: [
+          {
+            id: "continued-answer",
+            role: "assistant",
+            state: "complete",
+            text: "The original chat stream is still active.",
+          },
+        ],
+      });
+    });
+    await waitFor(() =>
+      assert.ok(view.getByText("The original chat stream is still active."))
+    );
+    assert.equal(fixture.calls.length, 2);
+    assert.equal(fixture.observations.length, 1);
+    assert.equal(fixture.observations[0]?.aborted, false);
+    assert.equal(composer.value, "Keep my unsent request.");
+    assert.equal(view.queryByText("Saved result work-a"), null);
+  });
+}
 
 test("role transcript, safe tools, tasks and saved usage use bounded lazy queries", async () => {
   const work = inspectionWork();
@@ -139,6 +226,7 @@ test("role transcript, safe tools, tasks and saved usage use bounded lazy querie
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );
@@ -214,6 +302,7 @@ test("a tool call without a result on its page shows unknown status and page-loc
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );
@@ -273,6 +362,7 @@ test("reused provider call IDs keep separate stable tool rows and preserve compl
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );
@@ -369,6 +459,7 @@ test("work history and owned events keep empty-page continuations and replace ol
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Work history" }))
   );
@@ -442,6 +533,7 @@ test("not-started and unavailable Team states show source metadata without role 
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work queued" }))
   );
@@ -496,6 +588,7 @@ for (const fault of ["address", "work", "role", "extra", "kind"] as const) {
       },
     });
     const view = fixture.mount();
+    await openInspector(view);
     await waitFor(() =>
       assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
     );
@@ -533,6 +626,7 @@ test("closing and changing work abort stale requests before their private respon
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );
@@ -552,7 +646,7 @@ test("closing and changing work abort stale requests before their private respon
   });
   assert.equal(view.queryByText("Saved result work-a"), null);
   await act(() =>
-    view.getByRole("button", { name: "Inspector", exact: true }).click()
+    view.getByRole("button", { name: "Close", exact: true }).click()
   );
   assert.equal(fixture.calls.at(-1)?.signal?.aborted, true);
   assert.equal(view.queryByText("Saved result work-b"), null);
@@ -573,6 +667,7 @@ for (const status of [401, 403] as const) {
             ),
     });
     const view = fixture.mount();
+    await openInspector(view);
     await waitFor(() =>
       assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
     );
@@ -602,6 +697,7 @@ test("signout clears an open Inspector and rejects a delayed private response", 
         : Response.json(inspectionOverview([work])),
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );
@@ -635,6 +731,7 @@ test("a cancelled Inspector denial cannot clear a newer work selection", async (
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );

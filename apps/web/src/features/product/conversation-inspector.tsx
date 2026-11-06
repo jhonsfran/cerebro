@@ -13,7 +13,15 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@cerebro/ui/components/empty";
-import { useId, useState } from "react";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@cerebro/ui/components/sheet";
+import { useState } from "react";
 
 import { Disclosure } from "./disclosure";
 import { ErrorAlert } from "./feedback";
@@ -341,50 +349,46 @@ const InspectionEventView = ({
 interface InspectorProps {
   readonly path: string;
   readonly source: EventAddress;
-  readonly mode: string;
   readonly workSignal: string | null;
   readonly completedSignal: string | null;
 }
 
 const InspectorSession = (props: InspectorProps) => {
-  const [open, setOpen] = useState(() => props.mode === "local");
-  const bodyId = useId();
+  const [open, setOpen] = useState(false);
   const inspector = useInspection({ ...props, open });
   return (
-    <section
-      aria-label="Development Inspector"
-      className="shrink-0 border-b text-xs"
+    <Sheet
+      open={open}
+      onOpenChange={(value) => {
+        if (!value) {
+          inspector.close();
+        }
+        setOpen(value);
+      }}
     >
-      <div className="flex min-h-10 flex-wrap items-center gap-2 px-4 py-1">
-        <Button
-          size="sm"
-          variant="ghost"
-          type="button"
-          aria-expanded={open}
-          aria-controls={bodyId}
-          onClick={() => {
-            if (open) {
-              inspector.close();
-            }
-            setOpen((value) => !value);
-          }}
-        >
-          Inspector
-        </Button>
-        {open && !inspector.denied ? (
-          <Button
-            size="xs"
-            variant="outline"
-            type="button"
-            onClick={() => inspector.refresh()}
-          >
-            Refresh Inspector
-          </Button>
-        ) : null}
-        <span className="text-muted-foreground">Saved execution state</span>
-      </div>
-      {open ? (
-        <div id={bodyId} className="max-h-[34dvh] overflow-y-auto px-4 pb-3">
+      <SheetTrigger render={<Button size="sm" variant="ghost" />}>
+        Inspector
+      </SheetTrigger>
+      <SheetContent className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-4xl">
+        <SheetHeader className="pr-12">
+          <div className="flex flex-wrap items-center gap-2">
+            <SheetTitle>Inspector</SheetTitle>
+            {inspector.denied ? null : (
+              <Button
+                size="xs"
+                variant="outline"
+                type="button"
+                onClick={() => inspector.refresh()}
+              >
+                Refresh Inspector
+              </Button>
+            )}
+          </div>
+          <SheetDescription>
+            Inspect background work, events, and private agent details.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
           {inspector.denied ? (
             <ErrorAlert>Inspector access is no longer available.</ErrorAlert>
           ) : (
@@ -407,8 +411,8 @@ const InspectorSession = (props: InspectorProps) => {
             </div>
           )}
         </div>
-      ) : null}
-    </section>
+      </SheetContent>
+    </Sheet>
   );
 };
 
@@ -429,7 +433,6 @@ export const ConversationInspector = ({
       key={JSON.stringify(conversation.snapshot.address)}
       path={path}
       source={conversation.snapshot.address}
-      mode={conversation.mode}
       workSignal={snapshot.activity?.backgroundWork?.workId ?? null}
       completedSignal={completedInspectionSignal(snapshot.messages)}
     />

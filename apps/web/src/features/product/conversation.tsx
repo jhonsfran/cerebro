@@ -164,6 +164,7 @@ const ConversationToolbar = ({
   toggle,
   reconnect,
   stop,
+  children,
 }: {
   sessionId: string | undefined;
   connection: ObservationConnectionStatus;
@@ -173,6 +174,7 @@ const ConversationToolbar = ({
   toggle: () => void;
   reconnect: () => void;
   stop: () => Promise<void>;
+  children: ReactNode;
 }) => (
   <div className="flex min-h-11 flex-wrap items-center gap-2 border-b px-4 py-1.5">
     <Badge
@@ -196,6 +198,7 @@ const ConversationToolbar = ({
       <TooltipContent>{sessionId ?? "Loading the session"}</TooltipContent>
     </Tooltip>
     <div className="ml-auto flex items-center gap-1">
+      {children}
       {busy ? (
         <Button
           variant="outline"
@@ -403,12 +406,13 @@ const ConversationSession = ({
         stop={async () => {
           await act(() => stopConversation(path));
         }}
-      />
-      <ConversationInspector
-        path={path}
-        conversation={conversation}
-        snapshot={snapshot}
-      />
+      >
+        <ConversationInspector
+          path={path}
+          conversation={conversation}
+          snapshot={snapshot}
+        />
+      </ConversationToolbar>
       {displayedError ? (
         <div className="mx-auto flex w-full max-w-(--measure-chat) flex-col items-start gap-2 px-4 pt-4">
           <ErrorAlert>{displayedError}</ErrorAlert>

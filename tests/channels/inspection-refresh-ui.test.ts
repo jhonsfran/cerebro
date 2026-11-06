@@ -17,6 +17,7 @@ import {
   cleanupInspectionDom,
   inspectorFixture,
   installInspectionDom,
+  openInspector,
   waitFor,
 } from "./inspection-ui-fixture.ts";
 
@@ -113,6 +114,7 @@ test("idle Inspector has no timer and streaming tokens do not trigger reads", as
   });
   const fixture = inspectorFixture({ snapshot: initial });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() => assert.ok(view.getByText("Select work to inspect")));
   assert.equal(fixture.calls.length, 1);
   assert.equal(clock.pending.size, 0);
@@ -204,6 +206,7 @@ test("active overview retains one bounded retry after a transient failure with n
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() => assert.equal(clock.pending.size, 1));
   assert.ok(view.getByText("Slot reserved"));
   await clock.next();
@@ -233,6 +236,7 @@ test("refresh is scheduled only after the current read completes and closing can
         : Response.json(inspectionOverview([work], true)),
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() => assert.equal(fixture.calls.length, 1));
   assert.equal(clock.pending.size, 0);
   await act(async () => {
@@ -244,7 +248,7 @@ test("refresh is scheduled only after the current read completes and closing can
   await waitFor(() => assert.equal(fixture.calls.length, 2));
   await waitFor(() => assert.equal(clock.pending.size, 1));
   await act(() =>
-    view.getByRole("button", { name: "Inspector", exact: true }).click()
+    view.getByRole("button", { name: "Close", exact: true }).click()
   );
   assert.equal(clock.pending.size, 0);
   assert.ok(fixture.calls.every(({ signal }) => signal?.aborted));
@@ -268,6 +272,7 @@ test("selected sealed details stop polling while other work keeps overview refre
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );
@@ -336,6 +341,7 @@ test("sealed private details retain fresh source settlement after work leaves th
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );
@@ -416,6 +422,7 @@ test("selected unsealed Team refreshes until sealing even when overview has no r
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );
@@ -483,6 +490,7 @@ test.each(["transcript", "tools", "tasks"] as const)(
       },
     });
     const view = fixture.mount();
+    await openInspector(view);
     await waitFor(() =>
       assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
     );
@@ -587,6 +595,7 @@ test.each(["failed", "unavailable"] as const)(
       },
     });
     const view = fixture.mount();
+    await openInspector(view);
     await waitFor(() =>
       assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
     );
@@ -649,6 +658,7 @@ test("work and role changes abort their old reads and unmount clears the only ti
     },
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );
@@ -694,6 +704,7 @@ test("user and source changes remove the prior Inspector before loading another 
         : Response.json(inspectionOverview([work])),
   });
   const view = fixture.mount();
+  await openInspector(view);
   await waitFor(() =>
     assert.ok(view.getByRole("button", { name: "Inspect work work-a" }))
   );
@@ -704,6 +715,7 @@ test("user and source changes remove the prior Inspector before loading another 
   const oldSignal = fixture.calls[1]?.signal;
   await act(() => view.rerender(fixture.element({ userId: "other-user" })));
   assert.equal(oldSignal?.aborted, true);
+  await openInspector(view);
   await waitFor(() => assert.equal(fixture.calls.length, 3));
   await act(async () => {
     held.resolve(Response.json(inspectionTeam(work)));
@@ -713,10 +725,7 @@ test("user and source changes remove the prior Inspector before loading another 
   await act(() =>
     view.rerender(fixture.element({ conversationId: "other-conversation" }))
   );
-  assert.equal(
-    view.queryByRole("region", { name: "Development Inspector" }),
-    null
-  );
+  assert.equal(view.queryByRole("dialog", { name: "Inspector" }), null);
   assert.ok(fixture.calls.every(({ signal }) => signal?.aborted));
   assert.equal(clock.pending.size, 0);
   assert.ok(view.getByText("The conversation does not belong to this agent."));
