@@ -64,7 +64,7 @@ export const userTexts = (snapshot: ChatSnapshot) =>
     .filter((message) => message.role === "user")
     .map((message) => message.text);
 export const runtimeJourney = (suite: string) => {
-  let stack: Stack;
+  let stack: Stack | undefined;
   let failed = false;
   before(
     async () => {
@@ -75,24 +75,31 @@ export const runtimeJourney = (suite: string) => {
   );
   after(
     async () => {
-      if (failed) {
-        await evidence(stack, "failure", {
-          logs: compose(stack, [
-            "logs",
-            "--no-color",
-            "--tail=150",
-            "celld",
-            "bootstrap",
-          ]),
-          provider: await provider(stack),
-        });
+      if (!stack) {
+        return;
       }
-      compose(stack, ["down", "-v"]);
+      try {
+        if (failed) {
+          await evidence(stack, "failure", {
+            logs: compose(stack, [
+              "logs",
+              "--no-color",
+              "--tail=150",
+              "celld",
+              "bootstrap",
+            ]),
+            provider: await provider(stack),
+          });
+        }
+      } finally {
+        compose(stack, ["down", "-v"]);
+      }
     },
     { timeout: 120_000 }
   );
   return (name: string, run: (stack: Stack) => Promise<void>) =>
     test(name, { timeout: 180_000 }, async () => {
+      assert.ok(stack);
       try {
         await control(stack, {
           arm: null,

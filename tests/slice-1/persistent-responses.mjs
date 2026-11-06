@@ -43,6 +43,8 @@ const tasks = {
   },
 };
 const marker = "PERSISTENT_AGENT_FIXTURE";
+const commandText = (text) =>
+  text.split("\n\nAuthorized source excerpts:\n", 1)[0];
 const taskPattern =
   /\b(?<family>storage|slack):(?<suffix>[a-z0-9][a-z0-9-]{0,63})\b/u;
 const commandPattern =
@@ -87,10 +89,11 @@ const calls = (operationId, name, values) => ({
   })),
 });
 const slackInput = (text) => {
-  if (!text.startsWith("Slack event.\n")) {
+  const command = commandText(text);
+  if (!command.startsWith("Slack event.\n")) {
     return;
   }
-  const input = parseJson(text.slice("Slack event.\n".length));
+  const input = parseJson(command.slice("Slack event.\n".length));
   return identifier(input?.eventId) && typeof input.content?.text === "string"
     ? input
     : undefined;
@@ -533,7 +536,7 @@ const legacyTeamMessage = (input, operationId, purpose) => {
   const latest = input.messages.findLastIndex(
     (message) => message.role === "user"
   );
-  const prompt = messageText(input.messages[latest]);
+  const prompt = commandText(messageText(input.messages[latest]));
   if (purpose !== "turn" || !prompt.includes("SLACK_TEAM_FIXTURE")) {
     return;
   }
@@ -597,7 +600,7 @@ export const teamMessage = (input, operationId, purpose) => {
   const latest = input.messages.findLastIndex(
     (message) => message.role === "user"
   );
-  const prompt = messageText(input.messages[latest]);
+  const prompt = commandText(messageText(input.messages[latest]));
   if (purpose !== "turn") {
     return;
   }

@@ -9,6 +9,7 @@ import { Schema } from "effect";
 import { z } from "zod";
 
 import { ChatSnapshot } from "../../../packages/contracts/src/session-service.ts";
+import { SlackPrimaryDecisionSchema } from "../../../packages/contracts/src/slack-events.ts";
 import {
   applicationFixture,
   readApplicationBoot,
@@ -115,9 +116,16 @@ export const event = (
     ...(thread ? { thread_ts: thread } : {}),
   },
 });
-export const send = async (payload: unknown, retry = false) => {
+export const signedCallback = async (
+  payload: unknown,
+  options: {
+    retry?: boolean;
+    timestamp?: string;
+    invalidSignature?: boolean;
+  } = {}
+) => {
   const body = JSON.stringify(payload);
-  const timestamp = String(Math.floor(Date.now() / 1000));
+  const timestamp = options.timestamp ?? String(Math.floor(Date.now() / 1000));
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(slack.signingSecret),
@@ -132,17 +140,22 @@ export const send = async (payload: unknown, retry = false) => {
       new TextEncoder().encode(`v0:${timestamp}:${body}`)
     )
   );
-  const response = await fetch(`${boot.apiUrl}/api/channels/slack/events`, {
+  return await fetch(`${boot.apiUrl}/api/channels/slack/events`, {
     method: "POST",
     body,
     signal: AbortSignal.timeout(30_000),
     headers: {
       "content-type": "application/json",
       "x-slack-request-timestamp": timestamp,
-      "x-slack-signature": `v0=${Array.from(signature, (byte) => byte.toString(16).padStart(2, "0")).join("")}`,
-      ...(retry ? { "x-slack-retry-num": "1" } : {}),
+      "x-slack-signature": options.invalidSignature
+        ? "v0=invalid"
+        : `v0=${Array.from(signature, (byte) => byte.toString(16).padStart(2, "0")).join("")}`,
+      ...(options.retry ? { "x-slack-retry-num": "1" } : {}),
     },
   });
+};
+export const send = async (payload: unknown, retry = false) => {
+  const response = await signedCallback(payload, { retry });
   assert.equal(response.status, 200, await response.clone().text());
   await response.body?.cancel();
 };
@@ -153,11 +166,13 @@ export const observed = async () =>
       model: z.array(
         z.object({
           model: z.string(),
+          digest: z.string(),
           operationId: z.string(),
           startedAt: z.number(),
           completedAt: z.number().optional(),
           toolNames: z.array(z.string()),
           messageTextDigests: z.array(z.string()),
+          status: z.number().optional(),
         })
       ),
       slack: z.object({
@@ -165,6 +180,8 @@ export const observed = async () =>
           z.object({
             method: z.string(),
             request: z.record(z.string(), z.unknown()),
+            response: z.unknown().optional(),
+            status: z.number().optional(),
           })
         ),
         messages: z.array(
@@ -183,20 +200,45 @@ export const completedCalls = (value: Observation, model: string) =>
   value.model.filter(
     (call) => call.model === model && call.completedAt !== undefined
   );
-export const summary =
-  "SLACK_TEAM_FIXTURE lead summary: SLACK_TEAM_FIXTURE worker one complete. SLACK_TEAM_FIXTURE worker two complete.";
-export const hasReply = (value: Observation, thread: string, text = summary) =>
+export const hasReply = (value: Observation, thread: string, text: string) =>
   value.slack.messages.some(
     (message) =>
       message.channel === "D-native-team" &&
       message.threadTs === thread &&
       message.text === text
   );
-export const snapshot = async (thread: string) => {
-  const conversationId = await fixture.sql(
-    `SELECT conversation_id FROM channel_conversation WHERE workspace_id=${literal(slack.workspaceId)} AND root_timestamp=${literal(thread)}`
+export const externalEventKey = (eventId: string) =>
+  `slack:${metadata.agent.organizationId}:${slack.appId}:${slack.workspaceId}:${eventId}`;
+export const primaryDecision = async (eventId: string) => {
+  const eventKey = externalEventKey(eventId);
+  const row = await waitForFixture(
+    () =>
+      fixture.sql(
+        `SELECT json_build_object('eventKey',event_key,'digest',digest,'decision',decision) FROM channel_slack_event_receipt WHERE event_key=${literal(eventKey)}`
+      ),
+    (value) => value.length > 0,
+    60_000
   );
-  assert.ok(conversationId && !conversationId.includes("\n"));
+  const saved = z
+    .object({ eventKey: z.string(), digest: z.string(), decision: z.unknown() })
+    .parse(JSON.parse(row));
+  const decision = Schema.decodeUnknownSync(SlackPrimaryDecisionSchema, {
+    onExcessProperty: "error",
+  })(saved.decision);
+  assert.equal(saved.eventKey, eventKey);
+  assert.equal(decision.authority.eventId, eventId);
+  assert.equal(decision.ownerPrincipalId, metadata.agent.principalId);
+  return { ...saved, decision };
+};
+export const snapshot = async (eventId: string, agentId: string) => {
+  const saved = await primaryDecision(eventId);
+  const targets = saved.decision.targets.filter(
+    (target) => target.agentId === agentId
+  );
+  assert.equal(targets.length, 1);
+  const [target] = targets;
+  assert.ok(target);
+  const { conversationId } = target;
   const value = await fixture.json(
     `/api/product/conversations/${encodeURIComponent(conversationId)}`,
     metadata.owner.cookie,
@@ -206,7 +248,8 @@ export const snapshot = async (thread: string) => {
         .transform((input) => Schema.decodeUnknownSync(ChatSnapshot)(input)),
     })
   );
-  return { ...value, conversationId };
+  assert.deepEqual(value.snapshot.address, target);
+  return { ...value, conversationId, target, saved };
 };
 export const evidence = (name: string, value: unknown) =>
   writeFile(
@@ -217,29 +260,37 @@ export const queue = async (
   operation: string,
   name: string,
   limit?: number
-): Promise<unknown> => {
-  const output = await docker(
-    "exec",
-    await fixture.container("celld"),
-    "node",
-    "/app/deploy/queues.mjs",
-    operation,
-    name,
-    ...(limit === undefined ? [] : ["--limit", String(limit)])
+): Promise<unknown> =>
+  await waitForFixture(
+    async () => {
+      try {
+        const output = await docker(
+          "exec",
+          await fixture.container("celld"),
+          "node",
+          "/app/deploy/queues.mjs",
+          operation,
+          name,
+          ...(limit === undefined ? [] : ["--limit", String(limit)])
+        );
+        return JSON.parse(output.stdout);
+      } catch (error) {
+        if (
+          (operation === "info" || operation === "peek") &&
+          error instanceof Error &&
+          error.message.includes("409 Conflict") &&
+          error.message.includes(
+            "peer request targets a different node session"
+          )
+        ) {
+          return;
+        }
+        throw error;
+      }
+    },
+    (value) => value !== undefined,
+    30_000
   );
-  return JSON.parse(output.stdout);
-};
-export const queueBodies = (value: unknown): unknown[] =>
-  z
-    .object({
-      messages: z.array(
-        z.object({ bodyBase64: z.string(), contentType: z.literal("json") })
-      ),
-    })
-    .parse(value)
-    .messages.map((message) =>
-      JSON.parse(Buffer.from(message.bodyBase64, "base64").toString("utf-8"))
-    );
 export const drained = (name: string) =>
   waitForFixture(
     async () => {
@@ -251,7 +302,13 @@ export const drained = (name: string) =>
     (value) => value.stored === 0 && value.backlogCount === 0,
     30_000
   );
-export const controlReportQueue = (operation: "pause" | "resume") =>
+export const controlQueue = (
+  operation: "pause" | "resume",
+  name:
+    | "cerebro-team-reports"
+    | "cerebro-team-commands"
+    | "cerebro-slack-events" = "cerebro-team-reports"
+) =>
   waitForFixture(
     async () => {
       try {
@@ -265,13 +322,14 @@ export const controlReportQueue = (operation: "pause" | "resume") =>
     import { readFile } from 'node:fs/promises';
     import { spawnSync } from 'node:child_process';
     const password = (await readFile('/run/cerebro-secrets/minio-password','utf8')).trim();
-    const result = spawnSync('celld', ['queue',process.argv[1],'cerebro-team-reports','--bucket','s3://cerebro-runtime','--endpoint','http://minio-runtime:9000','--region','us-east-1','--json'], { encoding:'utf8', timeout:30000, env:{...process.env,AWS_ACCESS_KEY_ID:'cerebro',AWS_SECRET_ACCESS_KEY:password,AWS_SESSION_TOKEN:undefined} });
+    const result = spawnSync('celld', ['queue',process.argv[1],process.argv[2],'--bucket','s3://cerebro-runtime','--endpoint','http://minio-runtime:9000','--region','us-east-1','--json'], { encoding:'utf8', timeout:30000, env:{...process.env,AWS_ACCESS_KEY_ID:'cerebro',AWS_SECRET_ACCESS_KEY:password,AWS_SESSION_TOKEN:undefined} });
     const redact = (text) => text.replaceAll(JSON.stringify(password).slice(1,-1),'[secret removed]').replaceAll(password,'[secret removed]');
     process.stdout.write(redact(result.stdout ?? ''));
     process.stderr.write(redact(result.stderr ?? ''));
     process.exitCode = result.error || result.signal ? 1 : result.status ?? 1;
   `,
-          operation
+          operation,
+          name
         );
         return JSON.parse(output.stdout);
       } catch (error) {
@@ -290,7 +348,47 @@ export const controlReportQueue = (operation: "pause" | "resume") =>
     (value) => value !== undefined,
     30_000
   );
-export const configure = async () => {
+export const selectSlackAgent = async (
+  agentId: string,
+  profile: { leadAgentId: string; workerAgentId: string }
+) => {
+  await compose(
+    "run",
+    "--no-deps",
+    "--rm",
+    "test-config",
+    "node",
+    "--input-type=module",
+    "-e",
+    "import {readFile,writeFile} from 'node:fs/promises'; const p='/run/cerebro-secrets/'; const config=JSON.parse(await readFile(p+'runtime.json','utf8')); config.coordination=JSON.parse(process.argv[2]); await writeFile(p+'runtime.json',JSON.stringify(config),{mode:0o600}); await writeFile(p+'channels.json',process.argv[1],{mode:0o600});",
+    JSON.stringify({
+      organizationId: metadata.agent.organizationId,
+      slack: { ...slack, agentId },
+    }),
+    JSON.stringify(profile)
+  );
+  await compose("run", "--no-deps", "--rm", "bootstrap");
+  await compose("restart", "celld");
+  await ready();
+  await waitForFixture(
+    async () => {
+      try {
+        await send({
+          type: "url_verification",
+          challenge: "team-ready",
+          api_app_id: slack.appId,
+          team_id: slack.workspaceId,
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    (value) => value,
+    60_000
+  );
+};
+export const configure = async (options: { link?: boolean } = {}) => {
   await fixture.container("fixture");
   const published = await Promise.all(
     Object.keys(wireModels).map((role) =>
@@ -323,45 +421,16 @@ export const configure = async () => {
   );
   const [coordinator, lead, worker] = published;
   assert.ok(coordinator && lead && worker);
-  await compose(
-    "run",
-    "--no-deps",
-    "--rm",
-    "test-config",
-    "node",
-    "--input-type=module",
-    "-e",
-    "import {readFile,writeFile} from 'node:fs/promises'; const p='/run/cerebro-secrets/'; const config=JSON.parse(await readFile(p+'runtime.json','utf8')); config.coordination=JSON.parse(process.argv[2]); await writeFile(p+'runtime.json',JSON.stringify(config),{mode:0o600}); await writeFile(p+'channels.json',process.argv[1],{mode:0o600});",
-    JSON.stringify({
-      organizationId: metadata.agent.organizationId,
-      slack: { ...slack, agentId: coordinator.agentId },
-    }),
-    JSON.stringify({ leadAgentId: lead.agentId, workerAgentId: worker.agentId })
-  );
-  await compose("run", "--no-deps", "--rm", "bootstrap");
-  await compose("restart", "celld");
-  await ready();
-  await waitForFixture(
-    async () => {
-      try {
-        await send({
-          type: "url_verification",
-          challenge: "team-ready",
-          api_app_id: slack.appId,
-          team_id: slack.workspaceId,
-        });
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    (value) => value,
-    60_000
-  );
+  await selectSlackAgent(coordinator.agentId, {
+    leadAgentId: lead.agentId,
+    workerAgentId: worker.agentId,
+  });
   const linkedPrincipal = await fixture.sql(
     `SELECT principal_id FROM identity_slack_link WHERE workspace_id=${literal(slack.workspaceId)} AND slack_user_id='native-team-user'`
   );
-  if (linkedPrincipal) {
+  if (options.link === false) {
+    assert.equal(linkedPrincipal, "");
+  } else if (linkedPrincipal) {
     assert.equal(linkedPrincipal, metadata.agent.principalId);
   } else {
     const link = await fixture.json(

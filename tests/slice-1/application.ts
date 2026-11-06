@@ -23,7 +23,6 @@ const execute = (
     encoding: "utf-8",
   });
 const root = path.resolve(import.meta.dirname, "../..");
-// Production compose.yaml plus the test-only fake provider and seed services.
 export const stackFiles = [
   path.join(root, "compose.yaml"),
   path.join(root, "tests/slice-1/compose.test.yaml"),
@@ -90,24 +89,30 @@ export const bootApplication = async (
   const project = `cerebro-s1-${name}-${randomUUID().slice(0, 8)}`;
   const revision = await execute("git", ["rev-parse", "HEAD"], { cwd: root });
   const sha = revision.stdout.trim();
-  await execute(
-    process.execPath,
-    [
-      "tests/slice-1/boot.mjs",
-      "--project",
-      project,
-      "--api-port",
-      String(api),
-      "--web-port",
-      String(web),
-      "--fixture-port",
-      String(fixture),
-    ],
-    { cwd: root, maxBuffer: 32 * 1024 * 1024, timeout: 20 * 60_000 }
-  );
-  return readApplicationBoot(
-    path.join(root, "artifacts/slice-1", sha, project, "boot.json")
-  );
+  const directory = path.join(root, "artifacts/slice-1", sha, project);
+  try {
+    await execute(
+      process.execPath,
+      [
+        "tests/slice-1/boot.mjs",
+        "--project",
+        project,
+        "--api-port",
+        String(api),
+        "--web-port",
+        String(web),
+        "--fixture-port",
+        String(fixture),
+      ],
+      { cwd: root, maxBuffer: 32 * 1024 * 1024, timeout: 20 * 60_000 }
+    );
+    return await readApplicationBoot(path.join(directory, "boot.json"));
+  } catch (error) {
+    throw new Error(
+      `Owned application ${project} failed to boot. Artifacts: ${directory}`,
+      { cause: error }
+    );
+  }
 };
 
 export const applicationFixture = (boot: ApplicationBoot) => {
@@ -198,7 +203,6 @@ export const applicationFixture = (boot: ApplicationBoot) => {
     assert.ok(cookie.includes("session_token"));
     return { cookie, email, password, userId: body.user.id };
   };
-  // Local deployments require the generated installation token for setup.
   const bootstrapToken = async (): Promise<string> => {
     const result = await execute("docker", [
       "exec",
@@ -264,6 +268,8 @@ export const applicationFixture = (boot: ApplicationBoot) => {
 
 const pilotDocument =
   "Fixture refund policy: refunds require current company authorization. Cerebro pilot runs use current company grants before each model request and tool dispatch. The local pilot source is stored in PostgreSQL and MinIO. Source revocation removes its content from later answers and source views.";
+export const authorizedPilotInput = (text: string): string =>
+  `${text}\n\nAuthorized source excerpts:\ncerebro://pilot/source (1):\n${pilotDocument}`;
 const sqlLiteral = (value: string): string =>
   `'${value.replaceAll("'", "''")}'`;
 
@@ -301,7 +307,6 @@ export const initializeFixtureAgent = async (
       `INSERT INTO identity_grant (organization_id,principal_id,action,resource_kind,resource_id,source) VALUES (${[setup.organizationId, principalId, action, kind, resource, "slice-1-fixture"].map(sqlLiteral).join(",")}) ON CONFLICT DO NOTHING`
     );
   }
-  // The pilot source is ordinary company memory, ingested through the API.
   await fixture.json(
     "/rpc/memory/ingest",
     owner.cookie,

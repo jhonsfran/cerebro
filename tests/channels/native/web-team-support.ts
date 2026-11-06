@@ -10,16 +10,18 @@ import {
   ChatObservation,
   ChatControlReceipt,
 } from "../../../packages/contracts/src/session-service.ts";
-import { TeamReportDeliverySchema } from "../../../packages/contracts/src/work.ts";
+import {
+  BackgroundWorkSnapshot,
+  WorkKeySchema,
+} from "../../../packages/contracts/src/work.ts";
 import { waitForFixture } from "../../slice-1/application.ts";
+import { matchingWorkReport } from "./team-queue-support.ts";
+import type { WorkTarget } from "./team-queue-support.ts";
 import {
   boot,
   completedCalls,
-  controlReportQueue,
   queue,
-  queueBodies,
   compose,
-  drained,
   fixture,
   metadata,
   observed,
@@ -49,12 +51,15 @@ export const receiptSchema = z.object({
 export const controlSchema = z
   .unknown()
   .transform((value) => Schema.decodeUnknownSync(ChatControlReceipt)(value));
-export const marker = "SLACK_TEAM_FIXTURE run both worker checks.";
 export const coordinatorTools = [
   "start_team",
   "get_work",
   "message_team",
   "stop_work",
+  "list_work",
+  "recall_work",
+  "subscribe_work",
+  "unsubscribe_work",
 ];
 let publishedRoles:
   | {
@@ -156,13 +161,15 @@ export const setupWebTeam = async () => {
   await noSlack();
 };
 
-export const createConversation = async () => {
+export const createConversation = async (
+  agentId = roles().coordinator.agentId
+) => {
   const conversation = await fixture.json(
     "/api/product/conversations",
     metadata.owner.cookie,
     conversationSchema,
     {
-      agentId: roles().coordinator.agentId,
+      agentId,
       operationId: crypto.randomUUID(),
     }
   );
@@ -182,6 +189,87 @@ export const sendMessage = (
     metadata.owner.cookie,
     receiptSchema,
     input
+  );
+export const sendTurn = async (route: string, text: string) => {
+  const before = await read(route);
+  const messages = new Set(
+    before.snapshot.messages.map((message) => message.id)
+  );
+  const tools = new Set(before.snapshot.tools.map((tool) => tool.id));
+  const input = { operationId: crypto.randomUUID(), text };
+  const receipt = await sendMessage(route, input);
+  const view = await waitForFixture(
+    () => read(route),
+    (value) =>
+      !value.snapshot.busy &&
+      value.snapshot.messages.some(
+        (message) =>
+          !messages.has(message.id) &&
+          message.role === "user" &&
+          message.text === text
+      ) &&
+      value.snapshot.messages.some(
+        (message) =>
+          !messages.has(message.id) &&
+          message.role === "assistant" &&
+          message.state === "complete" &&
+          message.outcome !== "tool-call"
+      ),
+    60_000
+  );
+  return {
+    before,
+    input,
+    receipt,
+    view,
+    tools: view.snapshot.tools.filter((tool) => !tools.has(tool.id)),
+  };
+};
+export const startedWork = (snapshot: ChatSnapshot, goal: string) => {
+  const starts = snapshot.tools.filter((tool) => {
+    const args = z.object({ goal: z.string() }).safeParse(tool.arguments);
+    return (
+      tool.toolName === "start_team" && args.success && args.data.goal === goal
+    );
+  });
+  assert.ok(
+    starts.length <= 1,
+    "One goal must have one native start tool occurrence."
+  );
+  const [call] = starts;
+  if (!call || call.state !== "succeeded") {
+    return;
+  }
+  const work = Schema.decodeUnknownSync(BackgroundWorkSnapshot)(
+    JSON.parse(call.output)
+  );
+  const key = Schema.decodeUnknownSync(WorkKeySchema)({
+    organizationId: snapshot.address.organizationId,
+    ownerPrincipalId: metadata.agent.principalId,
+    workId: work.workId,
+  });
+  assert.ok(call.resultMessageId);
+  return { call, work, key, sourceEventAddress: snapshot.address };
+};
+export const waitStartedWork = (route: string, goal: string) =>
+  waitForFixture(
+    async () => {
+      const view = await read(route);
+      return { view, work: startedWork(view.snapshot, goal) };
+    },
+    (value) => !value.view.snapshot.busy && value.work !== undefined,
+    60_000
+  );
+export const waitWorkReport = (
+  name: string,
+  target: WorkTarget,
+  timeoutMs = 30_000,
+  reportId?: string
+) =>
+  waitForFixture(
+    () => queue("peek", name, 50),
+    (value) => matchingWorkReport(value, target, reportId) !== undefined,
+    timeoutMs
   );
 export const stopWork = (
   route: string,
@@ -214,34 +302,6 @@ export const heldAcceptance = (before: Awaited<ReturnType<typeof observed>>) =>
         completedCalls(before, wireModels.coordinator).length + 2,
     60_000
   );
-export const matchingReport = (value: unknown, conversationId: string) =>
-  queueBodies(value)
-    .map((body) =>
-      Schema.decodeUnknownSync(TeamReportDeliverySchema, {
-        onExcessProperty: "error",
-      })(body)
-    )
-    .find(
-      (delivery) =>
-        delivery.sourceEventAddress.conversationId === conversationId
-    );
-export const waitReport = (
-  name: string,
-  conversationId: string,
-  timeoutMs = 30_000
-) =>
-  waitForFixture(
-    () => queue("peek", name, 10),
-    (value) => matchingReport(value, conversationId) !== undefined,
-    timeoutMs
-  );
-export const finishCancelledWork = async (conversationId: string) => {
-  await fixture.controls({ models: {}, release: true });
-  const waiting = await waitReport("cerebro-team-reports", conversationId);
-  await controlReportQueue("resume");
-  const queueState = await drained("cerebro-team-reports");
-  return { waiting, queueState };
-};
 export const observe = async (route: string) => {
   const abort = new AbortController();
   const response = await fetch(`${boot.apiUrl}${route}/observations`, {
@@ -279,10 +339,11 @@ export const observe = async (route: string) => {
 };
 export const access = async (
   actions: string[],
-  principalId = metadata.agent.principalId
+  principalId = metadata.agent.principalId,
+  agentId = roles().coordinator.agentId
 ) => {
   const response = await fixture.request(
-    `/api/product/agents/${encodeURIComponent(roles().coordinator.agentId)}/access/${encodeURIComponent(principalId)}`,
+    `/api/product/agents/${encodeURIComponent(agentId)}/access/${encodeURIComponent(principalId)}`,
     metadata.owner.cookie,
     { operationId: crypto.randomUUID(), actions },
     "PUT"

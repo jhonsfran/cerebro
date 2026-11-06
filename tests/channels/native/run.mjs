@@ -69,6 +69,8 @@ const available = [
   "product",
   "slack-events",
   "coordinator",
+  "event-subscriptions",
+  "inspection",
 ];
 const selected = process.argv.slice(2);
 assert.ok(
@@ -76,67 +78,123 @@ assert.ok(
   "Unknown native test group."
 );
 const groups = selected.length > 0 ? selected : available;
-const boot = await bootApplication("channels-native");
-const fixture = applicationFixture(boot);
-const owner = await fixture.signup("Native channel owner");
-const agent = await initializeFixtureAgent(fixture, owner);
-const directory = path.join(
-  root,
-  "artifacts/slice-1",
-  boot.sha,
-  boot.fixtureId
-);
-const metadataPath = path.join(directory, "channel-native.json");
-await writeFile(
-  metadataPath,
-  `${JSON.stringify({ agent, bootPath: path.join(directory, "boot.json"), owner: { cookie: owner.cookie, userId: owner.userId }, sourceCheckoutDirty, sourceIdentity }, null, 2)}\n`,
-  { mode: 0o600 }
-);
-let passed = false;
-const runGroup = async (name) => {
-  const child = spawn(
+const ownedMounts = async (fixtureId) => {
+  const allocated = await execute(
     "rtk",
     [
       "proxy",
-      process.execPath,
-      "--test",
-      "--test-concurrency=1",
-      ...(process.env.CHANNEL_NATIVE_TEST_PATTERN
-        ? ["--test-name-pattern", process.env.CHANNEL_NATIVE_TEST_PATTERN]
-        : []),
-      `tests/channels/native/${name}.test.ts`,
+      "docker",
+      "ps",
+      "-aq",
+      "--filter",
+      `label=com.docker.compose.project=${fixtureId}`,
     ],
+    { cwd: root }
+  );
+  const ids = allocated.stdout.trim().split("\n").filter(Boolean);
+  assert.ok(ids.length > 0, "The owned application must have containers.");
+  const inspected = await execute(
+    "rtk",
+    ["proxy", "docker", "inspect", ...ids],
     {
       cwd: root,
-      env: { ...process.env, CHANNEL_NATIVE_METADATA: metadataPath },
-      stdio: "inherit",
+      maxBuffer: 32 * 1024 * 1024,
     }
   );
-  const [code] = await once(child, "exit");
-  if (code !== 0) {
-    process.exitCode = code ?? 1;
-    return false;
-  }
-  return true;
-};
-try {
-  const runRemaining = async ([name, ...remaining]) => {
-    if (!name) {
-      return true;
-    }
-    return (await runGroup(name)) && (await runRemaining(remaining));
-  };
-  passed = await runRemaining(groups);
-  await writeFile(
-    path.join(directory, "channel-native-result.json"),
-    `${JSON.stringify({ fixtureId: boot.fixtureId, passed, sourceCheckoutDirty, sourceIdentity }, null, 2)}\n`
-  );
-} finally {
-  if (passed) {
-    await fixture.close();
-  } else {
-    process.stderr.write(
-      `Failed owned channel stack retained: ${boot.fixtureId}\n`
+  return JSON.parse(inspected.stdout).map((container) => {
+    assert.equal(container.Config.Labels["cerebro.slice-1"], "disposable");
+    assert.equal(
+      container.Config.Labels["com.docker.compose.project"],
+      fixtureId
     );
+    return {
+      id: container.Id,
+      service: container.Config.Labels["com.docker.compose.service"],
+      mounts: container.Mounts.map((mount) => ({
+        type: mount.Type,
+        name: mount.Name ?? null,
+        source: mount.Source,
+        destination: mount.Destination,
+      })),
+    };
+  });
+};
+const runGroup = async (name) => {
+  const boot = await bootApplication(`channels-${name}`);
+  const fixture = applicationFixture(boot);
+  const directory = path.join(
+    root,
+    "artifacts/slice-1",
+    boot.sha,
+    boot.fixtureId
+  );
+  let passed = false;
+  const ownership = {
+    fixtureId: boot.fixtureId,
+    group: name,
+    before: [],
+    after: [],
+  };
+  try {
+    ownership.before = await ownedMounts(boot.fixtureId);
+    const owner = await fixture.signup("Native channel owner");
+    const agent = await initializeFixtureAgent(fixture, owner);
+    const metadataPath = path.join(directory, "channel-native.json");
+    await writeFile(
+      metadataPath,
+      `${JSON.stringify({ agent, bootPath: path.join(directory, "boot.json"), owner: { cookie: owner.cookie, userId: owner.userId }, sourceCheckoutDirty, sourceIdentity }, null, 2)}\n`,
+      { mode: 0o600 }
+    );
+    const child = spawn(
+      "rtk",
+      [
+        "proxy",
+        process.execPath,
+        "--test",
+        "--test-concurrency=1",
+        ...(process.env.CHANNEL_NATIVE_TEST_PATTERN
+          ? ["--test-name-pattern", process.env.CHANNEL_NATIVE_TEST_PATTERN]
+          : []),
+        `tests/channels/native/${name}.test.ts`,
+      ],
+      {
+        cwd: root,
+        env: { ...process.env, CHANNEL_NATIVE_METADATA: metadataPath },
+        stdio: "inherit",
+      }
+    );
+    const [code] = await once(child, "exit");
+    passed = code === 0;
+    if (!passed) {
+      process.exitCode = code ?? 1;
+    }
+    await writeFile(
+      path.join(directory, "channel-native-result.json"),
+      `${JSON.stringify({ fixtureId: boot.fixtureId, group: name, passed, sourceCheckoutDirty, sourceIdentity }, null, 2)}\n`
+    );
+    return passed;
+  } finally {
+    try {
+      ownership.after = await ownedMounts(boot.fixtureId);
+      await writeFile(
+        path.join(directory, "channel-native-ownership.json"),
+        `${JSON.stringify(ownership, null, 2)}\n`
+      );
+    } finally {
+      if (passed) {
+        await fixture.close();
+      } else {
+        process.stderr.write(
+          `Failed owned channel stack retained: ${boot.fixtureId}\n`
+        );
+      }
+    }
   }
-}
+};
+const runRemaining = async ([name, ...remaining]) => {
+  if (!name) {
+    return true;
+  }
+  return (await runGroup(name)) && (await runRemaining(remaining));
+};
+await runRemaining(groups);
