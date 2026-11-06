@@ -32,7 +32,12 @@ import { AccessPanel } from "./access-panel";
 import { AgentEditor } from "./agent-editor";
 import { ConversationPanel } from "./conversation";
 import { LoadingState, PageBody } from "./feedback";
-import type { AgentDetail, AgentSummary, Setup } from "./types";
+import type {
+  AgentDetail,
+  AgentSummary,
+  LoadedConversation,
+  Setup,
+} from "./types";
 import type { AgentTab, WorkspaceView } from "./workspace-view";
 
 interface WorkspaceBodyProps {
@@ -43,6 +48,7 @@ interface WorkspaceBodyProps {
   busy: boolean;
   conversationId: string | undefined;
   conversationPending: boolean;
+  loadedConversation: LoadedConversation | null;
   userId: string;
   setView: (view: WorkspaceView) => void;
   claimSetup: () => Promise<void>;
@@ -195,6 +201,7 @@ const AgentContent = (props: WorkspaceBodyProps & { setup: Setup }) => {
     busy,
     conversationId,
     conversationPending,
+    loadedConversation,
     userId,
     setView,
     openConversation,
@@ -239,7 +246,12 @@ const AgentContent = (props: WorkspaceBodyProps & { setup: Setup }) => {
       </PageBody>
     );
   }
-  if (view.tab === "conversation" && conversationId && selected) {
+  if (
+    view.tab === "conversation" &&
+    conversationId &&
+    selected &&
+    loadedConversation
+  ) {
     return (
       <ConversationPanel
         key={conversationId}
@@ -247,6 +259,7 @@ const AgentContent = (props: WorkspaceBodyProps & { setup: Setup }) => {
         userId={userId}
         agentId={selected.agentId}
         agentName={selected.name}
+        loaded={loadedConversation}
         onConversation={onConversation}
         onOpenConversation={() => {
           void openConversation();

@@ -83,19 +83,26 @@ export const agentDetailSchema = z.object({
 const chatSnapshotSchema = z
   .unknown()
   .transform((input) => Schema.decodeUnknownSync(ChatSnapshot)(input));
-export const conversationSchema = z.object({
+export const conversationReferenceSchema = z.object({
   agentId: z.string(),
   conversationId: z.string(),
-  mode: z.string(),
   sessionId: z.string(),
-  snapshot: chatSnapshotSchema,
 });
+export const conversationSchema = conversationReferenceSchema
+  .extend({
+    mode: z.string(),
+    snapshot: chatSnapshotSchema,
+  })
+  .refine(
+    (value) =>
+      value.agentId === value.snapshot.address.agentId &&
+      value.conversationId === value.snapshot.address.conversationId &&
+      value.sessionId === value.snapshot.address.sessionId,
+    "The conversation does not belong to this agent."
+  );
 export const savedAgentSchema = z.object({
   agentId: z.string(),
   version: z.number(),
-});
-export const createdConversationSchema = z.object({
-  conversationId: z.string(),
 });
 export const messageReceiptSchema = z.object({
   receipt: z
@@ -127,11 +134,14 @@ export type AgentSummary = z.infer<typeof agentSummarySchema>;
 export type Grant = z.infer<typeof grantSchema>;
 export type AgentDetail = z.infer<typeof agentDetailSchema>;
 export type Conversation = z.infer<typeof conversationSchema>;
+export interface LoadedConversation {
+  readonly userId: string;
+  readonly principalId: string;
+  readonly accessGeneration: number;
+  readonly selectionRevision: number;
+  readonly conversation: Conversation;
+}
 
-export const conversationReferenceSchema = conversationSchema.pick({
-  agentId: true,
-  conversationId: true,
-});
 export type ConversationReference = z.infer<typeof conversationReferenceSchema>;
 
 export const connectorListSchema = z.object({

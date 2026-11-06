@@ -12,7 +12,9 @@ import {
   pendingChatSchema,
 } from "../../apps/web/src/features/product/chat";
 import { decodeObservation } from "../../apps/web/src/features/product/observation";
+import type { LoadedConversation } from "../../apps/web/src/features/product/types";
 import { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
+import { loadedConversation } from "./conversation-ui-data.ts";
 import { inspectionOverview } from "./inspection-ui-data.ts";
 
 mock.module("../../apps/web/src/env.public", () => ({
@@ -108,13 +110,14 @@ const snapshot = (overrides: Partial<ChatSnapshot> = {}): ChatSnapshot =>
     messages: [],
     ...overrides,
   });
-const renderConversation = () =>
+const renderConversation = (loaded: LoadedConversation) =>
   render(
     createElement(ConversationPanel, {
       agentId: "agent",
       agentName: "Agent",
       conversationId: "conversation",
       userId: "user",
+      loaded,
     })
   );
 
@@ -128,6 +131,7 @@ test("saved pending messages do not change the server and initial browser markup
     agentName: "Agent",
     conversationId: "conversation",
     userId: "user",
+    loaded: loadedConversation(snapshot()),
   });
   const browserMarkup = renderToString(element);
   const windowDescriptor = Object.getOwnPropertyDescriptor(
@@ -211,6 +215,7 @@ const installConversation = (
     writable: true,
   });
   return {
+    loaded: loadedConversation(initial),
     controllers,
     reconnectWith: (value: ChatSnapshot) => {
       latest = value;
@@ -239,7 +244,7 @@ test("the composer retains a 16001-character draft without pending admission and
       },
     });
   });
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   const composer = view.getByRole("textbox", { name: "Message" });
   await waitFor(() => assert.equal(composer.hasAttribute("disabled"), false));
   assert.equal(composer.getAttribute("maxlength"), "16000");
@@ -278,7 +283,7 @@ test("an oversized cached pending message is ignored and does not block a new va
     JSON.stringify({ operationId: "old-oversized", text: "x".repeat(16_001) })
   );
   const submitted: string[] = [];
-  installConversation(snapshot(), (_url, body) => {
+  const server = installConversation(snapshot(), (_url, body) => {
     const message = pendingChatSchema.parse(body);
     submitted.push(message.text);
     return Response.json({
@@ -289,7 +294,7 @@ test("an oversized cached pending message is ignored and does not block a new va
       },
     });
   });
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   const composer = view.getByRole("textbox", { name: "Message" });
   await waitFor(() => assert.equal(composer.hasAttribute("disabled"), false));
   assert.equal(view.queryByRole("button", { name: "Retry message" }), null);
@@ -314,7 +319,7 @@ test("native snapshots preserve transcript order and stable thinking panels", as
     ],
   });
   const server = installConversation(first);
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   await waitFor(() =>
     assert.ok(
       server.controllers.length > 0 &&
@@ -399,7 +404,7 @@ test("pending input recovers automatically with its original operation ID", asyn
       },
     });
   });
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   await waitFor(() => assert.equal(submissions, 1));
   assert.deepEqual(JSON.parse(sessionStorage.getItem(key) ?? "null"), {
     operationId: "native-operation",
@@ -436,7 +441,7 @@ test("the composer sends a new message while the native session is busy", async 
       },
     });
   });
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   const input = view.getByRole("textbox", { name: "Message" });
   await waitFor(() => assert.equal(input.disabled, false));
   await act(() =>
@@ -494,7 +499,7 @@ test("Stop controls the native session and approvals send only the decision", as
           },
         })
   );
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   const stop = await view.findByRole("button", { name: "Stop" });
   await waitFor(() => assert.equal(stop.disabled, false));
   assert.ok(view.container.textContent?.includes('"title": "Ticket"'));
@@ -567,7 +572,7 @@ test("Reconnect replaces the entire transcript from a fresh native snapshot", as
       ],
     })
   );
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   await waitFor(() =>
     assert.ok(view.container.textContent?.includes("Old answer"))
   );
@@ -620,7 +625,7 @@ test("signout clears visible private content, pending retry, and the observation
       ],
     })
   );
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   await waitFor(() =>
     assert.ok(view.container.textContent?.includes("Private answer"))
   );
@@ -666,7 +671,7 @@ test("queued inputs and tool executions stay visible once through placement and 
     ],
   });
   const server = installConversation(initial);
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   await waitFor(() =>
     assert.equal(
       view
@@ -781,8 +786,8 @@ test("an approval is attached only to the active occurrence of a reused tool cal
       },
     ],
   });
-  installConversation(initial);
-  const view = renderConversation();
+  const server = installConversation(initial);
+  const view = renderConversation(server.loaded);
   await waitFor(() =>
     assert.equal(
       view
@@ -816,7 +821,7 @@ test("a terminal observation fault shows Reconnect and opens a fresh attachment"
       ],
     })
   );
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   await waitFor(() => assert.equal(server.controllers.length, 1));
   await act(() => {
     server.controllers[0]?.enqueue(
@@ -859,7 +864,7 @@ test("streaming follows the latest content only while the reader stays near the 
       ],
     })
   );
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   await waitFor(() =>
     assert.equal(view.getByText("First text").textContent, "First text")
   );

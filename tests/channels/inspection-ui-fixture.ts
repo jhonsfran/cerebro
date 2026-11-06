@@ -7,6 +7,7 @@ import { JSDOM } from "../../apps/web/node_modules/jsdom";
 import { createElement } from "../../apps/web/node_modules/react";
 import { InspectionQuery } from "../../packages/contracts/src/inspection.ts";
 import type { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
+import { loadedConversation } from "./conversation-ui-data.ts";
 import {
   inspectionOverview,
   inspectionSnapshot,
@@ -170,6 +171,7 @@ export const inspectorFixture = ({
     agentName: "Agent",
     conversationId: snapshot.address.conversationId,
     userId: "user",
+    loaded: loadedConversation(snapshot, mode),
   };
   return {
     calls,
@@ -177,6 +179,10 @@ export const inspectorFixture = ({
     send,
     mount: () => render(createElement(ConversationPanel, props)),
     element: (changes: Partial<typeof props> = {}) =>
-      createElement(ConversationPanel, { ...props, ...changes }),
+      createElement(ConversationPanel, {
+        ...props,
+        ...changes,
+        loaded: { ...props.loaded, userId: changes.userId ?? props.userId },
+      }),
   };
 };

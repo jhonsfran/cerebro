@@ -28,7 +28,7 @@ import { ArrowUp, Clock, RotateCw, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { cacheKey, encoded, productPath, request } from "./api";
+import { cacheKey, currentAccessGeneration, encoded, productPath } from "./api";
 import type { PendingChatMessage } from "./chat";
 import { CHAT_MESSAGE_LENGTH_ERROR, MAX_CHAT_MESSAGE_LENGTH } from "./chat";
 import {
@@ -47,8 +47,7 @@ import { operationFor } from "./intent";
 import type { OperationIntent } from "./intent";
 import type { ObservationConnectionStatus } from "./observation";
 import { usePendingChat } from "./pending-chat";
-import { conversationSchema } from "./types";
-import type { Conversation } from "./types";
+import type { LoadedConversation } from "./types";
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : "The request failed.";
@@ -223,23 +222,6 @@ const ConversationToolbar = ({
   </div>
 );
 
-const EMPTY_CHAT: Pick<
-  ChatSnapshot,
-  | "messages"
-  | "approvals"
-  | "busy"
-  | "queuedInputs"
-  | "tools"
-  | "activity"
-  | "admission"
-> = {
-  approvals: [],
-  busy: false,
-  messages: [],
-  queuedInputs: [],
-  tools: [],
-};
-
 const ConversationInput = ({
   admission,
   onOpenConversation,
@@ -270,8 +252,8 @@ const ConversationInput = ({
 const ConversationSession = ({
   conversationId,
   userId,
-  agentId,
   agentName,
+  loaded,
   onOpenConversation,
   onConversation,
 }: {
@@ -279,10 +261,11 @@ const ConversationSession = ({
   userId: string;
   agentId: string;
   agentName: string;
+  loaded: LoadedConversation;
   onOpenConversation?: () => void;
   onConversation?: (conversationId: string) => void;
 }) => {
-  const [conversation, setConversation] = useState<Conversation | null>(null);
+  const { conversation } = loaded;
   const [errorMessage, setErrorMessage] = useState("");
   const [text, setText] = useState("");
   const [acting, setActing] = useState(false);
@@ -298,7 +281,7 @@ const ConversationSession = ({
     reconnect,
     snapshot: observedSnapshot,
   } = useConversationConnection(conversation, path, connected && accessValid);
-  const snapshot = observedSnapshot ?? conversation?.snapshot ?? EMPTY_CHAT;
+  const snapshot = observedSnapshot ?? conversation.snapshot;
   const online = connected && connection === "connected" && accessValid;
   const controlsDisabled = !online || acting;
   const delivery = useMessageDelivery(path, pendingKey, online, (message) => {
@@ -311,45 +294,12 @@ const ConversationSession = ({
   useEffect(() => {
     const clear = () => {
       setAccessValid(false);
-      setConversation(null);
       setText("");
       setConnected(false);
     };
     window.addEventListener("cerebro:access-cleared", clear);
     return () => window.removeEventListener("cerebro:access-cleared", clear);
   }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const load = async () => {
-      try {
-        const value = await request(path, conversationSchema, {
-          signal: controller.signal,
-        });
-        if (controller.signal.aborted) {
-          return;
-        }
-        if (
-          value.conversationId !== conversationId ||
-          value.agentId !== agentId ||
-          value.snapshot.address.conversationId !== conversationId ||
-          value.snapshot.address.agentId !== agentId ||
-          value.snapshot.address.sessionId !== value.sessionId
-        ) {
-          setErrorMessage("The conversation does not belong to this agent.");
-          setConnected(false);
-          return;
-        }
-        setConversation(value);
-      } catch (error) {
-        if (!controller.signal.aborted) {
-          setErrorMessage(messageOf(error));
-        }
-      }
-    };
-    void load();
-    return () => controller.abort();
-  }, [agentId, conversationId, path]);
 
   const send = (message: PendingChatMessage) => {
     setErrorMessage("");
@@ -491,9 +441,35 @@ const ConversationSession = ({
 
 export const ConversationPanel = (
   props: Parameters<typeof ConversationSession>[0]
-) => (
-  <ConversationSession
-    key={`${props.userId}:${props.conversationId}`}
-    {...props}
-  />
-);
+) => {
+  const { conversation } = props.loaded;
+  if (
+    props.loaded.userId !== props.userId ||
+    props.loaded.accessGeneration !== currentAccessGeneration()
+  ) {
+    return (
+      <ErrorAlert className="m-4 w-auto">
+        Conversation access is no longer available.
+      </ErrorAlert>
+    );
+  }
+  if (
+    conversation.agentId !== props.agentId ||
+    conversation.conversationId !== props.conversationId ||
+    conversation.snapshot.address.agentId !== props.agentId ||
+    conversation.snapshot.address.conversationId !== props.conversationId ||
+    conversation.snapshot.address.sessionId !== conversation.sessionId
+  ) {
+    return (
+      <ErrorAlert className="m-4 w-auto">
+        The conversation does not belong to this agent.
+      </ErrorAlert>
+    );
+  }
+  return (
+    <ConversationSession
+      key={`${props.userId}:${props.conversationId}:${props.loaded.accessGeneration}:${props.loaded.selectionRevision}`}
+      {...props}
+    />
+  );
+};

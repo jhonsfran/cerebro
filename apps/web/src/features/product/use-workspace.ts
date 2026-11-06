@@ -10,7 +10,8 @@ import {
 } from "./api";
 import { operationFor } from "./intent";
 import type { OperationIntent } from "./intent";
-import { resolveWorkspaceSelection } from "./selection";
+import { conversationReference, resolveWorkspaceSelection } from "./selection";
+import type { ConversationSelection } from "./selection";
 import type {
   AgentDetail,
   AgentSummary,
@@ -20,7 +21,7 @@ import type {
 import {
   agentDetailSchema,
   agentListSchema,
-  createdConversationSchema,
+  conversationSchema,
   conversationReferenceSchema,
   setupSchema,
 } from "./types";
@@ -42,8 +43,11 @@ export const useWorkspace = ({
   const [bootstrapToken, setBootstrapToken] = useState("");
   const [agents, setAgents] = useState<AgentSummary[]>([]);
   const [selectedId, setSelectedId] = useState("");
-  const [conversationReference, setConversationReference] =
+  const [conversationSelection, setConversationSelection] =
+    useState<ConversationSelection>({ kind: "pending", conversationId });
+  const [openedConversation, setOpenedConversation] =
     useState<ConversationReference | null>(null);
+  const openingRequest = useRef<AbortController | null>(null);
   const selectionRevision = useRef(0);
   const [agent, setAgent] = useState<AgentDetail | null>(null);
   const [view, setView] = useState<WorkspaceView>({
@@ -54,21 +58,33 @@ export const useWorkspace = ({
   const [busy, setBusy] = useState(false);
   const setupIntent = useRef<OperationIntent | null>(null);
   const conversationIntent = useRef<OperationIntent | null>(null);
+  const changeView = useCallback((next: WorkspaceView) => {
+    selectionRevision.current += 1;
+    openingRequest.current?.abort();
+    openingRequest.current = null;
+    setBusy(false);
+    setView(next);
+  }, []);
   useEffect(() => {
     const clear = () => {
       setAgents([]);
       setAgent(null);
-      setConversationReference(null);
-      selectionRevision.current += 1;
+      setSetup(null);
+      setConversationSelection({ kind: "pending", conversationId: undefined });
+      setOpenedConversation(null);
       setSelectedId("");
-      setView({ kind: "agent", tab: "conversation" });
+      changeView({ kind: "agent", tab: "conversation" });
       setErrorMessage(
         "Access changed. Refresh the workspace to check your permissions."
       );
     };
     window.addEventListener("cerebro:access-cleared", clear);
-    return () => window.removeEventListener("cerebro:access-cleared", clear);
-  }, []);
+    return () => {
+      window.removeEventListener("cerebro:access-cleared", clear);
+      selectionRevision.current += 1;
+      openingRequest.current?.abort();
+    };
+  }, [changeView]);
   const loadAgents = useCallback(async () => {
     const generation = currentAccessGeneration();
     const list = await request(productPath("agents"), agentListSchema);
@@ -102,17 +118,64 @@ export const useWorkspace = ({
     };
   }, [loadAgents]);
   const principalId = setup?.principalId;
+  const organizationId = setup?.organizationId;
+  const visibleConversationId =
+    view.kind === "agent" && view.tab === "conversation"
+      ? conversationId
+      : undefined;
+  const reference = conversationReference(conversationSelection);
+  const selectedConversationId =
+    conversationSelection.kind === "pending"
+      ? conversationSelection.conversationId
+      : reference?.conversationId;
+  if (selectedConversationId !== conversationId) {
+    setConversationSelection({ kind: "pending", conversationId });
+  } else if (
+    !visibleConversationId &&
+    conversationSelection.kind === "loaded"
+  ) {
+    const { agentId, sessionId } = conversationSelection.loaded.conversation;
+    setConversationSelection({
+      kind: "reference",
+      reference: {
+        agentId,
+        conversationId:
+          conversationSelection.loaded.conversation.conversationId,
+        sessionId,
+      },
+    });
+  }
+  const loadedConversation =
+    conversationSelection.kind === "loaded"
+      ? conversationSelection.loaded
+      : null;
+  const currentConversation =
+    selectedConversationId === visibleConversationId &&
+    loadedConversation?.userId === userId &&
+    loadedConversation.principalId === principalId &&
+    loadedConversation.accessGeneration === currentAccessGeneration() &&
+    loadedConversation.conversation.snapshot.address.organizationId ===
+      organizationId
+      ? loadedConversation
+      : null;
   useEffect(() => {
-    if (!conversationId || !principalId) {
+    selectionRevision.current += 1;
+    const revision = selectionRevision.current;
+    openingRequest.current?.abort();
+    if (!visibleConversationId || !principalId || !organizationId) {
       return;
     }
     const controller = new AbortController();
-    const revision = selectionRevision.current;
+    const generation = currentAccessGeneration();
+    const expected =
+      openedConversation?.conversationId === visibleConversationId
+        ? openedConversation
+        : null;
     const load = async () => {
       try {
-        const reference = await request(
-          productPath(`conversations/${encoded(conversationId)}`),
-          conversationReferenceSchema,
+        const conversation = await request(
+          productPath(`conversations/${encoded(visibleConversationId)}`),
+          conversationSchema,
           { signal: controller.signal }
         );
         if (
@@ -121,14 +184,29 @@ export const useWorkspace = ({
         ) {
           return;
         }
-        if (reference.conversationId !== conversationId) {
-          setErrorMessage(
-            "The conversation response does not match this page."
-          );
+        assertCurrentAccess(generation);
+        if (
+          conversation.conversationId !== visibleConversationId ||
+          conversation.snapshot.address.organizationId !== organizationId ||
+          (expected &&
+            (conversation.agentId !== expected.agentId ||
+              conversation.sessionId !== expected.sessionId))
+        ) {
+          setErrorMessage("The conversation does not belong to this agent.");
           return;
         }
-        setConversationReference(reference);
-        setSelectedId(reference.agentId);
+        setConversationSelection({
+          kind: "loaded",
+          loaded: {
+            userId,
+            principalId,
+            accessGeneration: generation,
+            selectionRevision: revision,
+            conversation,
+          },
+        });
+        setSelectedId(conversation.agentId);
+        setErrorMessage("");
       } catch (error) {
         if (
           !controller.signal.aborted &&
@@ -140,7 +218,13 @@ export const useWorkspace = ({
     };
     load();
     return () => controller.abort();
-  }, [conversationId, principalId]);
+  }, [
+    visibleConversationId,
+    principalId,
+    organizationId,
+    userId,
+    openedConversation,
+  ]);
   const refreshAgent = useCallback(async () => {
     if (selectedId) {
       const generation = currentAccessGeneration();
@@ -205,24 +289,60 @@ export const useWorkspace = ({
     }
     setBusy(true);
     setErrorMessage("");
+    const generation = currentAccessGeneration();
+    const revision = selectionRevision.current;
+    const controller = new AbortController();
+    openingRequest.current?.abort();
+    openingRequest.current = controller;
     try {
-      const value = await mutate(
+      const value = await request(
         productPath("conversations"),
+        conversationReferenceSchema,
         {
-          agentId: selectedId,
-          operationId: operationFor(conversationIntent, {
+          method: "POST",
+          signal: controller.signal,
+          body: JSON.stringify({
             agentId: selectedId,
+            operationId: operationFor(conversationIntent, {
+              agentId: selectedId,
+            }),
           }),
-        },
-        createdConversationSchema
+        }
       );
-      onConversation(value.conversationId);
-      conversationIntent.current = null;
-      setView({ kind: "agent", tab: "conversation" });
+      assertCurrentAccess(generation);
+      if (revision === selectionRevision.current) {
+        const sameConversation =
+          currentConversation?.conversation.conversationId ===
+          value.conversationId;
+        if (
+          value.agentId !== selectedId ||
+          (sameConversation &&
+            (currentConversation.conversation.agentId !== value.agentId ||
+              currentConversation.conversation.sessionId !== value.sessionId))
+        ) {
+          setErrorMessage("The conversation does not belong to this agent.");
+        } else {
+          if (!sameConversation) {
+            setOpenedConversation(value);
+          }
+          onConversation(value.conversationId);
+          conversationIntent.current = null;
+          setView({ kind: "agent", tab: "conversation" });
+        }
+      }
     } catch (error) {
-      setErrorMessage(messageOf(error));
+      if (
+        !controller.signal.aborted &&
+        revision === selectionRevision.current &&
+        generation === currentAccessGeneration()
+      ) {
+        setErrorMessage(messageOf(error));
+      }
     }
-    setBusy(false);
+    if (openingRequest.current === controller) {
+      openingRequest.current = null;
+      setBusy(false);
+    }
   };
   const { activeAgent, activeAgentId, selected, conversationPending } =
     resolveWorkspaceSelection(
@@ -230,21 +350,21 @@ export const useWorkspace = ({
       agent,
       selectedId,
       conversationId,
-      conversationReference
+      selectedConversationId === conversationId ? reference : null
     );
   const selectAgent = (agentId: string) => {
-    selectionRevision.current += 1;
-    setConversationReference(null);
+    changeView({ kind: "agent", tab: "configuration" });
+    setConversationSelection({ kind: "pending", conversationId: undefined });
+    setOpenedConversation(null);
     onConversation();
     setSelectedId(agentId);
-    setView({ kind: "agent", tab: "configuration" });
   };
   const agentSaved = async (agentId: string) => {
     const generation = currentAccessGeneration();
     await loadAgents();
     assertCurrentAccess(generation);
     setSelectedId(agentId);
-    setView({ kind: "agent", tab: "configuration" });
+    changeView({ kind: "agent", tab: "configuration" });
     const value = await request(
       productPath(`agents/${encoded(agentId)}`),
       agentDetailSchema
@@ -258,13 +378,16 @@ export const useWorkspace = ({
     setBootstrapToken,
     agents,
     view,
-    setView,
+    setView: changeView,
     errorMessage,
     busy,
     activeAgent,
     activeAgentId,
     selected,
-    conversationPending,
+    conversationPending:
+      conversationPending ||
+      Boolean(visibleConversationId && !currentConversation),
+    loadedConversation: currentConversation,
     claimSetup,
     openConversation,
     refreshAgent,

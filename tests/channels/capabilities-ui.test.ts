@@ -5,10 +5,12 @@ import { Schema } from "effect";
 
 import { JSDOM } from "../../apps/web/node_modules/jsdom";
 import { createElement } from "../../apps/web/node_modules/react";
+import type { LoadedConversation } from "../../apps/web/src/features/product/types";
 import {
   ChatControl,
   ChatSnapshot,
 } from "../../packages/contracts/src/session-service.ts";
+import { loadedConversation } from "./conversation-ui-data.ts";
 import { inspectionOverview } from "./inspection-ui-data.ts";
 
 mock.module("../../apps/web/src/env.public", () => ({
@@ -151,9 +153,10 @@ const installConversation = (
       });
     },
   });
-  return { replace: send, requests };
+  return { replace: send, requests, loaded: loadedConversation(initial) };
 };
 const renderConversation = (
+  loaded: LoadedConversation,
   onConversation?: (conversationId: string) => void
 ) =>
   render(
@@ -163,6 +166,7 @@ const renderConversation = (
       conversationId: "conversation",
       onConversation,
       userId: "user",
+      loaded,
     })
   );
 const openActivity = (container: HTMLElement) => {
@@ -220,7 +224,9 @@ test("fork controls use native completed entries, keep the retry ID and navigate
     }
   );
   const navigated: string[] = [];
-  const view = renderConversation((value) => navigated.push(value));
+  const view = renderConversation(server.loaded, (value) =>
+    navigated.push(value)
+  );
   await waitFor(() =>
     assert.equal(
       view.getByRole<HTMLButtonElement>("button", {
@@ -343,7 +349,9 @@ test("subagent work and ownership are visible and child approval stays on the pa
         })
   );
   const navigated: string[] = [];
-  const view = renderConversation((value) => navigated.push(value));
+  const view = renderConversation(server.loaded, (value) =>
+    navigated.push(value)
+  );
   await waitFor(() =>
     assert.equal(
       view.getByRole<HTMLButtonElement>("button", { name: "Approve request" })
@@ -396,7 +404,7 @@ test("subagent work and ownership are visible and child approval stays on the pa
 test("scheduled follow-ups preserve retry intent, recurrence timezone and explicit future cancellation", async () => {
   let attempts = 0;
   const commands: ChatControl[] = [];
-  installConversation(
+  const server = installConversation(
     snapshot({
       activity: {
         children: [],
@@ -424,7 +432,7 @@ test("scheduled follow-ups preserve retry intent, recurrence timezone and explic
         : Response.json({ id: "schedule", kind: command.kind });
     }
   );
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   await waitFor(() =>
     assert.ok(view.queryByRole("region", { name: "Conversation activity" }))
   );
@@ -517,7 +525,7 @@ test("compaction status and failures render and a failed command retries with th
           kind: Schema.decodeUnknownSync(ChatControl)(body).kind,
         });
   });
-  const view = renderConversation();
+  const view = renderConversation(server.loaded);
   await waitFor(() =>
     assert.ok(view.queryByRole("region", { name: "Conversation activity" }))
   );

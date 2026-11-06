@@ -134,6 +134,7 @@ try {
       "tests/channels/coordinator-policy.test.ts",
       "tests/channels/ui.test.ts",
       "tests/channels/conversation.test.ts",
+      "tests/channels/conversation-bootstrap-ui.test.ts",
       "tests/channels/delivery.test.ts",
       "tests/channels/observation.test.ts",
       "tests/channels/capabilities-ui.test.ts",

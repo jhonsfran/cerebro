@@ -12,7 +12,7 @@ const adminTitles = {
   skills: "Skills",
 } satisfies Record<AdminView, string>;
 
-export const ProductWorkspace = ({
+const WorkspaceSession = ({
   userId,
   userName,
   conversationId,
@@ -36,6 +36,7 @@ export const ProductWorkspace = ({
     activeAgentId,
     selected,
     conversationPending,
+    loadedConversation,
     claimSetup,
     openConversation,
     refreshAgent,
@@ -83,6 +84,7 @@ export const ProductWorkspace = ({
             busy={busy}
             conversationId={conversationId}
             conversationPending={conversationPending && !errorMessage}
+            loadedConversation={loadedConversation}
             userId={userId}
             setView={setView}
             claimSetup={claimSetup}
@@ -98,3 +100,7 @@ export const ProductWorkspace = ({
     </SidebarProvider>
   );
 };
+
+export const ProductWorkspace = (
+  props: Parameters<typeof WorkspaceSession>[0]
+) => <WorkspaceSession key={props.userId} {...props} />;
