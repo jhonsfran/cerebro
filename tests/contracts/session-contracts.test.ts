@@ -267,7 +267,7 @@ test("approvals bind run, registration version and destination, arguments, ident
     )
   );
 });
-test("native chat snapshots retain message and approval binding across JSON transport", () => {
+test("native chat snapshots retain message and approval binding, and a Team approval keeps its work ID, across JSON transport", () => {
   const snapshot = {
     address: {
       agentId: userEvent.agentId,
@@ -286,6 +286,17 @@ test("native chat snapshots retain message and approval binding across JSON tran
         state: "pending",
         taskId: "task-A",
         toolId: "fixture-write",
+      },
+      {
+        approvalId: "approval-B",
+        arguments: { title: "Ticket" },
+        callId: "team-call",
+        expiresAt: now + 1000,
+        operationId: "team-write",
+        state: "pending",
+        taskId: "team-task",
+        toolId: "fixture-write",
+        workId: "work-A",
       },
     ],
     busy: true,
@@ -349,6 +360,7 @@ test("native chat snapshots retain message and approval binding across JSON tran
     },
     { approvals: [{ ...snapshot.approvals[0], arguments: { invalid: 1n } }] },
     { approvals: [{ ...snapshot.approvals[0], callId: "" }] },
+    { approvals: [{ ...snapshot.approvals[1], workId: "" }] },
     { queuedInputs: [{ ...snapshot.queuedInputs[0], mode: "write" }] },
     { queuedInputs: undefined },
     { tools: [{ ...snapshot.tools[0], arguments: { invalid: 1n } }] },

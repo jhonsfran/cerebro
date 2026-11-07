@@ -55,6 +55,8 @@ const proofSchema = z.strictObject({
     "/control",
     "/team-report",
     "/team-event-return",
+    "/team-approval",
+    "/approval-decision",
     "/slack-event",
   ]),
 });

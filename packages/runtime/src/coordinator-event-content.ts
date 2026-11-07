@@ -5,7 +5,7 @@ import type { WorkReport } from "@cerebro/contracts/work";
 import type { Tx } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
-import { sameWorkSource } from "./coordinator-ledger.ts";
+import { cancelTeamApprovalsIn, sameWorkSource } from "./coordinator-ledger.ts";
 import type { CoordinatorWorkRecord } from "./coordinator-ledger.ts";
 import { Receipts } from "./trigger-receipts.ts";
 import type { Triggers } from "./triggers.ts";
@@ -38,7 +38,10 @@ const causeReplyIn = async (
 export const teamTriggerIn = async (
   tx: Tx,
   record: CoordinatorWorkRecord,
-  origin: Extract<TriggerOrigin, { kind: "teamreport" | "teamnotice" }>,
+  origin: Extract<
+    TriggerOrigin,
+    { kind: "teamreport" | "teamnotice" | "teamapproval" }
+  >,
   text: string,
   dependencies: ContentDependencies = record.admission.contentDependencies
 ): Promise<Trigger> =>
@@ -82,6 +85,7 @@ export const reportTriggerIn = (
 export const terminalNoticeIn =
   (triggers: Pick<Triggers, "acceptIn">): TerminalNoticeIn =>
   async (tx, record, reason) => {
+    await cancelTeamApprovalsIn(tx, record);
     await triggers.acceptIn(
       tx,
       await teamTriggerIn(

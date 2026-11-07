@@ -1,4 +1,5 @@
 import { Denied, InvalidInput } from "@cerebro/contracts/failures";
+import type { ChatApproval } from "@cerebro/contracts/session-service";
 import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
 import {
   canonicalToolArguments,
@@ -25,6 +26,7 @@ import { trackNativeProgress } from "./native-progress.ts";
 import { piContext } from "./pi-harness.ts";
 import type { MetadataTransaction } from "./session-agent.ts";
 import { createTeamAdmission } from "./team-admission.ts";
+import { teamApprovalStore } from "./team-approvals.ts";
 import { createTeamCompletion } from "./team-completion.ts";
 import { requireRoleConfiguration } from "./team-composition.ts";
 import type { TeamEvents } from "./team-events.ts";
@@ -61,16 +63,21 @@ export const createTeamRuntime = async (options: {
   readonly persistReportIn: (tx: Tx, report: WorkReport) => Promise<void>;
   readonly emitReport?: (report: WorkReport) => Promise<void>;
   readonly events?: TeamEvents;
+  readonly requestApprovalIn?: (
+    tx: Tx,
+    approval: ChatApproval
+  ) => Promise<void>;
 }) => {
   const { pi } = options;
   const work = Schema.decodeUnknownSync(WorkAdmissionSchema, {
     onExcessProperty: "error",
   })(options.work);
   const now = options.now ?? Date.now;
+  const approvals = teamApprovalStore(options.storage, work);
   const role = async (index: number) => {
     const configuration = await options.configure(index);
     requireRoleConfiguration(work, configuration);
-    return createTeamRole({ ...options, configuration, now });
+    return createTeamRole({ ...options, configuration, now, approvals });
   };
   const lead = await role(0);
   const openWorker = async (index: number): Promise<TeamWorker> => {
@@ -359,6 +366,6 @@ export const createTeamRuntime = async (options: {
     holdAdmissions,
   });
   await restore();
-  return { receive, wake, abort, lead, worker, task, restore };
+  return { receive, wake, abort, lead, worker, task, restore, approvals };
 };
 export type TeamRuntime = Awaited<ReturnType<typeof createTeamRuntime>>;

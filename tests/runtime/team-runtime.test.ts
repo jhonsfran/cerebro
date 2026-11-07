@@ -89,6 +89,19 @@ const inspectionSchema = Schema.Struct({
     })
   ),
   approvals: Schema.Number,
+  approvalStates: Schema.Array(
+    Schema.Struct({ approvalId: Schema.String, state: Schema.String })
+  ),
+  approvalRequests: Schema.Array(
+    Schema.Struct({
+      kind: Schema.Literal("approval-request"),
+      approval: Schema.Struct({
+        approvalId: Schema.String,
+        toolId: Schema.String,
+        workId: Schema.String,
+      }),
+    })
+  ),
 });
 const inspect = async (stack: Stack, work: WorkAdmission) => {
   const response = await call(stack, work, "inspect");
@@ -160,7 +173,10 @@ journey(
         `${item.role} instructions put its overlay before the agent's text`
       );
     }
-    assert.equal(JSON.stringify(result.io).includes("team_write"), false);
+    assert.ok(
+      requests.every((item) => item.text.includes("team_write")),
+      "every role is offered the agent's write tool"
+    );
     assert.equal(result.approvals, 0);
     assert.deepEqual(result.state.report?.contentDependencies, {
       sourceIds: ["source-A", "source-B"],
@@ -172,6 +188,65 @@ journey(
       result.state.children["2"]?.nativeId
     );
     await evidence(stack, "team-role-models", { work, result });
+  }
+);
+
+journey(
+  "a Team write waits for its approval, runs once after Allow, and a repeated Allow changes nothing",
+  async (stack) => {
+    const work = admission("approve-write");
+    await command(stack, {
+      kind: "start",
+      id: `start:${work.key.workId}`,
+      work,
+    });
+    const waiting = await waitFor(
+      () => inspect(stack, work),
+      (value) =>
+        value.approvalStates.some((item) => item.state === "pending") &&
+        value.approvalRequests.length === 1,
+      30_000
+    );
+    const [pending] = waiting.approvalStates;
+    assert.ok(pending);
+    assert.deepEqual(
+      waiting.approvalRequests.map((item) => ({
+        approvalId: item.approval.approvalId,
+        toolId: item.approval.toolId,
+        workId: item.approval.workId,
+      })),
+      [
+        {
+          approvalId: pending.approvalId,
+          toolId: "team_write",
+          workId: work.key.workId,
+        },
+      ]
+    );
+    assert.equal(waiting.io.filter((item) => item.kind === "tool").length, 0);
+    const decide = async () => {
+      const response = await call(stack, work, "approval-decision", {
+        work,
+        approvalId: pending.approvalId,
+        decision: "allow",
+      });
+      assert.equal(response.status, 200, await response.clone().text());
+      return await response.json();
+    };
+    assert.deepEqual(await decide(), {
+      approvalId: pending.approvalId,
+      state: "allowed",
+    });
+    const result = await settled(stack, work);
+    assert.equal(result.state.phase, "completed");
+    assert.equal(result.io.filter((item) => item.kind === "tool").length, 1);
+    assert.deepEqual(await decide(), {
+      approvalId: pending.approvalId,
+      state: "allowed",
+    });
+    const after = await inspect(stack, work);
+    assert.equal(after.io.filter((item) => item.kind === "tool").length, 1);
+    await evidence(stack, "team-approval-allow", { work, result });
   }
 );
 

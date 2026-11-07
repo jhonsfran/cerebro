@@ -8,13 +8,24 @@ import type { SQLInputValue } from "node:sqlite";
 import { Effect, Schema } from "effect";
 
 import { ChannelError } from "../../packages/channels/src/types.ts";
+import type { ToolAuditEvent } from "../../packages/contracts/src/audit.ts";
 import { Denied, tryAdapter } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { ContentDependencies } from "../../packages/contracts/src/session.ts";
-import type { TeamEventReturn } from "../../packages/contracts/src/team-events.ts";
-import type { WorkAdmission } from "../../packages/contracts/src/work.ts";
-import { WorkAdmissionSchema } from "../../packages/contracts/src/work.ts";
+import type {
+  TeamApprovalRequest,
+  TeamEventReturn,
+} from "../../packages/contracts/src/team-events.ts";
+import type {
+  WorkAdmission,
+  WorkReport,
+} from "../../packages/contracts/src/work.ts";
 import {
+  WorkAdmissionSchema,
+  WorkReportSchema,
+} from "../../packages/contracts/src/work.ts";
+import {
+  Type,
   createAssistantMessageEventStream,
   createModels,
   fauxAssistantMessage,
@@ -35,6 +46,8 @@ import { SqliteStorage } from "../../packages/runtime/node_modules/@earendil-wor
 import { createSourceDependencyStore } from "../../packages/runtime/src/content-dependency-store.ts";
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
 import type { MetadataTransaction } from "../../packages/runtime/src/session-agent.ts";
+import { createTeamApprovalRequests } from "../../packages/runtime/src/team-approvals.ts";
+import type { TeamApprovalRequestOutbox } from "../../packages/runtime/src/team-approvals.ts";
 import { readTeamRoleImports } from "../../packages/runtime/src/team-content.ts";
 import { createTeamEvents } from "../../packages/runtime/src/team-events.ts";
 import type { TeamEvents } from "../../packages/runtime/src/team-events.ts";
@@ -68,6 +81,8 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
   work?: WorkAdmission;
   delegate?: readonly string[];
   sendReturn?: (delivery: TeamEventReturn) => Promise<void>;
+  // The lead calls team_write once, which needs approval, and the outbox sends the request here.
+  sendApproval?: (request: TeamApprovalRequest) => Promise<void>;
 }) => {
   const directory = await mkdtemp(path.join(tmpdir(), "team-provenance-"));
   const filename = path.join(directory, "native.sqlite");
@@ -118,6 +133,18 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
   const calls: number[] = [];
   const prompts: { role: number; texts: string[] }[] = [];
   const errors: unknown[] = [];
+  const executions: unknown[] = [];
+  const audits: ToolAuditEvent[] = [];
+  const reports: WorkReport[] = [];
+  const approvalRequests: TeamApprovalRequest[] = [];
+  let requests: TeamApprovalRequestOutbox | undefined;
+  const writeTool = {
+    id: id.tool("team_write"),
+    connectorId: "team-fixture",
+    version: "1",
+    effect: "write" as const,
+    connectorFingerprint: id.digest("fixture-write"),
+  };
   const held = new Set<Promise<unknown>>();
   const metadata: MetadataTransaction = (operation) =>
     pi.commit(operation, context);
@@ -233,6 +260,19 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
               });
               const questions = fixtureOptions?.delegate ?? [];
               let answer = fauxAssistantMessage(`Answer from role ${index}.`);
+              if (index === 0 && fixtureOptions?.sendApproval) {
+                answer =
+                  results.length === 0
+                    ? fauxAssistantMessage(
+                        fauxToolCall(
+                          "team_write",
+                          { title: "Quarterly ticket" },
+                          { id: "write-call" }
+                        ),
+                        { stopReason: "toolUse" }
+                      )
+                    : fauxAssistantMessage(`Lead saw: ${results.join(" | ")}`);
+              }
               if (index === 0 && questions.length > 0) {
                 answer =
                   results.length === 0
@@ -288,8 +328,13 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
           version: pin.agentVersion,
           model: faux.getModel().id,
           instructions: "Answer briefly.",
+          enabledToolIds: fixtureOptions?.sendApproval ? [writeTool.id] : [],
+          grants: [],
         },
-        audit: () => Effect.void,
+        audit: (event) => {
+          audits.push(structuredClone(event));
+          return Effect.void;
+        },
         authority: {
           require: (request) =>
             deniedRole === index ||
@@ -300,7 +345,11 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
                     reason: "Current role or model access denied.",
                   })
                 )
-              : Effect.void,
+              : Effect.succeed({
+                  request,
+                  policyVersion: "fixture-policy",
+                  evaluatedAt: Date.now(),
+                }),
         },
         ownerContext: () =>
           deniedOwner
@@ -344,9 +393,21 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
                     reason: "Fixture dependency check failed.",
                   }),
           }),
-        tools: [],
+        tools: fixtureOptions?.sendApproval
+          ? [
+              {
+                definition: writeTool,
+                description: "Create a ticket.",
+                parameters: Type.Object({ title: Type.String() }),
+                requiresApproval: true,
+              },
+            ]
+          : [],
         executor: {
-          execute: () => Effect.succeed({ output: "Unused fixture tool." }),
+          execute: (call) => {
+            executions.push(structuredClone(call.arguments));
+            return Effect.succeed({ output: "Ticket created." });
+          },
         },
         toolDependencies: () => Effect.succeed(empty()),
         provider: {
@@ -405,6 +466,27 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
       },
     });
     const root = await pi.root(context);
+    const { sendApproval } = fixtureOptions ?? {};
+    requests = sendApproval
+      ? createTeamApprovalRequests({
+          pi,
+          registry,
+          nativeId: root.id,
+          work,
+          persist: () => Promise.resolve(),
+          waitUntil: (promise) => {
+            held.add(settleProgress(promise));
+          },
+          transport: {
+            check: (request: TeamApprovalRequest) =>
+              assert.ok(JSON.stringify(request).length <= 120_000),
+            send: async (request) => {
+              await sendApproval(request);
+              approvalRequests.push(structuredClone(request));
+            },
+          },
+        })
+      : undefined;
     events = fixtureOptions?.events
       ? createTeamEvents({
           pi,
@@ -448,6 +530,7 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
       models,
       registry,
       events,
+      requestApprovalIn: requests?.requestIn,
       ensureWake: () => Promise.resolve(),
       waitUntil: (promise) => {
         held.add(settleProgress(promise));
@@ -460,7 +543,10 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
           context
         );
       },
-      persistReportIn: () => Promise.resolve(),
+      persistReportIn: (_tx, report) => {
+        reports.push(Schema.decodeUnknownSync(WorkReportSchema)(report));
+        return Promise.resolve();
+      },
     });
     pi.resume();
   };
@@ -485,6 +571,11 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
     calls,
     prompts,
     errors,
+    executions,
+    audits,
+    reports,
+    approvalRequests,
+    storage,
     pi: () => pi,
     runtime: () => runtime,
     events: () => {

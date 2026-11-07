@@ -19,6 +19,7 @@ import type {
   AgentDefinition,
   ContentDependencies,
 } from "@cerebro/contracts/session";
+import type { ChatApproval } from "@cerebro/contracts/session-service";
 import { boundApprovalMatches } from "@cerebro/contracts/tool-service";
 import type {
   BoundApproval,
@@ -32,7 +33,7 @@ import {
 } from "@cerebro/contracts/tools";
 import type { ToolExecution } from "@cerebro/contracts/tools";
 import type { TSchema } from "@earendil-works/pi-ai";
-import type { ToolRegistration } from "@earendil-works/pi-durable";
+import type { ToolRegistration, Tx } from "@earendil-works/pi-durable";
 import { Effect } from "effect";
 
 import type { createApprovalStore } from "./approval-store.ts";
@@ -57,6 +58,11 @@ export interface PiToolConfiguration {
   readonly executor: ToolExecutor;
   readonly ownerContext: () => Effect.Effect<ExecutionContext, ContractFailure>;
   readonly approvals: ReturnType<typeof createApprovalStore>;
+  // Runs in the commit that creates the approval, so a request and its notice persist together.
+  readonly onApprovalRequested?: (
+    tx: Tx,
+    approval: ChatApproval
+  ) => Promise<void>;
   readonly checkDependencies: (
     context: ExecutionContext,
     dependencies: ContentDependencies,
@@ -76,7 +82,8 @@ export interface PiToolConfiguration {
   ) => Effect.Effect<void, ContractFailure>;
 }
 
-// The person deciding gets this long, independent of the model request deadline.
+// The person deciding gets this long, independent of the model request deadline,
+// but never past the work deadline when the caller has one.
 const APPROVAL_TTL_MS = 30 * 60 * 1000;
 const DISPATCH_MEMO = "cerebro-dispatch";
 const OUTCOME_MEMO = "cerebro-outcome";
@@ -303,7 +310,10 @@ export const createPiTools = (
                 ? { delegationId: executionContext.delegation.id }
                 : {}),
               effect: tool.effect,
-              expiresAt: Date.now() + APPROVAL_TTL_MS,
+              expiresAt: Math.min(
+                Date.now() + APPROVAL_TTL_MS,
+                configuration.deadlineAt ?? Number.MAX_SAFE_INTEGER
+              ),
               id: `approval:${operationId}`,
               operationId,
               organizationId: configuration.address.organizationId,
@@ -314,18 +324,21 @@ export const createPiTools = (
               toolId: tool.id,
               toolVersion: tool.version,
             };
+            approvalId = candidate.id;
             const retained = yield* vendorEffect(options, () =>
-              api.commit(
-                () =>
-                  configuration.approvals.request(
-                    invocation,
-                    candidate,
-                    api.callId
-                  ),
-                context
-              )
+              api.commit(async (tx) => {
+                const requested = configuration.approvals.request(
+                  invocation,
+                  candidate,
+                  api.callId
+                );
+                await configuration.onApprovalRequested?.(
+                  tx,
+                  configuration.approvals.read(requested.id)
+                );
+                return requested;
+              }, context)
             );
-            approvalId = retained.id;
             yield* configuration.persist();
             const state = yield* vendorEffect(options, () =>
               configuration.metadata(

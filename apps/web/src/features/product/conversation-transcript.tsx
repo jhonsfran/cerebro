@@ -124,6 +124,11 @@ const ApprovalRequest = ({
           <ShieldCheck aria-hidden="true" className="size-4 shrink-0" />
           {approval.toolId}
         </h3>
+        {approval.workId ? (
+          <p className="text-warning-foreground font-mono break-all">
+            Team {approval.workId}
+          </p>
+        ) : null}
         <p className="text-warning-foreground">
           This tool waits for your approval before it runs.
         </p>
@@ -204,7 +209,7 @@ type TranscriptSnapshot = Pick<
 >;
 
 // Groups tool calls under the message that made them and attaches each pending
-// approval to its running call.
+// approval to its running call. A Team's approval belongs to no call here.
 const placeApprovals = (snapshot: TranscriptSnapshot) => {
   const results = new Set(
     snapshot.tools.flatMap((tool) =>
@@ -227,9 +232,9 @@ const placeApprovals = (snapshot: TranscriptSnapshot) => {
   }
   const unassignedApprovals: ChatApproval[] = [];
   for (const approval of approvals) {
-    const tool = activeCalls.get(
-      JSON.stringify([approval.callId, approval.toolId])
-    );
+    const tool = approval.workId
+      ? undefined
+      : activeCalls.get(JSON.stringify([approval.callId, approval.toolId]));
     if (tool) {
       const assigned = activeApprovals.get(tool.id) ?? [];
       assigned.push(approval);

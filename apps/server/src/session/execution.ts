@@ -52,7 +52,7 @@ export const createExecutionComposition = (
   agent: AgentDefinition,
   ownerPrincipalId: string,
   metadata: MetadataTransaction,
-  readOnly = false,
+  teamRole = false,
   importedDependencies?: () => Promise<ContentDependencies>,
   contentState?: SessionHostConfiguration["contentState"]
 ) =>
@@ -178,7 +178,7 @@ export const createExecutionComposition = (
           address,
           agent,
           metadata,
-          readOnly,
+          teamRole,
           contentState
         )
       ),
@@ -348,7 +348,7 @@ export const createExecutionComposition = (
         };
         yield* receivingDependencies(
           context,
-          readOnly ? combined : imported,
+          teamRole ? combined : imported,
           options
         );
         return yield* tryAdapter(() =>
@@ -443,11 +443,6 @@ export const createExecutionComposition = (
         tryAdapter(() => content.recordTool(tool.id)).pipe(
           Effect.as({ sourceIds: [], toolIds: [tool.id] })
         ),
-      tools: readOnly
-        ? tools.filter(
-            (tool) =>
-              tool.definition.effect === "read" && !tool.requiresApproval
-          )
-        : tools,
+      tools,
     };
   });

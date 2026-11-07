@@ -13,10 +13,12 @@ import type {
 } from "@earendil-works/pi-durable";
 import { Effect, Result, Schema } from "effect";
 
+import type { createApprovalStore } from "./approval-store.ts";
 import { conversationProvider } from "./conversation-provider.ts";
 import { createConversationResources } from "./conversation-resources.ts";
 import { reconcileImportedContent } from "./imported-content.ts";
 import { piContext } from "./pi-harness.ts";
+import type { PiToolConfiguration } from "./pi-tools.ts";
 import { createRunLimits } from "./run-limits.ts";
 import type {
   MetadataTransaction,
@@ -52,6 +54,8 @@ export const createTeamRole = (options: {
   readonly models: MutableModels;
   readonly registry: Registry;
   readonly now: () => number;
+  readonly approvals: ReturnType<typeof createApprovalStore>;
+  readonly requestApprovalIn?: PiToolConfiguration["onApprovalRequested"];
 }) => {
   const { pi, configuration, now } = options;
   const checkRunning = () =>
@@ -90,10 +94,7 @@ export const createTeamRole = (options: {
   const configured: TeamRoleConfiguration = {
     ...configuration,
     tools: configuration.tools.filter(
-      (tool) =>
-        tool.definition.effect === "read" &&
-        !tool.requiresApproval &&
-        !isInternalToolName(tool.definition.id)
+      (tool) => !isInternalToolName(tool.definition.id)
     ),
     provider: {
       ...configuration.provider,
@@ -119,7 +120,11 @@ export const createTeamRole = (options: {
   const resources = createConversationResources(
     configured,
     options.storage,
-    options.metadata
+    options.metadata,
+    {
+      approvals: options.approvals,
+      onApprovalRequested: options.requestApprovalIn,
+    }
   );
   const provider = conversationProvider(
     configuration.address.sessionId,

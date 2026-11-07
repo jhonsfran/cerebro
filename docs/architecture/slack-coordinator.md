@@ -86,12 +86,12 @@ Ordinary text reaches the coordinator. It does not automatically update whicheve
 | Role | Tools |
 | --- | --- |
 | Coordinator | Start, inspect, message, stop, and recall work; explicit subscriptions; replies to external channels; authorized reminders; UI rendering. |
-| Lead | Read tools and delegate_worker, with several calls in one turn running in parallel; return an unrelated subscribed event once. |
-| Worker | A child conversation of one delegate_worker call; permitted read tools; no further delegation or scheduling. |
+| Lead | The agent's enabled tools and delegate_worker, with several calls in one turn running in parallel; return an unrelated subscribed event once. |
+| Worker | A child conversation of one delegate_worker call; the agent's enabled tools; no further delegation or scheduling. |
 
 Roles derive from the agent's pinned definition. The lead and workers run the agent's model, enabled tools, and grants, with a system overlay in front of the agent's instructions. The coordinator does not run task connector tools. Each Team saves the agent pin at admission. Current permissions still apply before execution and content transfer.
 
-Team tools are read-only and include no approval tools. Routing an approval request from a Team to the coordinator is out of scope.
+A tool that needs approval saves a pending approval in the Team cell and waits. All roles of one Team share that cell's approval store. In the same commit the Team saves one request for the coordinator, which travels on the report queue to `/team-approval`. The coordinator checks the source and the work admission, saves a mirror of the approval, and admits an internal event that names the work and the tool. The event copies the reply destination of the trigger that started the work, so a Slack-started Team can say in its thread that a decision waits. The person decides with Allow or Deny in web chat. The coordinator relays the decision to the Team cell with a signed request and shows the state the Team returns. A Team that already stopped returns its final state, and the tool never runs. The coordinator cannot decide an approval, and its own tools stay coordination-only. A mirrored approval never enters the coordinator's own approval store, so it never holds the publication gate. A report or a terminal notice for the work cancels its pending mirrors in the same commit. An approval expires at the work deadline at the latest.
 
 A `delegate_worker` call creates its child, submits the question under the request ID `worker:<task ID>`, waits for the answer, and imports the child's content dependencies into the lead. The call's saved child record lets a restart reuse the same child and submission.
 
@@ -122,4 +122,4 @@ The development Inspector reads source-owned metadata and selected private detai
 
 ## MVP boundaries
 
-Slack support covers linked direct messages and their threads. Coordinator inputs run in durable order, and a burst that arrives during a turn runs in the next turn together. Private Teams run concurrently. The hierarchy is one lead and its child workers, at most `maxWorkers` running at once. Team tools are read-only. Endpoint execution daemons and a separate semantic-progress Watchdog remain future work.
+Slack support covers linked direct messages and their threads. Coordinator inputs run in durable order, and a burst that arrives during a turn runs in the next turn together. Private Teams run concurrently. The hierarchy is one lead and its child workers, at most `maxWorkers` running at once. A Team tool that needs approval waits for a decision in web chat. Endpoint execution daemons and a separate semantic-progress Watchdog remain future work.

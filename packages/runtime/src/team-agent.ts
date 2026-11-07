@@ -6,7 +6,10 @@ import {
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { PrivateInspectionQuery } from "@cerebro/contracts/inspection";
 import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
-import type { TeamCommandTransport } from "@cerebro/contracts/team-events";
+import type {
+  TeamApprovalDecision,
+  TeamCommandTransport,
+} from "@cerebro/contracts/team-events";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import type { WorkAdmission } from "@cerebro/contracts/work";
 import { WorkAdmissionSchema } from "@cerebro/contracts/work";
@@ -31,6 +34,15 @@ import type {
   SessionEnvironment,
 } from "./session-agent.ts";
 import { createTeamAdmission } from "./team-admission.ts";
+import {
+  createTeamApprovalRequests,
+  decideTeamApproval,
+  teamApprovalStore,
+} from "./team-approvals.ts";
+import type {
+  TeamApprovalRequestOutbox,
+  TeamApprovalTransport,
+} from "./team-approvals.ts";
 import { readTeamRoleImports } from "./team-content.ts";
 import { createTeamEvents } from "./team-events.ts";
 import type { TeamEventReturnTransport, TeamEvents } from "./team-events.ts";
@@ -61,12 +73,16 @@ export abstract class TeamAgent<
   private outbox: ReturnType<typeof createTeamReportOutbox> | undefined;
   private incoming: WorkAdmission | undefined;
   private events: TeamEvents | undefined;
+  private approvalRequests: TeamApprovalRequestOutbox | undefined;
 
   protected abstract resolve(request: Request): Promise<TeamCommandTransport>;
   protected abstract reportTransport(work: WorkAdmission): TeamReportTransport;
   protected abstract eventReturnTransport(
     work: WorkAdmission
   ): TeamEventReturnTransport;
+  protected abstract approvalTransport(
+    work: WorkAdmission
+  ): TeamApprovalTransport;
   protected abstract configure(
     work: WorkAdmission,
     metadata: MetadataTransaction
@@ -77,6 +93,14 @@ export abstract class TeamAgent<
     _request: Request
   ): Promise<PrivateInspectionQuery & { readonly context: ExecutionContext }> {
     throw new InvalidInput({ reason: "Private inspection is not configured." });
+  }
+  // oxlint-disable-next-line class-methods-use-this -- Server subclasses verify the signed coordinator decision.
+  protected resolveApprovalDecision(
+    _request: Request
+  ): Promise<TeamApprovalDecision> {
+    throw new InvalidInput({
+      reason: "Team approval decisions are not configured.",
+    });
   }
   // oxlint-disable-next-line class-methods-use-this -- Server subclasses check current source and recorded content reads.
   protected authorizeInspection(
@@ -112,6 +136,7 @@ export abstract class TeamAgent<
       this.opening = undefined;
       this.outbox = undefined;
       this.events = undefined;
+      this.approvalRequests = undefined;
       const close = async () => {
         const end = await pi.closed;
         if (end.reason === "failed") {
@@ -135,6 +160,7 @@ export abstract class TeamAgent<
         if (work) {
           const outbox = await this.ensureReportOutbox(work);
           const events = await this.ensureEvents(work);
+          const approvalRequests = await this.ensureApprovalRequests(work);
           if (teamInputRejection(state, work, Date.now())) {
             await this.finishTerminal(work);
           } else {
@@ -149,6 +175,7 @@ export abstract class TeamAgent<
           }
           await outbox.wake();
           await events.wake();
+          await approvalRequests.wake();
         }
         return pi;
       } catch (error) {
@@ -261,6 +288,27 @@ export abstract class TeamAgent<
     return this.events;
   }
 
+  private async ensureApprovalRequests(
+    work: WorkAdmission
+  ): Promise<TeamApprovalRequestOutbox> {
+    if (this.approvalRequests) {
+      return this.approvalRequests;
+    }
+    if (!this.host) {
+      throw new InvalidInput({ reason: "The Team native host is not open." });
+    }
+    const root = await this.host.pi.root(piContext());
+    this.approvalRequests = createTeamApprovalRequests({
+      ...this.host,
+      nativeId: root.id,
+      work,
+      transport: this.approvalTransport(work),
+      persist: () => this.ctx.storage.sync(),
+      waitUntil: (promise) => this.trackWork(promise),
+    });
+    return this.approvalRequests;
+  }
+
   private async finishTerminal(work: WorkAdmission): Promise<void> {
     if (!this.host) {
       throw new InvalidInput({ reason: "The Team native host is not open." });
@@ -301,6 +349,7 @@ export abstract class TeamAgent<
       host.pi.commit(operation, piContext());
     const outbox = await this.ensureReportOutbox(work);
     const events = await this.ensureEvents(work);
+    const approvalRequests = await this.ensureApprovalRequests(work);
     const configureRole = await this.configure(work, metadata);
     return await createTeamRuntime({
       ...host,
@@ -308,6 +357,7 @@ export abstract class TeamAgent<
       configure: (index) =>
         configureRole(index, () => readTeamRoleImports(host.pi, work, index)),
       events,
+      requestApprovalIn: approvalRequests.requestIn,
       storage: this.ctx.storage,
       metadata,
       persistReportIn: outbox.enqueueIn,
@@ -320,7 +370,22 @@ export abstract class TeamAgent<
 
   async onRequest(request: Request): Promise<Response> {
     try {
-      if (new URL(request.url).pathname === "/inspect") {
+      const path = new URL(request.url).pathname;
+      if (path === "/approval-decision") {
+        const decision = await this.resolveApprovalDecision(request);
+        const pi = await this.harness.pi();
+        return Response.json(
+          await decideTeamApproval({
+            pi,
+            approvals:
+              this.runtime?.approvals ??
+              teamApprovalStore(this.ctx.storage, decision.work),
+            decision,
+            persist: () => this.ctx.storage.sync(),
+          })
+        );
+      }
+      if (path === "/inspect") {
         const input = await this.resolveInspection(request);
         const pi = await this.harness.pi();
         await this.authorizeInspection(
@@ -398,10 +463,12 @@ export abstract class TeamAgent<
       const running = await this.runtime?.wake(deadlineAt);
       const outboxWake = await this.outbox?.wake();
       const eventWake = await this.events?.wake();
+      const approvalWake = await this.approvalRequests?.wake();
       const times = [
         running?.rescheduleAt,
         outboxWake?.rescheduleAt,
         eventWake?.rescheduleAt,
+        approvalWake?.rescheduleAt,
       ].filter((value): value is number => value !== undefined);
       if (times.length > 0) {
         return { rescheduleAt: Math.min(...times) };

@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 
+import { ChatApproval } from "./session-service.ts";
 import { canonicalToolArguments } from "./tools.ts";
 import { TriggerSchema } from "./triggers.ts";
 import {
@@ -51,16 +52,50 @@ export const TeamEventReturnReceiptSchema = Schema.Struct({
   key: WorkKeySchema,
   accepted: Schema.Boolean,
 });
+export const TeamApprovalRequestSchema = Schema.Struct({
+  version: Schema.Literal(2),
+  kind: Schema.Literal("approval-request"),
+  work: WorkAdmissionSchema,
+  approval: ChatApproval,
+}).check(
+  Schema.makeFilter(
+    ({ work, approval }) =>
+      approval.workId === work.key.workId && approval.state === "pending"
+  )
+);
+export type TeamApprovalRequest = typeof TeamApprovalRequestSchema.Type;
+export const TeamApprovalReceiptSchema = Schema.Struct({
+  approvalId: ChatApproval.fields.approvalId,
+  key: WorkKeySchema,
+  accepted: Schema.Boolean,
+});
+export type TeamApprovalReceipt = typeof TeamApprovalReceiptSchema.Type;
+export const TeamApprovalDecisionSchema = Schema.Struct({
+  work: WorkAdmissionSchema,
+  approvalId: ChatApproval.fields.approvalId,
+  decision: Schema.Literals(["allow", "deny"]),
+});
+export type TeamApprovalDecision = typeof TeamApprovalDecisionSchema.Type;
 export const TeamReportTransportSchema = Schema.Union([
   TeamReportDeliverySchema,
   TeamEventReturnSchema,
+  TeamApprovalRequestSchema,
 ]);
 export type TeamReportTransportMessage = typeof TeamReportTransportSchema.Type;
 export const normalizeTeamReport = (input: unknown) => {
   const wire = Schema.decodeUnknownSync(TeamReportTransportSchema, {
     onExcessProperty: "error",
   })(input);
-  return "kind" in wire
+  if (!("kind" in wire)) {
+    return {
+      kind: "report" as const,
+      wire,
+      key: wire.report.key,
+      sourceEventAddress: wire.sourceEventAddress,
+      path: "/team-report" as const,
+    };
+  }
+  return wire.kind === "event-return"
     ? {
         kind: "event-return" as const,
         wire,
@@ -69,32 +104,54 @@ export const normalizeTeamReport = (input: unknown) => {
         path: "/team-event-return" as const,
       }
     : {
-        kind: "report" as const,
+        kind: "approval-request" as const,
         wire,
-        key: wire.report.key,
-        sourceEventAddress: wire.sourceEventAddress,
-        path: "/team-report" as const,
+        key: wire.work.key,
+        sourceEventAddress: wire.work.sourceEventAddress,
+        path: "/team-approval" as const,
       };
 };
+const sameKey = (left: unknown, right: unknown): boolean =>
+  canonicalToolArguments(left) === canonicalToolArguments(right);
 export const teamReportReceiptMatches = (
   delivery: ReturnType<typeof normalizeTeamReport>,
   input: unknown
 ): boolean => {
-  if (delivery.kind === "report") {
-    const receipt = Schema.decodeUnknownSync(TeamReportReceiptSchema, {
-      onExcessProperty: "error",
-    })(input);
-    return (
-      receipt.reportId === delivery.wire.report.id &&
-      canonicalToolArguments(receipt.key) ===
-        canonicalToolArguments(delivery.key)
-    );
+  const decode = { onExcessProperty: "error" } as const;
+  switch (delivery.kind) {
+    case "report": {
+      const receipt = Schema.decodeUnknownSync(
+        TeamReportReceiptSchema,
+        decode
+      )(input);
+      return (
+        receipt.reportId === delivery.wire.report.id &&
+        sameKey(receipt.key, delivery.key)
+      );
+    }
+    case "event-return": {
+      const receipt = Schema.decodeUnknownSync(
+        TeamEventReturnReceiptSchema,
+        decode
+      )(input);
+      return (
+        receipt.eventId === delivery.wire.eventId &&
+        sameKey(receipt.key, delivery.key)
+      );
+    }
+    case "approval-request": {
+      const receipt = Schema.decodeUnknownSync(
+        TeamApprovalReceiptSchema,
+        decode
+      )(input);
+      return (
+        receipt.approvalId === delivery.wire.approval.approvalId &&
+        sameKey(receipt.key, delivery.key)
+      );
+    }
+    default: {
+      const exhaustive: never = delivery;
+      return exhaustive;
+    }
   }
-  const receipt = Schema.decodeUnknownSync(TeamEventReturnReceiptSchema, {
-    onExcessProperty: "error",
-  })(input);
-  return (
-    receipt.eventId === delivery.wire.eventId &&
-    canonicalToolArguments(receipt.key) === canonicalToolArguments(delivery.key)
-  );
 };

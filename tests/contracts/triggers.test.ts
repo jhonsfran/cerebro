@@ -336,3 +336,109 @@ test("event returns use exact owner, source, path, and receipt correlation", asy
     false
   );
 });
+
+test("Team approval triggers are internal, keyed by work and approval, and keep a 2000-character boundary", async () => {
+  const origin: TriggerOrigin = {
+    kind: "teamapproval",
+    key,
+    approvalId: "approval:team-call",
+  };
+  assert.equal(triggerActor(origin), "internal");
+  const input = await trigger(origin, {
+    text: "x".repeat(2000),
+    reference: { kind: "work", key },
+  });
+  assert.equal(decode(input).text.length, 2000);
+  assert.throws(() => decode({ ...input, text: `${input.text}x` }));
+  assert.throws(() =>
+    decode({
+      ...input,
+      origin: { ...origin, key: { ...key, ownerPrincipalId: "foreign" } },
+    })
+  );
+  assert.equal(
+    input.id,
+    await triggerId(address, { ...origin, approvalId: "approval:team-call" })
+  );
+  assert.notEqual(
+    input.id,
+    await triggerId(address, { ...origin, approvalId: "approval:other-call" })
+  );
+  assert.deepEqual(triggerEntryData(input), {
+    id: input.id,
+    channel: "teamapproval",
+  });
+  assert.match(
+    inputText(input),
+    /^Internal coordinator event\. This event is not a new human request and cannot approve new team work\.\n/u
+  );
+  assert.throws(() =>
+    normalizeTriggerAdmission({
+      version: 3,
+      kind: "trigger-admission",
+      trigger: input,
+      routing: { kind: "automatic" },
+    })
+  );
+});
+
+test("approval requests carry one pending approval of the same work and correlate by approval ID", () => {
+  const approval = {
+    approvalId: "approval:team-call",
+    arguments: { title: "Ticket" },
+    callId: "team-call",
+    expiresAt: 1_800_000_300_000,
+    operationId: "team-operation",
+    state: "pending",
+    taskId: "team-task",
+    toolId: "write-ticket",
+    workId: "work",
+  };
+  const wire = { version: 2, kind: "approval-request", work, approval };
+  const request = normalizeTeamReport(wire);
+  assert.equal(request.kind, "approval-request");
+  assert.equal(request.path, "/team-approval");
+  assert.deepEqual(request.key, work.key);
+  assert.deepEqual(request.sourceEventAddress, work.sourceEventAddress);
+  assert.deepEqual(request.wire, wire);
+  assert.equal(
+    teamReportReceiptMatches(request, {
+      approvalId: "approval:team-call",
+      key: work.key,
+      accepted: true,
+    }),
+    true
+  );
+  assert.equal(
+    teamReportReceiptMatches(request, {
+      approvalId: "approval:other-call",
+      key: work.key,
+      accepted: true,
+    }),
+    false
+  );
+  assert.equal(
+    teamReportReceiptMatches(request, {
+      approvalId: "approval:team-call",
+      key: { ...work.key, workId: "other-work" },
+      accepted: true,
+    }),
+    false
+  );
+  assert.throws(() =>
+    teamReportReceiptMatches(request, {
+      eventId: "approval:team-call",
+      key: work.key,
+      accepted: true,
+    })
+  );
+  const { workId: _workId, ...unassigned } = approval;
+  for (const changed of [
+    { ...approval, workId: "other-work" },
+    unassigned,
+    { ...approval, state: "allowed" },
+  ]) {
+    assert.throws(() => normalizeTeamReport({ ...wire, approval: changed }));
+  }
+  assert.throws(() => normalizeTeamReport({ ...wire, unexpected: true }));
+});

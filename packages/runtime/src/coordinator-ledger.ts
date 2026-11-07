@@ -2,6 +2,7 @@ import type { EventAddress } from "@cerebro/contracts/events";
 import { Conflict, Denied, NotFound } from "@cerebro/contracts/failures";
 import type { PrincipalId } from "@cerebro/contracts/identity";
 import type { ContentDependencies } from "@cerebro/contracts/session";
+import type { ChatApproval } from "@cerebro/contracts/session-service";
 import type { TeamCommandTransport } from "@cerebro/contracts/team-events";
 import {
   WorkCommandIdSchema,
@@ -10,6 +11,7 @@ import {
 } from "@cerebro/contracts/work";
 import type {
   WorkAdmission,
+  WorkKey,
   WorkReport,
   WorkStatus,
 } from "@cerebro/contracts/work";
@@ -118,6 +120,52 @@ export const WorkDocuments = defineDocFamily({
     record: null,
   }),
 });
+// The request as received stays canonical JSON; only the state changes after it.
+export interface TeamApprovalMirror extends JsonObject {
+  key: WorkKey;
+  approval: string;
+  state: ChatApproval["state"];
+}
+/** A Team's approval request as the coordinator shows it, keyed by approval ID. */
+export const TeamApprovals = defineDocFamily({
+  kind: "cerebro.team-approval",
+  scope: "session",
+  family: true,
+  version: 1,
+  initial: (_seed: null): { record: TeamApprovalMirror | null } => ({
+    record: null,
+  }),
+});
+/** The mirrored approval IDs of one source conversation, each with its work ID. */
+export const TeamApprovalIndex = defineDocFamily({
+  kind: "cerebro.team-approval-index",
+  scope: "session",
+  family: true,
+  version: 1,
+  initial: (_seed: null): { approvals: Record<string, string> } => ({
+    approvals: {},
+  }),
+});
+export const cancelTeamApprovalsIn = async (
+  tx: Tx,
+  record: CoordinatorWorkRecord
+): Promise<void> => {
+  const index = await tx.doc(
+    TeamApprovalIndex,
+    record.admission.sourceEventAddress.sessionId,
+    null
+  );
+  await Promise.all(
+    Object.entries(index.approvals)
+      .filter(([, workId]) => workId === record.admission.key.workId)
+      .map(async ([approvalId]) => {
+        const document = await tx.doc(TeamApprovals, approvalId, null);
+        if (document.record?.state === "pending") {
+          document.record.state = "cancelled";
+        }
+      })
+  );
+};
 export const CommandReceipts = defineDocFamily({
   kind: "cerebro.coordinator-command",
   scope: "session",

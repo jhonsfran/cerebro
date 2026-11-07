@@ -1,11 +1,21 @@
 import { assertQueuePayloadSize } from "@cerebro/channels/queue-payload";
 import { contextByPrincipal } from "@cerebro/channels/security";
 import { prepareTeamReport } from "@cerebro/channels/team-reports";
-import { Denied, fromPortResult } from "@cerebro/contracts/failures";
+import {
+  Denied,
+  InvalidInput,
+  fromPortResult,
+} from "@cerebro/contracts/failures";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { ContentDependencies } from "@cerebro/contracts/session";
-import { normalizeTeamCommand } from "@cerebro/contracts/team-events";
-import type { TeamEventReturn } from "@cerebro/contracts/team-events";
+import {
+  TeamApprovalDecisionSchema,
+  normalizeTeamCommand,
+} from "@cerebro/contracts/team-events";
+import type {
+  TeamApprovalRequest,
+  TeamEventReturn,
+} from "@cerebro/contracts/team-events";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import { workCellName } from "@cerebro/contracts/work";
 import type {
@@ -25,7 +35,7 @@ import {
 import { teamRoleAddress } from "@cerebro/runtime/team-content";
 import type { ConfigureTeamRole } from "@cerebro/runtime/team-role";
 import { teamCommandDependencies } from "@cerebro/runtime/team-state";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 
 import { checkContentDependencies, createCurrentAuthority } from "./access";
 import type { WorkerEnv } from "./bindings";
@@ -37,6 +47,16 @@ import {
   authorizeTeamInspection,
   resolveTeamInspection,
 } from "./session/team-inspection";
+
+const checkApprovalSize = (request: TeamApprovalRequest) => {
+  try {
+    assertQueuePayloadSize(request);
+  } catch {
+    throw new InvalidInput({
+      reason: "The approval request is too large to deliver.",
+    });
+  }
+};
 
 export class TeamAgent extends TeamHost<WorkerEnv> {
   protected override resolveInspection(request: Request) {
@@ -122,6 +142,56 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
         await this.env.TEAM_REPORTS.send(delivery, { contentType: "json" });
       },
     };
+  }
+  protected override approvalTransport() {
+    return {
+      check: checkApprovalSize,
+      send: async (request: TeamApprovalRequest) => {
+        checkApprovalSize(request);
+        await this.env.TEAM_REPORTS.send(request, { contentType: "json" });
+      },
+    };
+  }
+  protected override async resolveApprovalDecision(request: Request) {
+    if (
+      request.method !== "POST" ||
+      new URL(request.url).pathname !== "/approval-decision"
+    ) {
+      throw new Denied({
+        code: "unauthorized",
+        reason: "Invalid private approval route.",
+      });
+    }
+    const decision = Schema.decodeUnknownSync(TeamApprovalDecisionSchema, {
+      onExcessProperty: "error",
+    })(await request.clone().json());
+    const { key, sourceEventAddress } = decision.work;
+    if (this.ctx.id.name !== workCellName(key)) {
+      throw new Denied({
+        code: "unauthorized",
+        reason: "The decision addresses another team.",
+      });
+    }
+    const resolved = await authenticateSessionRequest(
+      request,
+      runtimeConfiguration(this.env).gatewaySigningKey,
+      {
+        organizationId: key.organizationId,
+        ownerPrincipalId: key.ownerPrincipalId,
+      }
+    );
+    if (
+      canonicalToolArguments(resolved.address) !==
+        canonicalToolArguments(sourceEventAddress) ||
+      resolved.context.actor.id !== key.ownerPrincipalId ||
+      "delegation" in resolved.context
+    ) {
+      throw new Denied({
+        code: "unauthorized",
+        reason: "The decision source identity does not match.",
+      });
+    }
+    return decision;
   }
   protected override reportTransport(work: WorkAdmission) {
     return {

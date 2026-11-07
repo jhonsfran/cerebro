@@ -8,6 +8,7 @@ import { Effect, Result } from "effect";
 import { createApprovalStore } from "./approval-store.ts";
 import { createControlledProvider } from "./pi-provider.ts";
 import { createPiTools } from "./pi-tools.ts";
+import type { PiToolConfiguration } from "./pi-tools.ts";
 import type {
   MetadataTransaction,
   SessionHostConfiguration,
@@ -50,8 +51,9 @@ export const createConversationResources = (
   metadata: MetadataTransaction,
   stable?: {
     readonly approvals: ReturnType<typeof createApprovalStore>;
-    readonly guardIn: (tx: Tx) => Promise<void>;
-    readonly requireCurrent: () => void;
+    readonly onApprovalRequested?: PiToolConfiguration["onApprovalRequested"];
+    readonly guardIn?: (tx: Tx) => Promise<void>;
+    readonly requireCurrent?: () => void;
   }
 ) => {
   const approvals =
@@ -119,7 +121,7 @@ export const createConversationResources = (
     try {
       await authorize(...args);
     } finally {
-      stable?.requireCurrent();
+      stable?.requireCurrent?.();
     }
   };
   const provider = createControlledProvider({
@@ -204,6 +206,7 @@ export const createConversationResources = (
     dependencies: configuration.toolDependencies,
     executor: configuration.executor,
     metadata,
+    onApprovalRequested: stable?.onApprovalRequested,
     ownerContext: configuration.ownerContext,
     persist: () =>
       Effect.tryPromise({

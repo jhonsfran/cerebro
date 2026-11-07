@@ -6,9 +6,9 @@ import type { WorkAdmission } from "@cerebro/contracts/work";
 export type TeamRoleKind = "lead" | "worker";
 
 export const LEAD_ROLE_INSTRUCTIONS =
-  "You lead a background team working on one bounded, read-only request. The first message is the goal. Split it into independent questions and call delegate_worker once per question, several in the same turn so the workers run in parallel, then combine the answers into one complete final answer. The person is not in this conversation; do not ask them anything. Your final message is the report.";
+  "You lead a background team working on one bounded request. The first message is the goal. Split it into independent tasks and call delegate_worker once per task, several in the same turn so the workers run in parallel, then combine the answers into one complete final answer. The person is not in this conversation; do not ask them anything. A tool that needs approval waits while the person decides in their own conversation; if they deny it, do not call it again. Your final message is the report.";
 export const WORKER_ROLE_INSTRUCTIONS =
-  "You are a worker in a background team. Answer the assigned question completely with the tools you have. Do not delegate, schedule, or address the person. Your final message is the answer.";
+  "You are a worker in a background team. Complete the assigned task with the tools you have. A tool that needs approval waits while the person decides; if they deny it, do not call it again. Do not delegate, schedule, or address the person. Your final message is the answer.";
 const ROLE_INSTRUCTIONS: Record<TeamRoleKind, string> = {
   lead: LEAD_ROLE_INSTRUCTIONS,
   worker: WORKER_ROLE_INSTRUCTIONS,

@@ -808,6 +808,82 @@ test("an approval is attached only to the active occurrence of a reused tool cal
   );
 });
 
+test("a Team approval names its Team, stays off the coordinator's own call, and decides in this conversation", async () => {
+  const initial = snapshot({
+    approvals: [
+      {
+        approvalId: "team-approval",
+        arguments: { title: "Ticket" },
+        callId: "shared-call",
+        expiresAt: Date.now() + 60_000,
+        operationId: "team-operation",
+        state: "pending",
+        taskId: "team-task",
+        toolId: "write-ticket",
+        workId: "work-7",
+      },
+    ],
+    busy: true,
+    messages: [
+      {
+        id: "coordinator",
+        role: "assistant",
+        state: "complete",
+        text: "Working on it",
+      },
+    ],
+    tools: [
+      {
+        arguments: {},
+        callId: "shared-call",
+        id: "coordinator:0:0",
+        messageId: "coordinator",
+        output: "",
+        state: "pending",
+        toolName: "write-ticket",
+      },
+    ],
+  });
+  const server = installConversation(initial, (_url, body) =>
+    Response.json({
+      approval: {
+        approvalId: "team-approval",
+        state:
+          body &&
+          typeof body === "object" &&
+          "decision" in body &&
+          body.decision === "deny"
+            ? "denied"
+            : "allowed",
+      },
+    })
+  );
+  const view = renderConversation(server.loaded);
+  const card = await view.findByRole("region", { name: "Approval required" });
+  assert.equal(card.querySelector("h3")?.textContent, "write-ticket");
+  assert.equal(
+    view.getByText("Team work-7").textContent,
+    "Team work-7",
+    "the card names the Team that waits"
+  );
+  assert.equal(
+    view
+      .getByRole("article", { name: "write-ticket Waiting" })
+      .querySelectorAll(".approval-card").length,
+    0
+  );
+  await act(() => view.getByRole("button", { name: "Deny request" }).click());
+  assert.deepEqual(
+    server.requests.filter((item) => item.body !== null),
+    [
+      {
+        body: { decision: "deny" },
+        url: "http://fixture.invalid/api/product/conversations/conversation/approvals/team-approval",
+      },
+    ]
+  );
+});
+
 test("a terminal observation fault shows Reconnect and opens a fresh attachment", async () => {
   const server = installConversation(
     snapshot({

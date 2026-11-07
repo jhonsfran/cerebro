@@ -15,6 +15,7 @@ import type { createConversationResources } from "./conversation-resources.ts";
 import { reportTriggerIn } from "./coordinator-event-content.ts";
 import {
   applyCoordinatorReport,
+  cancelTeamApprovalsIn,
   WorkDocuments,
   coordinatorOperationKey,
   requireCoordinatorWork,
@@ -215,6 +216,7 @@ export const createCoordinatorReport =
           (transaction, expired) =>
             options.coordination.notifyExpiredIn(transaction, [expired])
         );
+        await cancelTeamApprovalsIn(tx, record);
         document.receipt = { digest, accepted: applied.accepted };
         return applied.accepted;
       }

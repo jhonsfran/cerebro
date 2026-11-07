@@ -24,7 +24,10 @@ export const conversationSnapshot = async (
 ): Promise<ChatSnapshot> => {
   const { runtime, reminders: schedules, coordination } = profile;
   const { pi, native, triggers } = options;
-  const approvals = await pi.commit(() => runtime.approvals.all(), piContext());
+  const approvals = [
+    ...(await pi.commit(() => runtime.approvals.all(), piContext())),
+    ...(await profile.teamApprovals.list()),
+  ];
   const [reminders, inspection, live, backgroundWork] = await Promise.all([
     schedules.list(),
     pi.inspect(piContext()),

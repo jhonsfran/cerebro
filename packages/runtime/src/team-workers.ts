@@ -36,7 +36,7 @@ export const createTeamWorkerTool = (options: {
     callers: ["model"],
     name: "delegate_worker",
     replay: "safe",
-    description: `Delegate one bounded read-only question to a new worker conversation and return its answer. Call it several times in one turn to run workers in parallel. The team runs at most ${options.maxWorkers} workers at once and shares one model call budget.`,
+    description: `Delegate one bounded task to a new worker conversation and return its answer. Call it several times in one turn to run workers in parallel. The team runs at most ${options.maxWorkers} workers at once and shares one model call budget.`,
     parameters: Type.Object({
       text: Type.String({ minLength: 1, maxLength: 16_000 }),
     }),

@@ -12,6 +12,7 @@ import type { createReminderSerialization } from "./conversation-reminders.ts";
 import { createConversationReminders } from "./conversation-reminders.ts";
 import { createConversationResources } from "./conversation-resources.ts";
 import type { ConversationScopeServices } from "./conversation-scope.ts";
+import { createCoordinatorApprovals } from "./coordinator-approvals.ts";
 import { terminalNoticeIn } from "./coordinator-event-content.ts";
 import { createCoordinatorReport } from "./coordinator-report.ts";
 import { createCoordinatorSubscriptions } from "./coordinator-subscriptions.ts";
@@ -41,7 +42,7 @@ const run = async <A>(
 export const profileInstructions = (
   configuration: SessionHostConfiguration
 ): string =>
-  `${configuration.agent.instructions}\nHandle conversation and coordinate independent work. Use start_team for each independent task when available. Keep Team histories private and recall bounded results when needed. An event that names an eventId arrived from an external channel; answer it with reply_event when a reply is wanted. Web messages need no reply_event.`;
+  `${configuration.agent.instructions}\nHandle conversation and coordinate independent work. Use start_team for each independent task when available. Keep Team histories private and recall bounded results when needed. An event that names an eventId arrived from an external channel; answer it with reply_event when a reply is wanted. Web messages need no reply_event. When a Team asks for approval, tell the person to Allow or Deny it in web chat; you cannot decide it.`;
 
 export interface ProfileState {
   readonly approvals: ReturnType<typeof createApprovalStore>;
@@ -191,6 +192,12 @@ export const createConversationProfile = async (
     triggers: services.triggers,
     waitUntil: services.waitUntil,
   });
+  const teamApprovals = createCoordinatorApprovals({
+    ...source,
+    persist: () => services.storage.sync(),
+    triggers: services.triggers,
+    waitUntil: services.waitUntil,
+  });
   const subscriptions = createCoordinatorSubscriptions({
     guardIn: runtime.guardIn,
     pi: services.pi,
@@ -270,6 +277,7 @@ export const createConversationProfile = async (
     compaction,
     coordination,
     receiveReport,
+    teamApprovals,
     subscriptions,
     web,
     registration,

@@ -24,10 +24,18 @@ A Team runs as the agent you selected. Its roles derive from that agent's defini
 
 | Role | Model and grants | Instructions |
 | --- | --- | --- |
-| Lead | The agent's model, enabled tools, and grants | A system overlay to split the goal and call `delegate_worker` once per question, several in the same turn, followed by the agent's instructions. |
-| Worker | The agent's model, enabled tools, and grants | A system overlay to answer one assigned question without delegating, followed by the agent's instructions. |
+| Lead | The agent's model, enabled tools, and grants | A system overlay to split the goal and call `delegate_worker` once per task, several in the same turn, followed by the agent's instructions. |
+| Worker | The agent's model, enabled tools, and grants | A system overlay to complete one assigned task without delegating, followed by the agent's instructions. |
 
-Each `delegate_worker` call starts a worker in a new private child conversation. Calls in the same turn run in parallel, up to the team's worker limit. A call beyond the limit returns an error that tells the lead to wait for running workers. A role never holds more than the agent. Its tools are limited to read-only tools that need no approval. A Team cannot request approval, and routing an approval to the coordinator is out of scope. The first test needs no external tools or company sources. Add explicit grants to the agent before Teams handle company content.
+Each `delegate_worker` call starts a worker in a new private child conversation. Calls in the same turn run in parallel, up to the team's worker limit. A call beyond the limit returns an error that tells the lead to wait for running workers. A role never holds more than the agent. It offers every tool the agent enables, and a tool that needs approval waits for the person. The first test needs no external tools or company sources. Add explicit grants to the agent before Teams handle company content.
+
+## Approve a Team's tool
+
+When a Team calls a tool that needs approval, the tool waits in the Team. The request appears in the coordinator's web chat as a card with the tool name, its arguments, and the Team's work ID. Choose **Approve request** or **Deny request** on that card. The coordinator also posts a short note that a decision waits, in Slack too when the work started from a Slack thread. Slack and the coordinator model cannot decide the request.
+
+After Approve, the Team runs the tool once and continues. After Deny, the tool returns a denial to the Team, which reports without it. If the Team already stopped, the card shows its final state instead and nothing runs.
+
+The Team deadline bounds every wait. A request that nobody decides before the deadline expires with the work. If an agent's Teams need approvals, publish a longer time limit (`timeoutMs`, **Time limit in seconds**) so the person has time to decide.
 
 ## Set team limits
 

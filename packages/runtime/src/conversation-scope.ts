@@ -712,6 +712,11 @@ export class ConversationScope {
           await profile.receiveReport(delivery, context, request.signal)
         );
       }
+      if (path === "/team-approval") {
+        return Response.json(
+          await profile.teamApprovals.receive(body, context, request.signal)
+        );
+      }
       if (path === "/team-event-return") {
         const delivery = Schema.decodeUnknownSync(TeamEventReturnSchema, {
           onExcessProperty: "error",
@@ -785,15 +790,29 @@ export class ConversationScope {
           request.signal
         );
         const { pi } = this.services;
-        const value = await pi.commit(async (tx) => {
+        const local = await pi.commit(async (tx) => {
           await runtime.guardIn(tx);
-          return runtime.approvals.decide(command.approvalId, command.decision);
+          try {
+            return runtime.approvals.decide(
+              command.approvalId,
+              command.decision
+            );
+          } catch (error) {
+            if (error instanceof NotFound) {
+              return null;
+            }
+            throw error;
+          }
         }, piContext(request.signal));
+        const value = local
+          ? { approvalId: local.approvalId, state: local.state }
+          : await profile.teamApprovals.decide(
+              command.approvalId,
+              command.decision,
+              request.signal
+            );
         await this.services.storage.sync();
-        return Response.json({
-          status: "ok",
-          value: { approvalId: value.approvalId, state: value.state },
-        });
+        return Response.json({ status: "ok", value });
       }
       throw new NotFound({ resource: "Chat route" });
     } catch (error) {

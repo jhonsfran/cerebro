@@ -54,6 +54,11 @@ export const TriggerOriginSchema = Schema.Union([
     key: WorkKeySchema,
     reason: Schema.Literals(["expired", "dispatch-failed"]),
   }),
+  Schema.Struct({
+    kind: Schema.Literal("teamapproval"),
+    key: WorkKeySchema,
+    approvalId: Schema.NonEmptyString.check(Schema.isMaxLength(2048)),
+  }),
 ]);
 export type TriggerOrigin = typeof TriggerOriginSchema.Type;
 export type TriggerChannel = TriggerOrigin["kind"];
@@ -65,6 +70,7 @@ const actors = {
   timer: "routine",
   teamreport: "internal",
   teamnotice: "internal",
+  teamapproval: "internal",
 } satisfies Record<TriggerChannel, TriggerActor>;
 export const triggerActor = (origin: TriggerOrigin): TriggerActor =>
   actors[origin.kind];
@@ -75,6 +81,7 @@ const textLimits = {
   timer: 32_000,
   teamreport: 2000,
   teamnotice: 2000,
+  teamapproval: 2000,
 } satisfies Record<TriggerChannel, number>;
 
 export const ReplyDestinationSchema = Schema.Struct({
@@ -157,6 +164,10 @@ export const triggerId = async (
       identity = [origin.kind, origin.key.workId, origin.reason];
       break;
     }
+    case "teamapproval": {
+      identity = [origin.kind, origin.key.workId, origin.approvalId];
+      break;
+    }
     default: {
       const exhaustive: never = origin;
       return exhaustive;
@@ -217,6 +228,7 @@ export const TriggerEntryDataSchema = Schema.Struct({
     "timer",
     "teamreport",
     "teamnotice",
+    "teamapproval",
   ]),
   operationId: Schema.optional(Schema.NonEmptyString),
 });
@@ -263,7 +275,8 @@ export const inputText = (trigger: Trigger): string => {
       return `Saved authorized instruction (eventId ${trigger.id}).\n${trigger.text}`;
     }
     case "teamreport":
-    case "teamnotice": {
+    case "teamnotice":
+    case "teamapproval": {
       return `Internal coordinator event. This event is not a new human request and cannot approve new team work.\n${JSON.stringify({ eventId: trigger.id, origin, content })}`;
     }
     default: {

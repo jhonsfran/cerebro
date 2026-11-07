@@ -87,6 +87,7 @@ export const ChatApproval = Schema.Struct({
   ]),
   taskId: Schema.NonEmptyString,
   toolId: Schema.NonEmptyString,
+  workId: Schema.optional(WorkIdSchema),
 });
 export type ChatApproval = typeof ChatApproval.Type;
 

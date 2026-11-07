@@ -14,8 +14,14 @@ import type { AuthorityService } from "../../packages/contracts/src/authority-se
 import { Denied, Unavailable } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { AgentDefinition } from "../../packages/contracts/src/session.ts";
-import { normalizeTeamCommand } from "../../packages/contracts/src/team-events.ts";
-import type { TeamEventReturn } from "../../packages/contracts/src/team-events.ts";
+import {
+  TeamApprovalDecisionSchema,
+  normalizeTeamCommand,
+} from "../../packages/contracts/src/team-events.ts";
+import type {
+  TeamApprovalRequest,
+  TeamEventReturn,
+} from "../../packages/contracts/src/team-events.ts";
 import type {
   TeamReportDelivery,
   WorkReport,
@@ -69,6 +75,32 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
         });
       },
     };
+  }
+
+  protected override approvalTransport() {
+    return {
+      check: (request: TeamApprovalRequest) => {
+        if (JSON.stringify(request).length > 120_000) {
+          throw new Error("The fixture approval request is too large.");
+        }
+      },
+      send: async (request: TeamApprovalRequest) => {
+        await this.ctx.storage.put(
+          `fixture-approval:${request.approval.approvalId}`,
+          request
+        );
+      },
+    };
+  }
+
+  protected override async resolveApprovalDecision(request: Request) {
+    const decision = Schema.decodeUnknownSync(TeamApprovalDecisionSchema, {
+      onExcessProperty: "error",
+    })(await request.json());
+    if (this.ctx.id.name !== workCellName(decision.work.key)) {
+      throw new Denied({ code: "unauthorized", reason: "Wrong team fixture." });
+    }
+    return decision;
   }
 
   protected override reportTransport(work: WorkAdmission) {
@@ -323,6 +355,16 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
               let answer = fauxAssistantMessage(`Answer from ${role}.`);
               if (
                 index === 0 &&
+                work.goal.includes("approve-write") &&
+                toolResults.length === 0
+              ) {
+                answer = fauxAssistantMessage(
+                  fauxToolCall("team_write", {}, { id: "write-call" }),
+                  { stopReason: "toolUse" }
+                );
+              }
+              if (
+                index === 0 &&
                 work.goal.includes("delegate") &&
                 toolResults.length === 0
               ) {
@@ -511,7 +553,7 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
           },
           {
             definition: writeTool,
-            description: "Must be unavailable.",
+            description: "Change fixture data.",
             parameters: Type.Object({}),
             requiresApproval: true,
           },
@@ -586,6 +628,9 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
     const path = new URL(request.url).pathname;
     if (path === "/inspect") {
       const pi = await this.harness.pi();
+      const requests = await this.ctx.storage.list<TeamApprovalRequest>({
+        prefix: "fixture-approval:",
+      });
       const outbox = await pi.snapshot(TeamReportOutbox, piContext());
       return Response.json({
         outbox,
@@ -602,6 +647,12 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
               "SELECT COUNT(*) AS count FROM cerebro_approval"
             )
             .toArray()[0]?.count ?? 0,
+        approvalStates: this.ctx.storage.sql
+          .exec<{ approvalId: string; state: string }>(
+            "SELECT approval_id AS approvalId, state FROM cerebro_approval ORDER BY rowid"
+          )
+          .toArray(),
+        approvalRequests: [...requests.values()],
       });
     }
     if (path === "/revoke") {

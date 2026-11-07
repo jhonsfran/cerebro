@@ -210,6 +210,7 @@ export const InspectionEvent = Schema.Struct({
     "timer",
     "teamreport",
     "teamnotice",
+    "teamapproval",
   ]),
   actor: Schema.Literals(["human", "routine", "internal"]),
   route: identifier,

@@ -7,6 +7,7 @@ import {
 } from "@cerebro/contracts/failures";
 import type { PrincipalId } from "@cerebro/contracts/identity";
 import type { ContentDependencies } from "@cerebro/contracts/session";
+import type { ChatDecisionReceipt } from "@cerebro/contracts/session-service";
 import type {
   TeamCommandTransport,
   TeamEventCommand,
@@ -21,6 +22,7 @@ import {
 import type {
   AgentPin,
   BackgroundWorkSnapshot,
+  WorkAdmission,
   WorkId,
   WorkLimits,
 } from "@cerebro/contracts/work";
@@ -77,6 +79,11 @@ export interface CoordinationServices {
   readonly limits: WorkLimits;
   readonly contentDependencies: () => Promise<ContentDependencies>;
   readonly sendCommand: (command: TeamCommandTransport) => Promise<void>;
+  readonly decideApproval: (
+    work: WorkAdmission,
+    approvalId: string,
+    decision: "allow" | "deny"
+  ) => Promise<ChatDecisionReceipt>;
 }
 const HEARTBEAT_MS = 5000;
 const MAX_QUEUED_WORK = 16;
@@ -438,7 +445,7 @@ export const createCoordinatorWork = (options: {
           callers: ["model"],
           name: "start_team",
           description:
-            "Start bounded read-only team work for the current human request. Returns after durable admission while the team runs independently.",
+            "Start bounded team work for the current human request. The team uses this agent's tools and asks the person before a tool that needs approval. Returns after durable admission while the team runs independently.",
           parameters: Type.Object({
             goal: Type.String({ minLength: 1, maxLength: 16_000 }),
           }),
