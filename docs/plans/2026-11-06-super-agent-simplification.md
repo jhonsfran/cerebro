@@ -18,9 +18,12 @@ Five architectural changes move `codex/persistent-super-agent` closer to the two
 - [x] Phase D: Keep the audit trail throughout the run.
 - [x] Phase E: Verify and hand back. On `7d5a3b5`: types 13 of 13, lint clean, contracts 53 pass, channels 167 pass, runtime 311 node and 2 bun pass, integration 74 pass.
 
+- [x] Unit 8: Teams run the agent's full tool set; a Team tool that needs approval asks the coordinator conversation, the person decides in web chat, and the decision returns to the Team. The coordinator keeps coordination tools only. Commit `6b935c5`.
+
 ## Found during the run
 
-- After the persistent primary cutover, nothing in the product runs a connector tool that writes. The coordinator advertises no connector tools and Teams filter to read-only tools, so the approval machinery has no production caller. The proposed next unit lets Teams run the agent's full tool set and routes approvals to the coordinator conversation.
+- After the persistent primary cutover, nothing in the product ran a connector tool that writes: the coordinator advertised no connector tools and Teams filtered to read-only tools. Unit 8 gives Teams the agent's full tool set with approvals in the coordinator chat; the coordinator stays coordination-only by the user's decision.
+- The run bumped stored document versions and rejects older ones. That also rejects data created by this branch's own earlier commits, so a local stack that ran the branch before this run fails to open conversations with `Unsupported conversation bindings version`.
 - The trigger drain places input with `Conversation.submit`, which skips the harness's own wake job. `7d5a3b5` keeps the coordination alarm armed while Pi holds unsettled input.
 - Batching depends on model latency: triggers merge only when they arrive while a turn runs.
 - A run that ends on a provider error leaves queued follow-ups in Pi's inbox until the next input arrives. The deleted delivery task had the same exposure.
