@@ -2,11 +2,13 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 
+import { botEventId } from "../../packages/contracts/src/bot-events.ts";
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import type {
   ChatActivity,
   ChatSnapshot,
 } from "../../packages/contracts/src/session-service.ts";
+import { digestToolArguments } from "../../packages/contracts/src/tools.ts";
 import {
   addressFor,
   boot,
@@ -41,6 +43,16 @@ const userTexts = (snapshot: ChatSnapshot): readonly string[] =>
   snapshot.messages
     .filter((message) => message.role === "user")
     .map((message) => message.text);
+const occurrenceRequestId = async (
+  address: EventAddress,
+  reminderId: string,
+  occurrence: number
+): Promise<string> =>
+  botEventId(address, {
+    kind: "savedtimer",
+    occurrenceId: String(occurrence),
+    scheduleId: `saved-timer:${await digestToolArguments([address, reminderId])}`,
+  });
 const note = async (
   address: EventAddress,
   operationId: string,
@@ -144,15 +156,27 @@ journey(
         )
     );
     const stored = await capabilityStorage(stack, address);
-    assert.equal(
-      stored.submissions.filter(
-        (submission) => submission.requestId === `${receipt.id}:${runAt}`
-      ).length,
-      1
+    assert.deepEqual(
+      stored.submissions.map((submission) => [
+        submission.requestId,
+        submission.status,
+      ]),
+      [[await occurrenceRequestId(address, receipt.id, runAt), "done"]]
     );
-    assert.equal(
-      userTexts(final).filter((value) => value.includes("ONCE_MARKER")).length,
-      1
+    assert.deepEqual(
+      (await capabilityProvider(stack)).model
+        .filter(
+          (call) =>
+            call.scope === address.sessionId && call.completedAt !== undefined
+        )
+        .map((call) => [call.purpose, call.prompt]),
+      [["turn", "Saved authorized instruction.\nCAP_REMINDER_DUE ONCE_MARKER"]]
+    );
+    assert.deepEqual(
+      final.messages
+        .filter((message) => message.role === "assistant")
+        .map((message) => message.text),
+      ["CAP_ACK"]
     );
     assert.deepEqual(await chatControl(stack, address, command), receipt);
     assert.equal(
@@ -222,17 +246,18 @@ journey(
         )
     );
     const stored = await capabilityStorage(stack, address);
-    assert.equal(
-      stored.submissions.filter(
-        (value) => value.requestId === `${receipt.id}:${runAt}`
-      ).length,
-      1
-    );
-    assert.equal(
-      stored.submissions.filter(
-        (value) => value.requestId === `${receipt.id}:${runAt + 60_000}`
-      ).length,
-      1
+    assert.deepEqual(
+      stored.submissions.map((submission) => [
+        submission.requestId,
+        submission.status,
+      ]),
+      [
+        [await occurrenceRequestId(address, receipt.id, runAt), "done"],
+        [
+          await occurrenceRequestId(address, receipt.id, runAt + 60_000),
+          "done",
+        ],
+      ]
     );
     await chatControl(stack, address, {
       kind: "cancel-schedule",

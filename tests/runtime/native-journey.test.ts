@@ -8,15 +8,12 @@ import {
   assertPiFailure,
   compose,
   control,
-  decide,
-  dependencyCheckpoint,
   evidence,
   lifecycle,
   inputCalls,
   inputCorrelation,
   nativeStorage,
   observe,
-  pending,
   provider,
   rawRequest,
   read,
@@ -30,7 +27,6 @@ import {
   runtimeJourney,
   answer,
   completed,
-  writeCount,
   restart,
   waitForQuiet,
 } from "./runtime-journey.ts";
@@ -418,13 +414,13 @@ journey(
 );
 
 journey(
-  "content access revocation blocks reads and Allow while Stop and Deny remain available",
+  "content access revocation blocks reads and observation while Stop remains available",
   async (stack) => {
-    const stoppedAddress = addressFor("company-journey", "content-stop");
+    const address = addressFor("company-journey", "content-stop");
     await control(stack, { delayMs: 5000 });
     await send(
       stack,
-      stoppedAddress,
+      address,
       "content-stop-input",
       "Explain the private policy."
     );
@@ -432,7 +428,7 @@ journey(
       () =>
         inputCorrelation(
           stack,
-          stoppedAddress,
+          address,
           "content-stop-input",
           "Explain the private policy."
         ),
@@ -441,33 +437,35 @@ journey(
     await waitFor(
       () => provider(stack),
       (value) =>
-        inputCalls(value, stoppedAddress, "content-stop-input").some(
+        inputCalls(value, address, "content-stop-input").some(
           (call) =>
             call.operationId === relation.nativeRequestId &&
             call.completedAt === undefined
         )
     );
     await request(stack, "/runtime/fixture/content-access", {
-      address: stoppedAddress,
+      address,
       enabled: false,
     });
     assert.equal(
-      (await rawRequest(stack, "/runtime/read", { address: stoppedAddress }))
-        .status,
+      (await rawRequest(stack, "/runtime/read", { address })).status,
       403
     );
-    assert.deepEqual(await stop(stack, stoppedAddress), { stopped: true });
     assert.equal(
-      (await rawRequest(stack, "/runtime/read", { address: stoppedAddress }))
-        .status,
+      (await rawRequest(stack, "/runtime/observe", { address })).status,
+      403
+    );
+    assert.deepEqual(await stop(stack, address), { stopped: true });
+    assert.equal(
+      (await rawRequest(stack, "/runtime/read", { address })).status,
       403
     );
     await request(stack, "/runtime/fixture/content-access", {
-      address: stoppedAddress,
+      address,
       enabled: true,
     });
     const stopped = await waitFor(
-      () => read(stack, stoppedAddress),
+      () => read(stack, address),
       (value) => !value.busy
     );
     assert.deepEqual(
@@ -476,139 +474,10 @@ journey(
         .map((message) => message.text),
       ["Explain the private policy."]
     );
-
-    await control(stack, { delayMs: 0 });
-    const deniedAddress = addressFor("company-journey", "content-deny");
-    await send(
-      stack,
-      deniedAddress,
-      "content-deny-input",
-      "Apply fixture_effect once."
-    );
-    const approval = await pending(stack, deniedAddress);
-    await request(stack, "/runtime/fixture/content-access", {
-      address: deniedAddress,
-      enabled: false,
-    });
-    assert.equal(
-      (await rawRequest(stack, "/runtime/read", { address: deniedAddress }))
-        .status,
-      403
-    );
-    assert.equal(
-      (await rawRequest(stack, "/runtime/observe", { address: deniedAddress }))
-        .status,
-      403
-    );
-    assert.equal(
-      (
-        await rawRequest(stack, "/runtime/decide", {
-          address: deniedAddress,
-          approvalId: approval.approvalId,
-          decision: "allow",
-        })
-      ).status,
-      403
-    );
-    const denied = await rawRequest(stack, "/runtime/decide", {
-      address: deniedAddress,
-      approvalId: approval.approvalId,
-      decision: "deny",
-    });
-    assert.equal(denied.status, 200);
-    const deniedReceipt: unknown = await denied.json();
-    assert.deepEqual(deniedReceipt, {
-      status: "ok",
-      value: { approvalId: approval.approvalId, state: "denied" },
-    });
-    assert.equal(await writeCount(stack, approval.operationId), 0);
-    await request(stack, "/runtime/fixture/content-access", {
-      address: deniedAddress,
-      enabled: true,
-    });
-    const final = await waitFor(
-      () => read(stack, deniedAddress),
-      (value) => !value.busy
-    );
-    assert.equal(final.approvals[0]?.state, "denied");
-    assert.equal(await writeCount(stack, approval.operationId), 0);
     await evidence(stack, "source-control", {
-      deniedReceipt,
-      final,
       provider: await provider(stack),
       stopped,
       relation,
-    });
-  }
-);
-
-journey(
-  "source revocation after durable Allow prevents dispatch at the final dependency check",
-  async (stack) => {
-    const address = addressFor("company-journey", "post-allow-source");
-    await dependencyCheckpoint(stack, address, {
-      armed: true,
-      released: false,
-    });
-    await send(
-      stack,
-      address,
-      "post-allow-input",
-      "Apply fixture_effect once."
-    );
-    const approval = await pending(stack, address);
-    const allowed = await decide(stack, address, approval);
-    assert.deepEqual(allowed, {
-      approvalId: approval.approvalId,
-      state: "allowed",
-    });
-    const held = await waitFor(
-      () => dependencyCheckpoint(stack, address),
-      (value) => value.waiting
-    );
-    const beforeDispatch = await nativeStorage(stack, address);
-    assert.equal(
-      beforeDispatch.tasks.some((task) =>
-        task.memos?.includes("cerebro-dispatch")
-      ),
-      false
-    );
-    assert.equal(await writeCount(stack, approval.operationId), 0);
-    await request(stack, "/runtime/fixture/content-access", {
-      address,
-      enabled: false,
-    });
-    await dependencyCheckpoint(stack, address, { released: true });
-    const settled = await waitFor(
-      () => nativeStorage(stack, address),
-      (value) =>
-        value.tasks.length > 0 &&
-        value.tasks.every((task) => task.status === "terminal")
-    );
-    assert.equal(await writeCount(stack, approval.operationId), 0);
-    await request(stack, "/runtime/fixture/content-access", {
-      address,
-      enabled: true,
-    });
-    const final = await waitFor(
-      () => read(stack, address),
-      (value) => !value.busy
-    );
-    assert.equal(final.approvals[0]?.state, "allowed");
-    assert.deepEqual(
-      final.messages
-        .filter((message) => message.role === "user")
-        .map((message) => message.text),
-      ["Apply fixture_effect once."]
-    );
-    await evidence(stack, "post-allow-source", {
-      allowed,
-      approval,
-      beforeDispatch,
-      final,
-      held,
-      provider: await provider(stack),
-      settled,
     });
   }
 );

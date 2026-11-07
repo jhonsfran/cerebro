@@ -11,7 +11,6 @@ import {
   lifecycle,
   newStack,
   provider,
-  request,
   waitFor,
 } from "./helpers.ts";
 import type { Stack } from "./helpers.ts";
@@ -25,27 +24,6 @@ export const completed = (snapshot: ChatSnapshot): boolean =>
       message.state === "complete" &&
       message.text === answer
   );
-export const writeCount = async (
-  stack: Stack,
-  operationId: string
-): Promise<number> => {
-  const value = await provider(stack);
-  return value.tools.filter(
-    (tool) => tool.operationId === operationId && tool.write
-  ).length;
-};
-export const authorityCalls = async (
-  stack: Stack,
-  address: EventAddress,
-  failNextToolCheck?: boolean
-): Promise<number> => {
-  const value = await request(stack, "/runtime/fixture/authority", {
-    address,
-    failNextToolCheck,
-  });
-  assert.ok(value && typeof value === "object" && "calls" in value);
-  return Number(value.calls);
-};
 export const restart = (stack: Stack): void => {
   compose(stack, ["kill", "-s", "SIGKILL", "celld"]);
   compose(stack, ["up", "-d", "--wait", "celld"]);

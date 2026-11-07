@@ -1,11 +1,9 @@
-import { Type } from "@earendil-works/pi-ai";
 import type { Model } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { createProvider } from "@earendil-works/pi-ai/models";
 import { Effect } from "effect";
 import { z } from "zod";
 
-import type { ToolAuditEvent } from "../../packages/contracts/src/audit.ts";
 import { enforceDecision } from "../../packages/contracts/src/authority-service.ts";
 import type { AuthorityService } from "../../packages/contracts/src/authority-service.ts";
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
@@ -22,7 +20,7 @@ import {
   isExecutionContextActiveAt,
 } from "../../packages/contracts/src/identity.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/identity.ts";
-import { createApprovalStore } from "../../packages/runtime/src/approval-store.ts";
+import type { ToolExecutor } from "../../packages/contracts/src/tool-service.ts";
 import { sendToAuditSink } from "../../packages/runtime/src/audit-sink.ts";
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
 import { SessionAgent as NativeSessionAgent } from "../../packages/runtime/src/session-agent.ts";
@@ -30,11 +28,6 @@ import type {
   MetadataTransaction,
   SessionHostConfiguration,
 } from "../../packages/runtime/src/session-agent.ts";
-import { createConnectorExecutor } from "../../packages/tools/src/connector.ts";
-import {
-  bindRegisteredTool,
-  createToolRegistry,
-} from "../../packages/tools/src/registry.ts";
 import type { TestEnvironment } from "./environment.ts";
 import { capabilityFixture } from "./fixture-capabilities.ts";
 import { fixtureAddress, requestAddress } from "./fixture-contracts.ts";
@@ -56,24 +49,11 @@ const ownerContext = (
     state: "active",
   },
 });
-const receiptOutput = z.object({
-  operationId: z.string(),
-  receipt: z.string(),
-  value: z.string(),
-});
 const identityTuple = z.tuple([z.string(), z.string()]);
-const auditName = z.enum(["tool.dispatched", "tool.settled"]).optional();
-interface AuditFault {
-  readonly fail: ToolAuditEvent["name"] | null;
-  readonly hold: ToolAuditEvent["name"] | null;
-}
 
 export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
   private readonly instanceId = crypto.randomUUID();
   private readonly configurations = new Map<string, SessionHostConfiguration>();
-  private readonly authorityCallCounts = new Map<string, number>();
-  private readonly failingToolChecks = new Set<string>();
-  private readonly auditFaults = new Map<string, AuditFault>();
 
   private identity() {
     const [organizationId, principalId] = identityTuple.parse(
@@ -247,13 +227,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
         address.sessionId
       );
       this.ctx.storage.sql.exec(
-        "CREATE TABLE IF NOT EXISTS fixture_tool_dependency_gate (session_id TEXT PRIMARY KEY, armed INTEGER NOT NULL, released INTEGER NOT NULL, waiting INTEGER NOT NULL)"
-      );
-      this.ctx.storage.sql.exec(
-        "INSERT OR IGNORE INTO fixture_tool_dependency_gate VALUES (?, 0, 1, 0)",
-        address.sessionId
-      );
-      this.ctx.storage.sql.exec(
         "CREATE TABLE IF NOT EXISTS fixture_commit_failure (session_id TEXT NOT NULL, operation_id TEXT NOT NULL, instance_id TEXT NOT NULL, committed_seq INTEGER NOT NULL, PRIMARY KEY(session_id, operation_id))"
       );
       this.ctx.storage.sql.exec(
@@ -262,38 +235,19 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
       this.ctx.storage.sql.exec(
         "CREATE TABLE IF NOT EXISTS fixture_model_request (session_id TEXT NOT NULL, operation_id TEXT NOT NULL, body TEXT NOT NULL)"
       );
-      this.ctx.storage.sql.exec(
-        "CREATE TABLE IF NOT EXISTS fixture_audit_event (session_id TEXT NOT NULL, body TEXT NOT NULL)"
-      );
-      const sendAudit = sendToAuditSink(this.env.AUDIT_SINK);
       const context = ownerContext(address, identity.principalId);
       const agent = {
         agentId: address.agentId,
-        enabledToolIds: address.agentId.includes("no-tools")
-          ? []
-          : ["fixture_effect"],
+        enabledToolIds: [],
         grants: [],
-        instructions: `Agent scope ${address.agentId}. Use the fixture_effect tool once for each user input.`,
+        instructions: `Agent scope ${address.agentId}.`,
         model: "fixture/slice-1",
         organizationId: address.organizationId,
         version: address.agentId.endsWith("-v2") ? 2 : 1,
       };
       const authority: AuthorityService = {
-        evaluate: (request) => {
-          this.authorityCallCounts.set(
-            address.sessionId,
-            (this.authorityCallCounts.get(address.sessionId) ?? 0) + 1
-          );
-          if (
-            this.failingToolChecks.has(address.sessionId) &&
-            request.resource.kind === "tool"
-          ) {
-            this.failingToolChecks.delete(address.sessionId);
-            return Effect.fail(
-              new Unavailable({ reason: "Fixture authority is unavailable." })
-            );
-          }
-          return Effect.sync(() =>
+        evaluate: (request) =>
+          Effect.sync(() =>
             this.enabled(address) &&
             request.context.actor.id === context.actor.id &&
             isExecutionContextActiveAt(
@@ -307,65 +261,20 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
                   policyVersion: "fixture-v1",
                   reason: "Current fixture access denied.",
                 }
-          );
-        },
+          ),
         require: (request, options) =>
           Effect.flatMap(authority.evaluate(request, options), (decision) =>
             enforceDecision(request, Date.now(), decision)
           ),
       };
-      const registry = createToolRegistry(
-        [
-          {
-            definition: {
-              connectorId: "fixture",
-              effect: "write",
-              id: id.tool("fixture_effect"),
-              version: "1",
-            },
-            description: `Apply one controlled fixture write for ${address.agentId}.`,
-            input: z.object({ value: z.string() }),
-            maxInputBytes: 4096,
-            maxOutputBytes: 4096,
-            output: receiptOutput,
-            requiresApproval: true,
-            retryMode: "at-most-once",
-            target: {
-              kind: "http-write",
-              method: "POST",
-              url: `${this.env.FIXTURE_URL}/effects`,
-            },
-          },
-        ],
-        "local"
-      );
-      const [entry] = registry.list();
-      if (!entry) {
-        return yield* Effect.fail(
-          new Unavailable({ reason: "Fixture tool is missing." })
-        );
-      }
-      const definition = yield* bindRegisteredTool(entry);
-      const approvals = createApprovalStore(
-        this.ctx.storage,
-        address.sessionId
-      );
-      const executor = createConnectorExecutor({
-        credentials: () =>
-          Promise.resolve({
-            headers: { Authorization: "Bearer fixture-connector-key" },
-            secrets: [],
-          }),
-        fetch: async (input, init) => {
-          const response = await fetch(input, init);
-          if (this.env.FAIL_FIRST_EFFECT === "1" && response.ok) {
-            await response.text();
-            throw new Error("Injected lost write response");
-          }
-          return response;
-        },
-        registry,
-      });
+      const executor: ToolExecutor = {
+        execute: () =>
+          Effect.fail(
+            new Unavailable({
+              reason: "The fixture registers no connector tools.",
+            })
+          ),
+      };
       const model: Model<"openai-completions"> = {
         api: "openai-completions",
         baseUrl: `${this.env.FIXTURE_URL}/v1`,
@@ -394,33 +303,7 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
       const configuration: SessionHostConfiguration = {
         address,
         agent,
-        audit: (event) =>
-          Effect.gen({ self: this }, function* fixtureAudit() {
-            const fault = this.auditFaults.get(address.sessionId);
-            if (fault?.fail === event.name) {
-              return yield* Effect.fail(
-                new Unavailable({ reason: "Fixture audit sink is down." })
-              );
-            }
-            yield* sendAudit(event);
-            yield* Effect.tryPromise({
-              catch: () =>
-                new Unavailable({ reason: "Fixture audit log failed." }),
-              try: async () => {
-                await metadata(() => {
-                  this.ctx.storage.sql.exec(
-                    "INSERT INTO fixture_audit_event VALUES (?, ?)",
-                    address.sessionId,
-                    JSON.stringify(event)
-                  );
-                });
-                await this.ctx.storage.sync();
-              },
-            });
-            if (fault?.hold === event.name) {
-              yield* Effect.never;
-            }
-          }),
+        audit: sendToAuditSink(this.env.AUDIT_SINK),
         authority,
         contentDependencies: () =>
           Promise.resolve({ sourceIds: [], toolIds: [] }),
@@ -505,76 +388,8 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
           model,
           provider,
         },
-        toolDependencies: () =>
-          Effect.gen({ self: this }, function* fixtureToolDependencies() {
-            const [gate] = this.ctx.storage.sql
-              .exec<{ armed: number; released: number; waiting: number }>(
-                "SELECT armed, released, waiting FROM fixture_tool_dependency_gate WHERE session_id=?",
-                address.sessionId
-              )
-              .toArray();
-            if (
-              gate?.armed === 1 &&
-              approvals.all().some((approval) => approval.state === "allowed")
-            ) {
-              yield* Effect.tryPromise({
-                catch: () =>
-                  new Unavailable({
-                    reason: "Fixture dependency gate update failed.",
-                  }),
-                try: () =>
-                  metadata(() => {
-                    this.ctx.storage.sql.exec(
-                      "UPDATE fixture_tool_dependency_gate SET armed=0, waiting=1 WHERE session_id=?",
-                      address.sessionId
-                    );
-                  }),
-              });
-              yield* Effect.tryPromise({
-                catch: () =>
-                  new Unavailable({
-                    reason: "Fixture dependency gate flush failed.",
-                  }),
-                try: () => this.ctx.storage.sync(),
-              });
-              while (true) {
-                const [current] = this.ctx.storage.sql
-                  .exec<{ released: number }>(
-                    "SELECT released FROM fixture_tool_dependency_gate WHERE session_id=?",
-                    address.sessionId
-                  )
-                  .toArray();
-                if (current?.released === 1) {
-                  break;
-                }
-                yield* Effect.sleep(50);
-              }
-              yield* Effect.tryPromise({
-                catch: () =>
-                  new Unavailable({
-                    reason: "Fixture dependency gate update failed.",
-                  }),
-                try: () =>
-                  metadata(() => {
-                    this.ctx.storage.sql.exec(
-                      "UPDATE fixture_tool_dependency_gate SET waiting=0 WHERE session_id=?",
-                      address.sessionId
-                    );
-                  }),
-              });
-            }
-            return { sourceIds: [], toolIds: [definition.id] };
-          }),
-        tools: agent.enabledToolIds.length
-          ? [
-              {
-                definition,
-                description: entry.description,
-                parameters: Type.Object({ value: Type.String() }),
-                requiresApproval: true,
-              },
-            ]
-          : [],
+        toolDependencies: () => Effect.succeed({ sourceIds: [], toolIds: [] }),
+        tools: [],
       };
       this.configurations.set(address.sessionId, configuration);
       return configuration;
@@ -644,20 +459,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
     };
   }
 
-  private setFailingToolCheck(
-    address: EventAddress,
-    enabled: boolean | undefined
-  ): void {
-    if (enabled === undefined) {
-      return;
-    }
-    if (enabled) {
-      this.failingToolChecks.add(address.sessionId);
-    } else {
-      this.failingToolChecks.delete(address.sessionId);
-    }
-  }
-
   private async setAccess(
     request: Request,
     path: string,
@@ -687,30 +488,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
     return Response.json({
       status: "ok",
       value: { enabled: input.enabled },
-    });
-  }
-
-  private async auditFixture(
-    request: Request,
-    address: EventAddress
-  ): Promise<Response> {
-    const input = z
-      .object({ fail: auditName, hold: auditName })
-      .parse(await request.json());
-    const current = this.auditFaults.get(address.sessionId);
-    this.auditFaults.set(address.sessionId, {
-      fail: input.fail ?? current?.fail ?? null,
-      hold: input.hold ?? current?.hold ?? null,
-    });
-    return Response.json({
-      status: "ok",
-      value: this.ctx.storage.sql
-        .exec<{ body: string }>(
-          "SELECT body FROM fixture_audit_event WHERE session_id=? ORDER BY rowid",
-          address.sessionId
-        )
-        .toArray()
-        .map((row) => JSON.parse(row.body)),
     });
   }
 
@@ -790,61 +567,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
               })),
           },
         });
-      }
-      if (path === "/fixture/dependency-checkpoint") {
-        const input = z
-          .object({
-            armed: z.boolean().optional(),
-            released: z.boolean().optional(),
-          })
-          .parse(await request.json());
-        await this.fixtureTransaction(() => {
-          if (input.armed !== undefined) {
-            this.ctx.storage.sql.exec(
-              "UPDATE fixture_tool_dependency_gate SET armed=?, waiting=0 WHERE session_id=?",
-              input.armed ? 1 : 0,
-              address.sessionId
-            );
-          }
-          if (input.released !== undefined) {
-            this.ctx.storage.sql.exec(
-              "UPDATE fixture_tool_dependency_gate SET released=? WHERE session_id=?",
-              input.released ? 1 : 0,
-              address.sessionId
-            );
-          }
-        });
-        await this.ctx.storage.sync();
-        const [gate] = this.ctx.storage.sql
-          .exec<{ armed: number; released: number; waiting: number }>(
-            "SELECT armed, released, waiting FROM fixture_tool_dependency_gate WHERE session_id=?",
-            address.sessionId
-          )
-          .toArray();
-        return Response.json({
-          status: "ok",
-          value: {
-            armed: gate?.armed === 1,
-            released: gate?.released === 1,
-            waiting: gate?.waiting === 1,
-          },
-        });
-      }
-      if (path === "/fixture/authority") {
-        const input = z
-          .object({ failNextToolCheck: z.boolean().optional() })
-          .parse(await request.json());
-        this.setFailingToolCheck(address, input.failNextToolCheck);
-        return Response.json({
-          status: "ok",
-          value: {
-            calls: this.authorityCallCounts.get(address.sessionId) ?? 0,
-            failNextToolCheck: this.failingToolChecks.has(address.sessionId),
-          },
-        });
-      }
-      if (path === "/fixture/audit") {
-        return await this.auditFixture(request, address);
       }
       if (path === "/fixture/native-storage") {
         return Response.json({

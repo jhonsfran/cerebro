@@ -6,7 +6,6 @@
   "vars": {
     "DATABASE_URL": "postgres://runtime:runtime-local-only@postgres:5432/runtime",
     "FIXTURE_URL": "http://fixture:8090",
-    "FAIL_FIRST_EFFECT": "0",
     "TRACE_NATIVE": "0",
   },
   "durable_objects": {

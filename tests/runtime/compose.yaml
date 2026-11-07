@@ -71,7 +71,6 @@ services:
       AWS_ACCESS_KEY_ID: runtime
       AWS_SECRET_ACCESS_KEY: runtime-local-only-storage-secret
       AWS_REGION: us-east-1
-      RUNTIME_FAIL_FIRST_EFFECT: ${RUNTIME_FAIL_FIRST_EFFECT:-0}
       RUNTIME_TRACE_NATIVE: ${RUNTIME_TRACE_NATIVE:-0}
     depends_on:
       postgres:

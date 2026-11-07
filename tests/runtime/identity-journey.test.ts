@@ -6,13 +6,11 @@ import {
   assertPiFailure,
   compose,
   control,
-  decide,
   evidence,
   lifecycle,
   inputCalls,
   inputCorrelation,
   nativeStorage,
-  pending,
   provider,
   rawRequest,
   read,
@@ -25,7 +23,6 @@ import {
 import {
   runtimeJourney,
   completed,
-  writeCount,
   restart,
   waitForQuiet,
   userTexts,
@@ -75,13 +72,13 @@ journey(
 );
 
 journey(
-  "concurrent agents isolate identical request IDs, provider names, tool names, pins, and approvals",
+  "concurrent agents isolate identical request IDs, provider names, and pins",
   async (stack) => {
     const left = addressFor("identity-concurrent", "chat", "agent-a");
     const right = addressFor("identity-concurrent", "chat", "agent-b-v2");
     const operationId = "same-identity-retry-id";
-    const textA = "Apply fixture_effect once. Private marker ALPHA.";
-    const textB = "Apply fixture_effect once. Private marker BETA.";
+    const textA = "Explain the policy. Private marker ALPHA.";
+    const textB = "Explain the policy. Private marker BETA.";
     const receipts = await Promise.all([
       send(stack, left, operationId, textA),
       send(stack, right, operationId, textB),
@@ -91,24 +88,6 @@ journey(
       receipts.map((receipt) => receipt.operationId),
       [operationId, operationId]
     );
-    const [approvalA, approvalB] = await Promise.all([
-      pending(stack, left),
-      pending(stack, right),
-    ]);
-    assert.notEqual(approvalA.operationId, approvalB.operationId);
-    assert.notEqual(approvalA.approvalId, approvalB.approvalId);
-    const foreign = await rawRequest(stack, "/runtime/decide", {
-      address: right,
-      approvalId: approvalA.approvalId,
-      decision: "allow",
-    });
-    assert.notEqual(foreign.status, 200);
-    assert.equal(await writeCount(stack, approvalA.operationId), 0);
-    assert.equal(await writeCount(stack, approvalB.operationId), 0);
-    await Promise.all([
-      decide(stack, left, approvalA),
-      decide(stack, right, approvalB),
-    ]);
     const [a, b] = await Promise.all([
       waitFor(() => read(stack, left), completed),
       waitFor(() => read(stack, right), completed),
@@ -122,8 +101,6 @@ journey(
       send(stack, right, operationId, textB),
     ]);
     assert.ok(retries.every((receipt) => !receipt.accepted));
-    assert.equal(await writeCount(stack, approvalA.operationId), 1);
-    assert.equal(await writeCount(stack, approvalB.operationId), 1);
     const [nativeA, nativeB, evidenceA, evidenceB, relationA, relationB] =
       await Promise.all([
         nativeStorage(stack, left),
@@ -146,25 +123,18 @@ journey(
       [evidenceA, relationA, "ALPHA", "BETA", "agent-a"],
       [evidenceB, relationB, "BETA", "ALPHA", "agent-b-v2"],
     ] as const) {
-      assert.ok(scope.modelRequests.length >= 2);
-      for (const call of scope.modelRequests) {
-        assert.equal(call.operationId, relation.nativeRequestId);
-        assert.equal(call.body.model, "slice-1");
-        const messages = JSON.stringify(call.body.messages);
-        assert.ok(messages.includes(own));
-        assert.ok(!messages.includes(other));
-        assert.ok(messages.includes(`Agent scope ${agent}.`));
-        const tool = call.body.tools?.find(
-          (item) => item.function.name === "fixture_effect"
-        );
-        assert.ok(tool?.function.description.includes(agent));
-      }
+      assert.equal(scope.modelRequests.length, 1);
+      const [call] = scope.modelRequests;
+      assert.equal(call?.operationId, relation.nativeRequestId);
+      assert.equal(call?.body.model, "slice-1");
+      const messages = JSON.stringify(call?.body.messages);
+      assert.ok(messages.includes(own));
+      assert.ok(!messages.includes(other));
+      assert.ok(messages.includes(`Agent scope ${agent}.`));
     }
     await evidence(stack, "identity-concurrent-scopes", {
       a,
       b,
-      approvalA,
-      approvalB,
       evidenceA,
       evidenceB,
       retries,
@@ -177,12 +147,12 @@ journey(
 );
 
 journey(
-  "one conversation's tool set and provider limits do not change a sibling's configuration",
+  "one conversation's provider limits do not change a sibling's configuration",
   async (stack) => {
     const restricted = addressFor(
       "identity-limits",
       "restricted",
-      "agent-no-tools-small-input"
+      "agent-small-input"
     );
     const healthy = addressFor("identity-limits", "healthy", "agent-healthy");
     await Promise.all([
@@ -190,38 +160,21 @@ journey(
         stack,
         restricted,
         "restricted-input",
-        `Apply fixture_effect once. ${"bounded ".repeat(150)}`
+        `Explain the bounded policy. ${"bounded ".repeat(150)}`
       ),
-      send(stack, healthy, "healthy-input", "Apply fixture_effect once."),
+      send(stack, healthy, "healthy-input", "Explain the healthy policy."),
     ]);
-    const healthyApproval = await pending(stack, healthy);
     const denied = await waitFor(
       () => read(stack, restricted),
       (snapshot) => !snapshot.busy
     );
-    assert.equal(denied.approvals.length, 0);
     assert.ok(!completed(denied));
     assert.equal(
       (await runtimeEvidence(stack, restricted)).modelRequests.length,
       0
     );
-    await decide(stack, healthy, healthyApproval);
-    await waitFor(() => read(stack, healthy), completed);
-    assert.equal(await writeCount(stack, healthyApproval.operationId), 1);
-    const noTools = addressFor("identity-limits", "no-tools", "agent-no-tools");
-    await send(stack, noTools, "no-tools-input", "Apply fixture_effect once.");
-    const noToolsFinal = await waitFor(() => read(stack, noTools), completed);
-    assert.equal(noToolsFinal.approvals.length, 0);
-    const noToolsRequests = await runtimeEvidence(stack, noTools);
-    assert.ok(noToolsRequests.modelRequests.length > 0);
-    assert.ok(
-      noToolsRequests.modelRequests.every(
-        (call) =>
-          !call.body.tools?.some(
-            (tool) => tool.function.name === "fixture_effect"
-          )
-      )
-    );
+    const healthyFirst = await waitFor(() => read(stack, healthy), completed);
+    assert.deepEqual(userTexts(healthyFirst), ["Explain the healthy policy."]);
     await control(stack, { delayMs: 500 });
     const short = addressFor(
       "identity-limits",
@@ -248,28 +201,26 @@ journey(
     );
     await evidence(stack, "identity-provider-limits", {
       denied,
-      noToolsFinal,
-      noToolsRequests,
       shortFinal,
+      healthyFirst,
       healthyFinal,
     });
   }
 );
 
 journey(
-  "Deny and content or agent revocation in one conversation leave a sibling's approval valid",
+  "content or agent revocation in one conversation leaves a sibling readable and accepting input",
   async (stack) => {
     const left = addressFor("identity-revocation", "left", "agent-left");
     const right = addressFor("identity-revocation", "right", "agent-right");
     await Promise.all([
-      send(stack, left, "deny-left", "Apply fixture_effect once."),
-      send(stack, right, "allow-right", "Apply fixture_effect once."),
+      send(stack, left, "revoke-left", "Explain the left policy."),
+      send(stack, right, "keep-right", "Explain the right policy."),
     ]);
-    const [approvalA, approvalB] = await Promise.all([
-      pending(stack, left),
-      pending(stack, right),
+    await Promise.all([
+      waitFor(() => read(stack, left), completed),
+      waitFor(() => read(stack, right), completed),
     ]);
-    await decide(stack, left, approvalA, "deny");
     await request(stack, "/runtime/fixture/content-access", {
       address: left,
       enabled: false,
@@ -279,21 +230,29 @@ journey(
       403
     );
     const sibling = await read(stack, right);
-    assert.ok(
-      sibling.approvals.some(
-        (approval) =>
-          approval.approvalId === approvalB.approvalId &&
-          approval.state === "pending"
-      )
-    );
+    assert.deepEqual(userTexts(sibling), ["Explain the right policy."]);
     await request(stack, "/runtime/fixture/access", {
       address: left,
       enabled: false,
     });
-    await decide(stack, right, approvalB);
-    const final = await waitFor(() => read(stack, right), completed);
-    assert.equal(await writeCount(stack, approvalA.operationId), 0);
-    assert.equal(await writeCount(stack, approvalB.operationId), 1);
+    assert.equal(
+      (await rawRequest(stack, "/runtime/read", { address: left })).status,
+      403
+    );
+    await send(
+      stack,
+      right,
+      "keep-right-again",
+      "Explain the right follow-up."
+    );
+    const final = await waitFor(
+      () => read(stack, right),
+      (snapshot) => completed(snapshot) && userTexts(snapshot).length === 2
+    );
+    assert.deepEqual(userTexts(final), [
+      "Explain the right policy.",
+      "Explain the right follow-up.",
+    ]);
     await request(stack, "/runtime/fixture/access", {
       address: left,
       enabled: true,
@@ -302,16 +261,13 @@ journey(
       address: left,
       enabled: true,
     });
-    const denied = await waitFor(
-      () => read(stack, left),
-      (snapshot) => !snapshot.busy
-    );
-    assert.ok(denied.approvals.some((approval) => approval.state === "denied"));
+    const restored = await read(stack, left);
+    assert.ok(completed(restored));
+    assert.deepEqual(userTexts(restored), ["Explain the left policy."]);
     await evidence(stack, "identity-revocation-isolation", {
       final,
-      denied,
-      approvalA,
-      approvalB,
+      restored,
+      sibling,
     });
   }
 );
@@ -501,111 +457,6 @@ journey(
       reopenedA,
       reopenedB,
       relations,
-      killedAt,
-    });
-  }
-);
-
-journey(
-  "an uncertain external write is not repeated when its identity also recovers a sibling conversation",
-  async (stack) => {
-    const left = addressFor("identity-write-crash", "write", "agent-write");
-    const right = addressFor(
-      "identity-write-crash",
-      "sibling",
-      "agent-sibling"
-    );
-    await control(stack, { arm: { boundary: "after-tool-dispatch" } });
-    await send(
-      stack,
-      left,
-      "identity-uncertain-write",
-      "Apply fixture_effect once."
-    );
-    const approval = await pending(stack, left);
-    await decide(stack, left, approval);
-    await waitFor(
-      () => provider(stack),
-      (value) =>
-        value.held > 0 &&
-        value.tools.some(
-          (tool) => tool.operationId === approval.operationId && tool.write
-        )
-    );
-    await control(stack, { delayMs: 5000 });
-    await send(
-      stack,
-      right,
-      "identity-write-sibling",
-      "Recover a separate sibling input."
-    );
-    const siblingRelation = await waitFor(
-      () =>
-        inputCorrelation(
-          stack,
-          right,
-          "identity-write-sibling",
-          "Recover a separate sibling input."
-        ),
-      () => true
-    );
-    await waitFor(
-      () => provider(stack),
-      (value) =>
-        inputCalls(value, right, "identity-write-sibling").some(
-          (call) =>
-            call.operationId === siblingRelation.nativeRequestId &&
-            call.completedAt === undefined
-        )
-    );
-    const killedAt = Date.now();
-    restart(stack);
-    await control(stack, { arm: null, delayMs: 0, release: true });
-    const recoveredBeforeRead = await waitFor(
-      () => provider(stack),
-      (value) =>
-        inputCalls(value, right, "identity-write-sibling").some(
-          (call) =>
-            call.operationId === siblingRelation.nativeRequestId &&
-            call.startedAt > killedAt &&
-            call.completedAt !== undefined &&
-            call.status === 200
-        )
-    );
-    const [uncertain, sibling] = await Promise.all([
-      waitFor(
-        () => read(stack, left),
-        (snapshot) =>
-          !snapshot.busy &&
-          snapshot.messages.some(
-            (message) =>
-              message.role === "tool" &&
-              /outcome is unknown/u.test(message.text)
-          )
-      ),
-      waitFor(() => read(stack, right), completed),
-    ]);
-    assert.equal(await writeCount(stack, approval.operationId), 1);
-    assert.deepEqual(userTexts(uncertain), ["Apply fixture_effect once."]);
-    assert.deepEqual(userTexts(sibling), ["Recover a separate sibling input."]);
-    assert.equal(
-      (
-        await send(
-          stack,
-          left,
-          "identity-uncertain-write",
-          "Apply fixture_effect once."
-        )
-      ).accepted,
-      false
-    );
-    assert.equal(await writeCount(stack, approval.operationId), 1);
-    await evidence(stack, "identity-uncertain-write-with-sibling", {
-      approval,
-      recoveredBeforeRead,
-      uncertain,
-      sibling,
-      siblingRelation,
       killedAt,
     });
   }

@@ -15,13 +15,9 @@ import { BotEventAddressSchema } from "../../packages/contracts/src/bot-events.t
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/identity.ts";
-import type {
-  ChatApproval,
-  ChatControl as ChatControlValue,
-} from "../../packages/contracts/src/session-service.ts";
+import type { ChatControl as ChatControlValue } from "../../packages/contracts/src/session-service.ts";
 import {
   ChatControlReceipt,
-  ChatDecisionReceipt,
   ChatObservation,
   ChatReceipt,
   ChatSnapshot,
@@ -63,7 +59,6 @@ export interface Stack {
   readonly project: string;
   readonly apiPort: number;
   readonly fixturePort: number;
-  readonly failFirstEffect?: boolean;
   readonly traceNative?: boolean;
 }
 const freePort = async (): Promise<number> => {
@@ -77,11 +72,9 @@ const freePort = async (): Promise<number> => {
 };
 export const newStack = async (
   name: string,
-  failFirstEffect = false,
   traceNative = false
 ): Promise<Stack> => ({
   apiPort: await freePort(),
-  failFirstEffect,
   fixturePort: await freePort(),
   project: `cerebro-s1-native-host-${name}-${randomUUID().slice(0, 8)}`,
   traceNative,
@@ -174,7 +167,6 @@ export const compose = (stack: Stack, args: readonly string[]): string => {
         ...process.env,
         COMPOSE_PROJECT_NAME: stack.project,
         RUNTIME_API_PORT: String(stack.apiPort),
-        RUNTIME_FAIL_FIRST_EFFECT: stack.failFirstEffect ? "1" : "0",
         RUNTIME_FIXTURE_PORT: String(stack.fixturePort),
         RUNTIME_SOURCE_SHA: sourceForStack(stack).identity,
         RUNTIME_TRACE_NATIVE: stack.traceNative ? "1" : "0",
@@ -538,33 +530,6 @@ export const capabilityStorage = async (stack: Stack, address: EventAddress) =>
       ),
     })
   )(await request(stack, "/runtime/fixture/capabilities/storage", { address }));
-export const pending = async (
-  stack: Stack,
-  address: EventAddress
-): Promise<ChatApproval> => {
-  const snapshot = await waitFor(
-    () => read(stack, address),
-    (value) => value.approvals.some((approval) => approval.state === "pending")
-  );
-  const approval = snapshot.approvals.find(
-    (value) => value.state === "pending"
-  );
-  assert.ok(approval);
-  return approval;
-};
-export const decide = async (
-  stack: Stack,
-  address: EventAddress,
-  approval: ChatApproval,
-  decision: "allow" | "deny" = "allow"
-): Promise<ChatDecisionReceipt> =>
-  Schema.decodeUnknownSync(ChatDecisionReceipt)(
-    await request(stack, "/runtime/decide", {
-      address,
-      approvalId: approval.approvalId,
-      decision,
-    })
-  );
 export const observe = async (stack: Stack, address: EventAddress) => {
   const abort = new AbortController();
   const response = await fetch(
@@ -735,23 +700,6 @@ export const inputCorrelation = async (
   assert.equal(relation.eventId, relation.nativeRequestId);
   return relation;
 };
-export const dependencyCheckpoint = async (
-  stack: Stack,
-  address: EventAddress,
-  state: { readonly armed?: boolean; readonly released?: boolean } = {}
-) =>
-  Schema.decodeUnknownSync(
-    Schema.Struct({
-      armed: Schema.Boolean,
-      released: Schema.Boolean,
-      waiting: Schema.Boolean,
-    })
-  )(
-    await request(stack, "/runtime/fixture/dependency-checkpoint", {
-      address,
-      ...state,
-    })
-  );
 export const evidence = async (
   stack: Stack,
   name: string,
