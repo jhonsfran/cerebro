@@ -6,6 +6,7 @@ import type { ExecutionContext } from "./identity.ts";
 import {
   AgentPinSchema,
   EventAddressSchema,
+  TEAM_MAX_TURNS,
   WorkAdmissionSchema,
   WorkIdSchema,
 } from "./work.ts";
@@ -20,7 +21,9 @@ const count = Schema.Number.check(
   Schema.isGreaterThanOrEqualTo(0)
 );
 const time = Schema.Number.check(Schema.isFinite());
-const slot = Schema.Literals([0, 1, 2]);
+const slot = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: TEAM_MAX_TURNS })
+);
 export const InspectionText = Schema.Struct({
   text: Schema.String.check(Schema.isMaxLength(INSPECTION_TEXT_LENGTH)),
   truncated: Schema.Boolean,
@@ -107,6 +110,7 @@ export const InspectionRole = Schema.Struct({
   running: Schema.Boolean,
   ownerTaskId: Schema.NullOr(identifier),
   requestId: Schema.NullOr(identifier),
+  startedAt: Schema.NullOr(time),
   usage: InspectionTokens,
   toolUsage: InspectionTokens,
   attempt: Schema.NullOr(count),
@@ -132,7 +136,9 @@ export const InspectionTeam = Schema.Union([
     sealed: Schema.Boolean,
     requestReservations: count,
     requestLimit: count,
-    roles: Schema.Array(InspectionRole).check(Schema.isMaxLength(3)),
+    roles: Schema.Array(InspectionRole).check(
+      Schema.isMaxLength(1 + TEAM_MAX_TURNS)
+    ),
     result: Schema.NullOr(InspectionResult),
     monetaryCost: Schema.Literal("unavailable"),
   }),

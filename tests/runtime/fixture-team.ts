@@ -32,11 +32,10 @@ import type { MetadataTransaction } from "../../packages/runtime/src/session-age
 import { TeamAgent } from "../../packages/runtime/src/team-agent.ts";
 import {
   teamRoleDefinition,
-  teamRoleSlots,
+  teamRoleKind,
 } from "../../packages/runtime/src/team-composition.ts";
-import type { ReadTeamRoleImports } from "../../packages/runtime/src/team-content.ts";
 import { TeamReportOutbox } from "../../packages/runtime/src/team-report-outbox.ts";
-import type { TeamRoleConfiguration } from "../../packages/runtime/src/team-role.ts";
+import type { ConfigureTeamRole } from "../../packages/runtime/src/team-role.ts";
 import { TeamState } from "../../packages/runtime/src/team-state.ts";
 import type { TestEnvironment } from "./environment.ts";
 
@@ -115,11 +114,10 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
     return wire;
   }
 
-  protected override async configure(
+  protected override configure(
     work: WorkAdmission,
-    metadata: MetadataTransaction,
-    importedDependencies: ReadTeamRoleImports
-  ): Promise<readonly TeamRoleConfiguration[]> {
+    metadata: MetadataTransaction
+  ): Promise<ConfigureTeamRole> {
     this.activeWork = work;
     this.ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS team_fixture_flags (name TEXT PRIMARY KEY, enabled INTEGER NOT NULL)"
@@ -191,298 +189,350 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
         },
       ],
     };
-    return await Promise.all(
-      teamRoleSlots(work).map(
-        ({ index, role: roleKind }): TeamRoleConfiguration => {
-          const role = roleKind === "lead" ? "lead" : `worker-${index}`;
-          const address = {
-            organizationId: work.key.organizationId,
-            agentId: work.agent.agentId,
-            conversationId: id.conversation(`team-${role}`),
-            sessionId: id.session(`team-${role}`),
-          };
-          const context = {
-            actor: {
-              id: work.key.ownerPrincipalId,
-              kind: "human" as const,
-              organizationId: work.key.organizationId,
-              state: "active" as const,
-            },
-          };
-          let revokedMemory: readonly string[] = [];
-          if (index > 0 && work.goal.includes("worker-narrow")) {
-            revokedMemory = ["source-A", "source-B"];
-          } else if (index === 0 && work.goal.includes("lead-narrow")) {
-            revokedMemory = ["source-B"];
-          }
-          const agent = teamRoleDefinition(published, roleKind);
-          const enabled = () =>
-            this.ctx.storage.sql
-              .exec<{ enabled: number }>(
-                "SELECT enabled FROM team_fixture_flags WHERE name='source'"
-              )
-              .toArray()[0]?.enabled === 1;
-          const current: AuthorityService = {
-            evaluate: (request) =>
-              Effect.succeed(
-                request.resource.kind === "memory" &&
-                  revokedMemory.includes(request.resource.id)
-                  ? {
-                      decision: "deny",
-                      reason: "Current grants exclude this source.",
-                      policyVersion: "current",
-                    }
-                  : { decision: "allow", policyVersion: "current" }
-              ),
-            require: (request, options) =>
-              current
-                .evaluate(request, options)
-                .pipe(
-                  Effect.flatMap((decision) =>
-                    enforceDecision(request, Date.now(), decision)
-                  )
-                ),
-          };
-          const authority = createAgentAuthority({
-            current,
-            enabledModels: [agent.model],
-            tools: [readTool, writeTool],
-            entitlements: {
-              check: () =>
-                Promise.resolve({ status: "ok", value: { decision: "allow" } }),
-            },
-            checkSession: () =>
-              enabled()
-                ? Effect.void
-                : Effect.fail(
-                    new Denied({ code: "revoked", reason: "Source revoked." })
-                  ),
-          });
-          const sources = createSourceDependencyStore(
-            this.ctx.storage,
-            address.sessionId,
-            metadata,
-            true
-          );
-          const dependencies = async () => {
-            const imported = await importedDependencies(index);
-            return {
-              sourceIds: [
-                ...new Set([...(await sources.all()), ...imported.sourceIds]),
-              ],
-              toolIds: [
-                ...new Set([...(await sources.tools()), ...imported.toolIds]),
-              ],
-            };
-          };
-          const record = (kind: string, body: unknown) =>
-            metadata(() => {
-              this.ctx.storage.sql.exec(
-                "INSERT INTO team_fixture_io VALUES (?, ?, ?, ?)",
-                kind,
-                role,
-                Date.now(),
-                JSON.stringify(body)
-              );
-            });
-          const faux = fauxProvider({
-            provider: "shared-physical-provider",
-            models: [{ id: agent.model }],
-          });
-          const physical = faux.provider;
-          const provider = {
-            ...physical,
-            streamSimple: (
-              model: Parameters<typeof physical.streamSimple>[0],
-              transcript: Parameters<typeof physical.streamSimple>[1],
-              options?: Parameters<typeof physical.streamSimple>[2]
-            ) => {
-              const stream = createAssistantMessageEventStream();
-              const pump = async () => {
-                try {
-                  if (!options?.fetch) {
-                    throw new Error("The guarded fetch is missing.");
-                  }
-                  await options.fetch("https://fixture.invalid/model", {
-                    method: "POST",
-                    body: JSON.stringify({
-                      model: model.id,
-                      instructions: transcript.systemPrompt,
-                      messages: transcript.messages,
-                      tools: transcript.tools,
-                    }),
-                    signal: options.signal,
-                  });
-                  if (work.goal.includes("retry-loop")) {
-                    await options.fetch("https://fixture.invalid/model-retry", {
-                      method: "POST",
-                      body: "{}",
-                      signal: options.signal,
-                    });
-                  }
-                  const toolResults = transcript.messages.filter(
-                    (message) => message.role === "toolResult"
-                  );
-                  let answer = fauxAssistantMessage(`Answer from ${role}.`);
-                  if (
-                    index === 0 &&
-                    work.goal.includes("delegate") &&
-                    toolResults.length === 0
-                  ) {
-                    answer = fauxAssistantMessage(
-                      [
-                        fauxToolCall(
-                          "delegate_worker",
-                          { text: "Worker question one." },
-                          { id: "worker-one" }
-                        ),
-                        fauxToolCall(
-                          "delegate_worker",
-                          { text: "Worker question two." },
-                          { id: "worker-two" }
-                        ),
-                      ],
-                      { stopReason: "toolUse" }
-                    );
-                  }
-                  if (
-                    work.goal.includes("retry-loop") ||
-                    ((work.goal.includes("hold-tool") ||
-                      work.goal.includes("hold-for-revoke")) &&
-                      toolResults.length === 0) ||
-                    (index > 0 && toolResults.length === 0)
-                  ) {
-                    answer = fauxAssistantMessage(
-                      fauxToolCall(
-                        "team_read",
-                        {},
-                        { id: `read-${toolResults.length}` }
-                      ),
-                      { stopReason: "toolUse" }
-                    );
-                  }
-                  if (
-                    work.goal.includes("tool-fanout") &&
-                    toolResults.length === 0
-                  ) {
-                    answer = fauxAssistantMessage(
-                      Array.from({ length: 61 }, (_, callIndex) =>
-                        fauxToolCall(
-                          "team_read",
-                          {},
-                          { id: `fanout-${callIndex}` }
-                        )
-                      ),
-                      { stopReason: "toolUse" }
-                    );
-                  }
-                  faux.setResponses([answer]);
-                  const source = physical.streamSimple(
-                    model,
-                    transcript,
-                    options
-                  );
-                  for await (const event of source) {
-                    stream.push(event);
-                  }
-                  stream.end(await source.result());
-                } catch {
-                  const error = fauxAssistantMessage("", {
-                    stopReason: "error",
-                  });
-                  stream.push({ type: "error", reason: "error", error });
-                  stream.end(error);
+    const configureRole: ConfigureTeamRole = (index, importedDependencies) => {
+      const roleKind = teamRoleKind(work, index);
+      const role = roleKind === "lead" ? "lead" : `worker-${index}`;
+      const address = {
+        organizationId: work.key.organizationId,
+        agentId: work.agent.agentId,
+        conversationId: id.conversation(`team-${role}`),
+        sessionId: id.session(`team-${role}`),
+      };
+      const context = {
+        actor: {
+          id: work.key.ownerPrincipalId,
+          kind: "human" as const,
+          organizationId: work.key.organizationId,
+          state: "active" as const,
+        },
+      };
+      let revokedMemory: readonly string[] = [];
+      if (index > 0 && work.goal.includes("worker-narrow")) {
+        revokedMemory = ["source-A", "source-B"];
+      } else if (index === 0 && work.goal.includes("lead-narrow")) {
+        revokedMemory = ["source-B"];
+      }
+      const agent = teamRoleDefinition(published, roleKind);
+      const enabled = () =>
+        this.ctx.storage.sql
+          .exec<{ enabled: number }>(
+            "SELECT enabled FROM team_fixture_flags WHERE name='source'"
+          )
+          .toArray()[0]?.enabled === 1;
+      const current: AuthorityService = {
+        evaluate: (request) =>
+          Effect.succeed(
+            request.resource.kind === "memory" &&
+              revokedMemory.includes(request.resource.id)
+              ? {
+                  decision: "deny",
+                  reason: "Current grants exclude this source.",
+                  policyVersion: "current",
                 }
-              };
-              void pump();
-              return stream;
-            },
+              : { decision: "allow", policyVersion: "current" }
+          ),
+        require: (request, options) =>
+          current
+            .evaluate(request, options)
+            .pipe(
+              Effect.flatMap((decision) =>
+                enforceDecision(request, Date.now(), decision)
+              )
+            ),
+      };
+      const authority = createAgentAuthority({
+        current,
+        enabledModels: [agent.model],
+        tools: [readTool, writeTool],
+        entitlements: {
+          check: () =>
+            Promise.resolve({ status: "ok", value: { decision: "allow" } }),
+        },
+        checkSession: () =>
+          enabled()
+            ? Effect.void
+            : Effect.fail(
+                new Denied({ code: "revoked", reason: "Source revoked." })
+              ),
+      });
+      const sources = createSourceDependencyStore(
+        this.ctx.storage,
+        address.sessionId,
+        metadata,
+        true
+      );
+      const dependencies = async () => {
+        const imported = await importedDependencies();
+        return {
+          sourceIds: [
+            ...new Set([...(await sources.all()), ...imported.sourceIds]),
+          ],
+          toolIds: [
+            ...new Set([...(await sources.tools()), ...imported.toolIds]),
+          ],
+        };
+      };
+      const record = (kind: string, body: unknown) =>
+        metadata(() => {
+          this.ctx.storage.sql.exec(
+            "INSERT INTO team_fixture_io VALUES (?, ?, ?, ?)",
+            kind,
+            role,
+            Date.now(),
+            JSON.stringify(body)
+          );
+        });
+      const faux = fauxProvider({
+        provider: "shared-physical-provider",
+        models: [{ id: agent.model }],
+      });
+      const physical = faux.provider;
+      const provider = {
+        ...physical,
+        streamSimple: (
+          model: Parameters<typeof physical.streamSimple>[0],
+          transcript: Parameters<typeof physical.streamSimple>[1],
+          options?: Parameters<typeof physical.streamSimple>[2]
+        ) => {
+          const stream = createAssistantMessageEventStream();
+          const pump = async () => {
+            try {
+              if (!options?.fetch) {
+                throw new Error("The guarded fetch is missing.");
+              }
+              await options.fetch("https://fixture.invalid/model", {
+                method: "POST",
+                body: JSON.stringify({
+                  model: model.id,
+                  instructions: transcript.systemPrompt,
+                  messages: transcript.messages,
+                  tools: transcript.tools,
+                }),
+                signal: options.signal,
+              });
+              if (work.goal.includes("retry-loop")) {
+                await options.fetch("https://fixture.invalid/model-retry", {
+                  method: "POST",
+                  body: "{}",
+                  signal: options.signal,
+                });
+              }
+              const toolResults = transcript.messages.filter(
+                (message) => message.role === "toolResult"
+              );
+              let answer = fauxAssistantMessage(`Answer from ${role}.`);
+              if (
+                index === 0 &&
+                work.goal.includes("delegate") &&
+                toolResults.length === 0
+              ) {
+                answer = fauxAssistantMessage(
+                  [
+                    fauxToolCall(
+                      "delegate_worker",
+                      { text: "Worker question one." },
+                      { id: "worker-one" }
+                    ),
+                    fauxToolCall(
+                      "delegate_worker",
+                      { text: "Worker question two." },
+                      { id: "worker-two" }
+                    ),
+                  ],
+                  { stopReason: "toolUse" }
+                );
+              }
+              if (
+                work.goal.includes("retry-loop") ||
+                ((work.goal.includes("hold-tool") ||
+                  work.goal.includes("hold-for-revoke")) &&
+                  toolResults.length === 0) ||
+                (index > 0 && toolResults.length === 0)
+              ) {
+                answer = fauxAssistantMessage(
+                  fauxToolCall(
+                    "team_read",
+                    {},
+                    { id: `read-${toolResults.length}` }
+                  ),
+                  { stopReason: "toolUse" }
+                );
+              }
+              if (
+                work.goal.includes("tool-fanout") &&
+                toolResults.length === 0
+              ) {
+                answer = fauxAssistantMessage(
+                  Array.from({ length: 61 }, (_, callIndex) =>
+                    fauxToolCall("team_read", {}, { id: `fanout-${callIndex}` })
+                  ),
+                  { stopReason: "toolUse" }
+                );
+              }
+              faux.setResponses([answer]);
+              const source = physical.streamSimple(model, transcript, options);
+              for await (const event of source) {
+                stream.push(event);
+              }
+              stream.end(await source.result());
+            } catch {
+              const error = fauxAssistantMessage("", {
+                stopReason: "error",
+              });
+              stream.push({ type: "error", reason: "error", error });
+              stream.end(error);
+            }
           };
-          return {
-            address,
-            agent,
-            authority,
-            ownerContext: () => Effect.succeed(context),
-            audit: () => Effect.void,
-            contentDependencies: dependencies,
-            importDependencies: sources.importDependencies,
-            checkDependencies: (owner, requested, options) =>
-              Effect.gen(function* checkRoleDependencies() {
-                const saved = yield* Effect.tryPromise({
-                  catch: () =>
-                    new Unavailable({ reason: "Dependencies unavailable." }),
-                  try: dependencies,
-                });
-                const combined = Schema.decodeUnknownSync(
-                  BoundedContentDependenciesSchema
-                )({
-                  sourceIds: [
-                    ...new Set([...saved.sourceIds, ...requested.sourceIds]),
-                  ],
-                  toolIds: [
-                    ...new Set([...saved.toolIds, ...requested.toolIds]),
-                  ],
-                });
-                yield* Effect.all(
-                  combined.sourceIds.map((sourceId) =>
-                    authority.require(
-                      {
-                        action: "read",
-                        address,
-                        context: owner,
-                        pinnedAgent: agent,
-                        resource: {
-                          kind: "memory",
-                          id: sourceId,
-                          organizationId: work.key.organizationId,
-                        },
-                      },
-                      options
-                    )
-                  )
+          void pump();
+          return stream;
+        },
+      };
+      return Promise.resolve({
+        address,
+        agent,
+        authority,
+        ownerContext: () => Effect.succeed(context),
+        audit: () => Effect.void,
+        contentDependencies: dependencies,
+        importDependencies: sources.importDependencies,
+        checkDependencies: (owner, requested, options) =>
+          Effect.gen(function* checkRoleDependencies() {
+            const saved = yield* Effect.tryPromise({
+              catch: () =>
+                new Unavailable({ reason: "Dependencies unavailable." }),
+              try: dependencies,
+            });
+            const combined = Schema.decodeUnknownSync(
+              BoundedContentDependenciesSchema
+            )({
+              sourceIds: [
+                ...new Set([...saved.sourceIds, ...requested.sourceIds]),
+              ],
+              toolIds: [...new Set([...saved.toolIds, ...requested.toolIds])],
+            });
+            yield* Effect.all(
+              combined.sourceIds.map((sourceId) =>
+                authority.require(
+                  {
+                    action: "read",
+                    address,
+                    context: owner,
+                    pinnedAgent: agent,
+                    resource: {
+                      kind: "memory",
+                      id: sourceId,
+                      organizationId: work.key.organizationId,
+                    },
+                  },
+                  options
+                )
+              )
+            );
+            yield* Effect.all(
+              combined.toolIds.map((toolId) =>
+                authority.require(
+                  {
+                    action: "read",
+                    address,
+                    context: owner,
+                    pinnedAgent: agent,
+                    tool: readTool,
+                    resource: {
+                      kind: "tool",
+                      id: toolId,
+                      organizationId: work.key.organizationId,
+                    },
+                  },
+                  options
+                )
+              )
+            );
+          }),
+        provider: {
+          model: faux.getModel(),
+          provider,
+          maxInputBytes: 200_000,
+          maxResponseBytes: 200_000,
+          deadlineMs: 30_000,
+          fetch: async (_input, init) => {
+            await record("model", {
+              body: init?.body,
+              instanceId: this.instanceId,
+            });
+            if (work.goal.includes("hold-model")) {
+              const signal = init?.signal;
+              const blocked = Promise.withResolvers<boolean>();
+              const abort = async () => {
+                await record("model-aborted", {});
+                blocked.reject(new Error("Aborted"));
+              };
+              if (signal?.aborted) {
+                void abort();
+              } else {
+                signal?.addEventListener(
+                  "abort",
+                  () => {
+                    void abort();
+                  },
+                  { once: true }
                 );
-                yield* Effect.all(
-                  combined.toolIds.map((toolId) =>
-                    authority.require(
-                      {
-                        action: "read",
-                        address,
-                        context: owner,
-                        pinnedAgent: agent,
-                        tool: readTool,
-                        resource: {
-                          kind: "tool",
-                          id: toolId,
-                          organizationId: work.key.organizationId,
-                        },
-                      },
-                      options
-                    )
-                  )
-                );
-              }),
-            provider: {
-              model: faux.getModel(),
-              provider,
-              maxInputBytes: 200_000,
-              maxResponseBytes: 200_000,
-              deadlineMs: 30_000,
-              fetch: async (_input, init) => {
-                await record("model", {
-                  body: init?.body,
-                  instanceId: this.instanceId,
-                });
-                if (work.goal.includes("hold-model")) {
-                  const signal = init?.signal;
+              }
+              await blocked.promise;
+            }
+            if (work.goal.includes("hold-for-revoke")) {
+              const blocked = Promise.withResolvers<boolean>();
+              this.modelHolds.set(role, () => blocked.resolve(true));
+              await blocked.promise;
+            }
+            return new Response("model fixture");
+          },
+        },
+        toolDependencies: () =>
+          Effect.tryPromise({
+            catch: () =>
+              new Unavailable({ reason: "Tool provenance unavailable." }),
+            try: async () => {
+              const sourceIds = index > 0 ? [id.source("source-B")] : [];
+              await metadata(() =>
+                sources.importDependencies({
+                  sourceIds,
+                  toolIds: [readTool.id],
+                })
+              );
+              return { sourceIds, toolIds: [readTool.id] };
+            },
+          }),
+        tools: [
+          {
+            definition: readTool,
+            description: "Read fixture data.",
+            parameters: Type.Object({}),
+            idempotent: true,
+          },
+          {
+            definition: writeTool,
+            description: "Must be unavailable.",
+            parameters: Type.Object({}),
+            requiresApproval: true,
+          },
+        ],
+        executor: {
+          execute: (_call, options) =>
+            Effect.tryPromise({
+              catch: () =>
+                new Unavailable({ reason: "Fixture tool unavailable." }),
+              try: async () => {
+                await record("tool", { deadlineAt: options.deadlineAt });
+                if (work.goal.includes("hold-tool")) {
                   const blocked = Promise.withResolvers<boolean>();
                   const abort = async () => {
-                    await record("model-aborted", {});
-                    blocked.reject(new Error("Aborted"));
+                    await record("tool-aborted", {});
+                    blocked.reject(new Error("Aborted tool"));
                   };
-                  if (signal?.aborted) {
+                  if (options.signal?.aborted) {
                     void abort();
                   } else {
-                    signal?.addEventListener(
+                    options.signal?.addEventListener(
                       "abort",
                       () => {
                         void abort();
@@ -492,82 +542,16 @@ export class TeamFixture extends TeamAgent<TestEnvironment> {
                   }
                   await blocked.promise;
                 }
-                if (work.goal.includes("hold-for-revoke")) {
-                  const blocked = Promise.withResolvers<boolean>();
-                  this.modelHolds.set(role, () => blocked.resolve(true));
-                  await blocked.promise;
-                }
-                return new Response("model fixture");
+                return {
+                  output:
+                    index > 0 ? "Private worker source-B." : "Lead source-A.",
+                };
               },
-            },
-            toolDependencies: () =>
-              Effect.tryPromise({
-                catch: () =>
-                  new Unavailable({ reason: "Tool provenance unavailable." }),
-                try: async () => {
-                  const sourceIds = index > 0 ? [id.source("source-B")] : [];
-                  await metadata(() =>
-                    sources.importDependencies({
-                      sourceIds,
-                      toolIds: [readTool.id],
-                    })
-                  );
-                  return { sourceIds, toolIds: [readTool.id] };
-                },
-              }),
-            tools: [
-              {
-                definition: readTool,
-                description: "Read fixture data.",
-                parameters: Type.Object({}),
-                idempotent: true,
-              },
-              {
-                definition: writeTool,
-                description: "Must be unavailable.",
-                parameters: Type.Object({}),
-                requiresApproval: true,
-              },
-            ],
-            executor: {
-              execute: (_call, options) =>
-                Effect.tryPromise({
-                  catch: () =>
-                    new Unavailable({ reason: "Fixture tool unavailable." }),
-                  try: async () => {
-                    await record("tool", { deadlineAt: options.deadlineAt });
-                    if (work.goal.includes("hold-tool")) {
-                      const blocked = Promise.withResolvers<boolean>();
-                      const abort = async () => {
-                        await record("tool-aborted", {});
-                        blocked.reject(new Error("Aborted tool"));
-                      };
-                      if (options.signal?.aborted) {
-                        void abort();
-                      } else {
-                        options.signal?.addEventListener(
-                          "abort",
-                          () => {
-                            void abort();
-                          },
-                          { once: true }
-                        );
-                      }
-                      await blocked.promise;
-                    }
-                    return {
-                      output:
-                        index > 0
-                          ? "Private worker source-B."
-                          : "Lead source-A.",
-                    };
-                  },
-                }),
-            },
-          };
-        }
-      )
-    );
+            }),
+        },
+      });
+    };
+    return Promise.resolve(configureRole);
   }
 
   protected override async submit(

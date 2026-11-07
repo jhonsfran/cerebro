@@ -146,12 +146,8 @@ test(
       assert.equal(active.team.cell, workCellName(target.key));
       assert.equal(active.team.sealed, false);
       assert.deepEqual(
-        active.team.roles.map((role) => role.slot),
-        [0, 1, 2]
-      );
-      assert.deepEqual(
-        active.team.roles.map((role) => role.role),
-        ["lead", "worker", "worker"]
+        active.team.roles.map((role) => [role.slot, role.role]),
+        [[0, "lead"]]
       );
       assert.ok(
         active.team.roles.every(
@@ -160,10 +156,7 @@ test(
             role.definition.agentVersion === installed.coordinator.version
         )
       );
-      assert.equal(
-        new Set(active.team.roles.map((role) => role.nativeId)).size,
-        3
-      );
+      assert.equal(active.team.roles[0]?.ownerTaskId, null);
       assert.ok(
         active.team.roles.every((role) => role.modelId === agentWireModel)
       );
@@ -172,8 +165,7 @@ test(
           active.team.requestReservations <= active.team.requestLimit
       );
       const pages = await Promise.all(
-        ([0, 1, 2] as const).map(async (role) => {
-          assert.ok(role === 0 || role === 1 || role === 2);
+        [0].map(async (role) => {
           const tasks = await inspect(route, {
             kind: "tasks",
             workId: target.key.workId,
@@ -386,7 +378,7 @@ test(
           {
             kind: "tasks",
             workId: first.key.workId,
-            role: 1,
+            role: 0,
             cursor: history.next,
           },
         ],

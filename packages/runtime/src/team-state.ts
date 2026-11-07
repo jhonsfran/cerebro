@@ -17,19 +17,17 @@ import type {
 } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
-export interface TeamWorker extends JsonObject {
+export interface TeamChild extends JsonObject {
   nativeId: ConversationId;
-  ownerTaskId: TaskId | null;
-  digest: string | null;
-  requestId: string | null;
-  inputDependencies: WorkAdmission["contentDependencies"] | null;
+  ownerTaskId: TaskId;
+  startedAt: number;
 }
 export interface TeamStateValue extends JsonObject {
   admission: WorkAdmission | null;
   phase: "waiting" | "running" | "cancelled" | "completed" | "failed";
   modelCalls: number;
   lead: ConversationId | null;
-  workers: TeamWorker[];
+  children: Record<string, TeamChild>;
   requests: string[];
   pending: Record<string, TaskId>;
   inputCount: number;
@@ -38,19 +36,37 @@ export interface TeamStateValue extends JsonObject {
 export const TeamState = defineDoc({
   kind: "cerebro.team",
   scope: "session",
-  version: 1,
+  version: 2,
   initial: (): TeamStateValue => ({
     admission: null,
     phase: "waiting",
     modelCalls: 0,
     lead: null,
-    workers: [],
+    children: {},
     requests: [],
     pending: {},
     inputCount: 0,
     report: null,
   }),
 });
+export const workerRequestId = (ownerTaskId: TaskId): string =>
+  `worker:${ownerTaskId}`;
+export const teamChildren = (state: TeamStateValue) =>
+  Object.entries(state.children)
+    .map(([index, child]) => ({ ...child, index: Number(index) }))
+    .toSorted((left, right) => left.index - right.index);
+export const teamRoleConversation = (
+  state: TeamStateValue,
+  index: number
+): ConversationId | undefined =>
+  (index === 0 ? state.lead : state.children[String(index)]?.nativeId) ??
+  undefined;
+export const teamConversationIds = (
+  state: TeamStateValue | undefined
+): ConversationId[] =>
+  state?.lead
+    ? [state.lead, ...teamChildren(state).map((child) => child.nativeId)]
+    : [];
 export const TeamCommandReceipts = defineDocFamily({
   kind: "cerebro.team-command",
   scope: "session",

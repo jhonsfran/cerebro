@@ -69,10 +69,12 @@ const inspectionSchema = Schema.Struct({
     modelCalls: Schema.Number,
     phase: Schema.String,
     lead: Schema.NullOr(Schema.Number),
-    workers: Schema.Array(
+    children: Schema.Record(
+      Schema.String,
       Schema.Struct({
         nativeId: Schema.Number,
-        ownerTaskId: Schema.NullOr(Schema.Number),
+        ownerTaskId: Schema.Number,
+        startedAt: Schema.Number,
       })
     ),
     report: Schema.NullOr(WorkReportSchema),
@@ -128,7 +130,7 @@ const modelRequests = (result: Awaited<ReturnType<typeof inspect>>) =>
     });
 
 journey(
-  "one agent composes a lead and workers that run its model behind their role overlays",
+  "one agent composes a lead and parallel child workers that run its model behind their role overlays",
   async (stack) => {
     const work = admission("delegate two workers");
     await command(stack, {
@@ -164,9 +166,10 @@ journey(
       sourceIds: ["source-A", "source-B"],
       toolIds: ["team_read"],
     });
+    assert.deepEqual(Object.keys(result.state.children).toSorted(), ["1", "2"]);
     assert.notEqual(
-      result.state.workers[0]?.nativeId,
-      result.state.workers[1]?.nativeId
+      result.state.children["1"]?.nativeId,
+      result.state.children["2"]?.nativeId
     );
     await evidence(stack, "team-role-models", { work, result });
   }

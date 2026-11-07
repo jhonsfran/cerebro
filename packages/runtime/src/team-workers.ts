@@ -1,27 +1,42 @@
 import { Denied, InvalidInput } from "@cerebro/contracts/failures";
-import { digestToolArguments } from "@cerebro/contracts/tools";
 import { BoundedContentDependenciesSchema } from "@cerebro/contracts/work";
 import { Type } from "@earendil-works/pi-ai";
-import { AssistantEntry, defineTool } from "@earendil-works/pi-durable";
-import type { Harness } from "@earendil-works/pi-durable";
+import {
+  AssistantEntry,
+  configure,
+  defineTool,
+} from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 import { importContentIn } from "./imported-content.ts";
 import type { TeamRole } from "./team-role.ts";
-import { TeamState, requireTeamRunning } from "./team-state.ts";
+import {
+  TeamState,
+  requireTeamRunning,
+  teamChildren,
+  workerRequestId,
+} from "./team-state.ts";
+
+export type TeamWorker = TeamRole & {
+  readonly agent: ReturnType<TeamRole["install"]>;
+};
+
+const failure = (text: string) => ({
+  isError: true,
+  output: [{ type: "text" as const, text }],
+});
 
 export const createTeamWorkerTool = (options: {
-  readonly pi: Harness;
   readonly lead: TeamRole;
-  readonly workers: readonly TeamRole[];
+  readonly worker: (index: number) => Promise<TeamWorker>;
+  readonly maxWorkers: number;
   readonly now: () => number;
 }) =>
   defineTool({
     callers: ["model"],
     name: "delegate_worker",
     replay: "safe",
-    description:
-      "Delegate one bounded read-only question to a worker. The team has at most two worker conversations and one shared model call budget.",
+    description: `Delegate one bounded read-only question to a new worker conversation and return its answer. Call it several times in one turn to run workers in parallel. The team runs at most ${options.maxWorkers} workers at once and shares one model call budget.`,
     parameters: Type.Object({
       text: Type.String({ minLength: 1, maxLength: 16_000 }),
     }),
@@ -30,98 +45,93 @@ export const createTeamWorkerTool = (options: {
         BoundedContentDependenciesSchema
       )(await options.lead.dependencies());
       await options.lead.permit(dependencies, context.abortSignal);
-      const digest = await digestToolArguments(text);
-      const selected = await api.commit(async (tx) => {
-        const current = await tx.doc(TeamState);
-        requireTeamRunning(current, options.now());
-        if (current.lead !== api.conversationId) {
+      const claim = await api.commit(async (tx) => {
+        const state = await tx.doc(TeamState);
+        const work = requireTeamRunning(state, options.now());
+        if (state.lead !== api.conversationId) {
           throw new Denied({
             code: "unauthorized",
             reason: "Only the team lead can delegate.",
           });
         }
-        const existingIndex = current.workers.findIndex(
-          (item) => item.ownerTaskId === api.taskId
+        const children = teamChildren(state);
+        const owned = children.find(
+          (child) => child.ownerTaskId === api.taskId
         );
-        let index = existingIndex;
-        if (index === -1) {
-          index = current.workers.findIndex(
-            (item) => item.ownerTaskId === null
-          );
+        if (owned) {
+          return { kind: "started" as const, child: owned };
         }
-        const worker = current.workers[index];
-        if (!worker) {
-          throw new InvalidInput({
-            reason: "The team worker limit was reached.",
-          });
+        const index = children.length + 1;
+        if (index > work.limits.maxTurns) {
+          return { kind: "exhausted" as const };
         }
-        if (existingIndex !== -1 && worker.digest !== digest) {
-          throw new InvalidInput({ reason: "The worker request changed." });
+        const owners = await Promise.all(
+          children.map((child) => tx.task(child.ownerTaskId))
+        );
+        const running = owners.filter(
+          (task) => task && task.state.status !== "terminal"
+        ).length;
+        if (running >= work.limits.maxWorkers) {
+          return { kind: "busy" as const, limit: work.limits.maxWorkers };
         }
-        if (worker.ownerTaskId === null) {
-          worker.ownerTaskId = api.taskId;
-          worker.digest = digest;
-          worker.requestId = `worker:${api.taskId}`;
-          worker.inputDependencies = dependencies;
-        }
-        return {
-          index,
-          worker: {
-            ...worker,
-            inputDependencies: worker.inputDependencies
-              ? {
-                  sourceIds: [...worker.inputDependencies.sourceIds],
-                  toolIds: [...worker.inputDependencies.toolIds],
-                }
-              : null,
-          },
+        const created = await tx.createConversation({
+          ownership: { kind: "task", taskId: api.taskId },
+        });
+        const child = {
+          nativeId: created.id,
+          ownerTaskId: api.taskId,
+          startedAt: options.now(),
         };
+        state.children[String(index)] = child;
+        return { kind: "started" as const, child: { ...child, index } };
       }, context);
-      const { worker, index } = selected;
-      const role = options.workers[index];
-      if (!role || !worker.inputDependencies) {
-        throw new InvalidInput({ reason: "The worker role is missing." });
+      if (claim.kind === "busy") {
+        return failure(
+          `The team already runs its maximum number of workers (${claim.limit}). Wait for their answers before delegating another question.`
+        );
       }
-      const { inputDependencies } = worker;
-      await role.permit(inputDependencies, context.abortSignal);
+      if (claim.kind === "exhausted") {
+        return failure(
+          "The team model call budget cannot start another worker. Combine the answers you have."
+        );
+      }
+      const { child } = claim;
+      const worker = await options.worker(child.index);
+      await worker.permit(dependencies, context.abortSignal);
       await api.commit(async (tx) => {
         requireTeamRunning(await tx.doc(TeamState), options.now());
-        await importContentIn(tx, worker.nativeId, inputDependencies);
+        await configure(tx, child.nativeId, worker.agent);
+        await importContentIn(tx, child.nativeId, dependencies);
       }, context);
-      await role.reconcileImports(worker.nativeId, {
+      await worker.reconcileImports(child.nativeId, {
         kind: "handoff",
         signal: context.abortSignal,
       });
-      if (!worker.requestId) {
-        throw new InvalidInput({ reason: "The worker request is missing." });
-      }
-      const native = await api.conversation(worker.nativeId, context);
+      const native = await api.conversation(child.nativeId, context);
       if (!native) {
         throw new InvalidInput({
           reason: "The worker conversation is missing.",
         });
       }
       const submission = await native.submit(
-        { type: "input", content: text, requestId: worker.requestId },
+        {
+          type: "input",
+          content: text,
+          requestId: workerRequestId(child.ownerTaskId),
+        },
         context
       );
       const settled = await submission.wait(context);
       if (settled.status !== "done" || settled.type !== "input") {
-        return {
-          isError: true,
-          output: [
-            { type: "text", text: "The worker did not complete its answer." },
-          ],
-        };
+        return failure("The worker did not complete its answer.");
       }
       const resultDependencies = Schema.decodeUnknownSync(
         BoundedContentDependenciesSchema
-      )(await role.dependencies());
-      await role.permit(resultDependencies, context.abortSignal);
+      )(await worker.dependencies());
+      await worker.permit(resultDependencies, context.abortSignal);
       await options.lead.permit(resultDependencies, context.abortSignal);
       const answer = await api.commit(async (tx) => {
-        const current = await tx.doc(TeamState);
-        requireTeamRunning(current, options.now());
+        requireTeamRunning(await tx.doc(TeamState), options.now());
         await importContentIn(tx, api.conversationId, resultDependencies);
         return await tx.entry(AssistantEntry, settled.answer);
       }, context);
@@ -138,15 +148,9 @@ export const createTeamWorkerTool = (options: {
               .join("\n")
           : "";
       if (!result || result.length > 16_000) {
-        return {
-          isError: true,
-          output: [
-            {
-              type: "text",
-              text: "The worker answer is unavailable within the output limit.",
-            },
-          ],
-        };
+        return failure(
+          "The worker answer is unavailable within the output limit."
+        );
       }
       return { output: [{ type: "text", text: result }] };
     },

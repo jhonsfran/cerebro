@@ -2,7 +2,11 @@ import { Effect, Schema } from "effect";
 
 import type { EventAddress } from "./events.ts";
 import type { BrandedId } from "./identity.ts";
-import type { ContentDependencies } from "./session.ts";
+import type {
+  AgentDefinition,
+  AgentTeamSection,
+  ContentDependencies,
+} from "./session.ts";
 
 const identifier = <Name extends string>() =>
   Schema.declare<BrandedId<Name>>(
@@ -44,15 +48,33 @@ export const SlackThreadSchema = Schema.Struct({
 });
 export type SlackThread = typeof SlackThreadSchema.Type;
 
+export const TEAM_MAX_TURNS = 256;
+const maxTurns = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: TEAM_MAX_TURNS })
+);
+const maxWorkers = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: 8 })
+);
+const timeoutMs = Schema.Int.check(
+  Schema.isBetween({ minimum: 1000, maximum: 4 * 60 * 60 * 1000 })
+);
 export const WorkLimitsSchema = Schema.Struct({
   maxTeams: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2 })),
-  maxTurns: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 8 })),
-  maxWorkers: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2 })),
-  timeoutMs: Schema.Int.check(
-    Schema.isBetween({ minimum: 1000, maximum: 600_000 })
-  ),
+  maxTurns,
+  maxWorkers,
+  timeoutMs,
 });
 export type WorkLimits = typeof WorkLimitsSchema.Type;
+
+export const AgentTeamSectionSchema = Schema.Struct({
+  limits: Schema.optionalKey(
+    Schema.Struct({
+      maxTurns: Schema.optionalKey(maxTurns),
+      maxWorkers: Schema.optionalKey(maxWorkers),
+      timeoutMs: Schema.optionalKey(timeoutMs),
+    })
+  ),
+}) satisfies Schema.Codec<AgentTeamSection>;
 
 export const TeamDefaultsSchema = Schema.Struct({
   maxTeams: WorkLimitsSchema.fields.maxTeams.pipe(
@@ -72,6 +94,15 @@ export type TeamDefaults = WorkLimits;
 export const DEFAULT_TEAM_LIMITS: TeamDefaults = Schema.decodeUnknownSync(
   TeamDefaultsSchema
 )({});
+export const resolveWorkLimits = (
+  agent: Pick<AgentDefinition, "team">,
+  defaults: TeamDefaults
+): WorkLimits => ({
+  maxTeams: defaults.maxTeams,
+  maxTurns: agent.team?.limits?.maxTurns ?? defaults.maxTurns,
+  maxWorkers: agent.team?.limits?.maxWorkers ?? defaults.maxWorkers,
+  timeoutMs: agent.team?.limits?.timeoutMs ?? defaults.timeoutMs,
+});
 
 export const BoundedContentDependenciesSchema = Schema.Struct({
   sourceIds: Schema.mutable(

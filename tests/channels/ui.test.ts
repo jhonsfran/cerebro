@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   agentEditorValues,
   agentExecutionGrants,
+  agentTeamSection,
 } from "../../apps/web/src/features/product/configuration";
 import { operationFor } from "../../apps/web/src/features/product/intent";
 import type { OperationIntent } from "../../apps/web/src/features/product/intent";
@@ -700,6 +701,7 @@ test("agent editor replaces obsolete fixture choices with the current catalog", 
     model: "fixture/configured-model",
     name: "Company assistant",
     sourceIds: [],
+    team: { maxTurns: "", maxWorkers: "", timeoutSeconds: "" },
     toolIds: [],
     unavailableSelections: {
       model: "fixture-model",
@@ -708,6 +710,28 @@ test("agent editor replaces obsolete fixture choices with the current catalog", 
     },
   });
   assert.deepEqual(agent, original);
+});
+
+test("agent editor reloads saved team budgets and saves them back unchanged", () => {
+  const team = { limits: { maxWorkers: 4, timeoutMs: 1_800_000 } };
+  const agent: AgentDetail = {
+    ...structuredClone(obsoleteAgent),
+    definition: { ...structuredClone(obsoleteAgent.definition), team },
+  };
+  const draft = agentEditorValues(agent);
+  assert.deepEqual(draft.team, {
+    maxTurns: "",
+    maxWorkers: "4",
+    timeoutSeconds: "1800",
+  });
+  assert.deepEqual(agentTeamSection(draft.team), team);
+  assert.deepEqual(agentTeamSection({ ...draft.team, maxTurns: " 40 " }), {
+    limits: { maxTurns: 40, maxWorkers: 4, timeoutMs: 1_800_000 },
+  });
+  assert.equal(
+    agentTeamSection({ maxTurns: "", maxWorkers: "", timeoutSeconds: "" }),
+    undefined
+  );
 });
 
 test("agent editor preserves a valid nonfirst model and filters mixed tool and source IDs", () => {

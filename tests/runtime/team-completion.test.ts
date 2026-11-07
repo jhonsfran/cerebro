@@ -109,10 +109,7 @@ const fixture = async (kind: "sources" | "tools", block = false) => {
     pi,
     work,
     now: Date.now,
-    roles: [
-      { dependencies: () => read("lead") },
-      { dependencies: () => read("worker") },
-    ],
+    roleDependencies: () => Promise.all([read("lead"), read("worker")]),
     abort: () => root.abort(context),
     holdAdmissions: () => Promise.resolve(),
     emitReport: (report) => {

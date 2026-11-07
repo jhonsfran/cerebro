@@ -72,6 +72,17 @@ export const agentDetailSchema = z.object({
     instructions: z.string(),
     model: z.string(),
     organizationId: z.string(),
+    team: z
+      .object({
+        limits: z
+          .object({
+            maxTurns: z.number().optional(),
+            maxWorkers: z.number().optional(),
+            timeoutMs: z.number().optional(),
+          })
+          .optional(),
+      })
+      .optional(),
     version: z.number(),
   }),
   modelChoices: z.array(z.object({ id: z.string(), label: z.string() })),

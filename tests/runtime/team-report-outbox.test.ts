@@ -170,7 +170,7 @@ test("a whitespace-only lead answer creates a constant failure report instead of
       pi,
       work: record.admission,
       now: Date.now,
-      roles: [],
+      roleDependencies: () => Promise.resolve([]),
       abort: () => Promise.resolve(),
       holdAdmissions: () => Promise.resolve(),
     });

@@ -58,6 +58,7 @@ const agentInput = z.object({
     .regex(/^[^\s/]+(?:\/[^\s/]+)*$/u),
   name: z.string().trim().min(1).max(120),
   operationId: identifier,
+  team: z.unknown().optional(),
 });
 const conversation = z.object({ conversationId: z.string().min(1) });
 const inspectionQuery = z.unknown().transform((value, context) => {

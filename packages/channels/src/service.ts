@@ -1,6 +1,11 @@
 /* oxlint-disable no-await-in-loop -- Current permission reads and effects share one request-scoped PostgreSQL connection. */
 import { id } from "@cerebro/contracts";
-import type { AgentDefinition, AgentGrant } from "@cerebro/contracts";
+import type {
+  AgentDefinition,
+  AgentGrant,
+  AgentTeamSection,
+} from "@cerebro/contracts";
+import { AgentTeamSectionSchema } from "@cerebro/contracts/work";
 import type { Database } from "@cerebro/db";
 import {
   createAgentRepository,
@@ -24,6 +29,7 @@ import {
   identityPrincipal,
 } from "@cerebro/db/schema/identity";
 import { and, eq, sql } from "drizzle-orm";
+import { Schema } from "effect";
 
 import { createConversationService } from "./conversations";
 import {
@@ -48,8 +54,25 @@ export interface AgentInput {
   readonly model: string;
   readonly enabledToolIds: readonly string[];
   readonly grants: readonly AgentGrant[];
+  readonly team?: unknown;
   readonly expectedVersion?: number;
 }
+const decodeTeamSection = (team: unknown): AgentTeamSection | undefined => {
+  if (team === undefined) {
+    return undefined;
+  }
+  try {
+    return Schema.decodeUnknownSync(AgentTeamSectionSchema, {
+      onExcessProperty: "error",
+    })(team);
+  } catch {
+    throw new ChannelError(
+      422,
+      "invalid-input",
+      "Team limits must be whole numbers within their safety bounds."
+    );
+  }
+};
 export const createChannelService = (
   database: Database,
   options: ChannelOptions
@@ -299,6 +322,7 @@ export const createChannelService = (
       "agent",
       agentId ?? `${INSTALLATION_AGENT_PREFIX}${options.organizationId}`
     );
+    const team = decodeTeamSection(input.team);
     const configured = await catalog(userId);
     if (
       !configured.modelChoices.some((choice) => choice.id === input.model) ||
@@ -355,6 +379,7 @@ export const createChannelService = (
       model: input.model,
       organizationId: id.organization(options.organizationId),
       version: (expectedVersion ?? 0) + 1,
+      ...(team ? { team } : {}),
     };
     const result = unwrap(
       await publishAgentConfiguration(

@@ -19,6 +19,7 @@ import {
   createModels,
   fauxAssistantMessage,
   fauxProvider,
+  fauxToolCall,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import {
   Harness,
@@ -60,9 +61,12 @@ const settleProgress = async (promise: Promise<unknown>): Promise<unknown> => {
   }
 };
 
+const ROLE_STORES = 4;
+
 export const teamProvenanceFixture = async (fixtureOptions?: {
   events?: boolean;
   work?: WorkAdmission;
+  delegate?: readonly string[];
   sendReturn?: (delivery: TeamEventReturn) => Promise<void>;
 }) => {
   const directory = await mkdtemp(path.join(tmpdir(), "team-provenance-"));
@@ -100,7 +104,9 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
   let events: TeamEvents | undefined;
   const returns: TeamEventReturn[] = [];
   let stores: ReturnType<typeof createSourceDependencyStore>[];
-  let configurations: TeamRoleConfiguration[];
+  const configurations = new Map<number, TeamRoleConfiguration>();
+  let holdWorkers = false;
+  const heldWorkers = new Set<() => void>();
   let failAdmission = false;
   let mirrorFailure: number | null = null;
   let deniedSource: string | null = null;
@@ -110,6 +116,7 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
   let deniedOwner = false;
   let workerTaskId: TaskId | undefined;
   const calls: number[] = [];
+  const prompts: { role: number; texts: string[] }[] = [];
   const errors: unknown[] = [];
   const held = new Set<Promise<unknown>>();
   const metadata: MetadataTransaction = (operation) =>
@@ -131,6 +138,7 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
     },
   };
   const storage = platform as unknown as DurableObjectStorage;
+  // Left uninstalled so this stand-in for a running delegate_worker call stays live.
   const workerCaller = defineTask({
     name: "test.worker-caller",
     version: 1,
@@ -150,7 +158,6 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
     database = new DatabaseSync(filename);
     const models = createModels();
     const registry = createRegistry();
-    registry.install({ name: "test.worker-caller", tasks: [workerCaller] });
     pi = await Harness.open(
       await SqliteStorage.open(new NodeSqliteDatabase(database)),
       {
@@ -166,10 +173,7 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
       context
     );
     stores = await Promise.all(
-      Array.from(
-        { length: 1 + work.limits.maxWorkers },
-        (_, index) => index
-      ).map(
+      Array.from({ length: ROLE_STORES }, (_, index) => index).map(
         async (index) =>
           await metadata(() =>
             createSourceDependencyStore(
@@ -181,7 +185,10 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
           )
       )
     );
-    configurations = stores.map((store, index): TeamRoleConfiguration => {
+    configurations.clear();
+    const configure = (index: number): TeamRoleConfiguration => {
+      const store = stores[index];
+      assert.ok(store, `the fixture has a store for role ${index}`);
       const pin = work.agent;
       const faux = fauxProvider({
         provider: `provider:${index}`,
@@ -204,9 +211,44 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
                 body: "{}",
                 signal: options.signal,
               });
-              faux.setResponses([
-                fauxAssistantMessage(`Answer from role ${index}.`),
-              ]);
+              const results = transcript.messages.flatMap((message) =>
+                message.role === "toolResult"
+                  ? message.content.flatMap((part) =>
+                      part.type === "text" ? [part.text] : []
+                    )
+                  : []
+              );
+              prompts.push({
+                role: index,
+                texts: transcript.messages.flatMap((message) => {
+                  if (message.role !== "user") {
+                    return [];
+                  }
+                  return typeof message.content === "string"
+                    ? [message.content]
+                    : message.content.flatMap((part) =>
+                        part.type === "text" ? [part.text] : []
+                      );
+                }),
+              });
+              const questions = fixtureOptions?.delegate ?? [];
+              let answer = fauxAssistantMessage(`Answer from role ${index}.`);
+              if (index === 0 && questions.length > 0) {
+                answer =
+                  results.length === 0
+                    ? fauxAssistantMessage(
+                        questions.map((text, call) =>
+                          fauxToolCall(
+                            "delegate_worker",
+                            { text },
+                            { id: `delegate-${call}` }
+                          )
+                        ),
+                        { stopReason: "toolUse" }
+                      )
+                    : fauxAssistantMessage(`Combined: ${results.join(" | ")}`);
+              }
+              faux.setResponses([answer]);
               const result = physical.streamSimple(model, transcript, options);
               for await (const event of result) {
                 stream.push(event);
@@ -310,16 +352,33 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
         provider: {
           model: faux.getModel(),
           provider,
-          fetch: () => {
+          fetch: (_input, init) => {
             calls.push(index);
-            return Promise.resolve(new Response("fixture"));
+            if (index === 0 || !holdWorkers) {
+              return Promise.resolve(new Response("fixture"));
+            }
+            const response = Promise.withResolvers<Response>();
+            const release = () => {
+              heldWorkers.delete(release);
+              response.resolve(new Response("fixture"));
+            };
+            heldWorkers.add(release);
+            init?.signal?.addEventListener(
+              "abort",
+              () => {
+                heldWorkers.delete(release);
+                response.reject(new Error("Aborted held worker request."));
+              },
+              { once: true }
+            );
+            return response.promise;
           },
           deadlineMs: 30_000,
           maxInputBytes: 100_000,
           maxResponseBytes: 100_000,
         },
       };
-    });
+    };
     const proxy = new Proxy(pi, {
       get(target, key) {
         if (key === "commit") {
@@ -379,7 +438,11 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
     runtime = await createTeamRuntime({
       pi: proxy,
       work,
-      configurations,
+      configure: (index) => {
+        const configuration = configure(index);
+        configurations.set(index, configuration);
+        return Promise.resolve(configuration);
+      },
       storage,
       metadata,
       models,
@@ -410,7 +473,7 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
         [0, 1].map((index) => readTeamRoleImports(pi, work, index))
       ),
       raw: await Promise.all(
-        stores.map(async (store) => ({
+        stores.slice(0, 2).map(async (store) => ({
           sourceIds: await store.all(),
           toolIds: await store.tools(),
         }))
@@ -420,6 +483,7 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
   return {
     work,
     calls,
+    prompts,
     errors,
     pi: () => pi,
     runtime: () => runtime,
@@ -428,7 +492,7 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
       return events;
     },
     returns,
-    configuration: (index: number) => configurations[index],
+    configuration: (index: number) => configurations.get(index),
     store: (index: number) => stores[index],
     read,
     failAdmission: () => {
@@ -452,11 +516,18 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
     denyOwner: (value: boolean) => {
       deniedOwner = value;
     },
+    holdWorkers: () => {
+      holdWorkers = true;
+    },
+    releaseWorkers: () => {
+      holdWorkers = false;
+      for (const release of heldWorkers) {
+        release();
+      }
+    },
     invokeWorker: async (failCommit = 0) => {
       const state = await pi.snapshot(TeamState, context);
       assert.ok(state?.lead);
-      const [lead, worker] = runtime.roles;
-      assert.ok(lead && worker);
       workerTaskId ??= await pi.commit(
         (tx) =>
           tx.createTask(
@@ -489,9 +560,9 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
         "conversationId" | "taskId" | "commit" | "conversation"
       >;
       const tool = createTeamWorkerTool({
-        pi,
-        lead,
-        workers: [worker],
+        lead: runtime.lead,
+        worker: runtime.worker,
+        maxWorkers: work.limits.maxWorkers,
         now: Date.now,
       });
       return await tool.execute(

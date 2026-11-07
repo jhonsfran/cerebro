@@ -32,14 +32,13 @@ import type {
 } from "./session-agent.ts";
 import { createTeamAdmission } from "./team-admission.ts";
 import { readTeamRoleImports } from "./team-content.ts";
-import type { ReadTeamRoleImports } from "./team-content.ts";
 import { createTeamEvents } from "./team-events.ts";
 import type { TeamEventReturnTransport, TeamEvents } from "./team-events.ts";
 import { expireTeam, receiveExpiredTeam } from "./team-expiration.ts";
 import { readTeamInspection } from "./team-inspection.ts";
 import { createTeamReportOutbox } from "./team-report-outbox.ts";
 import type { TeamReportTransport } from "./team-report-outbox.ts";
-import type { TeamRoleConfiguration } from "./team-role.ts";
+import type { ConfigureTeamRole } from "./team-role.ts";
 import { createTeamRuntime } from "./team-runtime.ts";
 import type { TeamRuntime } from "./team-runtime.ts";
 import {
@@ -70,9 +69,8 @@ export abstract class TeamAgent<
   ): TeamEventReturnTransport;
   protected abstract configure(
     work: WorkAdmission,
-    metadata: MetadataTransaction,
-    importedDependencies: ReadTeamRoleImports
-  ): Promise<readonly TeamRoleConfiguration[]>;
+    metadata: MetadataTransaction
+  ): Promise<ConfigureTeamRole>;
 
   // oxlint-disable-next-line class-methods-use-this -- Server subclasses verify the signed private inspection target.
   protected resolveInspection(
@@ -303,13 +301,12 @@ export abstract class TeamAgent<
       host.pi.commit(operation, piContext());
     const outbox = await this.ensureReportOutbox(work);
     const events = await this.ensureEvents(work);
-    const configurations = await this.configure(work, metadata, (index) =>
-      readTeamRoleImports(host.pi, work, index)
-    );
+    const configureRole = await this.configure(work, metadata);
     return await createTeamRuntime({
       ...host,
       work,
-      configurations,
+      configure: (index) =>
+        configureRole(index, () => readTeamRoleImports(host.pi, work, index)),
       events,
       storage: this.ctx.storage,
       metadata,

@@ -20,10 +20,10 @@ import type { MetadataTransaction } from "@cerebro/runtime/session-agent";
 import { TeamAgent as TeamHost } from "@cerebro/runtime/team-agent";
 import {
   teamRoleDefinition,
-  teamRoleSlots,
+  teamRoleKind,
 } from "@cerebro/runtime/team-composition";
-import type { ReadTeamRoleImports } from "@cerebro/runtime/team-content";
 import { teamRoleAddress } from "@cerebro/runtime/team-content";
+import type { ConfigureTeamRole } from "@cerebro/runtime/team-role";
 import { teamCommandDependencies } from "@cerebro/runtime/team-state";
 import { Effect } from "effect";
 
@@ -182,9 +182,8 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
 
   protected override async configure(
     work: WorkAdmission,
-    metadata: MetadataTransaction,
-    importedDependencies: ReadTeamRoleImports
-  ) {
+    metadata: MetadataTransaction
+  ): Promise<ConfigureTeamRole> {
     const result = await withDatabase(this.env, (database) =>
       createAgentRepository(database).get(
         work.key.organizationId,
@@ -194,22 +193,19 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
       )
     );
     const agent = await Effect.runPromise(fromPortResult(result));
-    return await Promise.all(
-      teamRoleSlots(work).map(async (slot) =>
-        Effect.runPromise(
-          createExecutionComposition(
-            this.env,
-            this.ctx.storage,
-            work.sourceEventAddress,
-            await teamRoleAddress(work, slot.index),
-            teamRoleDefinition(agent, slot.role),
-            work.key.ownerPrincipalId,
-            metadata,
-            true,
-            () => importedDependencies(slot.index)
-          )
+    return async (index, importedDependencies) =>
+      Effect.runPromise(
+        createExecutionComposition(
+          this.env,
+          this.ctx.storage,
+          work.sourceEventAddress,
+          await teamRoleAddress(work, index),
+          teamRoleDefinition(agent, teamRoleKind(work, index)),
+          work.key.ownerPrincipalId,
+          metadata,
+          true,
+          importedDependencies
         )
-      )
-    );
+      );
   }
 }

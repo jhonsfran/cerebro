@@ -71,6 +71,7 @@ const RoleSummary = ({
         ["Definition version", role.definition.agentVersion],
         ["Owner task", role.ownerTaskId],
         ["Request", role.requestId],
+        ["Started", inspectionTime(role.startedAt)],
         ["Attempt", role.attempt],
         ["Retry", inspectionTime(role.retryAt)],
       ]}

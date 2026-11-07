@@ -166,7 +166,7 @@ export const createRuntimeComposition = (
         env,
         agent,
         conversation,
-        limits: config.coordination,
+        teamDefaults: config.coordination,
         contentDependencies: execution.contentDependencies,
       }),
     };

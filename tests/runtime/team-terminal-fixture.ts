@@ -19,6 +19,7 @@ import {
 } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import {
   Harness,
+  LiveDoc,
   createRegistry,
   defineTool,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
@@ -117,10 +118,6 @@ const lead = await pi.createConversation(
   { ownership: { kind: "ownerless" } },
   context
 );
-const worker = await pi.createConversation(
-  { ownership: { kind: "ownerless" } },
-  context
-);
 const model = faux.getModel();
 await lead.configure(
   {
@@ -134,15 +131,6 @@ await pi.commit(async (tx) => {
   state.admission = work;
   state.phase = "running";
   state.lead = lead.id;
-  state.workers = [
-    {
-      nativeId: worker.id,
-      ownerTaskId: null,
-      digest: null,
-      requestId: null,
-      inputDependencies: null,
-    },
-  ];
   state.modelCalls = scenario === "admission" ? 0 : 1;
 }, context);
 if (scenario === "admission") {
@@ -186,6 +174,24 @@ await waitFor(
   (calls) => calls.includes(expected),
   10_000
 );
+const team = await pi.snapshot(TeamState, context);
+const live = await pi.snapshot(LiveDoc, lead.id, context);
+const owner =
+  scenario === "admission"
+    ? Object.values(team?.pending ?? {})[0]
+    : live?.run?.taskId;
+if (!owner) {
+  throw new Error("The terminal fixture has no running lead task.");
+}
+await pi.commit(async (tx) => {
+  const worker = await tx.createConversation({
+    ownership: { kind: "task", taskId: owner },
+  });
+  const state = await tx.doc(TeamState);
+  state.children = {
+    "1": { nativeId: worker.id, ownerTaskId: owner, startedAt: Date.now() },
+  };
+}, context);
 if (scenario !== "admission") {
   await lead.submit(
     {

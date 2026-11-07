@@ -28,7 +28,13 @@ import { TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { encoded, mutate, productPath, request } from "./api";
-import { agentEditorValues, agentExecutionGrants } from "./configuration";
+import {
+  agentEditorValues,
+  agentExecutionGrants,
+  agentTeamSection,
+} from "./configuration";
+import type { TeamBudgets } from "./configuration";
+import { Disclosure } from "./disclosure";
 import { ErrorAlert, PageBody, PageIntro } from "./feedback";
 import { operationFor } from "./intent";
 import type { OperationIntent } from "./intent";
@@ -97,6 +103,54 @@ const ChoiceGroup = ({
   );
 };
 
+const TEAM_BUDGET_FIELDS: readonly {
+  readonly key: keyof TeamBudgets;
+  readonly label: string;
+  readonly max: number;
+}[] = [
+  { key: "maxWorkers", label: "Workers at once", max: 8 },
+  { key: "maxTurns", label: "Model calls per team", max: 256 },
+  { key: "timeoutSeconds", label: "Time limit in seconds", max: 14_400 },
+];
+
+const TeamBudgetFields = ({
+  budgets,
+  change,
+}: {
+  budgets: TeamBudgets;
+  change: (key: keyof TeamBudgets, value: string) => void;
+}) => (
+  <Disclosure summary="Teams">
+    <FieldSet>
+      <FieldLegend className="sr-only">Team budgets</FieldLegend>
+      <FieldDescription>
+        Budgets for the background teams this agent starts. Leave a field empty
+        to use the installation default.
+      </FieldDescription>
+      <FieldGroup className="gap-3">
+        {TEAM_BUDGET_FIELDS.map((field) => (
+          <Field key={field.key}>
+            <FieldLabel htmlFor={`agent-team-${field.key}`}>
+              {field.label}
+            </FieldLabel>
+            <Input
+              id={`agent-team-${field.key}`}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={field.max}
+              step={1}
+              placeholder="Installation default"
+              value={budgets[field.key]}
+              onChange={(event) => change(field.key, event.target.value)}
+            />
+          </Field>
+        ))}
+      </FieldGroup>
+    </FieldSet>
+  </Disclosure>
+);
+
 export const AgentEditor = ({
   agent,
   setup,
@@ -119,6 +173,7 @@ export const AgentEditor = ({
   const [model, setModel] = useState(initial.model);
   const [connectors, setConnectors] = useState(initial.toolIds);
   const [sources, setSources] = useState(initial.sourceIds);
+  const [team, setTeam] = useState(initial.team);
   const selectedToolIds = useMemo(() => new Set(connectors), [connectors]);
   const selectedSourceIds = useMemo(() => new Set(sources), [sources]);
   const [errorMessage, setErrorMessage] = useState("");
@@ -163,12 +218,14 @@ export const AgentEditor = ({
       agent?.definition.grants,
       catalog.connectorChoices
     );
+    const teamSection = agentTeamSection(team);
     const input = {
       enabledToolIds: connectors,
       grants,
       instructions: instructions.trim(),
       model,
       name: name.trim(),
+      ...(teamSection ? { team: teamSection } : {}),
       ...(agent ? { expectedVersion: agent.definition.version } : {}),
     };
     try {
@@ -323,6 +380,13 @@ export const AgentEditor = ({
                     ? [...current, id]
                     : current.filter((sourceId) => sourceId !== id)
                 )
+              }
+            />
+            <FieldSeparator />
+            <TeamBudgetFields
+              budgets={team}
+              change={(key, value) =>
+                setTeam((current) => ({ ...current, [key]: value }))
               }
             />
           </FieldGroup>

@@ -8,12 +8,11 @@ import type { WorkAdmission } from "@cerebro/contracts/work";
 import { readRecordedContent } from "@cerebro/runtime/content-dependency-store";
 import { piContext } from "@cerebro/runtime/pi-harness";
 import type { Harness } from "@cerebro/runtime/pi-harness";
-import { teamRoleSlots } from "@cerebro/runtime/team-composition";
 import {
   readTeamRoleImports,
   teamRoleAddress,
 } from "@cerebro/runtime/team-content";
-import { TeamState } from "@cerebro/runtime/team-state";
+import { TeamState, teamChildren } from "@cerebro/runtime/team-state";
 import { Schema } from "effect";
 
 import type { WorkerEnv } from "../bindings";
@@ -94,19 +93,18 @@ export const authorizeTeamInspection = async (
   const values: ContentDependencies[] = [
     work.contentDependencies,
     ...(state.report ? [state.report.contentDependencies] : []),
-    ...state.workers.flatMap((worker) =>
-      worker.inputDependencies ? [worker.inputDependencies] : []
-    ),
   ];
   const roles = await Promise.all(
-    teamRoleSlots(work).map(async ({ index }) => {
-      const address = await teamRoleAddress(work, index);
-      const raw = await pi.commit(
-        () => readRecordedContent(storage, address.sessionId),
-        piContext(signal)
-      );
-      return { raw, canonical: await readTeamRoleImports(pi, work, index) };
-    })
+    [0, ...teamChildren(state).map((child) => child.index)].map(
+      async (index) => {
+        const address = await teamRoleAddress(work, index);
+        const raw = await pi.commit(
+          () => readRecordedContent(storage, address.sessionId),
+          piContext(signal)
+        );
+        return { raw, canonical: await readTeamRoleImports(pi, work, index) };
+      }
+    )
   );
   values.push(...roles.flatMap((role) => [role.raw, role.canonical]));
   await requireInspectionRead(env, {

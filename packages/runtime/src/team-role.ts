@@ -38,6 +38,10 @@ export interface TeamRoleConfiguration extends SessionHostConfiguration {
   readonly contentDependencies: () => Promise<ContentDependencies>;
   readonly importDependencies: (dependencies: ContentDependencies) => void;
 }
+export type ConfigureTeamRole = (
+  index: number,
+  importedDependencies: () => Promise<ContentDependencies>
+) => Promise<TeamRoleConfiguration>;
 
 export const createTeamRole = (options: {
   readonly work: WorkAdmission;

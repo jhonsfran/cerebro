@@ -30,8 +30,14 @@ import { inspectionCursor, nextInspectionCursor } from "./inspection-page.ts";
 import { inspectionResult } from "./inspection-work.ts";
 import { piContext } from "./pi-harness.ts";
 import { teamRoleKind } from "./team-composition.ts";
-import { TeamState } from "./team-state.ts";
-import type { TeamStateValue, TeamWorker } from "./team-state.ts";
+import {
+  TeamState,
+  teamChildren,
+  teamConversationIds,
+  teamRoleConversation,
+  workerRequestId,
+} from "./team-state.ts";
+import type { TeamChild, TeamStateValue } from "./team-state.ts";
 
 interface TeamRead {
   readonly pi: Harness;
@@ -40,20 +46,21 @@ interface TeamRead {
 }
 const roleProgress = (
   live: LiveState | undefined,
-  worker: TeamWorker | undefined
+  child: TeamChild | undefined
 ) => ({
   running: live?.run !== undefined,
-  ownerTaskId: worker?.ownerTaskId ? String(worker.ownerTaskId) : null,
-  requestId: worker?.requestId ?? null,
+  ownerTaskId: child ? String(child.ownerTaskId) : null,
+  requestId: child ? workerRequestId(child.ownerTaskId) : null,
+  startedAt: child?.startedAt ?? null,
   attempt: live?.generation?.attempt ?? null,
   retryAt:
     live?.generation?.retry?.at ?? live?.generation?.deferred?.pollAt ?? null,
 });
 const readRole = async (
   input: TeamRead,
-  state: TeamStateValue,
   nativeId: ConversationId,
-  slot: 0 | 1 | 2
+  slot: number,
+  child?: TeamChild
 ): Promise<InspectionRole> => {
   const context = piContext(input.signal);
   const [agent, live, usage] = await Promise.all([
@@ -61,35 +68,31 @@ const readRole = async (
     input.pi.snapshot(LiveDoc, nativeId, context),
     input.pi.snapshot(UsageDoc, nativeId, context),
   ]);
-  const worker = slot === 0 ? undefined : state.workers[slot - 1];
   return {
     slot,
     nativeId: String(nativeId),
     definition: input.work.agent,
     role: teamRoleKind(input.work, slot),
     modelId: agent?.model?.modelId ?? null,
-    ...roleProgress(live, worker),
+    ...roleProgress(live, child),
     usage: inspectUsage(usage?.models),
     toolUsage: inspectUsage(usage?.tools),
   };
 };
 const readSummary = async (
   input: TeamRead,
-  state: TeamStateValue,
-  ids: readonly ConversationId[]
+  state: TeamStateValue
 ): Promise<TeamInspectionFrame> => {
   const context = piContext(input.signal);
-  const candidates = await Promise.all(
-    ids.map((nativeId, slot) => {
-      if (slot !== 0 && slot !== 1 && slot !== 2) {
-        throw new Denied({
-          code: "unauthorized",
-          reason: "Invalid retained private role.",
-        });
-      }
-      return readRole(input, state, nativeId, slot);
-    })
-  );
+  const ids = teamConversationIds(state);
+  const candidates = state.lead
+    ? await Promise.all([
+        readRole(input, state.lead, 0),
+        ...teamChildren(state).map((child) =>
+          readRole(input, child.nativeId, child.index, child)
+        ),
+      ])
+    : [];
   const inspection = await input.pi.inspect(context);
   const inboxes = await Promise.all(
     ids.map((nativeId) => input.pi.snapshot(InboxDoc, nativeId, context))
@@ -164,13 +167,10 @@ export const readTeamInspection = async (
       reason: "The private work admission does not match.",
     });
   }
-  const ids = state.lead
-    ? [state.lead, ...state.workers.map((worker) => worker.nativeId)]
-    : [];
   if (query.kind === "team") {
-    return await readSummary(input, state, ids);
+    return await readSummary(input, state);
   }
-  const nativeId = ids[query.role];
+  const nativeId = teamRoleConversation(state, query.role);
   if (!nativeId) {
     throw new NotFound({ resource: "Private role conversation" });
   }

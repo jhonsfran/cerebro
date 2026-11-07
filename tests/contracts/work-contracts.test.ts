@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { Schema } from "effect";
 
 import {
+  AgentTeamSectionSchema,
   DEFAULT_TEAM_LIMITS,
   TeamCommandReceiptSchema,
   TeamCommandSchema,
@@ -13,6 +14,7 @@ import {
   WorkAdmissionSchema,
   WorkReportSchema,
   WorkStatusSchema,
+  resolveWorkLimits,
   transitionWorkStatus,
   workCellName,
   workStartOperationId,
@@ -145,7 +147,8 @@ test("work admission preserves public source identity and the agent pin", () => 
     { admittedAt: Number.POSITIVE_INFINITY },
     { deadlineAt: value.admittedAt },
     { deadlineAt: value.deadlineAt + 1 },
-    { limits: { ...value.limits, maxWorkers: 3 } },
+    { limits: { ...value.limits, maxWorkers: 9 } },
+    { limits: { ...value.limits, maxTurns: 257 } },
     { contentDependencies: undefined },
     { contentDependencies: { sourceIds: [" source-A"], toolIds: [] } },
     {
@@ -360,4 +363,75 @@ test("team defaults decode an absent block to the bounded limits", () => {
   ]) {
     assert.throws(() => decode(changed));
   }
+});
+
+test("work limits admit the widened safety bounds and nothing past them", () => {
+  const decode = Schema.decodeUnknownSync(WorkAdmissionSchema);
+  const value = admission();
+  const widest = {
+    ...value,
+    deadlineAt: value.admittedAt + 14_400_000,
+    limits: {
+      maxTeams: 2,
+      maxTurns: 256,
+      maxWorkers: 8,
+      timeoutMs: 14_400_000,
+    },
+  };
+  assert.deepEqual(decode(widest).limits, widest.limits);
+  assert.throws(() =>
+    decode({
+      ...widest,
+      limits: { ...widest.limits, timeoutMs: 14_400_001 },
+    })
+  );
+});
+
+test("an agent team section accepts empty budgets and rejects values outside the safety bounds", () => {
+  const decode = Schema.decodeUnknownSync(AgentTeamSectionSchema, {
+    onExcessProperty: "error",
+  });
+  assert.deepEqual(decode({}), {});
+  assert.deepEqual(decode({ limits: {} }), { limits: {} });
+  assert.deepEqual(
+    decode({ limits: { maxTurns: 256, maxWorkers: 8, timeoutMs: 1000 } }),
+    { limits: { maxTurns: 256, maxWorkers: 8, timeoutMs: 1000 } }
+  );
+  for (const limits of [
+    { maxWorkers: 0 },
+    { maxWorkers: 9 },
+    { maxWorkers: 1.5 },
+    { maxTurns: 0 },
+    { maxTurns: 257 },
+    { timeoutMs: 999 },
+    { timeoutMs: 14_400_001 },
+    { maxTeams: 1 },
+  ]) {
+    assert.throws(() => decode({ limits }), JSON.stringify(limits));
+  }
+  assert.throws(() => decode({ limits: {}, workers: 2 }));
+});
+
+test("agent team limits replace installation defaults field by field and never the team count", () => {
+  const defaults = {
+    maxTeams: 2,
+    maxTurns: 8,
+    maxWorkers: 2,
+    timeoutMs: 600_000,
+  };
+  assert.deepEqual(resolveWorkLimits({}, defaults), defaults);
+  assert.deepEqual(resolveWorkLimits({ team: {} }, defaults), defaults);
+  assert.deepEqual(
+    resolveWorkLimits({ team: { limits: { maxWorkers: 5 } } }, defaults),
+    { maxTeams: 2, maxTurns: 8, maxWorkers: 5, timeoutMs: 600_000 }
+  );
+  assert.deepEqual(
+    resolveWorkLimits(
+      {
+        team: { limits: { maxTurns: 40, maxWorkers: 1, timeoutMs: 3_600_000 } },
+      },
+      { ...defaults, maxTeams: 1 }
+    ),
+    { maxTeams: 1, maxTurns: 40, maxWorkers: 1, timeoutMs: 3_600_000 }
+  );
 });

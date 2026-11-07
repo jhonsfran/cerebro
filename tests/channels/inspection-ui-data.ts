@@ -51,6 +51,7 @@ export const inspectionRole = (slot: InspectionRole["slot"]): InspectionRole =>
     running: false,
     ownerTaskId: slot === 0 ? null : `owner-${slot}`,
     requestId: slot === 0 ? null : `request-${slot}`,
+    startedAt: slot === 0 ? null : 1_800_000_000_000 + slot,
     usage: tokens,
     toolUsage: {
       input: 0,

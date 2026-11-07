@@ -14,7 +14,7 @@ Unknown fields are rejected.
 | `models` | array of [models](#models) | yes | At least one. Model IDs are unique. |
 | `tools` | array of [tools](#tools) | yes | The catalog tools this file owns. Each start replaces them, so removing a tool here removes it from the catalog. Publish a new agent version to apply tool changes in the same primary conversation. An empty array removes them all. |
 | `connectors` | array of [MCP connectors](#mcp-connectors) | no | MCP servers whose tools bootstrap discovers into the catalog. |
-| `coordination` | [team limits](#coordination) | no | Limits for conversation background teams. Defaults apply when absent. |
+| `coordination` | [team limits](#coordination) | no | Default limits for conversation background teams. Defaults apply when absent. |
 | `artifacts` | object | yes | `endpoint`, `bucket`, `accessKeyId`, `secretAccessKey`, and `region` of the artifact MinIO or S3 store. |
 | `gatewaySigningKey` | string | yes | At least 32 characters. Signs requests from the API to session objects. |
 | `retrievalMode` | `"full-text"` | yes | The only supported value. |
@@ -45,9 +45,11 @@ Integer limits are positive and at most 1,048,576.
 
 ## Coordination
 
-Every published agent can start Teams. Its lead and workers run the agent's pinned model, enabled tools, and grants, with a system overlay in front of the agent's instructions. Select the agent in web chat. In Slack, `slack.agentId` in `channels.json` selects the default target. Explicit thread subscriptions can select additional owned bots. Web and Slack inputs use the same primary conversation for each person and agent. Web teams need no Slack configuration or account link.
+Every published agent can start Teams. Its lead and workers run the agent's pinned model, enabled tools, and grants, with a system overlay in front of the agent's instructions. Each `delegate_worker` call starts one worker as a child conversation of the lead. Calls in the same turn run in parallel. Team roles use only read tools that need no approval. Routing an approval from a Team to the coordinator is out of scope. Select the agent in web chat. In Slack, `slack.agentId` in `channels.json` selects the default target. Explicit thread subscriptions can select additional owned bots. Web and Slack inputs use the same primary conversation for each person and agent. Web teams need no Slack configuration or account link.
 
-The optional `coordination` block sets team limits only. An absent block uses the defaults below. A block that names agent IDs fails to parse.
+The optional `coordination` block sets installation defaults for team limits only. An absent block uses the defaults below. A block that names agent IDs fails to parse.
+
+An agent can publish its own `maxWorkers`, `maxTurns`, and `timeoutMs` in its `team.limits` section, set in the editor's **Teams** fields. A published value replaces the installation default for that field. An unset field uses the default. `maxTeams` is installation-only. The ranges below are safety bounds for both sources. Publishing an agent with a value outside them fails.
 
 For local use, supply a complete custom `runtime.json` with all required models. In a Compose override, set `services.secrets-init.environment.CEREBRO_MODEL` to an explicit empty string. Apply that override on later starts. An unset or empty host variable is insufficient because the base Compose file supplies a default. Without the override, the generator replaces custom models and team limits.
 
@@ -64,12 +66,12 @@ For local use, supply a complete custom `runtime.json` with all required models.
 
 | Field | Required | Default | Range or meaning |
 | --- | --- | --- | --- |
-| `maxTeams` | no | 2 | 1–2 active teams across all agents for one organization and person. |
-| `maxWorkers` | no | 2 | 1–2 worker conversations in total per team. |
-| `maxTurns` | no | 8 | 1–8 model request reservations shared by the lead and all workers, including retries and compaction. |
-| `timeoutMs` | no | 600000 | 1000–600000 milliseconds from work admission, including queue time. A restart does not extend it. |
+| `maxTeams` | no | 2 | 1–2 active teams across all agents for one organization and person. Installation-only. |
+| `maxWorkers` | no | 2 | 1–8 workers running at the same time in one team. A further `delegate_worker` call returns an error that tells the lead to wait. |
+| `maxTurns` | no | 8 | 1–256 model request reservations shared by the lead and all workers, including retries and compaction. A team also creates at most this many workers. |
+| `timeoutMs` | no | 600000 | 1000–14400000 milliseconds (four hours) from work admission, including queue time. A restart does not extend it. |
 
-Sixteen work items can wait in a saved FIFO queue per person across agents. This queue limit is fixed. Cancelling queued work creates no Team cell. Each work item saves its agent version and limits at admission. Current permissions still apply. Removing a required capability from the agent can stop existing work, because every role is checked against the agent's current grants.
+Sixteen work items can wait in a saved FIFO queue per person across agents. This queue limit is fixed. Cancelling queued work creates no Team cell. Each work item saves its agent version and resolved limits at admission. Current permissions still apply. Removing a required capability from the agent can stop existing work, because every role is checked against the agent's current grants.
 
 The shared request budget is saved before model dispatch. A reservation can remain used if a request is then denied. A crash can repeat an in-flight provider request, and the repeated request uses another reservation. The configured provider prices are zero, so this limit is not a monetary spend ceiling.
 

@@ -19,12 +19,12 @@ flowchart TD
   Commands --> A
   Commands --> B
   subgraph A[Private Team cell A]
-    LeadA[Lead] --> WorkerA1[Worker 1]
-    LeadA --> WorkerA2[Worker 2]
+    LeadA[Lead] --> WorkerA1[Child worker]
+    LeadA --> WorkerA2[Child worker]
   end
   subgraph B[Private Team cell B]
-    LeadB[Lead] --> WorkerB1[Worker 1]
-    LeadB --> WorkerB2[Worker 2]
+    LeadB[Lead] --> WorkerB1[Child worker]
+    LeadB --> WorkerB2[Child worker]
   end
   A --> Reports[(Report queue)]
   B --> Reports
@@ -35,7 +35,7 @@ flowchart TD
   Port --> SlackPost[Checked Slack post]
 ```
 
-A Team is a separate cell. Its lead and workers are private Pi conversations inside that cell. They are not separate Durable Objects or public chats. The identity cell holds the person's agent conversations and shared admission limits. Native conversation IDs are local to a cell. Use the cell name and native ID together when debugging.
+A Team is a separate cell. Its lead is a private Pi conversation inside that cell. Each worker is a Pi child conversation that one `delegate_worker` call creates and owns. They are not separate Durable Objects or public chats. The identity cell holds the person's agent conversations and shared admission limits. Native conversation IDs are local to a cell. Use the cell name and native ID together when debugging.
 
 Always on means durable state and event-driven wake-up. No model loop runs while the agent is idle. Pi tasks, existing queues, and lifecycle alarms resume accepted work.
 
@@ -86,10 +86,14 @@ Ordinary text reaches the coordinator. It does not automatically update whicheve
 | Role | Tools |
 | --- | --- |
 | Coordinator | Start, inspect, message, stop, and recall work; explicit subscriptions; replies to external channels; authorized reminders; UI rendering. |
-| Lead | Read tools and delegate_worker; return an unrelated subscribed event once. |
-| Worker | Permitted read tools; no further delegation or scheduling. |
+| Lead | Read tools and delegate_worker, with several calls in one turn running in parallel; return an unrelated subscribed event once. |
+| Worker | A child conversation of one delegate_worker call; permitted read tools; no further delegation or scheduling. |
 
 Roles derive from the agent's pinned definition. The lead and workers run the agent's model, enabled tools, and grants, with a system overlay in front of the agent's instructions. The coordinator does not run task connector tools. Each Team saves the agent pin at admission. Current permissions still apply before execution and content transfer.
+
+Team tools are read-only and include no approval tools. Routing an approval request from a Team to the coordinator is out of scope.
+
+A `delegate_worker` call creates its child, submits the question under the request ID `worker:<task ID>`, waits for the answer, and imports the child's content dependencies into the lead. The call's saved child record lets a restart reuse the same child and submission.
 
 Publishing a coordinator definition stages a complete profile. Existing native work drains first. Provider, instructions, tools, skills, and permission callbacks then change together in the same conversation. New triggers wait durably in the backlog during this boundary.
 
@@ -106,6 +110,8 @@ A Slack post first saves an unknown outcome and synchronizes storage. Confirmed 
 
 ## Limits and recovery
 
+Each Team runs under budgets saved at admission. `maxWorkers` bounds children running at once; a call beyond it returns a tool error that tells the lead to wait for running workers. `maxTurns` bounds model calls shared by the lead and every child, and also the number of children a Team can create. `timeoutMs` sets the absolute deadline. An agent can publish these budgets in its `team.limits` section. Each unset field uses the installation default from `coordination`. `maxTeams` stays installation-only.
+
 Two Teams can be active and sixteen can wait for one person across their agents. Queue time counts toward the absolute deadline. Cancelling queued work creates no Team cell. A failed source status can still hold a reservation when delivery is uncertain. The slot returns only after terminal acknowledgement or its deadline.
 
 Pi stores transcripts, tasks, receipts, and compacted context in SQLite. The native request byte cap can trigger Pi's existing compaction task. Full entries remain retained; the active chat view shows its current summary and tail. Recovery still needs a selectable cut and a summary that fits the request cap.
@@ -116,4 +122,4 @@ The development Inspector reads source-owned metadata and selected private detai
 
 ## MVP boundaries
 
-Slack support covers linked direct messages and their threads. Coordinator inputs run in durable order, and a burst that arrives during a turn runs in the next turn together. Private Teams run concurrently. The hierarchy is bounded to one lead and two workers. Team tools are read-only. Endpoint execution daemons and a separate semantic-progress Watchdog remain future work.
+Slack support covers linked direct messages and their threads. Coordinator inputs run in durable order, and a burst that arrives during a turn runs in the next turn together. Private Teams run concurrently. The hierarchy is one lead and its child workers, at most `maxWorkers` running at once. Team tools are read-only. Endpoint execution daemons and a separate semantic-progress Watchdog remain future work.

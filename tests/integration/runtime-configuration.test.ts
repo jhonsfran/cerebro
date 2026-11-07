@@ -88,7 +88,7 @@ test("coordination defaults to bounded team limits without a block and accepts l
   );
 });
 
-test("coordination permits smaller limits and rejects agent IDs and model overrides", () => {
+test("coordination permits limits within the safety bounds and rejects agent IDs and model overrides", () => {
   const coordination = {
     maxTeams: 1,
     maxTurns: 3,
@@ -104,11 +104,11 @@ test("coordination permits smaller limits and rejects agent IDs and model overri
     { workerAgentId: "worker-A" },
     { maxTeams: 0 },
     { maxTeams: 3 },
-    { maxWorkers: 3 },
-    { maxTurns: 9 },
+    { maxWorkers: 9 },
+    { maxTurns: 257 },
     { maxTurns: 1.5 },
     { timeoutMs: 999 },
-    { timeoutMs: 600_001 },
+    { timeoutMs: 14_400_001 },
     { leadModel: "company/model" },
     { workerModel: "company/model" },
   ]) {

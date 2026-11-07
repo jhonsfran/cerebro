@@ -527,6 +527,53 @@ test("production requires configured catalog and source adapters", async () => {
   );
 });
 
+test("an agent version carries its team budgets and rejects budgets past the safety bounds", async () => {
+  const app = await createTestProduct();
+  await app.install();
+  const team = {
+    limits: { maxTurns: 40, maxWorkers: 4, timeoutMs: 1_800_000 },
+  };
+  const published = await app.request("/api/product/agents", "POST", {
+    ...app.agentBody,
+    operationId: "team-agent",
+    team,
+  });
+  assert.equal(published.status, 200);
+  const agentId = string(object(await published.json()).agentId);
+  const definition = async () =>
+    object(
+      object(await (await app.request(`/api/product/agents/${agentId}`)).json())
+        .definition
+    );
+  assert.deepEqual((await definition()).team, team);
+  const cleared = await app.request(`/api/product/agents/${agentId}`, "PUT", {
+    ...app.agentBody,
+    expectedVersion: 1,
+    operationId: "team-agent-cleared",
+  });
+  assert.equal(cleared.status, 200);
+  assert.equal((await definition()).team, undefined);
+  const outOfBounds = [
+    { maxWorkers: 9 },
+    { maxTurns: 0 },
+    { timeoutMs: 999 },
+    { maxTeams: 1 },
+  ];
+  const statuses = await Promise.all(
+    outOfBounds.map(
+      async (limits, index) =>
+        (
+          await app.request("/api/product/agents", "POST", {
+            ...app.agentBody,
+            operationId: `team-out-of-bounds-${index}`,
+            team: { limits },
+          })
+        ).status
+    )
+  );
+  assert.deepEqual(statuses, [422, 422, 422, 422]);
+});
+
 test("audit export requires a current export grant and returns bounded company rows", async () => {
   const app = await createTestProduct();
   const setupResult = await app.install();

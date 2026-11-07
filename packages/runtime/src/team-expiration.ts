@@ -18,6 +18,7 @@ import {
   TeamCommandReceipts,
   TeamState,
   requireTeamAdmission,
+  teamConversationIds,
 } from "./team-state.ts";
 
 export const expireTeam = async (
@@ -57,9 +58,7 @@ export const expireTeam = async (
   }, piContext());
   const state = await pi.snapshot(TeamState, piContext());
   pi.resume();
-  const ids = state?.lead
-    ? [state.lead, ...state.workers.map((worker) => worker.nativeId)]
-    : [];
+  const ids = teamConversationIds(state);
   await Promise.all(
     ids.map(async (id) => {
       const native = await pi.conversation(id, piContext());

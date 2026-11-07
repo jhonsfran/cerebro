@@ -77,17 +77,18 @@ const subject = async (holdReturn = false) => {
     worker = false,
     failCommit = false
   ) => {
+    if (worker) {
+      await team.invokeWorker();
+    }
     const state = await team.pi().snapshot(TeamState, context);
     assert.ok(state?.lead);
-    const workerId = state.workers[0]?.nativeId;
-    assert.ok(workerId);
-    const [lead] = team.runtime().roles;
-    assert.ok(lead);
-    const tool = team.events().tool(lead.permit);
+    const workerId = worker ? state.children["1"]?.nativeId : undefined;
+    assert.ok(!worker || workerId, "the worker conversation exists");
+    const tool = team.events().tool(team.runtime().lead.permit);
     return await tool.execute(
       { eventId: event.id, reason },
       {
-        conversationId: worker ? workerId : state.lead,
+        conversationId: workerId ?? state.lead,
         commit: (change, invocation) =>
           team.pi().commit(async (tx) => {
             const result = await change(tx);

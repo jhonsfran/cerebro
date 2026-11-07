@@ -12,6 +12,14 @@ export interface AgentGrant {
   readonly resource: Resource;
 }
 
+export interface AgentTeamSection {
+  readonly limits?: {
+    readonly maxTurns?: number;
+    readonly maxWorkers?: number;
+    readonly timeoutMs?: number;
+  };
+}
+
 export interface AgentDefinition {
   readonly organizationId: OrganizationId;
   readonly agentId: AgentId;
@@ -20,6 +28,7 @@ export interface AgentDefinition {
   readonly model: string;
   readonly enabledToolIds: readonly string[];
   readonly grants: readonly AgentGrant[];
+  readonly team?: AgentTeamSection;
 }
 
 export interface AgentRepository {

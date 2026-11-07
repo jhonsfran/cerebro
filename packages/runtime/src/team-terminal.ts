@@ -7,7 +7,7 @@ import type {
 } from "@earendil-works/pi-durable";
 
 import { piContext } from "./pi-harness.ts";
-import { TeamState } from "./team-state.ts";
+import { TeamState, teamConversationIds } from "./team-state.ts";
 
 const roleTasks = async (pi: Harness, ids: readonly ConversationId[]) => {
   const statuses = ["pending", "running", "waiting", "completing"] as const;
@@ -47,9 +47,7 @@ export const drainTerminalTeam = async (pi: Harness): Promise<void> => {
       reason: "Only terminal Team work can be drained without its roles.",
     });
   }
-  const ids = state.lead
-    ? [state.lead, ...state.workers.map((worker) => worker.nativeId)]
-    : [];
+  const ids = teamConversationIds(state);
   const before = await pi.inspect(piContext());
   const paused = before.scheduling === "paused";
   await Promise.all(

@@ -26,7 +26,7 @@ import { piContext } from "./pi-harness.ts";
 import type { MetadataTransaction } from "./session-agent.ts";
 import { createTeamAdmission } from "./team-admission.ts";
 import { createTeamCompletion } from "./team-completion.ts";
-import { requireRoleConfigurations, teamRoleKind } from "./team-composition.ts";
+import { requireRoleConfiguration } from "./team-composition.ts";
 import type { TeamEvents } from "./team-events.ts";
 import { createTeamRole } from "./team-role.ts";
 import type { TeamRoleConfiguration } from "./team-role.ts";
@@ -34,14 +34,17 @@ import {
   TeamCommandReceipts,
   TeamState,
   requireTeamAdmission,
+  teamChildren,
   teamCommandDependencies,
+  teamConversationIds,
   teamInputRejection,
 } from "./team-state.ts";
 import { createTeamWorkerTool } from "./team-workers.ts";
+import type { TeamWorker } from "./team-workers.ts";
 
 export const createTeamRuntime = async (options: {
   readonly work: WorkAdmission;
-  readonly configurations: readonly TeamRoleConfiguration[];
+  readonly configure: (index: number) => Promise<TeamRoleConfiguration>;
   readonly pi: Harness;
   readonly storage: DurableObjectStorage;
   readonly metadata: MetadataTransaction;
@@ -64,17 +67,36 @@ export const createTeamRuntime = async (options: {
     onExcessProperty: "error",
   })(options.work);
   const now = options.now ?? Date.now;
-  requireRoleConfigurations(work, options.configurations);
-  const roles = options.configurations.map((configuration) =>
-    createTeamRole({ ...options, configuration, now })
-  );
-  const [lead] = roles;
-  if (!lead) {
-    throw new InvalidInput({
-      reason: "The team lead configuration is missing.",
-    });
-  }
-  const workers = roles.slice(1);
+  const role = async (index: number) => {
+    const configuration = await options.configure(index);
+    requireRoleConfiguration(work, configuration);
+    return createTeamRole({ ...options, configuration, now });
+  };
+  const lead = await role(0);
+  const openWorker = async (index: number): Promise<TeamWorker> => {
+    const created = await role(index);
+    return { ...created, agent: created.install() };
+  };
+  const workers = new Map<number, Promise<TeamWorker>>();
+  const worker = async (index: number): Promise<TeamWorker> => {
+    const opening = workers.get(index) ?? openWorker(index);
+    workers.set(index, opening);
+    try {
+      return await opening;
+    } catch (error) {
+      workers.delete(index);
+      throw error;
+    }
+  };
+  const savedWorkers = async () => {
+    const state = await pi.snapshot(TeamState, piContext());
+    return await Promise.all(
+      (state ? teamChildren(state) : []).map(async (child) => ({
+        nativeId: child.nativeId,
+        role: await worker(child.index),
+      }))
+    );
+  };
   const reconcileLead = async () => {
     const current = await pi.snapshot(TeamState, piContext());
     if (
@@ -85,16 +107,15 @@ export const createTeamRuntime = async (options: {
       await lead.reconcileImports(current.lead, { kind: "handoff" });
     }
   };
-  const agents = roles.map((role, index) =>
-    role.install(
-      teamRoleKind(work, index) === "lead"
-        ? [
-            createTeamWorkerTool({ pi, lead, workers, now }),
-            ...(options.events ? [options.events.tool(lead.permit)] : []),
-          ]
-        : []
-    )
-  );
+  const leadAgent = lead.install([
+    createTeamWorkerTool({
+      lead,
+      worker,
+      maxWorkers: work.limits.maxWorkers,
+      now,
+    }),
+    ...(options.events ? [options.events.tool(lead.permit)] : []),
+  ]);
   const task = createTeamAdmission({
     pi,
     work,
@@ -130,38 +151,22 @@ export const createTeamRuntime = async (options: {
       requireTeamAdmission(state, work);
     }
     if (state?.lead) {
+      const roles = [
+        { nativeId: state.lead, role: { ...lead, agent: leadAgent } },
+        ...(await savedWorkers()),
+      ];
       await pi.commit(async (tx) => {
-        const ids = [
-          state.lead,
-          ...state.workers.map((worker) => worker.nativeId),
-        ];
         await Promise.all(
-          ids.map(async (nativeId, index) => {
-            const agent = agents[index];
-            if (!nativeId || !agent) {
-              throw new InvalidInput({
-                reason: "The saved team role is missing.",
-              });
-            }
-            await configure(tx, nativeId, agent);
-          })
+          roles.map(({ nativeId, role: saved }) =>
+            configure(tx, nativeId, saved.agent)
+          )
         );
       }, piContext());
       if (state.phase === "running" && work.deadlineAt > now()) {
-        const ids = [
-          state.lead,
-          ...state.workers.map((worker) => worker.nativeId),
-        ];
         await Promise.all(
-          ids.map(async (nativeId, index) => {
-            const role = roles[index];
-            if (!role) {
-              throw new InvalidInput({
-                reason: "The saved team role is missing.",
-              });
-            }
-            await role.reconcileImports(nativeId, { kind: "restore" });
-          })
+          roles.map(({ nativeId, role: saved }) =>
+            saved.reconcileImports(nativeId, { kind: "restore" })
+          )
         );
       }
     }
@@ -175,11 +180,8 @@ export const createTeamRuntime = async (options: {
   };
   const abort = async () => {
     const state = await pi.snapshot(TeamState, piContext());
-    const ids = state?.lead
-      ? [state.lead, ...state.workers.map((worker) => worker.nativeId)]
-      : [];
     await Promise.all(
-      ids.map(async (nativeId) => {
+      teamConversationIds(state).map(async (nativeId) => {
         const native = await pi.conversation(nativeId, piContext());
         await native?.abort(piContext());
       })
@@ -295,29 +297,11 @@ export const createTeamRuntime = async (options: {
         return { accepted: false, reason: "terminal" };
       }
       if (!state.lead) {
-        const natives = await Promise.all(
-          agents.map(async (agent) => {
-            const native = await tx.createConversation({
-              ownership: { kind: "ownerless" },
-            });
-            await configure(tx, native.id, agent);
-            return native.id;
-          })
-        );
-        const [leadId] = natives;
-        if (!leadId) {
-          throw new InvalidInput({
-            reason: "The lead conversation was not created.",
-          });
-        }
-        state.lead = leadId;
-        state.workers = natives.slice(1).map((nativeId) => ({
-          nativeId,
-          ownerTaskId: null,
-          digest: null,
-          requestId: null,
-          inputDependencies: null,
-        }));
+        const native = await tx.createConversation({
+          ownership: { kind: "ownerless" },
+        });
+        await configure(tx, native.id, leadAgent);
+        state.lead = native.id;
       }
       state.phase = "running";
       state.inputCount += 1;
@@ -360,7 +344,14 @@ export const createTeamRuntime = async (options: {
   const wake = createTeamCompletion({
     pi,
     work,
-    roles,
+    roleDependencies: async () => {
+      const saved = await savedWorkers();
+      return await Promise.all(
+        [lead, ...saved.map((child) => child.role)].map((member) =>
+          member.dependencies()
+        )
+      );
+    },
     now,
     abort,
     emitReport: options.emitReport,
@@ -368,6 +359,6 @@ export const createTeamRuntime = async (options: {
     holdAdmissions,
   });
   await restore();
-  return { receive, wake, abort, roles, task, restore };
+  return { receive, wake, abort, lead, worker, task, restore };
 };
 export type TeamRuntime = Awaited<ReturnType<typeof createTeamRuntime>>;

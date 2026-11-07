@@ -18,6 +18,7 @@ import { readTeamRoleImports } from "../../packages/runtime/src/team-content.ts"
 import {
   TeamCommandReceipts,
   TeamState,
+  workerRequestId,
 } from "../../packages/runtime/src/team-state.ts";
 import {
   context,
@@ -57,8 +58,9 @@ test("the role reader resolves accepted native IDs and retained imports after re
   try {
     assert.deepEqual(await readTeamRoleImports(f.pi(), f.work, 0), empty());
     assert.deepEqual(await readTeamRoleImports(f.pi(), f.work, 1), empty());
+    assert.deepEqual(await readTeamRoleImports(f.pi(), f.work, 2), empty());
     await assert.rejects(
-      readTeamRoleImports(f.pi(), f.work, 2),
+      readTeamRoleImports(f.pi(), f.work, f.work.limits.maxTurns + 1),
       (error: unknown) => error instanceof InvalidInput
     );
     const command = input(f, "initial");
@@ -139,9 +141,10 @@ for (const stage of [2, 3]) {
       assert.deepEqual(before.raw[receiver], empty());
       assert.deepEqual(before.canonical[receiver], empty());
       assert.ok(before.state);
-      const [savedWorker] = before.state.workers;
-      assert.ok(savedWorker?.requestId);
-      const { requestId, nativeId: workerId } = savedWorker;
+      const savedWorker = before.state.children["1"];
+      assert.ok(savedWorker);
+      const workerId = savedWorker.nativeId;
+      const requestId = workerRequestId(savedWorker.ownerTaskId);
       const submission = await f
         .pi()
         .commit((tx) => tx.submissionByRequest(workerId, requestId), context);
@@ -249,7 +252,7 @@ for (const receiver of [0, 1]) {
       assert.deepEqual(reopened.raw[receiver], provenance);
       assert.deepEqual(reopened.canonical[receiver], provenance);
       assert.equal(reopened.state?.inputCount, 1);
-      assert.deepEqual(reopened.state?.workers, accepted.state?.workers);
+      assert.deepEqual(reopened.state?.children, accepted.state?.children);
       assert.deepEqual(f.calls, callsBeforeReopen);
       const result = await f.invokeWorker();
       assert.deepEqual(result.output, [
@@ -274,7 +277,7 @@ for (const denied of ["source", "tool", "role", "model"] as const) {
       );
       const accepted = await f.read();
       assert.deepEqual(
-        await f.runtime().roles[0]?.dependencies(),
+        await f.runtime().lead.dependencies(),
         command.contentDependencies
       );
       if (denied === "source") {
@@ -295,7 +298,7 @@ for (const denied of ["source", "tool", "role", "model"] as const) {
         (error: unknown) => error instanceof Denied
       );
       await assert.rejects(
-        f.runtime().roles[0]?.permit(empty()),
+        f.runtime().lead.permit(empty()),
         (error: unknown) => error instanceof Denied
       );
       const deniedState = await f.read();
@@ -347,8 +350,7 @@ test("an owner ChannelError wrapped as Unavailable does not block a cold complet
     assert.deepEqual(final.raw, before.raw);
     assert.deepEqual(f.calls, callsBefore);
     assert.ok(f.work.deadlineAt - Date.now() > 500_000);
-    const [lead] = f.runtime().roles;
-    assert.ok(lead);
+    const { lead } = f.runtime();
     await assert.rejects(
       lead.permit(empty()),
       (error: unknown) => error instanceof Unavailable
@@ -412,8 +414,7 @@ for (const kind of ["source", "tool"] as const) {
           .pi()
           .snapshot(TeamCommandReceipts, command.id, context);
         assert.equal(receipt?.receipt?.accepted, true);
-        const [lead] = f.runtime().roles;
-        assert.ok(lead);
+        const { lead } = f.runtime();
         const full = await lead.dependencies();
         const values = kind === "source" ? full.sourceIds : full.toolIds;
         assert.deepEqual(values, [
@@ -426,8 +427,7 @@ for (const kind of ["source", "tool"] as const) {
         await f.reopen();
         const pending = await f.pi().snapshot(TeamState, context);
         assert.equal(pending?.phase, "running");
-        const [restoredLead] = f.runtime().roles;
-        assert.ok(restoredLead);
+        const { lead: restoredLead } = f.runtime();
         assert.deepEqual(await restoredLead.dependencies(), full);
         await Promise.all(
           Object.values(pending?.pending ?? {}).map((taskId) =>
@@ -449,8 +449,7 @@ for (const kind of ["source", "tool"] as const) {
         assert.ok(f.work.deadlineAt - Date.now() > 500_000);
         await f.reopen();
         const reopened = await f.pi().snapshot(TeamState, context);
-        const [reopenedLead] = f.runtime().roles;
-        assert.ok(reopenedLead);
+        const { lead: reopenedLead } = f.runtime();
         assert.deepEqual(await reopenedLead.dependencies(), full);
         assert.deepEqual(reopened?.report, final.report);
         assert.equal(f.calls.length, 1);

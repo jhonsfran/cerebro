@@ -48,6 +48,40 @@ export const agentExecutionGrants = (
   ];
 };
 
+const MS_PER_SECOND = 1000;
+type TeamLimits = NonNullable<
+  NonNullable<AgentDetail["definition"]["team"]>["limits"]
+>;
+export interface TeamBudgets {
+  readonly maxTurns: string;
+  readonly maxWorkers: string;
+  readonly timeoutSeconds: string;
+}
+const teamBudgets = (limits: TeamLimits | undefined): TeamBudgets => ({
+  maxTurns: limits?.maxTurns?.toString() ?? "",
+  maxWorkers: limits?.maxWorkers?.toString() ?? "",
+  timeoutSeconds:
+    limits?.timeoutMs === undefined
+      ? ""
+      : String(limits.timeoutMs / MS_PER_SECOND),
+});
+export const agentTeamSection = (
+  budgets: TeamBudgets
+): { limits: TeamLimits } | undefined => {
+  const limits: TeamLimits = {
+    ...(budgets.maxTurns.trim() ? { maxTurns: Number(budgets.maxTurns) } : {}),
+    ...(budgets.maxWorkers.trim()
+      ? { maxWorkers: Number(budgets.maxWorkers) }
+      : {}),
+    ...(budgets.timeoutSeconds.trim()
+      ? {
+          timeoutMs: Math.round(Number(budgets.timeoutSeconds) * MS_PER_SECOND),
+        }
+      : {}),
+  };
+  return Object.keys(limits).length > 0 ? { limits } : undefined;
+};
+
 export const agentEditorValues = (agent: AgentDetail | null) => {
   const catalog = {
     connectorChoices: agent?.connectorChoices ?? [],
@@ -81,6 +115,7 @@ export const agentEditorValues = (agent: AgentDetail | null) => {
         : (catalog.modelChoices[0]?.id ?? ""),
     name: agent?.name ?? "",
     sourceIds: selectedSources.filter((id) => sourceIds.has(id)),
+    team: teamBudgets(agent?.definition.team?.limits),
     toolIds: selectedTools.filter((id) => toolIds.has(id)),
     unavailableSelections: {
       model: unavailableModel,

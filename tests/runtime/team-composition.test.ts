@@ -10,10 +10,9 @@ import { WorkAdmissionSchema } from "../../packages/contracts/src/work.ts";
 import {
   LEAD_ROLE_INSTRUCTIONS,
   WORKER_ROLE_INSTRUCTIONS,
-  requireRoleConfigurations,
+  requireRoleConfiguration,
   teamRoleDefinition,
   teamRoleKind,
-  teamRoleSlots,
 } from "../../packages/runtime/src/team-composition.ts";
 
 const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
@@ -63,15 +62,11 @@ const configuration = (
   },
 });
 
-test("slots are positional: one lead followed by maxWorkers workers", () => {
-  assert.deepEqual(teamRoleSlots(work), [
-    { index: 0, role: "lead" },
-    { index: 1, role: "worker" },
-    { index: 2, role: "worker" },
-  ]);
+test("index 0 is the lead and every child index up to the model call budget is a worker", () => {
   assert.equal(teamRoleKind(work, 0), "lead");
-  assert.equal(teamRoleKind(work, 2), "worker");
-  for (const index of [-1, 3, 1.5, Number.NaN]) {
+  assert.equal(teamRoleKind(work, 1), "worker");
+  assert.equal(teamRoleKind(work, 8), "worker");
+  for (const index of [-1, 9, 1.5, Number.NaN]) {
     assert.throws(() => teamRoleKind(work, index), InvalidInput);
   }
 });
@@ -101,38 +96,24 @@ test("a role definition is the agent plus a system overlay and nothing more", ()
 const invalid = (reason: string) => (error: unknown) =>
   error instanceof InvalidInput && error.reason.includes(reason);
 
-test("role configurations must match the pinned agent, one per slot, with distinct sessions", () => {
-  const valid = [configuration(0), configuration(1), configuration(2)];
-  assert.doesNotThrow(() => requireRoleConfigurations(work, valid));
-  assert.throws(
-    () => requireRoleConfigurations(work, valid.slice(0, 2)),
-    invalid("count changed")
-  );
-  assert.throws(
-    () =>
-      requireRoleConfigurations(work, [
-        configuration(0),
-        configuration(1, { version: 5 }),
-        configuration(2),
-      ]),
-    invalid("differs from its saved pin")
-  );
-  assert.throws(
-    () =>
-      requireRoleConfigurations(work, [
-        configuration(0),
-        configuration(1, { agentId: id.agent("other") }),
-        configuration(2),
-      ]),
-    invalid("differs from its saved pin")
-  );
-  assert.throws(
-    () =>
-      requireRoleConfigurations(work, [
-        configuration(0),
-        configuration(1),
-        configuration(1),
-      ]),
-    invalid("differs from its saved pin")
-  );
+test("a role configuration must match the pinned agent and organization", () => {
+  assert.doesNotThrow(() => requireRoleConfiguration(work, configuration(0)));
+  assert.doesNotThrow(() => requireRoleConfiguration(work, configuration(7)));
+  for (const changed of [
+    configuration(1, { version: 5 }),
+    configuration(1, { agentId: id.agent("other") }),
+    configuration(1, { organizationId: id.organization("other") }),
+    {
+      ...configuration(1),
+      address: {
+        ...configuration(1).address,
+        organizationId: id.organization("other"),
+      },
+    },
+  ]) {
+    assert.throws(
+      () => requireRoleConfiguration(work, changed),
+      invalid("differs from its saved pin")
+    );
+  }
 });

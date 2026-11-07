@@ -12,7 +12,7 @@ flowchart LR
   B --> C
 ```
 
-The identity cell stores the coordinator and admission records. Each Team has its own cell. Its lead and workers are private Pi conversations inside that cell. Always on means saved state and event-driven wake-up. An idle agent makes no model requests.
+The identity cell stores the coordinator and admission records. Each Team has its own cell. Its lead is a private Pi conversation inside that cell, and each worker is a child conversation of the lead. Always on means saved state and event-driven wake-up. An idle agent makes no model requests.
 
 ## Configure the agent
 
@@ -24,12 +24,16 @@ A Team runs as the agent you selected. Its roles derive from that agent's defini
 
 | Role | Model and grants | Instructions |
 | --- | --- | --- |
-| Lead | The agent's model, enabled tools, and grants | A system overlay to split the goal and call `delegate_worker` once per question, followed by the agent's instructions. |
+| Lead | The agent's model, enabled tools, and grants | A system overlay to split the goal and call `delegate_worker` once per question, several in the same turn, followed by the agent's instructions. |
 | Worker | The agent's model, enabled tools, and grants | A system overlay to answer one assigned question without delegating, followed by the agent's instructions. |
 
-Each worker has a separate private conversation. A role never holds more than the agent. Its tools are limited to read-only tools that need no approval. The first test needs no external tools or company sources. Add explicit grants to the agent before Teams handle company content.
+Each `delegate_worker` call starts a worker in a new private child conversation. Calls in the same turn run in parallel, up to the team's worker limit. A call beyond the limit returns an error that tells the lead to wait for running workers. A role never holds more than the agent. Its tools are limited to read-only tools that need no approval. A Team cannot request approval, and routing an approval to the coordinator is out of scope. The first test needs no external tools or company sources. Add explicit grants to the agent before Teams handle company content.
 
-Team limits have bounded defaults. To change them, add an optional `coordination` block to `runtime.json`. It carries limits only. See the [runtime reference](../reference/runtime-configuration.md#coordination).
+## Set team limits
+
+Each Team runs under three budgets: workers at once, model calls shared by the lead and every worker, and a time limit. The installation sets defaults. To change them, add an optional `coordination` block to `runtime.json`. It carries limits only. See the [runtime reference](../reference/runtime-configuration.md#coordination).
+
+An agent can override any budget. In the agent editor, open **Teams** and set **Workers at once**, **Model calls per team**, or **Time limit in seconds**. Leave a field empty to use the installation default. Each save publishes a new agent version. Running Teams keep the budgets saved at admission. A value outside the safety bounds fails to publish. The number of active Teams stays an installation setting.
 
 ## Send and control a team request
 

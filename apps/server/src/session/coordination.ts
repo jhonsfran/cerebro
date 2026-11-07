@@ -4,7 +4,8 @@ import type {
   ContentDependencies,
   AgentDefinition,
 } from "@cerebro/contracts/session";
-import type { WorkLimits } from "@cerebro/contracts/work";
+import { resolveWorkLimits } from "@cerebro/contracts/work";
+import type { TeamDefaults } from "@cerebro/contracts/work";
 import type { channelConversation } from "@cerebro/db/schema/agents";
 import type { CoordinationServices } from "@cerebro/runtime/coordinator-work";
 
@@ -14,7 +15,7 @@ export const createCoordinatorServices = (options: {
   readonly env: WorkerEnv;
   readonly agent: AgentDefinition;
   readonly conversation: typeof channelConversation.$inferSelect;
-  readonly limits: WorkLimits;
+  readonly teamDefaults: TeamDefaults;
   readonly contentDependencies: () => Promise<ContentDependencies>;
 }): CoordinationServices => ({
   ownerPrincipalId: id.principal(options.conversation.ownerPrincipalId),
@@ -22,7 +23,7 @@ export const createCoordinatorServices = (options: {
     agentId: options.agent.agentId,
     agentVersion: options.agent.version,
   },
-  limits: options.limits,
+  limits: resolveWorkLimits(options.agent, options.teamDefaults),
   contentDependencies: options.contentDependencies,
   sendCommand: async (command) => {
     assertQueuePayloadSize(command);

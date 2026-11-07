@@ -1,3 +1,4 @@
+import type { ContentDependencies } from "@cerebro/contracts/session";
 import {
   BoundedContentDependenciesSchema,
   WorkReportSchema,
@@ -8,14 +9,13 @@ import type { Harness, Tx } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 import { piContext } from "./pi-harness.ts";
-import type { TeamRole } from "./team-role.ts";
 import { TeamState } from "./team-state.ts";
 import type { TeamStateValue } from "./team-state.ts";
 
 export const createTeamCompletion = (options: {
   readonly pi: Harness;
   readonly work: WorkAdmission;
-  readonly roles: readonly Pick<TeamRole, "dependencies">[];
+  readonly roleDependencies: () => Promise<readonly ContentDependencies[]>;
   readonly now: () => number;
   readonly abort: () => Promise<void>;
   readonly holdAdmissions: () => Promise<void>;
@@ -30,7 +30,7 @@ export const createTeamCompletion = (options: {
   const saveReport = async (text = "", requestCount?: number) => {
     const dependencies = [
       work.contentDependencies,
-      ...(await Promise.all(options.roles.map((role) => role.dependencies()))),
+      ...(await options.roleDependencies()),
     ];
     const combined = {
       sourceIds: [...new Set(dependencies.flatMap((value) => value.sourceIds))],
