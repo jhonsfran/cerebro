@@ -5,38 +5,20 @@ import { defineDoc } from "../../packages/runtime/node_modules/@earendil-works/p
 import { Bindings } from "../../packages/runtime/src/conversation-bindings.ts";
 import { context, setup } from "./coordinator-fixture.ts";
 
-test("a persisted v1 binding migrates its exact definition, native identity, and legacy alias provenance", async () => {
+test("a persisted binding from an older version is rejected instead of migrated", async () => {
   const fixture = await setup();
   try {
-    const source = fixture.source("a");
-    const legacy = defineDoc({
+    const older = defineDoc({
       kind: "cerebro.conversation-bindings",
       scope: "session",
       version: 1,
-      initial: () => ({
-        conversations: {
-          [source.address.sessionId]: {
-            address: { ...source.address },
-            agentVersion: 1,
-            nativeId: source.native.id,
-          },
-        },
-      }),
+      initial: () => ({ conversations: {} }),
     });
-    await fixture.pi().commit((tx) => tx.doc(legacy), context);
-    await fixture.reopen();
-    const stored = await fixture.pi().snapshot(Bindings, context);
-    assert.deepEqual(stored?.conversations[source.address.sessionId], {
-      address: source.address,
-      agentVersion: 1,
-      policyVersion: 0,
-      nativeId: source.native.id,
-      legacyVersion: 1,
-      origin: null,
-      refresh: null,
-      releaseEvent: null,
-    });
-    assert.equal(fixture.source("a").native.id, source.native.id);
+    await fixture.pi().commit((tx) => tx.doc(older), context);
+    await assert.rejects(
+      fixture.pi().snapshot(Bindings, context),
+      /Unsupported conversation bindings version\./u
+    );
   } finally {
     await fixture.close();
   }
