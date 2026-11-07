@@ -478,6 +478,119 @@ test("native messages require an operation ID; approvals and Stop reject extra f
   );
 });
 
+const openConversation = async () => {
+  const app = await createTestProduct();
+  await app.install();
+  const agent = await app.createAgent();
+  const agentId = string(agent.agentId);
+  const created = await app.request("/api/product/conversations", "POST", {
+    agentId,
+    operationId: "control-chat",
+  });
+  assert.equal(created.status, 200);
+  const path = `/api/product/conversations/${string(object(await created.json()).conversationId)}`;
+  const activity = async () => {
+    const response = await app.request(path);
+    assert.equal(response.status, 200);
+    return object(object(object(await response.json()).snapshot).activity);
+  };
+  return { ...app, activity, agentId, path };
+};
+
+test("chat controls reach their scope with stable receipts and observable activity", async () => {
+  const app = await openConversation();
+  const command = {
+    instruction: "Review the queue.",
+    kind: "schedule",
+    operationId: "schedule-once",
+    recurrence: { interval: 1, timezone: "America/Bogota", unit: "day" },
+    runAt: Date.now() + 60_000,
+  };
+  const first = await app.request(`${app.path}/control`, "POST", command);
+  assert.equal(first.status, 200);
+  const receipt = object(await first.json());
+  assert.deepEqual(receipt, { id: "schedule:schedule-once", kind: "schedule" });
+  const duplicate = await app.request(`${app.path}/control`, "POST", command);
+  assert.equal(duplicate.status, 200);
+  assert.deepEqual(object(await duplicate.json()), receipt);
+  const compact = await app.request(`${app.path}/control`, "POST", {
+    instructions: "Keep decisions.",
+    kind: "compact",
+    operationId: "compact-once",
+  });
+  assert.equal(compact.status, 200);
+  const changed = await app.request(`${app.path}/control`, "POST", {
+    ...command,
+    instruction: "Another request.",
+  });
+  assert.equal(changed.status, 409);
+  const active = await app.activity();
+  assert.deepEqual(active.reminders, [
+    {
+      id: "schedule:schedule-once",
+      instruction: command.instruction,
+      recurrence: command.recurrence,
+      runAt: command.runAt,
+      state: "scheduled",
+    },
+  ]);
+  assert.deepEqual(active.compactions, [
+    {
+      attempt: 1,
+      blocking: false,
+      id: "compact:compact-once",
+      reason: "manual",
+    },
+  ]);
+  const cancelled = await app.request(`${app.path}/control`, "POST", {
+    kind: "cancel-schedule",
+    scheduleId: string(receipt.id),
+  });
+  assert.equal(cancelled.status, 200);
+  assert.deepEqual(
+    array((await app.activity()).reminders).map(
+      (reminder) => object(reminder).state
+    ),
+    ["cancelled"]
+  );
+});
+
+test("an identity with agent access cannot control another identity's chat", async () => {
+  const app = await openConversation();
+  await app.options.withDatabase(async (db) => {
+    const identity = createIdentityRepository(db);
+    const other = await identity.provisionHumanPrincipal(
+      app.options.organizationId,
+      "test-other"
+    );
+    await Promise.all(
+      (["read", "execute"] as const).map((action) =>
+        identity.setManualGrant(
+          app.options.organizationId,
+          other.id,
+          { action, resourceId: app.agentId, resourceKind: "agent" },
+          true
+        )
+      )
+    );
+  });
+  const owned = await app.request(
+    "/api/product/conversations",
+    "POST",
+    { agentId: app.agentId, operationId: "other-chat" },
+    "test-other"
+  );
+  assert.equal(owned.status, 200);
+  const foreignControl = await app.request(
+    `${app.path}/control`,
+    "POST",
+    { kind: "compact", operationId: "foreign-compact" },
+    "test-other"
+  );
+  assert.equal(foreignControl.status, 404);
+  assert.deepEqual((await app.activity()).compactions, []);
+});
+
 test("only product and Slack request bodies have the 100 KB limit", async () => {
   const app = await createTestProduct();
   const large = "x".repeat(150_000);

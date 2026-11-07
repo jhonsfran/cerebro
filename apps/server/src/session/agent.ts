@@ -20,7 +20,6 @@ import type {
   AgentDefinition,
   ContentDependencies,
 } from "@cerebro/contracts/session";
-import { ConversationForkOrigin } from "@cerebro/contracts/session-service";
 import { SlackEventReferenceSchema } from "@cerebro/contracts/slack-events";
 import { TeamEventReturnSchema } from "@cerebro/contracts/team-events";
 import {
@@ -128,21 +127,8 @@ export const createRuntimeComposition = (
           )
         )
       ).pipe(Effect.flatMap(fromPortResult));
-    const forkOrigin = conversation.forkOrigin
-      ? yield* Effect.try({
-          catch: () =>
-            new InvalidInput({ reason: "Invalid conversation fork origin." }),
-          try: () =>
-            Schema.decodeUnknownSync(ConversationForkOrigin)(
-              conversation.forkOrigin
-            ),
-        })
-      : undefined;
     const loadedAgent = yield* loadAgent(
-      selection?.version ??
-        persisted?.agent_version ??
-        forkOrigin?.agentVersion ??
-        "latest"
+      selection?.version ?? persisted?.agent_version ?? "latest"
     );
     storage.sql.exec(
       "INSERT OR IGNORE INTO cerebro_session_metadata VALUES (?, ?, ?, ?, ?)",
@@ -200,21 +186,6 @@ export const createRuntimeComposition = (
         agent,
         owner: () => Effect.runPromise(execution.ownerContext()),
       }),
-      ...(forkOrigin
-        ? {
-            origin: {
-              address: {
-                ...address,
-                conversationId: id.conversation(
-                  forkOrigin.parentConversationId
-                ),
-                sessionId: id.session(forkOrigin.parentSessionId),
-              },
-              agentVersion: forkOrigin.agentVersion,
-              entryId: forkOrigin.entryId,
-            },
-          }
-        : {}),
       coordination: createCoordinatorServices({
         env,
         address,

@@ -252,7 +252,7 @@ export const searchConversationHistory = async (
           )
         );
         await services.metadata(() =>
-          inheritDependencies?.(candidate, toolIds, true)
+          inheritDependencies?.(candidate, toolIds)
         );
         await services.persist();
         await runtime.authorize(owner, "send", signal);

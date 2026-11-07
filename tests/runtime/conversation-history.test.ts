@@ -178,11 +178,7 @@ const fixture = async () => {
         context
       ));
     const usedTools = new Set<string>();
-    const inherited: {
-      sessionId: string;
-      toolIds: readonly string[];
-      history: boolean;
-    }[] = [];
+    const inherited: { sessionId: string; toolIds: readonly string[] }[] = [];
     const registered = {
       definition: tool,
       description: entry.description,
@@ -250,8 +246,8 @@ const fixture = async () => {
           authority,
           contentDependencies: () =>
             Promise.resolve({ sourceIds: [], toolIds: [...usedTools] }),
-          inheritDependencies: (source, toolIds, history) => {
-            inherited.push({ sessionId: source.sessionId, toolIds, history });
+          inheritDependencies: (source, toolIds) => {
+            inherited.push({ sessionId: source.sessionId, toolIds });
             for (const toolId of toolIds) {
               usedTools.add(toolId);
             }
@@ -380,7 +376,6 @@ test("history tool evidence requires the receiving agent's enabled tool, read gr
     });
     assert.deepEqual(permitted.inherited, [
       {
-        history: true,
         sessionId: "session:privileged-source",
         toolIds: ["privileged_lookup"],
       },

@@ -14,7 +14,6 @@ import type { ExecutionContext } from "@cerebro/contracts/identity";
 import {
   ChatDecisionReceipt,
   ChatControlReceipt,
-  ChatForkReceipt,
   ChatReceipt,
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
@@ -35,8 +34,7 @@ type SessionPath =
   | "/observe"
   | "/decide"
   | "/stop"
-  | "/control"
-  | "/fork";
+  | "/control";
 const responseSchema = z.object({
   status: z.literal("ok"),
   value: z.unknown(),
@@ -173,16 +171,6 @@ export const createSessionClient = (env: WorkerEnv): ChatClient => {
         { ...input, body: { command }, path: "/control" },
         Schema.decodeUnknownSync(ChatControlReceipt),
         "operationId" in command ? command.operationId : undefined
-      ),
-    fork: ({ destination, entryId, operationId, ...input }) =>
-      invoke(
-        {
-          ...input,
-          body: { destination, entryId, operationId },
-          path: "/fork",
-        },
-        Schema.decodeUnknownSync(ChatForkReceipt),
-        operationId
       ),
     decide: ({ approvalId, decision, ...input }) =>
       invoke(

@@ -170,17 +170,16 @@ test("history inheritance copies source, tool and chat evidence monotonically in
     await target.addTool("target-tool");
     await sibling.add(["sibling-source"]);
     await metadata(() =>
-      source.inherit(addressFor("earlier"), ["native-earlier-tool"], true)
+      source.inherit(addressFor("earlier"), ["native-earlier-tool"])
     );
     await metadata(() =>
-      target.inherit(
-        addressFor("source"),
-        ["native-source-tool", "source-tool"],
-        true
-      )
+      target.inherit(addressFor("source"), [
+        "native-source-tool",
+        "source-tool",
+      ])
     );
     await metadata(() =>
-      target.inherit(addressFor("source"), ["native-source-tool"], true)
+      target.inherit(addressFor("source"), ["native-source-tool"])
     );
     assert.deepEqual(await target.all(), [
       "earlier-source",
@@ -223,53 +222,6 @@ test("history inheritance copies source, tool and chat evidence monotonically in
   }
 });
 
-test("fork inheritance keeps prior history evidence and omits a new dependency on its parent chat", async () => {
-  const database = new DatabaseSync(":memory:");
-  try {
-    const metadata = metadataFor(database);
-    const storage = storageFor(database);
-    const [evidence, parent, fork] = await Promise.all(
-      ["evidence", "parent", "fork"].map((name) =>
-        metadata(() =>
-          createSourceDependencyStore(
-            storage,
-            addressFor(name).sessionId,
-            metadata
-          )
-        )
-      )
-    );
-    await evidence.add(["company-source"]);
-    await evidence.addTool("company-tool");
-    await parent.add(["parent-source"]);
-    await metadata(() =>
-      parent.inherit(addressFor("evidence"), ["historic-tool"], true)
-    );
-    await metadata(() => fork.inherit(addressFor("parent"), [], false));
-    assert.deepEqual(await fork.all(), ["company-source", "parent-source"]);
-    assert.deepEqual(await fork.tools(), ["company-tool", "historic-tool"]);
-    assert.deepEqual(await fork.history(), [addressFor("evidence")]);
-    await parent.add(["later-parent-source"]);
-    await parent.addTool("later-parent-tool");
-    assert.deepEqual(await fork.all(), ["company-source", "parent-source"]);
-    assert.deepEqual(await fork.tools(), ["company-tool", "historic-tool"]);
-    await metadata(() => fork.inherit(addressFor("parent"), [], false));
-    assert.deepEqual(await fork.all(), [
-      "company-source",
-      "later-parent-source",
-      "parent-source",
-    ]);
-    assert.deepEqual(await fork.tools(), [
-      "company-tool",
-      "historic-tool",
-      "later-parent-tool",
-    ]);
-    assert.deepEqual(await fork.history(), [addressFor("evidence")]);
-  } finally {
-    database.close();
-  }
-});
-
 test("history copies flatten cycles without recording the receiving chat as its own evidence", async () => {
   const database = new DatabaseSync(":memory:");
   try {
@@ -288,9 +240,9 @@ test("history copies flatten cycles without recording the receiving chat as its 
     );
     await first.add(["first-source"]);
     await second.add(["second-source"]);
-    await metadata(() => first.inherit(addressFor("second"), [], true));
-    await metadata(() => second.inherit(addressFor("first"), [], true));
-    await metadata(() => first.inherit(addressFor("second"), [], true));
+    await metadata(() => first.inherit(addressFor("second"), []));
+    await metadata(() => second.inherit(addressFor("first"), []));
+    await metadata(() => first.inherit(addressFor("second"), []));
     assert.deepEqual(await first.all(), ["first-source", "second-source"]);
     assert.deepEqual(await second.all(), ["first-source", "second-source"]);
     assert.deepEqual(await first.history(), [addressFor("second")]);

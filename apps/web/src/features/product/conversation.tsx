@@ -25,7 +25,7 @@ import {
   TooltipTrigger,
 } from "@cerebro/ui/components/tooltip";
 import { ArrowUp, Clock, RotateCw, Square } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import { cacheKey, currentAccessGeneration, encoded, productPath } from "./api";
@@ -34,7 +34,6 @@ import { CHAT_MESSAGE_LENGTH_ERROR, MAX_CHAT_MESSAGE_LENGTH } from "./chat";
 import {
   controlConversation,
   decideApproval,
-  forkConversation,
   stopConversation,
   useConversationConnection,
 } from "./chat-connection";
@@ -43,8 +42,6 @@ import { ConversationActivity } from "./conversation-activity";
 import { ConversationInspector } from "./conversation-inspector";
 import { ConversationTranscript } from "./conversation-transcript";
 import { ErrorAlert } from "./feedback";
-import { operationFor } from "./intent";
-import type { OperationIntent } from "./intent";
 import type { ObservationConnectionStatus } from "./observation";
 import { usePendingChat } from "./pending-chat";
 import type { LoadedConversation } from "./types";
@@ -255,7 +252,6 @@ const ConversationSession = ({
   agentName,
   loaded,
   onOpenConversation,
-  onConversation,
 }: {
   conversationId: string;
   userId: string;
@@ -263,7 +259,6 @@ const ConversationSession = ({
   agentName: string;
   loaded: LoadedConversation;
   onOpenConversation?: () => void;
-  onConversation?: (conversationId: string) => void;
 }) => {
   const { conversation } = loaded;
   const [errorMessage, setErrorMessage] = useState("");
@@ -271,7 +266,6 @@ const ConversationSession = ({
   const [acting, setActing] = useState(false);
   const [connected, setConnected] = useState(true);
   const [accessValid, setAccessValid] = useState(true);
-  const forkIntent = useRef<OperationIntent | null>(null);
   const path = productPath(`conversations/${encoded(conversationId)}`);
   const pendingKey = cacheKey(userId, conversationId, "pending");
   const pending = usePendingChat(pendingKey);
@@ -323,17 +317,6 @@ const ConversationSession = ({
   };
   const control = (command: ChatControl) =>
     act(() => controlConversation(path, command));
-  const fork = async (entryId: string) => {
-    await act(async () => {
-      const value = await forkConversation(
-        path,
-        entryId,
-        operationFor(forkIntent, { entryId })
-      );
-      forkIntent.current = null;
-      onConversation?.(value.conversationId);
-    });
-  };
 
   if (!accessValid) {
     return (
@@ -385,13 +368,11 @@ const ConversationSession = ({
         decide={async (approvalId, decision) => {
           await act(() => decideApproval(path, approvalId, decision));
         }}
-        fork={onConversation ? fork : undefined}
       />
       <ConversationActivity
         activity={snapshot.activity}
         disabled={controlsDisabled}
         control={control}
-        onConversation={onConversation}
         admission={snapshot.admission}
       />
       {pending ? (

@@ -25,7 +25,6 @@ import type { ObservationConnectionStatus } from "./observation";
 import {
   approvalReceiptSchema,
   chatControlReceiptSchema,
-  forkedConversationSchema,
   messageReceiptSchema,
   stopReceiptSchema,
 } from "./types";
@@ -126,12 +125,6 @@ export const stopConversation = (path: string) =>
 
 export const controlConversation = (path: string, command: ChatControl) =>
   mutate(`${path}/control`, command, chatControlReceiptSchema);
-
-export const forkConversation = (
-  path: string,
-  entryId: string,
-  operationId: string
-) => mutate(`${path}/fork`, { entryId, operationId }, forkedConversationSchema);
 
 export const decideApproval = (
   path: string,

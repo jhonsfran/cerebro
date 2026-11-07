@@ -155,16 +155,12 @@ const installConversation = (
   });
   return { replace: send, requests, loaded: loadedConversation(initial) };
 };
-const renderConversation = (
-  loaded: LoadedConversation,
-  onConversation?: (conversationId: string) => void
-) =>
+const renderConversation = (loaded: LoadedConversation) =>
   render(
     createElement(ConversationPanel, {
       agentId: "agent",
       agentName: "Agent",
       conversationId: "conversation",
-      onConversation,
       userId: "user",
       loaded,
     })
@@ -177,88 +173,6 @@ const openActivity = (container: HTMLElement) => {
     details.open = true;
   }
 };
-
-test("fork controls use native completed entries, keep the retry ID and navigate to the result", async () => {
-  let attempts = 0;
-  const server = installConversation(
-    snapshot({
-      messages: [
-        {
-          entryId: "entry-user",
-          id: "user",
-          role: "user",
-          state: "complete",
-          text: "Question",
-        },
-        {
-          id: "answer",
-          role: "assistant",
-          state: "complete",
-          text: "No native entry",
-        },
-        {
-          entryId: "partial",
-          id: "stream",
-          role: "assistant",
-          state: "streaming",
-          text: "Streaming",
-        },
-        {
-          entryId: "tool",
-          id: "result",
-          role: "tool",
-          state: "complete",
-          text: "Tool output",
-        },
-      ],
-    }),
-    () => {
-      attempts += 1;
-      return attempts === 1
-        ? Response.json({ message: "Response lost. Retry." }, { status: 503 })
-        : Response.json({
-            agentId: "agent",
-            conversationId: "fork",
-            sessionId: "fork-session",
-          });
-    }
-  );
-  const navigated: string[] = [];
-  const view = renderConversation(server.loaded, (value) =>
-    navigated.push(value)
-  );
-  await waitFor(() =>
-    assert.equal(
-      view.getByRole<HTMLButtonElement>("button", {
-        name: "Fork from this message",
-      }).disabled,
-      false
-    )
-  );
-  assert.equal(
-    view.getAllByRole("button", { name: "Fork from this message" }).length,
-    1
-  );
-  await act(() =>
-    view.getByRole("button", { name: "Fork from this message" }).click()
-  );
-  await waitFor(() =>
-    assert.match(view.getByRole("alert").textContent ?? "", /Response lost/u)
-  );
-  await act(() =>
-    view.getByRole("button", { name: "Fork from this message" }).click()
-  );
-  await waitFor(() => assert.deepEqual(navigated, ["fork"]));
-  assert.equal(server.requests.length, 2);
-  assert.deepEqual(server.requests[0], server.requests[1]);
-  assert.ok(server.requests[0]?.url.endsWith("/conversation/fork"));
-  assert.ok(
-    server.requests[0]?.body &&
-      typeof server.requests[0].body === "object" &&
-      "entryId" in server.requests[0].body
-  );
-  assert.equal(server.requests[0].body.entryId, "entry-user");
-});
 
 test("subagent work and ownership are visible and child approval stays on the parent route", async () => {
   const initial = snapshot({
@@ -304,7 +218,6 @@ test("subagent work and ownership are visible and child approval stays on the pa
           state: "waiting",
         },
       ],
-      origin: { conversationId: "parent", entryId: "parent-entry" },
     },
     approvals: [
       {
@@ -348,10 +261,7 @@ test("subagent work and ownership are visible and child approval stays on the pa
           approval: { approvalId: "child-approval", state: "allowed" },
         })
   );
-  const navigated: string[] = [];
-  const view = renderConversation(server.loaded, (value) =>
-    navigated.push(value)
-  );
+  const view = renderConversation(server.loaded);
   await waitFor(() =>
     assert.equal(
       view.getByRole<HTMLButtonElement>("button", { name: "Approve request" })
@@ -395,10 +305,6 @@ test("subagent work and ownership are visible and child approval stays on the pa
   assert.ok(
     server.requests[0]?.url.endsWith("/conversation/approvals/child-approval")
   );
-  await act(() =>
-    view.getByRole("button", { name: "parent conversation" }).click()
-  );
-  assert.deepEqual(navigated, ["parent"]);
 });
 
 test("scheduled follow-ups preserve retry intent, recurrence timezone and explicit future cancellation", async () => {

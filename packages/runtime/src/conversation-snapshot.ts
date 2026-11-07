@@ -55,14 +55,6 @@ export const conversationSnapshot = async (
             "Context compaction failed. Try again after checking model access.",
         }
       : {}),
-    ...(runtime.configuration.origin
-      ? {
-          origin: {
-            conversationId: runtime.configuration.origin.address.conversationId,
-            entryId: runtime.configuration.origin.entryId,
-          },
-        }
-      : {}),
     tasks: inspection.tasks
       .filter(
         ({ record }) =>

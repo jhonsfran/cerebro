@@ -112,11 +112,7 @@ export const createSourceDependencyStore = (
     importDependencies,
     addTool: (toolId: string) =>
       metadata(() => importDependencies({ sourceIds: [], toolIds: [toolId] })),
-    inherit: (
-      source: EventAddress,
-      toolIds: readonly string[],
-      history: boolean
-    ): void => {
+    inherit: (source: EventAddress, toolIds: readonly string[]): void => {
       storage.sql.exec(
         "INSERT OR IGNORE INTO cerebro_content_source SELECT ?, source_id FROM cerebro_content_source WHERE session_id=?",
         sessionId,
@@ -140,7 +136,7 @@ export const createSourceDependencyStore = (
         source.sessionId,
         sessionId
       );
-      if (history && source.sessionId !== sessionId) {
+      if (source.sessionId !== sessionId) {
         storage.sql.exec(
           "INSERT OR IGNORE INTO cerebro_content_chat VALUES (?, ?, ?, ?, ?)",
           sessionId,

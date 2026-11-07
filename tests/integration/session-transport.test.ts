@@ -58,7 +58,6 @@ test("native chat credentials authenticate every private operation with the comp
     "/observe",
     "/decide",
     "/stop",
-    "/fork",
     "/control",
     "/slack-event",
     "/legacy-slack-input",
@@ -217,86 +216,65 @@ test("Slack discovery authenticates an identity without a default conversation a
   );
 });
 
-test("fork and control credentials bind the command body, destination, source chat, and identity host", async () => {
-  const destination = {
-    ...address,
-    conversationId: id.conversation("forked-chat"),
-    sessionId: id.session("forked-session"),
+test("control credentials bind the command body, source chat, and identity host", async () => {
+  const command = {
+    body: {
+      kind: "schedule",
+      instruction: "Review it.",
+      operationId: "later",
+      runAt: 1_800_000_000_000,
+    },
+    changed: {
+      kind: "schedule",
+      instruction: "Run another action.",
+      operationId: "later",
+      runAt: 1_800_000_000_000,
+    },
   };
-  const commands = [
-    {
-      path: "/fork" as const,
-      body: { destination, entryId: "12", operationId: "branch" },
-      changed: {
-        destination: { ...destination, conversationId: "foreign-chat" },
-        entryId: "12",
-        operationId: "branch",
-      },
-    },
-    {
-      path: "/control" as const,
-      body: {
-        kind: "schedule",
-        instruction: "Review it.",
-        operationId: "later",
-        runAt: 1_800_000_000_000,
-      },
-      changed: {
-        kind: "schedule",
-        instruction: "Run another action.",
-        operationId: "later",
-        runAt: 1_800_000_000_000,
-      },
-    },
-  ];
-  await Promise.all(
-    commands.map(async (command) => {
-      const request = await signedRequest(
-        command.path,
-        address,
-        identity,
-        command.body
-      );
-      assert.deepEqual(
-        await authenticateSessionRequest(request.clone(), secret, identity),
-        { address, context: userEvent.context }
-      );
-      await assert.rejects(
-        authenticateSessionRequest(
-          new Request(request.url, {
-            body: JSON.stringify(command.changed),
-            headers: request.headers,
-            method: "POST",
-          }),
-          secret,
-          identity
-        ),
-        Denied
-      );
-      await assert.rejects(
-        authenticateSessionRequest(request.clone(), secret, {
-          ...identity,
-          ownerPrincipalId: id.principal("foreign-owner"),
-        }),
-        Denied
-      );
-      const proof = JSON.parse(
-        request.headers.get("x-cerebro-session-proof") ?? "null"
-      );
-      proof.proof.address.sessionId = destination.sessionId;
-      await assert.rejects(
-        authenticateSessionRequest(
-          new Request(request.url, {
-            body: JSON.stringify(command.body),
-            headers: { "x-cerebro-session-proof": JSON.stringify(proof) },
-            method: "POST",
-          }),
-          secret,
-          identity
-        ),
-        Denied
-      );
-    })
+  const request = await signedRequest(
+    "/control",
+    address,
+    identity,
+    command.body
+  );
+  assert.deepEqual(
+    await authenticateSessionRequest(request.clone(), secret, identity),
+    { address, context: userEvent.context }
+  );
+  await assert.rejects(
+    authenticateSessionRequest(
+      new Request(request.url, {
+        body: JSON.stringify(command.changed),
+        headers: request.headers,
+        method: "POST",
+      }),
+      secret,
+      identity
+    ),
+    Denied
+  );
+  await assert.rejects(
+    authenticateSessionRequest(request.clone(), secret, {
+      ...identity,
+      ownerPrincipalId: id.principal("foreign-owner"),
+    }),
+    Denied
+  );
+  const proof = JSON.parse(
+    request.headers.get("x-cerebro-session-proof") ?? "null"
+  );
+  proof.proof.address.sessionId = id.session("other-session");
+  await assert.rejects(
+    authenticateSessionRequest(
+      new Request(request.url, {
+        body: JSON.stringify(command.body),
+        headers: { "x-cerebro-session-proof": JSON.stringify(proof) },
+        method: "POST",
+      }),
+      secret,
+      identity
+    ),
+    Denied
   );
 });
 

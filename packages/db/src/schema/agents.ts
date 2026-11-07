@@ -1,5 +1,4 @@
 import type { AgentDefinition } from "@cerebro/contracts";
-import type { ConversationForkOrigin } from "@cerebro/contracts/session-service";
 import {
   integer,
   jsonb,
@@ -60,7 +59,6 @@ export const channelConversation = pgTable("channel_conversation", {
     .notNull()
     .default("legacy-v1"),
   kind: text("kind", { enum: ["web", "slack"] }).notNull(),
-  forkOrigin: jsonb("fork_origin").$type<ConversationForkOrigin>(),
   organizationId: text("organization_id").notNull(),
   ownerPrincipalId: text("owner_principal_id").notNull(),
   retiredAt: timestamp("retired_at"),

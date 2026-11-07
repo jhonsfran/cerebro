@@ -7,7 +7,6 @@ import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import { InvalidInput } from "../../packages/contracts/src/failures.ts";
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
 import type { MetadataTransaction } from "../../packages/runtime/src/session-agent.ts";
-import { forkOrigin } from "./fixture-contracts.ts";
 
 export const capabilityFixture = async (
   request: Request,
@@ -21,43 +20,6 @@ export const capabilityFixture = async (
     readonly jobs: LifecycleJobs;
   }
 ): Promise<Response> => {
-  if (path === "/fixture/capabilities/reserve-fork") {
-    const { origin } = z
-      .object({ origin: forkOrigin })
-      .parse(await request.json());
-    if (
-      origin.address.organizationId !== address.organizationId ||
-      origin.address.agentId !== address.agentId
-    ) {
-      throw new InvalidInput({
-        reason: "Fixture fork origin crosses an identity or agent.",
-      });
-    }
-    const serialized = JSON.stringify(origin);
-    await services.transaction(() => {
-      services.storage.sql.exec(
-        "CREATE TABLE IF NOT EXISTS fixture_fork_origin (session_id TEXT PRIMARY KEY, origin TEXT NOT NULL)"
-      );
-      const [prior] = services.storage.sql
-        .exec<{ origin: string }>(
-          "SELECT origin FROM fixture_fork_origin WHERE session_id=?",
-          address.sessionId
-        )
-        .toArray();
-      if (prior && prior.origin !== serialized) {
-        throw new InvalidInput({
-          reason: "The fixture fork reservation changed.",
-        });
-      }
-      services.storage.sql.exec(
-        "INSERT OR IGNORE INTO fixture_fork_origin VALUES (?, ?)",
-        address.sessionId,
-        serialized
-      );
-    });
-    await services.storage.sync();
-    return Response.json({ status: "ok", value: { reserved: true } });
-  }
   const nativeId = await services.nativeSession(address);
   if (path === "/fixture/capabilities/compaction-state") {
     const pi = await services.harness.pi();

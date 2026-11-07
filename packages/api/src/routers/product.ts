@@ -192,21 +192,6 @@ export const productRouter = {
         input.operationId
       )
     ),
-  forkConversation: product
-    .route({
-      method: "POST",
-      path: "/product/conversations/{conversationId}/fork",
-    })
-    .input(
-      conversation.extend({ operationId: identifier, entryId: identifier })
-    )
-    .handler(({ context, input }) =>
-      context.service.forkConversation(
-        context.userId,
-        input.conversationId,
-        input
-      )
-    ),
   controlConversation: product
     .route({
       method: "POST",

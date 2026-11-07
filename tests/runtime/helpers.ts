@@ -22,7 +22,6 @@ import type {
 import {
   ChatControlReceipt,
   ChatDecisionReceipt,
-  ChatForkReceipt,
   ChatObservation,
   ChatReceipt,
   ChatSnapshot,
@@ -492,33 +491,6 @@ export const chatControl = async (
 ) =>
   Schema.decodeUnknownSync(ChatControlReceipt)(
     await request(stack, "/runtime/control", { address, command })
-  );
-export const reserveFork = async (
-  stack: Stack,
-  destination: EventAddress,
-  source: EventAddress,
-  entryId: string,
-  agentVersion: number
-): Promise<void> => {
-  await request(stack, "/runtime/fixture/capabilities/reserve-fork", {
-    address: destination,
-    origin: { address: source, agentVersion, entryId },
-  });
-};
-export const fork = async (
-  stack: Stack,
-  address: EventAddress,
-  destination: EventAddress,
-  entryId: string,
-  operationId: string
-) =>
-  Schema.decodeUnknownSync(ChatForkReceipt)(
-    await request(stack, "/runtime/fork", {
-      address,
-      destination,
-      entryId,
-      operationId,
-    })
   );
 export const capabilityProvider = async (stack: Stack) =>
   Schema.decodeUnknownSync(

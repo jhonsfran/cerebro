@@ -300,20 +300,17 @@ export const ConversationActivity = ({
   activity,
   disabled,
   control,
-  onConversation,
   admission,
 }: {
   activity: ChatActivity | undefined;
   disabled: boolean;
   control: Control;
-  onConversation?: (conversationId: string) => void;
   admission?: ChatSnapshot["admission"];
 }) => {
   const compactIntent = useRef<OperationIntent | null>(null);
   if (!activity) {
     return null;
   }
-  const { origin } = activity;
   const runningChildren = activity.children.filter(
     (child) => child.state === "running"
   ).length;
@@ -332,25 +329,6 @@ export const ConversationActivity = ({
           disabled={disabled}
           control={control}
         />
-      ) : null}
-      {origin ? (
-        <p className="text-muted-foreground text-xs">
-          Forked from{" "}
-          {onConversation ? (
-            <Button
-              variant="link"
-              size="xs"
-              className="h-auto px-0"
-              type="button"
-              onClick={() => onConversation(origin.conversationId)}
-            >
-              parent conversation
-            </Button>
-          ) : (
-            "another conversation"
-          )}
-          .
-        </p>
       ) : null}
       <Disclosure
         className="bg-card border"

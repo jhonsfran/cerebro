@@ -49,7 +49,6 @@ export const isPrimaryConversation = async (
     | "ownerPrincipalId"
     | "bindingKey"
     | "conversationId"
-    | "forkOrigin"
   >
 ): Promise<boolean> => {
   const owner = {
@@ -59,7 +58,6 @@ export const isPrimaryConversation = async (
   };
   const bindingKey = `primary:${await digest(owner)}`;
   return (
-    !conversation.forkOrigin &&
     conversation.bindingKey === bindingKey &&
     conversation.conversationId === `conversation:${await digest(bindingKey)}`
   );

@@ -16,7 +16,6 @@ const conversation = {
   conversationId: "source",
   createdAt: new Date(),
   engine: "pi-identity-v1" as const,
-  forkOrigin: null,
   kind: "web" as const,
   organizationId: "organization",
   ownerPrincipalId: "owner",

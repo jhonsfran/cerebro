@@ -1,0 +1,1 @@
+ALTER TABLE "channel_conversation" DROP COLUMN "fork_origin";

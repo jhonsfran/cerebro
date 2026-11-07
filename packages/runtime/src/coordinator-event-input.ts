@@ -1,15 +1,7 @@
 import type { BotEvent } from "@cerebro/contracts/bot-events";
-import type { EventAddress } from "@cerebro/contracts/events";
 import { Unavailable } from "@cerebro/contracts/failures";
-import type { PrincipalId } from "@cerebro/contracts/identity";
 import type { ChatQueuedInput } from "@cerebro/contracts/session-service";
-import { digestToolArguments } from "@cerebro/contracts/tools";
-import type {
-  ConversationId,
-  EntryRecord,
-  Harness,
-  Tx,
-} from "@earendil-works/pi-durable";
+import type { ConversationId, Harness, Tx } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 import {
@@ -18,7 +10,6 @@ import {
   eventOf,
 } from "./coordinator-event-state.ts";
 import type { BotEventReceipt } from "./coordinator-event-state.ts";
-import { sameWorkSource } from "./coordinator-ledger.ts";
 import type { PiContext } from "./pi-harness.ts";
 
 const webData = Schema.Struct({
@@ -28,42 +19,6 @@ const webData = Schema.Struct({
 });
 export const webEventData = (data: unknown) =>
   Schema.is(webData)(data) ? data : undefined;
-
-export const webEventForkPointIn = async (
-  tx: Tx,
-  options: {
-    readonly point: EntryRecord;
-    readonly nativeId: ConversationId;
-    readonly address: EventAddress;
-    readonly ownerPrincipalId: PrincipalId;
-  }
-): Promise<boolean> => {
-  const { point } = options;
-  const data =
-    point.kind === "cerebro.bot-event-input"
-      ? webEventData(point.data)
-      : undefined;
-  if (!data) {
-    return false;
-  }
-  const document = await tx.doc(BotEventReceipts, data.eventId, null);
-  if (!document.receipt) {
-    return false;
-  }
-  const event = eventOf(document.receipt);
-  const message = point.model?.[0];
-  return (
-    event.source.kind === "web" &&
-    event.source.operationId === data.operationId &&
-    document.receipt.nativeId === options.nativeId &&
-    event.ownerPrincipalId === options.ownerPrincipalId &&
-    sameWorkSource(event.coordinator, options.address) &&
-    document.receipt.digest ===
-      (await digestToolArguments(document.receipt.input)) &&
-    message?.role === "user" &&
-    message.content === event.content.text
-  );
-};
 
 export const botEventInput = (event: BotEvent): string => {
   switch (event.source.kind) {

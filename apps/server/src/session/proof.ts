@@ -52,7 +52,6 @@ const proofSchema = z.strictObject({
     "/observe",
     "/decide",
     "/stop",
-    "/fork",
     "/control",
     "/team-report",
     "/team-event-return",

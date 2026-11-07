@@ -7,7 +7,6 @@ import {
   fauxAssistantMessage,
   fauxToolCall,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
-import { webEventForkPointIn } from "../../packages/runtime/src/coordinator-event-input.ts";
 import { BotEventReceipts } from "../../packages/runtime/src/coordinator-event-state.ts";
 import { context } from "./coordinator-fixture.ts";
 import { actor, setupWeb } from "./coordinator-web-fixture.ts";
@@ -521,87 +520,6 @@ test("a native queued web input appears once with its original operation while t
     assert.equal(subject.source.faux.state.callCount, 2);
   } finally {
     release.resolve(true);
-    await subject.close();
-  }
-});
-
-test("a visible receipt-backed web entry remains a real Pi fork point while fabricated custom input does not", async () => {
-  const subject = await setupWeb();
-  try {
-    const sendResponse12 = await subject.send(
-      "fork-web",
-      "Keep this fork snapshot."
-    );
-    assert.equal(sendResponse12.status, 200);
-    const saved = await settled(subject, "fork-web");
-    assert.ok(
-      saved.delivery.kind === "coordinator" &&
-        saved.delivery.admission.kind === "settled" &&
-        saved.delivery.admission.outcome === "done"
-    );
-    const input = await subject.fixture
-      .pi()
-      .commit(
-        (tx) =>
-          tx.entry(
-            saved.delivery.kind === "coordinator" &&
-              saved.delivery.admission.kind === "settled" &&
-              saved.delivery.admission.outcome === "done"
-              ? saved.delivery.admission.entry
-              : 0
-          ),
-        context
-      );
-    assert.ok(input);
-    const valid = (point: typeof input) =>
-      subject.fixture.pi().commit(
-        (tx) =>
-          webEventForkPointIn(tx, {
-            point,
-            nativeId: subject.source.native.id,
-            address: subject.source.address,
-            ownerPrincipalId: actor.actor.id,
-          }),
-        context
-      );
-    assert.equal(await valid(input), true);
-    assert.equal(
-      await valid({
-        ...input,
-        data: {
-          eventId: "not-admitted",
-          source: "web",
-          operationId: "fork-web",
-        },
-      }),
-      false
-    );
-    assert.equal(
-      await valid({
-        ...input,
-        data: {
-          eventId: "not-admitted",
-          source: "slack",
-          operationId: "fork-web",
-        },
-      }),
-      false
-    );
-    const fork = await subject.fixture.pi().commit(
-      (tx) =>
-        tx.forkConversation(subject.source.native.id, input.id, {
-          ownership: { kind: "ownerless" },
-        }),
-      context
-    );
-    const native = await subject.fixture.pi().conversation(fork.id, context);
-    assert.ok(native);
-    assert.match(
-      JSON.stringify(await native.entries({}, 100, undefined, context)),
-      /Keep this fork snapshot/u
-    );
-    assert.equal(subject.source.faux.state.callCount, 1);
-  } finally {
     await subject.close();
   }
 });

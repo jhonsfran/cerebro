@@ -18,20 +18,13 @@ import type {
   ContentDependencies,
 } from "@cerebro/contracts/session";
 import type { ChatSnapshot } from "@cerebro/contracts/session-service";
-import { ChatForkReceipt } from "@cerebro/contracts/session-service";
 import type { LegacyTimerReplyOrigin } from "@cerebro/contracts/timer-events";
 import type { ToolExecutor } from "@cerebro/contracts/tool-service";
 import type { SlackThread } from "@cerebro/contracts/work";
 import { createModels } from "@earendil-works/pi-ai/models";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
-import {
-  Harness,
-  configure,
-  createRegistry,
-  UserEntry,
-  AssistantEntry,
-} from "@earendil-works/pi-durable";
-import type { EntryId, Registry, Storage } from "@earendil-works/pi-durable";
+import { Harness, configure, createRegistry } from "@earendil-works/pi-durable";
+import type { Registry, Storage } from "@earendil-works/pi-durable";
 import { PiHarness } from "agents/harness/pi";
 import { Lifecycle } from "agents/lifecycle";
 import type {
@@ -55,7 +48,6 @@ import { ReminderPayload } from "./conversation-reminders.ts";
 import { ConversationScope } from "./conversation-scope.ts";
 import type { SearchResult } from "./conversation-work.ts";
 import { terminalNoticeIn } from "./coordinator-event-content.ts";
-import { webEventForkPointIn } from "./coordinator-event-input.ts";
 import { eventOf } from "./coordinator-event-state.ts";
 import {
   BotEventReceipts,
@@ -73,7 +65,7 @@ import { wakeCoordinatorJob } from "./coordinator-work.ts";
 import type { CoordinationServices } from "./coordinator-work.ts";
 import { readImportedContent } from "./imported-content.ts";
 import { scanInspectionKeys } from "./inspection-page.ts";
-import { piContext, snapshotToolIds } from "./pi-harness.ts";
+import { piContext } from "./pi-harness.ts";
 import type { ControlledProviderConfiguration } from "./pi-provider.ts";
 import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
 
@@ -115,11 +107,6 @@ export interface SessionHostConfiguration {
   readonly address: EventAddress;
   readonly conversationKind?: "web" | "slack";
   readonly coordination?: CoordinationServices;
-  readonly origin?: {
-    readonly address: EventAddress;
-    readonly entryId: string;
-    readonly agentVersion: number;
-  };
   readonly contentDependencies?: () => Promise<ContentDependencies>;
   readonly importDependencies?: (dependencies: ContentDependencies) => void;
   readonly checkImportedDependencies?: (
@@ -129,8 +116,7 @@ export interface SessionHostConfiguration {
   ) => Effect.Effect<void, ContractFailure>;
   readonly inheritDependencies?: (
     source: EventAddress,
-    toolIds: readonly string[],
-    history: boolean
+    toolIds: readonly string[]
   ) => void;
   readonly agent: AgentDefinition;
   readonly authority: AuthorityService;
@@ -165,19 +151,10 @@ interface NativeHost {
   readonly registry: Registry;
 }
 const notifyPayload = Schema.Struct({ sessionId: Schema.NonEmptyString });
-const forkCommand = Schema.Struct({
-  destination: ChatForkReceipt.fields.address,
-  entryId: Schema.NonEmptyString,
-  operationId: Schema.NonEmptyString,
-});
 const childPayload = Schema.Struct({
   sessionId: Schema.NonEmptyString,
   childId: Schema.NonEmptyString,
 });
-const nativeEntryId = Schema.declare<EntryId>(
-  (value): value is EntryId =>
-    typeof value === "number" && Number.isSafeInteger(value) && value > 0
-);
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
 ): Promise<A> => {
@@ -364,14 +341,8 @@ export class SessionAgent<
   private async openScope(
     address: EventAddress,
     host: NativeHost,
-    binding?: ConversationBinding,
-    ancestors: ReadonlySet<string> = new Set()
+    binding?: ConversationBinding
   ): Promise<ConversationScope> {
-    if (ancestors.has(address.sessionId)) {
-      throw new InvalidInput({
-        reason: "A conversation fork cannot contain a cycle.",
-      });
-    }
     const existing = this.scopes.get(address.sessionId);
     if (existing) {
       if (!sameAddress(existing.runtime.configuration.address, address)) {
@@ -383,7 +354,7 @@ export class SessionAgent<
     }
     let opening = this.openings.get(address.sessionId);
     if (!opening) {
-      opening = this.createScope(address, host, binding, ancestors);
+      opening = this.createScope(address, host, binding);
       this.openings.set(address.sessionId, opening);
     }
     try {
@@ -414,8 +385,7 @@ export class SessionAgent<
   private async createScope(
     address: EventAddress,
     host: NativeHost,
-    binding?: ConversationBinding,
-    ancestors: ReadonlySet<string> = new Set()
+    binding?: ConversationBinding
   ): Promise<ConversationScope> {
     let importedNativeId = binding?.nativeId;
     const metadata: MetadataTransaction = (operation) =>
@@ -430,33 +400,18 @@ export class SessionAgent<
         )
       )
     );
-    const originKey = configuration.origin
-      ? JSON.stringify([
-          configuration.origin.address.organizationId,
-          configuration.origin.address.agentId,
-          configuration.origin.address.conversationId,
-          configuration.origin.address.sessionId,
-          configuration.origin.entryId,
-          configuration.origin.agentVersion,
-        ])
-      : null;
     if (
       !sameAddress(address, configuration.address) ||
       configuration.agent.agentId !== address.agentId ||
       (binding &&
         (binding.agentVersion !== configuration.agent.version ||
-          !sameAddress(binding.address, address) ||
-          (binding.origin ?? null) !== originKey))
+          !sameAddress(binding.address, address)))
     ) {
       throw new InvalidInput({
         reason:
           "The conversation configuration does not match its durable binding.",
       });
     }
-    const { origin } = configuration;
-    const fork = binding
-      ? undefined
-      : await this.forkSource(configuration, host, ancestors);
     const scope = await ConversationScope.open(
       configuration,
       {
@@ -525,8 +480,7 @@ export class SessionAgent<
             if (current) {
               if (
                 !sameAddress(current.address, address) ||
-                current.agentVersion !== configuration.agent.version ||
-                (current.origin ?? null) !== originKey
+                current.agentVersion !== configuration.agent.version
               ) {
                 throw new InvalidInput({
                   reason:
@@ -535,29 +489,10 @@ export class SessionAgent<
               }
               return current.nativeId;
             }
-            const parentNative = fork?.native;
-            const point = fork?.point;
-            if (origin && !point) {
-              throw new InvalidInput({
-                reason: "The fork entry does not belong to its source.",
-              });
-            }
-            const created =
-              point && parentNative
-                ? await tx.forkConversation(parentNative.id, point.id, {
-                    ownership: { kind: "ownerless" },
-                  })
-                : await tx.createConversation({
-                    ownership: { kind: "ownerless" },
-                  });
+            const created = await tx.createConversation({
+              ownership: { kind: "ownerless" },
+            });
             await configure(tx, created.id, agent);
-            if (origin) {
-              configuration.inheritDependencies?.(
-                origin.address,
-                fork?.toolIds ?? [],
-                false
-              );
-            }
             bindings.conversations[address.sessionId] = {
               address: { ...address },
               agentVersion: configuration.agent.version,
@@ -570,7 +505,6 @@ export class SessionAgent<
               refresh: null,
               releaseEvent: null,
               nativeId: created.id,
-              origin: originKey,
             };
             return created.id;
           }, piContext()));
@@ -611,77 +545,6 @@ export class SessionAgent<
       });
     }
     await scope.runtime.configuration.reconcileVersion?.(binding.agentVersion);
-  }
-
-  private async forkSource(
-    configuration: SessionHostConfiguration,
-    host: NativeHost,
-    ancestors: ReadonlySet<string>
-  ) {
-    const { origin, address } = configuration;
-    if (!origin) {
-      return;
-    }
-    if (
-      origin.address.organizationId !== address.organizationId ||
-      origin.address.agentId !== address.agentId ||
-      origin.agentVersion !== configuration.agent.version
-    ) {
-      throw new InvalidInput({
-        reason: "The fork configuration differs from its source.",
-      });
-    }
-    const bindings = await host.pi.snapshot(Bindings, piContext());
-    const parent =
-      this.scopes.get(origin.address.sessionId) ??
-      (await this.openScope(
-        origin.address,
-        host,
-        bindings?.conversations[origin.address.sessionId],
-        new Set([...ancestors, address.sessionId])
-      ));
-    const owner = await run(configuration.ownerContext());
-    const snapshot = await parent.read(owner);
-    const toolIds = snapshotToolIds(snapshot);
-    const parsedId = await run(
-      Effect.try({
-        catch: () =>
-          new InvalidInput({ reason: "The fork entry ID is invalid." }),
-        try: () =>
-          Schema.decodeUnknownSync(nativeEntryId)(Number(origin.entryId)),
-      })
-    );
-    const historical = await parent.native.entries(
-      { minEntryId: parsedId, maxEntryId: parsedId },
-      1,
-      undefined,
-      piContext()
-    );
-    const [point] = historical.items;
-    if (
-      !point ||
-      String(point.id) !== origin.entryId ||
-      !(
-        UserEntry.is(point) ||
-        AssistantEntry.is(point) ||
-        (await host.pi.commit(
-          (tx) =>
-            webEventForkPointIn(tx, {
-              point,
-              nativeId: parent.native.id,
-              address: origin.address,
-              ownerPrincipalId: owner.represented?.id ?? owner.actor.id,
-            }),
-          piContext()
-        ))
-      )
-    ) {
-      throw new InvalidInput({
-        reason:
-          "The fork entry is not a user or assistant message in its source.",
-      });
-    }
-    return { native: parent.native, point, toolIds };
   }
 
   private async search(
@@ -911,42 +774,6 @@ export class SessionAgent<
         return Response.json({
           status: "ok",
           value: { eventId: eventOf(receipt).id },
-        });
-      }
-      if (new URL(request.url).pathname === "/fork") {
-        const command = await run(
-          Effect.tryPromise({
-            catch: () =>
-              new InvalidInput({ reason: "The fork command is invalid." }),
-            try: async () =>
-              Schema.decodeUnknownSync(forkCommand)(await request.json()),
-          })
-        );
-        await scope.read(context, request.signal);
-        await scope.runtime.authorize(context, "send", request.signal);
-        if (
-          command.destination.organizationId !== address.organizationId ||
-          command.destination.agentId !== address.agentId
-        ) {
-          throw new InvalidInput({
-            reason: "A fork must retain its company and agent.",
-          });
-        }
-        const destination = await this.scope(command.destination);
-        const { origin } = destination.runtime.configuration;
-        if (
-          !origin ||
-          !sameAddress(origin.address, address) ||
-          origin.entryId !== command.entryId
-        ) {
-          throw new InvalidInput({
-            reason: "The destination does not reserve this fork.",
-          });
-        }
-        await this.ctx.storage.sync();
-        return Response.json({
-          status: "ok",
-          value: { address: destination.runtime.configuration.address },
         });
       }
       return await scope.handle(request, context);

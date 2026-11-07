@@ -4,7 +4,6 @@ import { authorize, unwrap } from "../../packages/channels/src/security";
 import { ChannelError } from "../../packages/channels/src/types";
 import type { ChannelOptions } from "../../packages/channels/src/types";
 import type { EventAddress } from "../../packages/contracts/src/events";
-import { id } from "../../packages/contracts/src/identity";
 import { ChatSnapshot } from "../../packages/contracts/src/session-service";
 import type {
   ChatApproval,
@@ -137,43 +136,11 @@ export const createFixtureChatClient = (
       return await inFlight;
     }
     const create = async (): Promise<FixtureConversation> => {
-      const [row] = await database
-        .select()
-        .from(channelConversation)
-        .where(
-          eq(channelConversation.conversationId, request.address.conversationId)
-        );
-      const origin = row?.forkOrigin;
-      let inherited: FixtureConversation | undefined;
-      let inheritedMessages: ChatSnapshot["messages"] = [];
-      if (origin) {
-        inherited = await conversation({
-          ...request,
-          address: {
-            ...request.address,
-            conversationId: id.conversation(origin.parentConversationId),
-            sessionId: id.session(origin.parentSessionId),
-          },
-        });
-        const selected = inherited.snapshot.messages.findIndex(
-          (message) => message.entryId === origin.entryId
-        );
-        if (selected === -1) {
-          throw new ChannelError(
-            422,
-            "invalid-input",
-            "The fork entry was not found."
-          );
-        }
-        inheritedMessages = structuredClone(
-          inherited.snapshot.messages.slice(0, selected + 1)
-        );
-      }
       const agent = unwrap(
         await createAgentRepository(database).get(
           request.address.organizationId,
           request.address.agentId,
-          origin?.agentVersion ?? "latest",
+          "latest",
           { deadlineAt: now() + 10_000 }
         )
       );
@@ -186,22 +153,14 @@ export const createFixtureChatClient = (
             compactions: [],
             reminders: [],
             tasks: [],
-            ...(origin
-              ? {
-                  origin: {
-                    conversationId: origin.parentConversationId,
-                    entryId: origin.entryId,
-                  },
-                }
-              : {}),
           },
           address: request.address,
-          agentVersion: inherited?.snapshot.agentVersion ?? agent.version,
+          agentVersion: agent.version,
           queuedInputs: [],
           tools: [],
           approvals: [],
           busy: false,
-          messages: inheritedMessages,
+          messages: [],
         },
       };
       conversations.set(sessionKey, created);
@@ -314,36 +273,6 @@ export const createFixtureChatClient = (
         };
       }
       return { id: commandId, kind: command.kind };
-    },
-    async fork(request) {
-      await access(request, "execute");
-      const source = await service.read(request);
-      await access({ ...request, address: request.destination }, "execute");
-      const [row] = await database
-        .select()
-        .from(channelConversation)
-        .where(
-          eq(
-            channelConversation.conversationId,
-            request.destination.conversationId
-          )
-        );
-      if (
-        !row?.forkOrigin ||
-        row.forkOrigin.parentConversationId !==
-          request.address.conversationId ||
-        row.forkOrigin.parentSessionId !== request.address.sessionId ||
-        row.forkOrigin.entryId !== request.entryId ||
-        row.forkOrigin.agentVersion !== source.agentVersion
-      ) {
-        throw new ChannelError(
-          409,
-          "conflict",
-          "The fork destination has another origin."
-        );
-      }
-      await conversation({ ...request, address: request.destination });
-      return { address: request.destination };
     },
     async decide(request) {
       await access(request, "approve");

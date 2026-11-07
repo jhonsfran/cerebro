@@ -140,7 +140,6 @@ try {
       "tests/channels/capabilities-ui.test.ts",
       "tests/channels/inspection-ui.test.ts",
       "tests/channels/inspection-refresh-ui.test.ts",
-      "tests/channels/forks.test.ts",
       "tests/channels/inspection-proof.test.ts",
       "tests/channels/inspection.test.ts",
     ],

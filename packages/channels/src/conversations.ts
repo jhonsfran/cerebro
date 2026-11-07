@@ -16,7 +16,7 @@ import { channelConversation } from "@cerebro/db/schema/agents";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { openPrimaryConversation } from "./primary-conversations";
-import { authorize, digest, principalContext, unwrap } from "./security";
+import { authorize, principalContext, unwrap } from "./security";
 import { ChannelError, EFFECT_DEADLINE_MS } from "./types";
 import type { ChannelOptions } from "./types";
 
@@ -93,98 +93,6 @@ export const createConversationService = (
       organizationId: options.organizationId,
       ownerPrincipalId: context.actor.id,
     });
-    return {
-      agentId: row.agentId,
-      conversationId: row.conversationId,
-      sessionId: row.sessionId,
-    };
-  };
-  const forkConversation = async (
-    userId: string,
-    parentConversationId: string,
-    input: { readonly operationId: string; readonly entryId: string }
-  ) => {
-    const context = await current(userId);
-    const bindingKey = `pi-identity-v1:web-fork:${await digest({ operationId: input.operationId, organizationId: options.organizationId, principalId: context.actor.id })}`;
-    const conversationId = `conversation:${await digest(bindingKey)}`;
-    const [reserved] = await database
-      .select()
-      .from(channelConversation)
-      .where(eq(channelConversation.conversationId, conversationId));
-    const parent = await requireConversation(
-      parentConversationId,
-      context,
-      "execute"
-    );
-    let agentVersion: number | undefined;
-    if (!reserved) {
-      requireActive(parent);
-      const snapshot = await options
-        .sessions(database)
-        .read({ address: conversationAddress(parent), context });
-      if (
-        !snapshot.messages.some(
-          (message) =>
-            message.entryId === input.entryId &&
-            message.state === "complete" &&
-            message.role !== "tool"
-        )
-      ) {
-        throw new ChannelError(
-          422,
-          "invalid-input",
-          "Select a complete message in this conversation."
-        );
-      }
-      ({ agentVersion } = snapshot);
-      await database
-        .insert(channelConversation)
-        .values({
-          agentId: parent.agentId,
-          bindingKey,
-          conversationId,
-          forkOrigin: {
-            agentVersion,
-            entryId: input.entryId,
-            parentConversationId,
-            parentSessionId: parent.sessionId,
-          },
-          engine: "pi-identity-v1",
-          kind: "web",
-          organizationId: options.organizationId,
-          ownerPrincipalId: context.actor.id,
-          sessionId: `session:${await digest({ agentId: parent.agentId, conversationId, organizationId: options.organizationId })}`,
-        })
-        .onConflictDoNothing();
-    }
-    const row = await requireConversation(conversationId, context, "execute");
-    requireActive(row);
-    if (
-      row.agentId !== parent.agentId ||
-      !row.forkOrigin ||
-      row.forkOrigin.parentConversationId !== parentConversationId ||
-      row.forkOrigin.parentSessionId !== parent.sessionId ||
-      row.forkOrigin.entryId !== input.entryId ||
-      (agentVersion !== undefined &&
-        row.forkOrigin.agentVersion !== agentVersion)
-    ) {
-      throw new ChannelError(
-        409,
-        "conflict",
-        "The fork operation names another branch."
-      );
-    }
-    await (reserved
-      ? options
-          .sessions(database)
-          .read({ address: conversationAddress(row), context })
-      : options.sessions(database).fork({
-          address: conversationAddress(parent),
-          context,
-          destination: conversationAddress(row),
-          entryId: input.entryId,
-          operationId: input.operationId,
-        }));
     return {
       agentId: row.agentId,
       conversationId: row.conversationId,
@@ -388,7 +296,6 @@ export const createConversationService = (
     conversationAccess,
     controlConversation,
     createConversation,
-    forkConversation,
     history,
     inspectConversation,
     listConversations,

@@ -17,7 +17,6 @@ import {
   control,
   decide,
   evidence,
-  fork,
   lifecycle,
   newStack,
   pending,
@@ -25,8 +24,6 @@ import {
   rawRequest,
   read,
   request,
-  reserveFork,
-  runtimeEvidence,
   send,
   stop,
   waitFor,
@@ -102,98 +99,6 @@ const journey = (name: string, run: () => Promise<void>) =>
       throw error;
     }
   });
-
-journey(
-  "a reserved fork inherits one selected entry range, retries, pins and copied content gates",
-  async () => {
-    const source = addressFor("cap-fork", "original", "cap-agent-v2");
-    const destination = addressFor("cap-fork", "branch", "cap-agent-v2");
-    const first = await note(
-      source,
-      "fork-first",
-      "CAP_NOTE FIRST_BRANCH_MARKER"
-    );
-    const entry = first.messages.find(
-      (message) => message.role === "assistant" && message.entryId
-    );
-    assert.ok(entry?.entryId);
-    await note(source, "fork-second", "CAP_NOTE LATER_ONLY_MARKER");
-    await reserveFork(
-      stack,
-      destination,
-      source,
-      entry.entryId,
-      first.agentVersion
-    );
-    const created = await fork(
-      stack,
-      source,
-      destination,
-      entry.entryId,
-      "fork-operation"
-    );
-    assert.deepEqual(created.address, destination);
-    const branch = await read(stack, destination);
-    assert.deepEqual(userTexts(branch), ["CAP_NOTE FIRST_BRANCH_MARKER"]);
-    assert.equal(branch.agentVersion, 2);
-    assert.deepEqual(activity(branch).origin, {
-      conversationId: source.conversationId,
-      entryId: entry.entryId,
-    });
-    assert.deepEqual(
-      await fork(stack, source, destination, entry.entryId, "fork-operation"),
-      created
-    );
-    const sourceNative = await runtimeEvidence(stack, source);
-    const stored = await capabilityStorage(stack, destination);
-    assert.equal(stored.conversations.length, 1);
-    assert.equal(
-      stored.conversations[0]?.parentConversationId,
-      Number(sourceNative.nativeSessionId)
-    );
-    assert.equal(stored.conversations[0]?.parentEntryId, Number(entry.entryId));
-    const mismatched = await rawRequest(stack, "/runtime/fork", {
-      address: source,
-      destination,
-      entryId: "999999999",
-      operationId: "fork-operation",
-    });
-    assert.equal(mismatched.status, 400);
-    const foreign = await rawRequest(stack, "/runtime/fork", {
-      address: source,
-      destination: addressFor("other-identity", "branch", "cap-agent-v2"),
-      entryId: entry.entryId,
-      operationId: "foreign-fork",
-    });
-    assert.equal(foreign.status, 400);
-    restart();
-    const recovered = await read(stack, destination);
-    assert.deepEqual(userTexts(recovered), ["CAP_NOTE FIRST_BRANCH_MARKER"]);
-    assert.equal(
-      (await capabilityStorage(stack, destination)).conversations[0]?.id,
-      stored.conversations[0]?.id
-    );
-    await request(stack, "/runtime/fixture/content-access", {
-      address: source,
-      enabled: false,
-    });
-    assert.equal(
-      (await rawRequest(stack, "/runtime/read", { address: destination }))
-        .status,
-      403
-    );
-    await request(stack, "/runtime/fixture/content-access", {
-      address: source,
-      enabled: true,
-    });
-    await evidence(stack, "capability-fork", {
-      branch,
-      recovered,
-      stored,
-      sourceNative,
-    });
-  }
-);
 
 journey(
   "owned child approvals survive restart, reject a sibling decision and remain scoped on Stop",
@@ -813,7 +718,7 @@ journey(
 );
 
 journey(
-  "history search excludes a revoked agent and preserves source access on later reads and forks",
+  "history search excludes a revoked agent and preserves source access on later reads",
   async () => {
     const allowed = addressFor(
       "cap-history",
@@ -870,33 +775,12 @@ journey(
     );
     assert.ok(searchCalls.length > 0);
     assert.ok(searchCalls.every((call) => call.toolNames.length === 1));
-    const entry = result.messages.findLast(
-      (message) => message.role === "assistant" && message.entryId
-    );
-    assert.ok(entry?.entryId);
-    const branch = addressFor(
-      "cap-history",
-      "search-branch",
-      "cap-search-agent"
-    );
-    await reserveFork(
-      stack,
-      branch,
-      target,
-      entry.entryId,
-      result.agentVersion
-    );
-    await fork(stack, target, branch, entry.entryId, "history-fork");
     await request(stack, "/runtime/fixture/access", {
       address: allowed,
       enabled: false,
     });
     assert.equal(
       (await rawRequest(stack, "/runtime/read", { address: target })).status,
-      403
-    );
-    assert.equal(
-      (await rawRequest(stack, "/runtime/read", { address: branch })).status,
       403
     );
     restart();

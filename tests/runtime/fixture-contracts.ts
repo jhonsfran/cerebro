@@ -9,11 +9,6 @@ export const fixtureAddress = z.object({
   organizationId: z.string().min(1),
   sessionId: z.string().min(1),
 });
-export const forkOrigin = z.object({
-  address: fixtureAddress,
-  agentVersion: z.number().int().positive(),
-  entryId: z.string().min(1),
-});
 export const requestAddress = async (
   request: Request
 ): Promise<EventAddress> => {

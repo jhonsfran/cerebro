@@ -201,12 +201,6 @@ test("the production gateway derives identity placement from the exact active co
               },
             });
           }
-          if (route === "/fork") {
-            return Response.json({
-              status: "ok",
-              value: { address: command.destination },
-            });
-          }
           return Response.json({
             status: "ok",
             value: {
@@ -282,26 +276,6 @@ test("the production gateway derives identity placement from the exact active co
   assert.equal(calls.at(-1)?.name, byConversation(first.conversationId));
   assert.equal(calls.at(-1)?.resolved.context.actor.id, claimedActor.actor.id);
 
-  const destination = {
-    ...first,
-    conversationId: id.conversation("placement-fork"),
-    sessionId: id.session("placement-fork"),
-  };
-  await app.options.withDatabase((db) =>
-    db.insert(channelConversation).values({
-      ...destination,
-      bindingKey: "placement:fork",
-      engine: "pi-identity-v1",
-      forkOrigin: {
-        agentVersion: 1,
-        entryId: "12",
-        parentConversationId: first.conversationId,
-        parentSessionId: first.sessionId,
-      },
-      kind: "web",
-      ownerPrincipalId,
-    })
-  );
   const control = {
     instructions: "Keep decisions.",
     kind: "compact" as const,
@@ -311,44 +285,26 @@ test("the production gateway derives identity placement from the exact active co
     await client.control({ address: first, command: control, context: caller }),
     { id: "native:compact-transport", kind: "compact" }
   );
+  const command = captured.at(-1);
+  assert.ok(command);
   assert.deepEqual(
-    await client.fork({
-      address: first,
-      context: caller,
-      destination,
-      entryId: "12",
-      operationId: "fork-transport",
-    }),
-    { address: destination }
-  );
-  const commands = captured.slice(-2);
-  assert.deepEqual(
-    await Promise.all(
-      commands.map(async (capturedRequest) => ({
-        body: await capturedRequest.request.clone().json(),
-        name: capturedRequest.name,
-        resolved: await authenticateSessionRequest(
-          capturedRequest.request.clone(),
-          secret,
-          {
-            organizationId: first.organizationId,
-            ownerPrincipalId: id.principal(ownerPrincipalId),
-          }
-        ),
-      }))
-    ),
-    [
-      {
-        body: { command: control },
-        name: JSON.stringify([first.organizationId, ownerPrincipalId]),
-        resolved: { address: first, context: caller },
-      },
-      {
-        body: { destination, entryId: "12", operationId: "fork-transport" },
-        name: JSON.stringify([first.organizationId, ownerPrincipalId]),
-        resolved: { address: first, context: caller },
-      },
-    ]
+    {
+      body: await command.request.clone().json(),
+      name: command.name,
+      resolved: await authenticateSessionRequest(
+        command.request.clone(),
+        secret,
+        {
+          organizationId: first.organizationId,
+          ownerPrincipalId: id.principal(ownerPrincipalId),
+        }
+      ),
+    },
+    {
+      body: { command: control },
+      name: JSON.stringify([first.organizationId, ownerPrincipalId]),
+      resolved: { address: first, context: caller },
+    }
   );
 
   const dispatched = captured.length;
@@ -365,16 +321,6 @@ test("the production gateway derives identity placement from the exact active co
       address: { ...first, sessionId: id.session("forged-source") },
       command: control,
       context: caller,
-    }),
-    Denied
-  );
-  await assert.rejects(
-    client.fork({
-      address: { ...first, conversationId: id.conversation("forged-source") },
-      context: caller,
-      destination,
-      entryId: "12",
-      operationId: "forged-fork",
     }),
     Denied
   );

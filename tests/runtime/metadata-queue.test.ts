@@ -216,15 +216,13 @@ test("tool and chat provenance accesses wait for the native mutation queue", asy
     const target = await fixture.sourceStore(addressFor("target").sessionId);
     await source.add(["private-source"]);
     await source.addTool("recorded-tool");
-    await fixture.metadata(() =>
-      source.inherit(addressFor("earlier"), [], true)
-    );
+    await fixture.metadata(() => source.inherit(addressFor("earlier"), []));
     fixture.arm(false);
     const native = fixture.createConversation();
     await fixture.entered;
     let copied = false;
     const copy = fixture.metadata(() => {
-      target.inherit(addressFor("source"), ["native-tool"], true);
+      target.inherit(addressFor("source"), ["native-tool"]);
       copied = true;
     });
     const reads = Promise.all([target.all(), target.tools(), target.history()]);
@@ -259,9 +257,7 @@ test("a failed native fork leaves conservative provenance and its retry creates 
     const target = await fixture.sourceStore(addressFor("target").sessionId);
     await source.add(["private-source"]);
     await source.addTool("recorded-tool");
-    await fixture.metadata(() =>
-      source.inherit(addressFor("earlier"), [], true)
-    );
+    await fixture.metadata(() => source.inherit(addressFor("earlier"), []));
     const parent = await fixture.createConversation();
     const entry = await fixture.host().commit(
       (tx) =>
@@ -281,7 +277,7 @@ test("a failed native fork leaves conservative provenance and its retry creates 
         const created = await tx.forkConversation(parent.id, entry.id, {
           ownership: { kind: "ownerless" },
         });
-        target.inherit(sourceAddress, ["native-tool"], false);
+        target.inherit(sourceAddress, ["native-tool"]);
         receipts.forks.operation = created.id;
         return created.id;
       }, piContext());
@@ -310,7 +306,10 @@ test("a failed native fork leaves conservative provenance and its retry creates 
     assert.equal(await count(), before);
     assert.deepEqual(await target.all(), ["private-source"]);
     assert.deepEqual(await target.tools(), ["native-tool", "recorded-tool"]);
-    assert.deepEqual(await target.history(), [addressFor("earlier")]);
+    assert.deepEqual(await target.history(), [
+      addressFor("earlier"),
+      sourceAddress,
+    ]);
     const created = await branch();
     assert.equal(await branch(), created);
     assert.equal(await count(), before + 1);
@@ -323,7 +322,10 @@ test("a failed native fork leaves conservative provenance and its retry creates 
     );
     assert.deepEqual(await target.all(), ["private-source"]);
     assert.deepEqual(await target.tools(), ["native-tool", "recorded-tool"]);
-    assert.deepEqual(await target.history(), [addressFor("earlier")]);
+    assert.deepEqual(await target.history(), [
+      addressFor("earlier"),
+      sourceAddress,
+    ]);
   } finally {
     await fixture.close();
   }

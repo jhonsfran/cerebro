@@ -38,11 +38,7 @@ import {
 } from "../../packages/tools/src/registry.ts";
 import type { TestEnvironment } from "./environment.ts";
 import { capabilityFixture } from "./fixture-capabilities.ts";
-import {
-  fixtureAddress,
-  forkOrigin,
-  requestAddress,
-} from "./fixture-contracts.ts";
+import { fixtureAddress, requestAddress } from "./fixture-contracts.ts";
 import {
   commitFailures,
   matchCommittedInput,
@@ -212,20 +208,8 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
         "CREATE TABLE IF NOT EXISTS fixture_conversation (session_id TEXT PRIMARY KEY, address TEXT NOT NULL)"
       );
       this.ctx.storage.sql.exec(
-        "CREATE TABLE IF NOT EXISTS fixture_fork_origin (session_id TEXT PRIMARY KEY, origin TEXT NOT NULL)"
+        "CREATE TABLE IF NOT EXISTS fixture_content_reference (session_id TEXT NOT NULL, source_session_id TEXT NOT NULL, source_address TEXT NOT NULL, PRIMARY KEY(session_id, source_session_id))"
       );
-      this.ctx.storage.sql.exec(
-        "CREATE TABLE IF NOT EXISTS fixture_content_reference (session_id TEXT NOT NULL, source_session_id TEXT NOT NULL, source_address TEXT NOT NULL, history INTEGER NOT NULL, PRIMARY KEY(session_id, source_session_id))"
-      );
-      const [originRow] = this.ctx.storage.sql
-        .exec<{ origin: string }>(
-          "SELECT origin FROM fixture_fork_origin WHERE session_id=?",
-          address.sessionId
-        )
-        .toArray();
-      const origin = originRow
-        ? forkOrigin.parse(JSON.parse(originRow.origin))
-        : undefined;
       this.ctx.storage.sql.exec(
         "INSERT OR IGNORE INTO fixture_conversation VALUES (?, ?)",
         address.sessionId,
@@ -299,8 +283,7 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
         instructions: `Agent scope ${address.agentId}. Use the fixture_effect tool once for each user input.`,
         model: "fixture/slice-1",
         organizationId: address.organizationId,
-        version:
-          origin?.agentVersion ?? (address.agentId.endsWith("-v2") ? 2 : 1),
+        version: address.agentId.endsWith("-v2") ? 2 : 1,
       };
       const authority: AuthorityService = {
         evaluate: (request) => {
@@ -446,35 +429,17 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
             }
           }),
         authority,
-        ...(origin
-          ? {
-              origin: {
-                ...origin,
-                address: {
-                  agentId: id.agent(origin.address.agentId),
-                  conversationId: id.conversation(
-                    origin.address.conversationId
-                  ),
-                  organizationId: id.organization(
-                    origin.address.organizationId
-                  ),
-                  sessionId: id.session(origin.address.sessionId),
-                },
-              },
-            }
-          : {}),
         contentDependencies: () =>
           Promise.resolve({ sourceIds: [], toolIds: [] }),
-        inheritDependencies: (source, _toolIds, history) => {
+        inheritDependencies: (source) => {
           this.ctx.storage.sql.exec(
-            "INSERT INTO fixture_content_reference VALUES (?, ?, ?, ?) ON CONFLICT(session_id, source_session_id) DO UPDATE SET history=MAX(history, excluded.history)",
+            "INSERT OR IGNORE INTO fixture_content_reference VALUES (?, ?, ?)",
             address.sessionId,
             source.sessionId,
-            JSON.stringify(source),
-            history ? 1 : 0
+            JSON.stringify(source)
           );
           this.ctx.storage.sql.exec(
-            "INSERT OR IGNORE INTO fixture_content_reference SELECT ?, source_session_id, source_address, history FROM fixture_content_reference WHERE session_id=?",
+            "INSERT OR IGNORE INTO fixture_content_reference SELECT ?, source_session_id, source_address FROM fixture_content_reference WHERE session_id=?",
             address.sessionId,
             source.sessionId
           );
@@ -497,8 +462,8 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
             ),
             () => {
               const references = this.ctx.storage.sql
-                .exec<{ source_address: string; history: number }>(
-                  "SELECT source_address, history FROM fixture_content_reference WHERE session_id=?",
+                .exec<{ source_address: string }>(
+                  "SELECT source_address FROM fixture_content_reference WHERE session_id=?",
                   address.sessionId
                 )
                 .toArray();
@@ -514,7 +479,7 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
                 };
                 return (
                   this.contentEnabled(sourceAddress) &&
-                  (reference.history === 0 || this.enabled(sourceAddress))
+                  this.enabled(sourceAddress)
                 );
               });
               return this.contentEnabled(address) && permitted

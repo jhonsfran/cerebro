@@ -138,12 +138,6 @@ export const ChatActivity = Schema.Struct({
       retryAt: Schema.optional(Schema.Number),
     })
   ),
-  origin: Schema.optional(
-    Schema.Struct({
-      conversationId: Schema.NonEmptyString,
-      entryId: Schema.NonEmptyString,
-    })
-  ),
   reminders: Schema.Array(ChatReminder),
   tasks: Schema.Array(
     Schema.Struct({
@@ -198,14 +192,6 @@ export const ChatControlReceipt = Schema.Struct({
 });
 export type ChatControlReceipt = typeof ChatControlReceipt.Type;
 
-export const ConversationForkOrigin = Schema.Struct({
-  agentVersion: Schema.Int.check(Schema.isGreaterThan(0)),
-  entryId: Schema.NonEmptyString,
-  parentConversationId: Schema.NonEmptyString,
-  parentSessionId: Schema.NonEmptyString,
-});
-export type ConversationForkOrigin = typeof ConversationForkOrigin.Type;
-
 export const ChatSnapshot = Schema.Struct({
   admission: Schema.optional(
     Schema.Union([
@@ -234,7 +220,6 @@ export const ChatReceipt = Schema.Struct({
   session: Schema.NonEmptyString,
 });
 export type ChatReceipt = typeof ChatReceipt.Type;
-export const ChatForkReceipt = Schema.Struct({ address });
 
 export const ChatObservation = Schema.Union([
   Schema.Struct({ snapshot: ChatSnapshot, type: Schema.Literal("snapshot") }),
@@ -262,13 +247,6 @@ export interface ChatClient {
   readonly control: (
     request: ChatRequest & { readonly command: ChatControl }
   ) => Promise<ChatControlReceipt>;
-  readonly fork: (
-    request: ChatRequest & {
-      readonly destination: EventAddress;
-      readonly entryId: string;
-      readonly operationId: string;
-    }
-  ) => Promise<{ readonly address: EventAddress }>;
   readonly send: (request: ChatSendRequest) => Promise<ChatReceipt>;
   readonly stop: (
     request: ChatRequest

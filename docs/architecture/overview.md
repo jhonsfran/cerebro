@@ -17,9 +17,7 @@ flowchart TD
 
 Each organization identity has one IdentityAgent Durable Object, addressed by organization ID and owner principal ID. That object holds the identity's conversations across all product agents. One official PiHarness connects Pi to SQLite and Lifecycle wake-up jobs. Each product conversation maps to its own native Pi conversation. Pi controls inputs, busy-input queuing, generation, tool tasks, Stop, retries, and crash recovery. Cerebro composes the model, instructions, enabled tools, and grants. Current company authorization controls admission, model requests, tool calls, approval decisions, and reads.
 
-## Forks and delegated work
-
-A fork is an independent product conversation. PostgreSQL reserves its deterministic address and immutable parent, entry, and agent version. The runtime creates the native fork and its binding in one Pi commit. If the response is lost, the next destination read materializes or reuses that branch. Historical entries remain valid after parent compaction. The destination installs its own provider and tool bindings. It does not inherit pending inputs, children, approvals, or reminders.
+## Delegated work
 
 A subagent is a fresh native conversation owned by its parent tool task. It shares the parent product chat's pinned configuration, controlled tools, approvals, and source ledger. The tool reuses its child and submission after a restart. Children cannot delegate or schedule work. Each chat permits three active children and 32 children in total. A child permits eight model rounds and has a durable ten-minute deadline. Parent Stop cancels foreground children. Detached background subagents are not exposed.
 
@@ -27,7 +25,7 @@ The activity panel projects native task ownership and bounded child transcripts.
 
 History search uses a child with only `search_conversations`. It scans bound product chats and checks current source-chat access before returning evidence. The receiving agent must also have access to the evidence's memory sources and tools. Search records source, tool, and chat provenance before it exposes excerpts. Later reads and model requests recheck that provenance. Searches omit child transcripts, prior search-derived turns, and duplicated inherited fork entries.
 
-Source and provenance copies are conservative. They include all recorded parent dependencies. Their SQL operations use Pi's mutation queue, but commit before Pi's physical storage transaction. A failed native fork can therefore leave extra dependency rows. Retry converges on one native branch and retains those rows.
+Source and provenance copies are conservative. They include all recorded parent dependencies. Their SQL operations use Pi's mutation queue, but commit before Pi's physical storage transaction.
 
 ## Background agent teams
 
@@ -125,7 +123,7 @@ Before an external effect, the tool records a dispatch marker in a Pi task memo 
 | `packages/runtime/src/conversation-provider.ts` | Conversation-specific provider aliases and physical model forwarding |
 | `packages/runtime/src/pi-harness.ts` | Safe presentation of native entries and live state |
 | `packages/runtime/src/pi-tools.ts` | Controlled tools, approval waits, and task memos |
-| `packages/channels/src/conversations.ts` | Public conversation ownership, forks, commands, and delivery |
+| `packages/channels/src/conversations.ts` | Public conversation ownership, commands, and delivery |
 | `packages/contracts/src/session-service.ts` | Small chat requests, receipts, approvals, and snapshots |
 | `apps/server/src/session` | Company configuration, access context, transport, and Slack delivery |
 | `packages/channels/src/service.ts` | Setup, agent management, access changes, and chat operations |

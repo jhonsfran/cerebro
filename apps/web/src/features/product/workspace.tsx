@@ -93,7 +93,6 @@ const WorkspaceSession = ({
             openConversation={openConversation}
             refreshAgent={refreshAgent}
             onSaved={agentSaved}
-            onConversation={onConversation}
           />
         )}
       </SidebarInset>

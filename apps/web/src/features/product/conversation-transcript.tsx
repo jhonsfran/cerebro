@@ -12,19 +12,10 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@cerebro/ui/components/empty";
-import {
-  Message,
-  MessageContent,
-  MessageFooter,
-} from "@cerebro/ui/components/message";
+import { Message, MessageContent } from "@cerebro/ui/components/message";
 import { Spinner } from "@cerebro/ui/components/spinner";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@cerebro/ui/components/tooltip";
 import { cn } from "@cerebro/ui/lib/utils";
-import { GitBranch, MessageSquare, ShieldCheck } from "lucide-react";
+import { MessageSquare, ShieldCheck } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 import { Disclosure } from "./disclosure";
@@ -173,7 +164,6 @@ const TranscriptEntry = ({
   approvals,
   disabled,
   decide,
-  fork,
 }: {
   message: ChatMessage;
   agentName: string;
@@ -181,63 +171,32 @@ const TranscriptEntry = ({
   approvals: ReadonlyMap<string, readonly ChatApproval[]>;
   disabled: boolean;
   decide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
-  fork?: (entryId: string) => Promise<void>;
-}) => {
-  const { entryId } = message;
-  const forkable =
-    fork && entryId && message.state === "complete" && message.role !== "tool";
-  return (
-    <Message align={message.role === "user" ? "end" : "start"}>
-      <MessageContent>
-        {tools.length === 0 || message.text || message.thinking ? (
-          <TranscriptMessage agentName={agentName} message={message} />
-        ) : null}
-        {tools.map((tool) => (
-          <ToolExecution
-            awaitingApproval={approvals.has(tool.id)}
-            key={tool.id}
-            tool={tool}
-          >
-            {(approvals.get(tool.id) ?? []).map((approval) => (
-              <ApprovalRequest
-                approval={approval}
-                attached
-                decide={decide}
-                disabled={disabled}
-                key={approval.approvalId}
-              />
-            ))}
-          </ToolExecution>
-        ))}
-        {forkable ? (
-          <MessageFooter className="px-0">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    className="text-muted-foreground"
-                    aria-label="Fork from this message"
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => fork(entryId)}
-                  />
-                }
-              >
-                <GitBranch data-icon="inline-start" aria-hidden="true" />
-                Fork
-              </TooltipTrigger>
-              <TooltipContent>
-                Start a new conversation from this point
-              </TooltipContent>
-            </Tooltip>
-          </MessageFooter>
-        ) : null}
-      </MessageContent>
-    </Message>
-  );
-};
+}) => (
+  <Message align={message.role === "user" ? "end" : "start"}>
+    <MessageContent>
+      {tools.length === 0 || message.text || message.thinking ? (
+        <TranscriptMessage agentName={agentName} message={message} />
+      ) : null}
+      {tools.map((tool) => (
+        <ToolExecution
+          awaitingApproval={approvals.has(tool.id)}
+          key={tool.id}
+          tool={tool}
+        >
+          {(approvals.get(tool.id) ?? []).map((approval) => (
+            <ApprovalRequest
+              approval={approval}
+              attached
+              decide={decide}
+              disabled={disabled}
+              key={approval.approvalId}
+            />
+          ))}
+        </ToolExecution>
+      ))}
+    </MessageContent>
+  </Message>
+);
 
 type TranscriptSnapshot = Pick<
   ChatSnapshot,
@@ -296,7 +255,6 @@ export const ConversationTranscript = ({
   connecting,
   disabled,
   decide,
-  fork,
   label = "Conversation messages",
   nested = false,
 }: {
@@ -305,7 +263,6 @@ export const ConversationTranscript = ({
   connecting: boolean;
   disabled: boolean;
   decide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
-  fork?: (entryId: string) => Promise<void>;
   label?: string;
   // A subagent's transcript inside the activity panel.
   nested?: boolean;
@@ -378,7 +335,6 @@ export const ConversationTranscript = ({
               approvals={activeApprovals}
               decide={decide}
               disabled={disabled}
-              fork={fork}
               key={message.id}
               message={message}
               tools={toolsByMessage.get(message.id) ?? []}
