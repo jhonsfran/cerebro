@@ -16,7 +16,7 @@ Five architectural changes move `codex/persistent-super-agent` closer to the two
 - [x] Unit 6: Generic trigger contract with a per-source policy and a generic thread key. Merged into Unit 5.
 - [x] Unit 7: Run Team workers as Pi child tasks and replace schema caps with per-agent budgets. Commit `cf7bfd2`.
 - [x] Phase D: Keep the audit trail throughout the run.
-- [ ] Phase E: Verify and hand back.
+- [x] Phase E: Verify and hand back. On `7d5a3b5`: types 13 of 13, lint clean, contracts 53 pass, channels 167 pass, runtime 311 node and 2 bun pass, integration 74 pass.
 
 ## Found during the run
 
