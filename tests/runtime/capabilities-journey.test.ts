@@ -2,13 +2,13 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 
-import { botEventId } from "../../packages/contracts/src/bot-events.ts";
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import type {
   ChatActivity,
   ChatSnapshot,
 } from "../../packages/contracts/src/session-service.ts";
 import { digestToolArguments } from "../../packages/contracts/src/tools.ts";
+import { triggerId } from "../../packages/contracts/src/triggers.ts";
 import {
   addressFor,
   boot,
@@ -48,8 +48,8 @@ const occurrenceRequestId = async (
   reminderId: string,
   occurrence: number
 ): Promise<string> =>
-  botEventId(address, {
-    kind: "savedtimer",
+  triggerId(address, {
+    kind: "timer",
     occurrenceId: String(occurrence),
     scheduleId: `saved-timer:${await digestToolArguments([address, reminderId])}`,
   });
@@ -156,12 +156,13 @@ journey(
         )
     );
     const stored = await capabilityStorage(stack, address);
+    const requestId = await occurrenceRequestId(address, receipt.id, runAt);
     assert.deepEqual(
       stored.submissions.map((submission) => [
         submission.requestId,
         submission.status,
       ]),
-      [[await occurrenceRequestId(address, receipt.id, runAt), "done"]]
+      [[requestId, "done"]]
     );
     assert.deepEqual(
       (await capabilityProvider(stack)).model
@@ -170,7 +171,12 @@ journey(
             call.scope === address.sessionId && call.completedAt !== undefined
         )
         .map((call) => [call.purpose, call.prompt]),
-      [["turn", "Saved authorized instruction.\nCAP_REMINDER_DUE ONCE_MARKER"]]
+      [
+        [
+          "turn",
+          `Saved authorized instruction (eventId ${requestId}).\nCAP_REMINDER_DUE ONCE_MARKER`,
+        ],
+      ]
     );
     assert.deepEqual(
       final.messages

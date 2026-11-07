@@ -549,8 +549,12 @@ export class SessionAgent<
           const pendingReplies = await this.active?.replies.hold(
             binding.nativeId
           );
+          // Placed triggers bypass the harness's own wake, so this job is the alarm that resumes Pi after an eviction.
+          const unsettled = await this.harness.pending({
+            session: String(binding.nativeId),
+          });
           const delay = waiting ? 1000 : 5000;
-          return waiting || pendingReplies
+          return waiting || pendingReplies || unsettled.length > 0
             ? {
                 rescheduleAt: Math.min(
                   typeof outcome === "object" ? outcome.rescheduleAt : Infinity,
