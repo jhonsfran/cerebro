@@ -8,14 +8,17 @@ Every coordinator event today becomes a four-phase durable task that orders itse
 
 ```ts
 // Slack queue / web / timer: one call, returns once the receipt and its placer are durable.
-const receipt = await events.admit(admission, context);           // { ...receipt, duplicates }
-return { eventId: eventOf(receipt).id };                           // replay: same receipt, duplicates > 0
+const receipt = await events.admit(admission, context); // { ...receipt, duplicates }
+return { eventId: eventOf(receipt).id }; // replay: same receipt, duplicates > 0
 
 // Team report, inside the report's own transaction:
 await events.enqueueIn(tx, await coordinatorReportEvent(record, report));
 
 // The model, in a batched run that saw "Slack event. {eventId: ..., content: ...}":
-reply_event({ eventId: "bot-event:9f3…", text: "Done: the report is in #ops." })
+reply_event({
+  eventId: "bot-event:9f3…",
+  text: "Done: the report is in #ops.",
+});
 // → {"eventId":"bot-event:9f3…","state":"queued"}  (web events: isError "the transcript is the reply")
 ```
 

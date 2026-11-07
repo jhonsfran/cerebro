@@ -9,6 +9,7 @@ A parallel delegate is doing Unit 3 on the same base: it replaces the coordinati
 Today every coordinator event becomes a four-phase durable delivery task that waits on its predecessor, claims a profile version, submits one Pi follow-up, and settles by binding the run's single answer entry to the event. Pi runs one follow-up per turn, so N messages are N turns. After this unit Pi's inbox is the queue, a burst that arrives during a turn runs in the next turn together, replies to external channels are an explicit model decision through one tool, and every channel is an adapter that produces a `Trigger` and registers a `ReplyPort`.
 
 The design was chosen in a three-candidate arena with a cross-judge. Read these before writing code:
+
 - Base mechanics (staging list, drive, gate, derived state): /private/tmp/claude-501/-Users-jhonsfran-repos-cerebro/165aaed4-2f2f-4d95-9258-566ce91c53c8/scratchpad/arena-inbox/candidate-1/rationale.md and sketch.ts.
 - Contract shape (Trigger, ReplyDestination, ReplyPort registry, adapters, placement states): /private/tmp/claude-501/-Users-jhonsfran-repos-cerebro/165aaed4-2f2f-4d95-9258-566ce91c53c8/scratchpad/arena-inbox/candidate-3/rationale.md and sketch.ts.
 - Durable nudge and inbox cap: /private/tmp/claude-501/-Users-jhonsfran-repos-cerebro/165aaed4-2f2f-4d95-9258-566ce91c53c8/scratchpad/arena-inbox/candidate-2/rationale.md, sections "Replies" and "Tradeoffs".

@@ -21,6 +21,7 @@ Five architectural changes move `codex/persistent-super-agent` closer to the two
 1. Check the delegate worktrees under `.claude/worktrees/` for uncommitted changes on the two branches above. Review each diff, commit on its branch, rebase the trigger branch onto the Unit 3 commit, and fast-forward `codex/persistent-super-agent`.
 2. Run `pnpm check-types`, `pnpm test:contracts`, `pnpm test:channels`, `pnpm test:runtime`, and `pnpm test:integration` after each landing. Baselines before this run: runtime 374 pass, channels 196 pass, integration 83 pass.
 3. The briefs and the two design arenas live in `super-agent-simplification-briefs/`. Unit 7 starts from `unit7-workers.md` once Units 3 and 5 have landed.
+
 - [ ] Phase D: Keep the audit trail throughout the run.
 - [ ] Phase E: Verify and hand back.
 

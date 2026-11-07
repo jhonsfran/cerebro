@@ -8,7 +8,7 @@ Two Pi facts, checked in `node_modules/@earendil-works/pi-durable@1.3.0`, rule o
 
 ## Usage (caller's view)
 
-*Admission.* Any source builds a `BotEvent` and calls `events.admit(admission, context)`. It returns the durable receipt after the submit landed or the gate held the event; `receipt.duplicates === 0` is the "accepted" bit the web and Slack acknowledgements already use.
+_Admission._ Any source builds a `BotEvent` and calls `events.admit(admission, context)`. It returns the durable receipt after the submit landed or the gate held the event; `receipt.duplicates === 0` is the "accepted" bit the web and Slack acknowledgements already use.
 
 ```ts
 // coordinator-web.ts (unchanged call)
@@ -21,18 +21,20 @@ await options.events.enqueueIn(transaction, await coordinatorReportEvent(record,
 options.waitUntil(options.events.drive(options.native.id));
 ```
 
-*Lifecycle.* The `cerebro-coordination` job is the only re-driver:
+_Lifecycle._ The `cerebro-coordination` job is the only re-driver:
 
 ```ts
-const open = await scope.advancePublication();          // applies a pending refresh when drained
-const pending = await events.wake(binding.nativeId);     // submits staged IDs while the gate is open
+const open = await scope.advancePublication(); // applies a pending refresh when drained
+const pending = await events.wake(binding.nativeId); // submits staged IDs while the gate is open
 const replies = await host.replies.hold(binding.nativeId);
-return pending || replies || !open ? { rescheduleAt: Date.now() + 5000 } : outcome;
+return pending || replies || !open
+  ? { rescheduleAt: Date.now() + 5000 }
+  : outcome;
 ```
 
-*Stop.* `await events.withdraw(native.id); await harness.abort({ session })` — staged events never reach Pi; Pi withdraws its own queued inputs (`inbox.js:110-119`).
+_Stop._ `await events.withdraw(native.id); await harness.abort({ session })` — staged events never reach Pi; Pi withdraws its own queued inputs (`inbox.js:110-119`).
 
-*The model.* A batched turn is N consecutive user messages, each the existing per-kind phrasing with its `eventId`. The model replies to the outside world only through one tool:
+_The model._ A batched turn is N consecutive user messages, each the existing per-kind phrasing with its `eventId`. The model replies to the outside world only through one tool:
 
 ```
 reply_event({ eventId: "bot-event:…", text: "Done: the report is in #ops." })
@@ -57,7 +59,7 @@ If a final answer leaves an external event unreplied, an `onYield` hook appends 
 
 ## Synthesis decision
 
-*Filled in by arena.*
+_Filled in by arena._
 
 ## Tradeoffs accepted
 

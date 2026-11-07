@@ -11,21 +11,50 @@ A channel does two things: it produces a `Trigger` and, if it can receive replie
 ```ts
 // Slack adapter (apps/server/src/session/agent.ts), after reading the decision receipt
 const trigger: Trigger = {
-  version: 2, id: await triggerId(address, origin), address, ownerPrincipalId: decision.ownerPrincipalId,
-  origin: { kind: "slack", eventId: decision.authority.eventId, thread: decision.authority.thread },
-  actor: "human", text: decision.text, reference: null, dependencies: { sourceIds: [], toolIds: [] },
-  reply: { kind: "slack", authority: decision.authority, ownerPrincipalId: decision.ownerPrincipalId, source: address },
+  version: 2,
+  id: await triggerId(address, origin),
+  address,
+  ownerPrincipalId: decision.ownerPrincipalId,
+  origin: {
+    kind: "slack",
+    eventId: decision.authority.eventId,
+    thread: decision.authority.thread,
+  },
+  actor: "human",
+  text: decision.text,
+  reference: null,
+  dependencies: { sourceIds: [], toolIds: [] },
+  reply: {
+    kind: "slack",
+    authority: decision.authority,
+    ownerPrincipalId: decision.ownerPrincipalId,
+    source: address,
+  },
 };
-return { kind: "owned-event", address, context, admission: { version: 3, kind: "trigger-admission", trigger, routing } };
+return {
+  kind: "owned-event",
+  address,
+  context,
+  admission: { version: 3, kind: "trigger-admission", trigger, routing },
+};
 // … and in the DO: const receipt = await host.triggers.admit(resolved.admission, context);
 
 // Team adapter (coordinator-report.ts), inside the report's admissions commit
-const trigger = await teamTriggerIn(tx, record, { kind: "teamreport", key, reportId, outcome }, report.text, report.contentDependencies);
-await triggers.acceptIn(tx, trigger);           // receipt + backlog, same commit as the ledger change
+const trigger = await teamTriggerIn(
+  tx,
+  record,
+  { kind: "teamreport", key, reportId, outcome },
+  report.text,
+  report.contentDependencies
+);
+await triggers.acceptIn(tx, trigger); // receipt + backlog, same commit as the ledger change
 // after the commit: void triggers.drain(native.id)
 
 // The model, in a batched run that placed two Slack messages and one team report
-reply_event({ event_id: "bot-event:9f…", text: "Done. The export is in #ops." })
+reply_event({
+  event_id: "bot-event:9f…",
+  text: "Done. The export is in #ops.",
+});
 
 // Stop (conversation-scope.ts)
 await Promise.all([triggers.withdraw(native.id), harness.abort({ session })]);
@@ -51,7 +80,7 @@ Interface depth. The runtime core exposes `admit`, `acceptIn`, `drain`, `withdra
 
 ## Synthesis decision
 
-*Filled in by arena.*
+_Filled in by arena._
 
 ## Tradeoffs accepted
 

@@ -9,20 +9,25 @@ Every agent now has one persistent primary conversation per person. A fork creat
 ## Delete, by package
 
 packages/api
+
 - `src/routers/product.ts:195-209` the `forkConversation` procedure and its route.
 
 packages/channels
+
 - `src/conversations.ts:102-189` and the `forkConversation` entry in the returned service object (`:391`).
 - `src/primary-conversations.ts:52,62` drop `forkOrigin` from the Pick and the `!conversation.forkOrigin` term. A primary conversation is identified by its binding key and conversation ID alone.
 
 packages/contracts
+
 - `src/session-service.ts` remove `ConversationForkOrigin` (`:201-207`), `ChatForkReceipt` (`:237`), `ChatClient.fork` (`:265-271`), and `ChatActivity.origin` (`:141-146`).
 
 packages/db
+
 - `src/schema/agents.ts` remove the `ConversationForkOrigin` import (`:2`) and the `forkOrigin` column (`:63`).
 - Generate the drop migration with drizzle-kit. Run `pnpm --filter @cerebro/db db:generate` (not through turbo, which marks it interactive). Expect a new `src/migrations/0020_*.sql` that drops `fork_origin` plus a journal entry and snapshot. Do not edit or delete `0016_conversation_forks.sql`; it is already applied in existing databases. If drizzle-kit prompts, answer so that the result is a plain column drop.
 
 packages/runtime
+
 - `src/session-agent.ts` remove: the `ChatForkReceipt` and `webEventForkPointIn` imports, the `UserEntry` and `AssistantEntry` imports if nothing else uses them, `origin` in `SessionHostConfiguration` (`:118-122`), the `forkCommand` and `nativeEntryId` schemas, the `ancestors` parameter and cycle check in `openScope` and `createScope`, `originKey` and its comparisons and the `origin` write into the binding, the `forkSource` call and method (`:616-685`), the "fork entry does not belong" check, the `tx.forkConversation` branch (keep `tx.createConversation`), the `inheritDependencies(origin.address, toolIds, false)` call, and the `/fork` request handler (`:916-951`). Keep `inheritDependencies` in the configuration; history search uses it.
 - `src/coordinator-event-input.ts:32-66` remove `webEventForkPointIn`. Keep `webEventData`.
 - `src/conversation-bindings.ts` remove `origin` from `ConversationBinding`. Bump the `Bindings` document to version 3 and make `migrate` throw `Unsupported conversation bindings version.` for anything older, the way other documents in this package reject unknown versions. Pre-cutover data is not migrated on this branch.
@@ -30,11 +35,13 @@ packages/runtime
 - `src/content-dependency-store.ts:115-153` `inherit(source, toolIds, history)`: after this unit the only callers pass `history = true`. Remove the parameter and the `false` branch. Update `inheritDependencies` signatures in `session-agent.ts`, `apps/server/src/session/content.ts`, `apps/server/src/session/execution.ts`, `conversation-history.ts`, and the test fixtures to match.
 
 apps/server
+
 - `src/session/agent.ts` remove the `ConversationForkOrigin` import, the `forkOrigin` decode (`:131-140`), the `forkOrigin?.agentVersion` fallback (`:144`), and the `origin` mapping (`:203-218`).
 - `src/session/client.ts` remove the `ChatForkReceipt` import, `"/fork"` from the path union, and the `fork` method (`:177-186`).
 - `src/session/proof.ts:55` remove `"/fork"` from the allowed signed paths.
 
 apps/web (src/features/product)
+
 - `chat-connection.ts` remove `forkedConversationSchema` import and `forkConversation` (`:130-134`).
 - `types.ts:116-120` remove `forkedConversationSchema`.
 - `conversation.tsx` remove the `forkConversation` import, `forkIntent`, the `fork` handler (`:326-335`), and the `fork` prop (`:388`).

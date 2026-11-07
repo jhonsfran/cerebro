@@ -9,17 +9,20 @@ Today a Team needs three published agents and a `coordination` block naming two 
 ## Data shape
 
 packages/contracts/src/work.ts
+
 - Rename `RolePinSchema` to `AgentPinSchema` (same fields `agentId`, `agentVersion`), type `AgentPin`. Update every importer.
 - Delete `CoordinationProfileSchema` and `CoordinationProfile`. Add `TeamDefaultsSchema`: `maxTeams`, `maxWorkers`, `maxTurns`, `timeoutMs`, each `WorkLimitsSchema.fields.*` with the same decoding defaults as today (2, 2, 8, 600000). Export `DEFAULT_TEAM_LIMITS = Schema.decodeUnknownSync(TeamDefaultsSchema)({})` and type `TeamDefaults = WorkLimits`.
 - `WorkAdmissionSchema` becomes a single struct at `version: 3`: `admittedAt`, `contentDependencies`, `deadlineAt`, `goal`, `key`, `agent: AgentPinSchema`, `limits: WorkLimitsSchema`, `sourceEventAddress`. The filter keeps the organization and deadline invariants and adds `sourceEventAddress.agentId === agent.agentId`. No `lead`, no `worker`.
 - `TeamCommandSchema`, `TeamEventReturnSchema`, `PrivateInspectionQuery` change by reference only.
 
 packages/contracts/src/inspection.ts
+
 - `InspectionRole.definition` stays an `AgentPinSchema`; every slot reports `work.agent`. Add `role: Schema.Literals(["lead", "worker"])` to `InspectionRole` so the web label stops depending on the slot literal.
 
 ## Runtime
 
 packages/runtime/src/team-composition.ts (new; the one module that knows how a pinned definition becomes roles)
+
 - `type TeamRoleKind = "lead" | "worker"`.
 - `teamRoleSlots(work): readonly { index: number; role: TeamRoleKind }[]` with length `1 + work.limits.maxWorkers`, slot 0 the lead.
 - `teamRoleKind(work, index)` throws `InvalidInput` outside `0..maxWorkers`. It replaces the two range checks in `team-content.ts` and the `index === 0 ? lead : worker` branches in `team-content.ts`, `team-runtime.ts`, `team-inspection.ts`, and `apps/server/src/team-agent.ts`.
@@ -28,22 +31,28 @@ packages/runtime/src/team-composition.ts (new; the one module that knows how a p
 - `requireRoleConfigurations(work, configurations)`: count equals `teamRoleSlots(work).length`; every configuration's `agent.agentId`, `agent.version`, `agent.organizationId` match `work.agent` and `work.key.organizationId`; every `address.agentId === work.agent.agentId`; session IDs unique. Throws `InvalidInput`.
 
 packages/runtime/src/team-content.ts
+
 - `teamRoleAddress` takes `agentId` from `work.agent` and its range check from `teamRoleKind`. `readTeamRoleImports` likewise.
 
 packages/runtime/src/team-role.ts
+
 - Unchanged. `install()` already reads `configuration.agent.instructions`, which now carries the overlay from the projection.
 
 packages/runtime/src/team-runtime.ts
+
 - Replace the inline pin loop with `requireRoleConfigurations`. Key the lead-only tools on `teamRoleKind(work, index) === "lead"`.
 
 packages/runtime/src/coordinator-work.ts
+
 - `CoordinationServices` becomes `{ ownerPrincipalId, agent: AgentPin, limits: WorkLimits, contentDependencies, sendCommand }`. Delete `profile` and `resolveRolePins`.
 - `start()` builds the v3 admission from `services.agent` and `services.limits` with no database read. `services.profile.maxTeams` and `services.profile.timeoutMs` become `services.limits.*`.
 
 packages/runtime/src/team-inspection.ts
+
 - `readRole` reports `definition: work.agent` and `role: slot === 0 ? "lead" : "worker"`.
 
 packages/runtime/src/conversation-profile.ts and instruction-cause.ts
+
 - Remove `allowLegacyUser` and its branch. Coordination services now exist for every web conversation, so the absent-coordination case is gone.
 - Remove the conversation `notify` hook, the `cerebro-notify` lifecycle job, `scheduleNotify`, and `ConversationScope.notify`: the Slack-kind notifier was their only production consumer and Unit 2 deleted it. Update `tests/runtime/fixture-session.ts` (the `notify-*` conversations) and the `notifications` assertions in `native-journey`, `identity-journey`, and `coordinator-results` tests; delete assertions that only proved the hook fired.
 
@@ -52,24 +61,30 @@ A parallel delegate is rewriting the event pipeline (coordinator events, replies
 ## Server
 
 apps/server/src/config.ts
+
 - `coordination` is optional in the file and always present after parsing: decode `value ?? {}` with `TeamDefaultsSchema` and `onExcessProperty: "error"`. A file that still carries `leadAgentId` or `workerAgentId` fails to parse; that is the intended signal. `RuntimeConfiguration.coordination: TeamDefaults`.
 
 apps/server/src/session/coordination.ts
+
 - Delete `resolveRolePins` and `isCoordinatorConversation` (after Unit 2 the only conversation kind is web). `createCoordinatorServices({ address, agent, conversation, limits, contentDependencies, env })` always returns services: `agent: { agentId: agent.agentId, agentVersion: agent.version }`, `limits`, `ownerPrincipalId`, `sendCommand` unchanged. It no longer takes `authority`, `profile`, `slack`, or `ownerContext`. `start_team` keeps its existing `runtime.authorize(owner, "coordinate")`, which already requires execute and read on the pinned coordinator agent; the model entitlement is re-checked in the Team cell at command receipt and before every provider call.
 
 apps/server/src/session/agent.ts
+
 - Pass `limits: config.coordination` to `createCoordinatorServices`.
 
 apps/server/src/team-agent.ts
+
 - `configure`: one `createAgentRepository(database).get(work.key.organizationId, work.agent.agentId, work.agent.agentVersion, ...)`, then `teamRoleSlots(work).map(slot => createExecutionComposition(env, storage, work.sourceEventAddress, await teamRoleAddress(work, slot.index), teamRoleDefinition(agent, slot.role), work.key.ownerPrincipalId, metadata, true, () => importedDependencies(slot.index)))`.
 - `resolve`: delete the `!config.coordination` denial.
 
 apps/server/src/session/team-inspection.ts
+
 - Iterate `teamRoleSlots(work)` instead of `maxWorkers + 1`.
 
 ## Web
 
 apps/web/src/features/product/inspection-role.tsx
+
 - Label from `role.role` ("Lead", "Worker"), keep the slot number for workers. Show "Agent" and "Definition version" from `definition`.
 - `types.ts` inspection schemas gain `role`.
 

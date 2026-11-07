@@ -32,6 +32,7 @@ Line numbers below come from an inventory taken before Unit 1 landed. Verify eac
 ## Partially delete
 
 packages/runtime/src
+
 - `session-agent.ts`: the `accepted-legacy-input` request kind and `acceptLegacyInput`; `legacyTimerOrigin`, `publicationPolicy`, `conversationKind`, and `primaryAddress` in `SessionHostConfiguration`; the `prepareAdmission` loop; policy and legacy derivation in `createScope`; `restoreSelections`' `legacyVersion`; the `cerebro-source-cutover`, `cerebro-child`, and `cerebro-notify` jobs; `search()` and `scheduleNotify`.
 - `conversation-scope.ts`: `sendLegacy`, `acceptLegacyInput`, the `/send` slack branch, the `legacy` flag and unsuffixed names, the `restoreProfiles` legacy alias and `p0` regex, `legacyVersion` retention, admission handling, `notify`, and stop-child. Keep `advance`; `policyVersion: 1` is the only value, so drop the field there as well.
 - `conversation-profile.ts`: `requireFreshSourceIn`, the `profileInstructions` branch, the `legacy` suffix, legacy timer origin, `work` and `work.tools`, `routeHuman` and `replayHandled`.
@@ -50,6 +51,7 @@ packages/runtime/src
 - `content-dependency-store.ts`: `inherit`.
 
 packages/channels/src
+
 - `slack-event-receipts.ts`: the `admit` decision member and type, the engine and retired filter, `readSlackEventTarget`; rename `legacyDigest` to `ignoredDigest`, since `ignored` decisions created today still use it.
 - `slack.ts`: the `receiveAcceptedLegacySlackInput` fallthrough and `receiveSlackInteraction`.
 - `slack-replies.ts`: as decided in item 5.
@@ -61,6 +63,7 @@ packages/channels/src
 - `team-reports.ts`: the `sourceSlackThread` branch.
 
 packages/contracts/src
+
 - `work.ts`: `LegacySlackWorkAdmissionSchema` (inline its `sourceEventAddress` struct where V2 reuses it), the union member, `LegacySlackTeamReportDeliverySchema`.
 - `timer-events.ts`: `LegacyTimerReplyOrigin`.
 - `slack-events.ts`: the legacy union member.
@@ -68,6 +71,7 @@ packages/contracts/src
 - `inspection.ts`: `policyVersion`, admission literals, and primary.
 
 apps/server/src
+
 - `session/agent.ts`: the `/legacy-slack-input` route, `requireLegacySourceMatch`, `legacyTimerOrigin`, `publicationPolicy`, `conversationKind`, the `primary` argument, the notifier, and `sourcePrimaryAddress`.
 - `session/source-primary.ts`: delete the file if nothing remains.
 - `session/slack-event-replies.ts`: the `primary` parameter and the legacy timer branches.
@@ -77,14 +81,17 @@ apps/server/src
 - `session/address.ts`, `session/client.ts`, `session/execution.ts`: the engine and retired gates.
 
 deploy
+
 - `backup.mjs`: the `--retirement-fence` option and its handling.
 
 apps/web/src/features/product
+
 - As decided in items 1 and 6.
 
 ## Tests
 
 Delete the files listed above. Then, following the inventory:
+
 - `tests/runtime/conversation-bindings.test.ts`, `event-migrations.test.ts`: remove migration cases for versions that no longer decode; keep a case that proves an older version is rejected if that is cheap.
 - `tests/channels/slack-events.test.ts` (`:260`, `:296`, `:333`), `fixture-slack-events.ts` legacy fixtures, `primary-conversations.test.ts:195`, `web.test.ts:317-385`, `production.test.ts:384-391`, `coordinator-policy.test.ts:71-106`, `slack.test.ts:287` and the notifier delivery tests at `:388-787`, `tests/integration/session-transport.test.ts:91`, `tests/runtime/coordinator-handoffs.test.ts:535` and `:688`, `coordinator-web.test.ts:312`, `conversation-reminders.test.ts:368` (per decision 8), the `cerebro-child` and `search_conversations` assertions in `capabilities-journey.test.ts`, and `tests/channels/native/product.test.ts:29`.
 - Rewrite: `tests/runtime/saved-timer-submit.test.ts` keeps its primary-only scenarios and drops the legacy ones; `tests/runtime/coordinator-web-fixture.ts` and the `conversation-publication*.test.ts` files stop modelling policy version 0 to 1 adoption and test agent-version bumps only; `coordinator-handoffs.test.ts:106` no longer uses `createCoordinatorSource`; fixtures that call `rememberHumanOperation` (`coordinator-fixture.ts`, `coordinator-recovery.test.ts`, `coordinator-fixture-provider.test.ts`, `coordinator-events.test.ts`) stop; legacy shapes in `tests/contracts/work-contracts.test.ts`, `tests/channels/team-reports.test.ts`, `inspection-ui.test.ts`, `inspection.test.ts`, and `tests/runtime/inspection-fixture.ts` go.

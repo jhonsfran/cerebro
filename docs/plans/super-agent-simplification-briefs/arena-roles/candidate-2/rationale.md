@@ -25,11 +25,26 @@ const admission = decode(WorkAdmissionSchema)({ version: 3, team, limits: servic
 Team cell (`TeamAgent.configure`):
 
 ```ts
-const pinned = await loadPinnedAgent(env, work.key.organizationId, work.team.agent); // one immutable row
-return Promise.all(teamRoles(work).map(async (role) =>
-  createExecutionComposition(env, storage, work.sourceEventAddress,
-    await teamRoleAddress(work, role.index), composeRoleDefinition(pinned, role),
-    work.key.ownerPrincipalId, metadata, true, () => importedDependencies(role.index))));
+const pinned = await loadPinnedAgent(
+  env,
+  work.key.organizationId,
+  work.team.agent
+); // one immutable row
+return Promise.all(
+  teamRoles(work).map(async (role) =>
+    createExecutionComposition(
+      env,
+      storage,
+      work.sourceEventAddress,
+      await teamRoleAddress(work, role.index),
+      composeRoleDefinition(pinned, role),
+      work.key.ownerPrincipalId,
+      metadata,
+      true,
+      () => importedDependencies(role.index)
+    )
+  )
+);
 ```
 
 Inspector: `definition: work.team.agent` for every slot; `modelId` from Pi's `AgentDoc` as today.
