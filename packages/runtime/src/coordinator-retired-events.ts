@@ -6,8 +6,8 @@ import {
 } from "@cerebro/contracts/tools";
 import type { Tx } from "@earendil-works/pi-durable";
 
-import { BotEventReceipts, eventOf } from "./coordinator-event-state.ts";
 import type { CoordinatorWorkRecord } from "./coordinator-ledger.ts";
+import { Receipts } from "./trigger-receipts.ts";
 
 export const discardQueuedCommandsIn = async (
   tx: Tx,
@@ -21,14 +21,13 @@ export const discardQueuedCommandsIn = async (
       if (wire.kind !== "event-command") {
         return;
       }
-      const document = await tx.doc(BotEventReceipts, wire.event.id, null);
+      const document = await tx.doc(Receipts, wire.event.id, null);
       const { receipt } = document;
       if (
         record.dispatched ||
         !receipt ||
         receipt.route.kind !== "teams" ||
         receipt.digest !== wire.event.digest ||
-        receipt.digest !== (await digestToolArguments(receipt.input)) ||
         commandId !== command.id ||
         (await digestToolArguments(command.work)) !== admissionDigest
       ) {
@@ -36,7 +35,7 @@ export const discardQueuedCommandsIn = async (
           reason: "The queued event command changed before retirement.",
         });
       }
-      const event = eventOf(receipt);
+      const { trigger } = receipt;
       const recipient = receipt.route.recipients.find(
         (item) => item.key.workId === record.admission.key.workId
       );
@@ -44,8 +43,8 @@ export const discardQueuedCommandsIn = async (
         !recipient ||
         recipient.commandId !== commandId ||
         recipient.admissionDigest !== admissionDigest ||
-        event.ownerPrincipalId !== record.admission.key.ownerPrincipalId ||
-        canonicalToolArguments(event.coordinator) !==
+        trigger.ownerPrincipalId !== record.admission.key.ownerPrincipalId ||
+        canonicalToolArguments(trigger.address) !==
           canonicalToolArguments(record.admission.sourceEventAddress)
       ) {
         throw new InvalidInput({

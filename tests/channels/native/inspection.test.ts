@@ -514,10 +514,9 @@ test(
               page.events.some(
                 (item) =>
                   item.id === report.event.id &&
-                  item.source === "teamreport" &&
-                  item.route === "coordinator" &&
-                  item.admission === "settled" &&
-                  item.outcome === "done" &&
+                  item.channel === "teamreport" &&
+                  item.route === "inbox" &&
+                  item.placement === "done" &&
                   item.duplicates === 0 &&
                   item.reply === null
               )

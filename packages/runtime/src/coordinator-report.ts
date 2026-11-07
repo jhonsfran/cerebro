@@ -12,8 +12,7 @@ import type { Conversation, Harness } from "@earendil-works/pi-durable";
 import { Effect, Result, Schema } from "effect";
 
 import type { createConversationResources } from "./conversation-resources.ts";
-import { coordinatorReportEvent } from "./coordinator-event-content.ts";
-import type { CoordinatorEvents } from "./coordinator-events.ts";
+import { reportTriggerIn } from "./coordinator-event-content.ts";
 import {
   applyCoordinatorReport,
   WorkDocuments,
@@ -33,6 +32,7 @@ import {
 } from "./imported-content.ts";
 import { piContext } from "./pi-harness.ts";
 import type { SessionHostConfiguration } from "./session-agent.ts";
+import type { Triggers } from "./triggers.ts";
 
 export const SourceReportReceipts = defineDocFamily({
   kind: "cerebro.coordinator-report",
@@ -99,8 +99,9 @@ export const createCoordinatorReport =
         };
       };
     readonly coordination: ReturnType<typeof createCoordinatorWork>;
-    readonly events: CoordinatorEvents;
+    readonly triggers: Pick<Triggers, "acceptIn" | "drain">;
     readonly persist: () => Promise<void>;
+    readonly waitUntil: (promise: Promise<unknown>) => void;
   }) =>
   async (
     input: TeamReportDelivery,
@@ -205,9 +206,9 @@ export const createCoordinatorReport =
               options.native.id,
               value.contentDependencies
             );
-            await options.events.enqueueIn(
+            await options.triggers.acceptIn(
               transaction,
-              await coordinatorReportEvent(record, value)
+              await reportTriggerIn(transaction, record, value)
             );
           },
           Date.now(),
@@ -225,6 +226,9 @@ export const createCoordinatorReport =
         importDependencies,
         { signal }
       );
+    }
+    if (result) {
+      options.waitUntil(options.triggers.drain(options.native.id));
     }
     await options.persist();
     return Schema.decodeUnknownSync(TeamReportReceiptSchema)({

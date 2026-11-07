@@ -479,7 +479,8 @@ test("current source revocation blocks new dispatch and deadlines release only e
       "a",
       "message_team",
       { workId: initial.admission.key.workId, text: "Revoked update." },
-      "revoked-update"
+      "revoked-update",
+      false
     );
     assert.match(denied.snapshot.tools.at(-1)?.output ?? "", /revoked/u);
     assert.equal(fixture.delivered.length, 2);

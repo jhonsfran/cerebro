@@ -268,7 +268,7 @@ test(
       return {
         ...view,
         inputEntryId: input.entryId,
-        answerEntryId: answer.entryId,
+        answerMessageId: answer.entryId,
       };
     };
     const provider = async () =>
@@ -865,7 +865,7 @@ test(
             (message) => message.entryId === activated.inputEntryId
           );
           const answerIndex = messages.findIndex(
-            (message) => message.entryId === activated.answerEntryId
+            (message) => message.entryId === activated.answerMessageId
           );
           assert.ok(messages.indexOf(result) > inputIndex);
           assert.ok(messages.indexOf(result) < answerIndex);

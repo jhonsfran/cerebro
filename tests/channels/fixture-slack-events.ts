@@ -1,5 +1,5 @@
 import {
-  primarySlackBotEvent,
+  primarySlackTrigger,
   readSlackPrimaryEvent,
 } from "../../packages/channels/src/slack-primary-events";
 import type { ChannelOptions } from "../../packages/channels/src/types";
@@ -22,14 +22,14 @@ export const createFixtureSlackEvents = (
         address,
         eventKey,
       });
-      const event = await primarySlackBotEvent(decision, address);
-      hideFixtureEvent(event.id);
+      const trigger = await primarySlackTrigger(decision, address);
+      hideFixtureEvent(trigger.id);
       await options.sessions(database).send({
         address,
         context,
-        operationId: id.operation(event.id),
-        text: event.content.text,
+        operationId: id.operation(trigger.id),
+        text: trigger.text,
       });
-      return { eventId: event.id };
+      return { eventId: trigger.id };
     }),
 });

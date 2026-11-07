@@ -65,6 +65,7 @@ import type {
   CoordinationBinding,
   CoordinatorWorkRecord,
 } from "./coordinator-ledger.ts";
+import { subscribeCauseIn } from "./coordinator-subscriptions.ts";
 import { prepareInstructionCause } from "./instruction-cause.ts";
 import { trackNativeProgress } from "./native-progress.ts";
 import { piContext } from "./pi-harness.ts";
@@ -331,7 +332,7 @@ export const createCoordinatorWork = (options: {
         });
         const record: CoordinatorWorkRecord = {
           admission,
-          humanOperationId: human.operationId,
+          humanOperationId: human.eventId,
           pendingCommands: {},
           reportId: null,
           terminalReport: null,
@@ -365,6 +366,7 @@ export const createCoordinatorWork = (options: {
         }
         const sourceWork = await tx.doc(SourceWork, options.nativeId);
         sourceWork.workId = candidate;
+        await subscribeCauseIn(tx, source, record, human.eventId);
         await Promise.all(
           expired.map((item) => options.terminalNoticeIn?.(tx, item, "expired"))
         );

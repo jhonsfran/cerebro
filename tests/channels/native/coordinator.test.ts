@@ -590,7 +590,7 @@ test(
       const expected = await reportEvent(delivery.wire);
       assert.equal(
         events.events.filter(
-          (item) => item.id === expected.id && item.outcome === "done"
+          (item) => item.id === expected.id && item.placement === "done"
         ).length,
         1
       );

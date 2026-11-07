@@ -1,24 +1,30 @@
 import type { EventAddress } from "@cerebro/contracts/events";
 import { Denied } from "@cerebro/contracts/failures";
 import type { PrincipalId } from "@cerebro/contracts/identity";
-import { digestToolArguments } from "@cerebro/contracts/tools";
+import {
+  REPLY_NUDGE_ENTRY_KIND,
+  ReplyNudgeEntryDataSchema,
+  TRIGGER_ENTRY_KIND,
+  TriggerEntryDataSchema,
+  replyNudgeRequestId,
+  triggerActor,
+} from "@cerebro/contracts/triggers";
 import { LiveDoc } from "@earendil-works/pi-durable";
 import type {
   ConversationId,
+  EntryRecord,
   Harness,
   SubmissionId,
   Tx,
 } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
-import { BotEventReceipts, eventOf } from "./coordinator-event-state.ts";
-import type { BotEventReceipt } from "./coordinator-event-state.ts";
 import {
-  SourceOperations,
   coordinatorOperationKey,
   sameWorkSource,
 } from "./coordinator-ledger.ts";
 import { piContext } from "./pi-harness.ts";
+import { Receipts } from "./trigger-receipts.ts";
 
 export interface InstructionCandidate {
   readonly operationId: string;
@@ -27,79 +33,27 @@ export interface InstructionCandidate {
 }
 export interface InstructionCause extends InstructionCandidate {
   readonly kind: "human" | "routine";
-  readonly eventId: string | null;
+  readonly eventId: string;
 }
-interface InstructionTarget {
-  readonly address: EventAddress;
-  readonly ownerPrincipalId: PrincipalId;
-  readonly nativeId: ConversationId;
-}
-const eventData = Schema.Struct({
-  eventId: Schema.NonEmptyString,
-  source: Schema.String,
-  agentVersion: Schema.Int,
-});
-interface EventCauseTarget extends InstructionTarget {
-  readonly candidate: InstructionCandidate;
-  readonly data: typeof eventData.Type;
-}
-const eventMatchesCause = (
-  receipt: BotEventReceipt,
-  options: EventCauseTarget
-): boolean => {
-  const event = eventOf(receipt);
-  return (
-    receipt.nativeId === options.nativeId &&
-    event.id === options.candidate.operationId &&
-    options.data.eventId === event.id &&
-    options.data.source === event.source.kind &&
-    event.ownerPrincipalId === options.ownerPrincipalId &&
-    sameWorkSource(event.coordinator, options.address)
-  );
-};
-const eventInstructionCauseIn = async (
-  tx: Tx,
-  options: EventCauseTarget
-): Promise<InstructionCause | undefined> => {
-  const { candidate, data } = options;
-  const saved = await tx.doc(BotEventReceipts, candidate.operationId, null);
-  const { receipt } = saved;
-  if (!receipt || receipt.delivery.kind !== "coordinator") {
-    return;
-  }
-  const claim = receipt.delivery.admission;
+
+/** The trigger an input entry stands for, and the request ID that input must carry. */
+const causeOf = (
+  entry: EntryRecord
+): { readonly triggerId: string; readonly requestId: string } | undefined => {
   if (
-    !eventMatchesCause(receipt, options) ||
-    receipt.digest !== (await digestToolArguments(receipt.input)) ||
-    claim.kind === "held" ||
-    (claim.kind === "settled" && claim.outcome === "blocked")
+    entry.kind === TRIGGER_ENTRY_KIND &&
+    Schema.is(TriggerEntryDataSchema)(entry.data)
   ) {
-    return;
+    return { triggerId: entry.data.id, requestId: entry.data.id };
   }
   if (
-    claim.requestId !== candidate.operationId ||
-    claim.agentVersion !== data.agentVersion ||
-    (claim.kind !== "claimed" && claim.submissionId !== candidate.submissionId)
+    entry.kind === REPLY_NUDGE_ENTRY_KIND &&
+    Schema.is(ReplyNudgeEntryDataSchema)(entry.data)
   ) {
-    return;
-  }
-  const event = eventOf(receipt);
-  switch (event.source.kind) {
-    case "web":
-    case "slack": {
-      return { ...candidate, kind: "human", eventId: event.id };
-    }
-    case "savedtimer": {
-      return { ...candidate, kind: "routine", eventId: event.id };
-    }
-    case "teamreport":
-    case "coordinator-terminalnotice": {
-      return;
-    }
-    default: {
-      const exhaustive: never = event.source;
-      return exhaustive;
-    }
+    return {
+      triggerId: entry.data.id,
+      requestId: replyNudgeRequestId(entry.data.id),
+    };
   }
 };
 
@@ -153,33 +107,31 @@ export const requireInstructionCauseIn = async (
           return;
         }
         const entry = await tx.entry(submission.entry);
-        if (entry?.kind === "pi.user") {
-          const operation = await tx.doc(
-            SourceOperations,
-            options.nativeId,
-            candidate.key,
-            candidate.operationId
-          );
-          return operation.operationId === candidate.operationId &&
-            operation.route?.kind === "coordinator"
-            ? { ...candidate, kind: "human", eventId: null }
-            : undefined;
+        const cause = entry && causeOf(entry);
+        if (!cause || cause.requestId !== candidate.operationId) {
+          return;
         }
+        const saved = await tx.doc(Receipts, cause.triggerId, null);
+        const trigger = saved.receipt?.trigger;
         if (
-          entry?.kind !== "cerebro.bot-event-input" ||
-          !Schema.is(eventData)(entry.data)
+          !trigger ||
+          saved.receipt?.nativeId !== options.nativeId ||
+          trigger.id !== cause.triggerId ||
+          trigger.ownerPrincipalId !== options.ownerPrincipalId ||
+          !sameWorkSource(trigger.address, options.address)
         ) {
           return;
         }
-        return await eventInstructionCauseIn(tx, {
-          ...options,
-          candidate,
-          data: entry.data,
-        });
+        const actor = triggerActor(trigger.origin);
+        return actor === "internal"
+          ? undefined
+          : { ...candidate, kind: actor, eventId: trigger.id };
       }
     )
   );
-  const cause = verified.findLast((candidate) => candidate !== undefined);
+  const cause =
+    verified.findLast((candidate) => candidate?.kind === "human") ??
+    verified.findLast((candidate) => candidate?.kind === "routine");
   if (!cause) {
     throw new Denied({
       code: "unauthorized",

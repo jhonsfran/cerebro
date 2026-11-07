@@ -1,15 +1,11 @@
-import {
-  botEventId,
-  BotEventSchema,
-  BotEventSourceSchema,
-} from "@cerebro/contracts/bot-events";
-import type { BotEvent } from "@cerebro/contracts/bot-events";
 import type { EventAddress } from "@cerebro/contracts/events";
-import type {
-  SlackPrimaryDecision,
-  SlackReplyDestination,
-} from "@cerebro/contracts/slack-events";
-import { canonicalToolArguments } from "@cerebro/contracts/tools";
+import type { SlackPrimaryDecision } from "@cerebro/contracts/slack-events";
+import {
+  TriggerOriginSchema,
+  TriggerSchema,
+  triggerId,
+} from "@cerebro/contracts/triggers";
+import type { Trigger } from "@cerebro/contracts/triggers";
 import type { Database } from "@cerebro/db";
 import { createIdentityRepository } from "@cerebro/db/repositories/identity";
 import {
@@ -91,71 +87,34 @@ export const readSlackPrimaryEvent = async (input: {
   return { decision, conversation };
 };
 
-export const primarySlackBotEvent = async (
+/** The trigger one saved Slack decision raises for one target, with the thread as its reply destination. */
+export const primarySlackTrigger = async (
   decision: SlackPrimaryDecision,
   address: EventAddress
-): Promise<BotEvent> => {
-  const source = Schema.decodeUnknownSync(BotEventSourceSchema, {
+): Promise<Trigger> => {
+  const origin = Schema.decodeUnknownSync(TriggerOriginSchema, {
     onExcessProperty: "error",
   })({
     kind: "slack",
     eventId: decision.authority.eventId,
     thread: decision.authority.thread,
   });
-  return Schema.decodeUnknownSync(BotEventSchema, {
+  return Schema.decodeUnknownSync(TriggerSchema, {
     onExcessProperty: "error",
   })({
-    version: 1,
-    id: await botEventId(address, source),
-    coordinator: address,
+    version: 2,
+    id: await triggerId(address, origin),
+    address,
     ownerPrincipalId: decision.ownerPrincipalId,
-    source,
-    replyTo: { kind: "slack", thread: decision.authority.thread },
-    content: { text: decision.text, reference: null },
+    origin,
+    text: decision.text,
+    reference: null,
+    reply: {
+      kind: "slack",
+      authority: decision.authority,
+      ownerPrincipalId: decision.ownerPrincipalId,
+      source: address,
+    },
     dependencies: { sourceIds: [], toolIds: [] },
   });
-};
-
-export const readSlackReplyDestination = async (
-  database: Database,
-  configuration: SlackConfiguration,
-  event: BotEvent
-): Promise<SlackReplyDestination> => {
-  if (event.source.kind !== "slack" || event.replyTo?.kind !== "slack") {
-    throw new ChannelError(
-      403,
-      "forbidden",
-      "The event has no Slack reply destination."
-    );
-  }
-  const authority = {
-    appId: configuration.appId,
-    eventId: event.source.eventId,
-    thread: event.source.thread,
-  };
-  const { decision } = await readSlackPrimaryEvent({
-    database,
-    configuration,
-    address: event.coordinator,
-    eventKey: slackEventKey(event.coordinator.organizationId, authority),
-  });
-  if (
-    decision.ownerPrincipalId !== event.ownerPrincipalId ||
-    decision.text !== event.content.text ||
-    canonicalToolArguments(decision.authority.thread) !==
-      canonicalToolArguments(event.source.thread) ||
-    canonicalToolArguments(event.replyTo.thread) !==
-      canonicalToolArguments(event.source.thread)
-  ) {
-    throw new ChannelError(
-      403,
-      "forbidden",
-      "The original Slack event changed."
-    );
-  }
-  return {
-    authority: decision.authority,
-    ownerPrincipalId: decision.ownerPrincipalId,
-    source: event.coordinator,
-  };
 };

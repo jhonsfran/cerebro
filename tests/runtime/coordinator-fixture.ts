@@ -1,3 +1,4 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Assertions read one field of freshly awaited durable state. */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,11 +8,12 @@ import { DatabaseSync } from "node:sqlite";
 import type { LifecycleJob, LifecycleJobs } from "agents/lifecycle";
 import { Schema } from "effect";
 
-import type { BotEvent } from "../../packages/contracts/src/bot-events.ts";
 import { Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import { normalizeTeamCommand } from "../../packages/contracts/src/team-events.ts";
 import type { TeamCommandTransport } from "../../packages/contracts/src/team-events.ts";
+import { triggerId } from "../../packages/contracts/src/triggers.ts";
+import type { Trigger } from "../../packages/contracts/src/triggers.ts";
 import {
   TeamDefaultsSchema,
   SlackThreadSchema,
@@ -36,19 +38,9 @@ import { NodeSqliteDatabase } from "../../packages/runtime/node_modules/@earendi
 import { SqliteStorage } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/storage.js";
 import { terminalNoticeIn } from "../../packages/runtime/src/coordinator-event-content.ts";
 import {
-  createCoordinatorEvents,
-  BotEventReceipts,
-} from "../../packages/runtime/src/coordinator-events.ts";
-import type {
-  CoordinatorEvents,
-  BotEventScope,
-} from "../../packages/runtime/src/coordinator-events.ts";
-import {
-  SourceOperations,
   WorkDocuments,
   WorkLedger,
   applyCoordinatorReport,
-  coordinatorOperationKey,
 } from "../../packages/runtime/src/coordinator-ledger.ts";
 import type { CoordinatorWorkRecord } from "../../packages/runtime/src/coordinator-ledger.ts";
 import { createCoordinatorSubscriptions } from "../../packages/runtime/src/coordinator-subscriptions.ts";
@@ -58,6 +50,16 @@ import {
   chatPresentation,
   piContext,
 } from "../../packages/runtime/src/pi-harness.ts";
+import {
+  Receipts,
+  createTriggers,
+} from "../../packages/runtime/src/triggers.ts";
+import type {
+  TriggerPlacement,
+  TriggerScope,
+  Triggers,
+} from "../../packages/runtime/src/triggers.ts";
+import { waitFor } from "./helpers.ts";
 
 const settleProgress = async (promise: Promise<unknown>): Promise<unknown> => {
   try {
@@ -68,6 +70,14 @@ const settleProgress = async (promise: Promise<unknown>): Promise<unknown> => {
 };
 
 export const context = piContext();
+export const actor = {
+  actor: {
+    id: id.principal("owner-A"),
+    organizationId: id.organization("org-A"),
+    kind: "human" as const,
+    state: "active" as const,
+  },
+};
 const fakeJobs = () => {
   const rows = new Map<string, LifecycleJob>();
   const jobs: LifecycleJobs = {
@@ -103,11 +113,18 @@ const fakeJobs = () => {
   };
   return { jobs, rows };
 };
+const finished = new Set<TriggerPlacement["kind"]>([
+  "done",
+  "unanswered",
+  "withdrawn",
+  "local-answer",
+]);
 
 export const setup = async (
   timeoutMs = 600_000,
   notices = false,
-  agentIds: Readonly<Record<string, string>> = {}
+  agentIds: Readonly<Record<string, string>> = {},
+  followUpMode: "all" | "one-at-a-time" = "all"
 ) => {
   const directory = await mkdtemp(path.join(tmpdir(), "cerebro-coordinator-"));
   const databasePath = path.join(directory, "state.sqlite");
@@ -116,9 +133,9 @@ export const setup = async (
   const calls: TeamCommand[] = [];
   const delivered: TeamCommand[] = [];
   const transports: TeamCommandTransport[] = [];
-  let localControl: BotEventScope["prepareLocalControl"];
-  let deliveryAuthorization: ((event: BotEvent) => Promise<void>) | undefined;
-  let prepareSettlement: BotEventScope["prepareSettlement"];
+  let localAnswer: TriggerScope["localAnswer"];
+  let deliveryAuthorization: ((trigger: Trigger) => Promise<void>) | undefined;
+  let gate: "open" | "waiting" = "open";
   const progress: Promise<unknown>[] = [];
   let pinVersion = 1;
   let clock = Date.now();
@@ -127,6 +144,7 @@ export const setup = async (
   const eventSubmissions: string[] = [];
   let submitPause: "before" | "after" | undefined;
   let submitEntered = Promise.withResolvers<boolean>();
+  let stopped = new AbortController();
   let dependencies = {
     sourceIds: [id.source("source-A")],
     toolIds: ["tool-A"],
@@ -169,7 +187,7 @@ export const setup = async (
         registry,
         settings: {
           extensions: [],
-          followUpMode: "one-at-a-time",
+          followUpMode,
           compaction: { enabled: false },
           retry: { enabled: false },
         },
@@ -185,7 +203,7 @@ export const setup = async (
         subscriptions: ReturnType<typeof createCoordinatorSubscriptions>;
       }
     >();
-    const events: CoordinatorEvents = createCoordinatorEvents({
+    const triggers: Triggers = createTriggers({
       pi,
       targetIn: (_tx, address) => {
         const source = sourceBindings.find(
@@ -193,9 +211,9 @@ export const setup = async (
         );
         const nativeId = source && nativeIds.get(source.name);
         assert.ok(nativeId);
-        return Promise.resolve({ nativeId, agentVersion: pinVersion });
+        return Promise.resolve({ nativeId });
       },
-      resolve: (address): Promise<BotEventScope> => {
+      resolve: (address): Promise<TriggerScope> => {
         const current = scopeSources.get(address.sessionId);
         assert.ok(current);
         const native = new Proxy(current.native, {
@@ -207,13 +225,16 @@ export const setup = async (
               ) => {
                 const pause = async () => {
                   submitEntered.resolve(true);
-                  const stopped = Promise.withResolvers<never>();
-                  invocation.abortSignal?.addEventListener(
-                    "abort",
-                    () => stopped.reject(new Error("Fixture process stopped.")),
-                    { once: true }
-                  );
-                  await stopped.promise;
+                  const halted = Promise.withResolvers<never>();
+                  const stop = () =>
+                    halted.reject(new Error("Fixture process stopped."));
+                  invocation.abortSignal?.addEventListener("abort", stop, {
+                    once: true,
+                  });
+                  stopped.signal.addEventListener("abort", stop, {
+                    once: true,
+                  });
+                  await halted.promise;
                 };
                 if (submitPause === "before") {
                   await pause();
@@ -230,9 +251,13 @@ export const setup = async (
             return typeof value === "function" ? value.bind(target) : value;
           },
         });
-        const authorize = async (event: BotEvent, caller?: unknown) => {
+        const authorize: TriggerScope["authorize"] = async (
+          trigger,
+          _caller,
+          action
+        ) => {
           await (allowed.get(current.name) &&
-          !event.dependencies.sourceIds.some((sourceId) =>
+          !trigger.dependencies.sourceIds.some((sourceId) =>
             revokedContent.has(sourceId)
           )
             ? Promise.resolve()
@@ -242,18 +267,19 @@ export const setup = async (
                   reason: "Event content revoked.",
                 })
               ));
-          if (caller === undefined) {
-            await deliveryAuthorization?.(event);
+          if (action === "deliver") {
+            await deliveryAuthorization?.(trigger);
           }
         };
         return Promise.resolve({
           native,
-          agentVersion: pinVersion,
           ownerPrincipalId,
-          admissions: current.coordinator.admissions,
-          prepareRoute: current.subscriptions.prepare,
-          prepareLocalControl: localControl,
-          prepareSettlement,
+          requireCurrent: () => assert.ok(scopeSources.has(address.sessionId)),
+          commit: (key, change) =>
+            current.coordinator.admissions.commit(key, change),
+          gate: () => Promise.resolve(gate),
+          route: current.subscriptions.prepare,
+          localAnswer,
           routingAccess: (_context, content) =>
             allowed.get(current.name) &&
             !content.sourceIds.some((sourceId) => revokedContent.has(sourceId))
@@ -279,7 +305,7 @@ export const setup = async (
             {
               scope: { kind: "session" },
               at: "current",
-              kind: BotEventReceipts.definition.kind,
+              kind: Receipts.definition.kind,
             },
             32,
             cursor,
@@ -293,10 +319,6 @@ export const setup = async (
       waitUntil: (promise) => {
         progress.push(settleProgress(promise));
       },
-    });
-    registry.install({
-      name: "fixture.bot-events",
-      tasks: [events.definition],
     });
     const scopes = await Promise.all(
       sourceBindings.map(async (source) => {
@@ -315,9 +337,17 @@ export const setup = async (
         });
         models.setProvider(faux.provider);
         faux.setResponses([fauxAssistantMessage("Coordinator result.")]);
+        const owner = {
+          actor: {
+            id: ownerPrincipalId,
+            organizationId: id.organization("org-A"),
+            kind: "human" as const,
+            state: "active" as const,
+          },
+        };
         const coordinator = createCoordinatorWork({
-          returnEventIn: events.returnEventIn,
-          terminalNoticeIn: notices ? terminalNoticeIn(events) : undefined,
+          returnEventIn: triggers.returnEventIn,
+          terminalNoticeIn: notices ? terminalNoticeIn(triggers) : undefined,
           address: source.address,
           nativeId: native.id,
           authorize: () =>
@@ -417,14 +447,6 @@ export const setup = async (
             },
           },
         });
-        const owner = {
-          actor: {
-            id: ownerPrincipalId,
-            organizationId: id.organization("org-A"),
-            kind: "human" as const,
-            state: "active" as const,
-          },
-        };
         const subscriptions = createCoordinatorSubscriptions({
           pi,
           nativeId: native.id,
@@ -449,7 +471,7 @@ export const setup = async (
                     reason: "Content access revoked.",
                   })
                 ),
-          readEvent: events.read,
+          readEvent: triggers.read,
         });
         const extension = {
           name: `source-${source.name}`,
@@ -475,8 +497,8 @@ export const setup = async (
       })
     );
     await Promise.all(scopes.map((scope) => scope.coordinator.restore()));
-    await events.restore();
-    return { pi, registry, models, scopes, storage, events, database };
+    await triggers.drainAll(scopes.map((scope) => scope.native.id));
+    return { pi, registry, models, scopes, storage, triggers, database };
   };
   let host = await open();
   const source = (name: string) => {
@@ -484,24 +506,42 @@ export const setup = async (
     assert.ok(value);
     return value;
   };
-  // Marks a native request as a human coordinator operation, as a web event
-  // delivery would, so tool calls from that turn carry a human cause.
-  const rememberHumanOperation = async (
+  const webTrigger = async (
     name: string,
-    operationId: string
-  ): Promise<void> => {
-    const key = await coordinatorOperationKey(operationId);
-    const { native } = source(name);
-    await host.pi.commit(async (tx) => {
-      const operation = await tx.doc(
-        SourceOperations,
-        native.id,
-        key,
-        operationId
-      );
-      operation.route ??= { kind: "coordinator", workId: null };
-    }, context);
+    operationId: string,
+    text = operationId
+  ): Promise<Trigger> => {
+    const { address } = source(name);
+    const origin = {
+      kind: "web",
+      operationId: id.operation(operationId),
+    } as const;
+    return {
+      version: 2,
+      id: await triggerId(address, origin),
+      address,
+      ownerPrincipalId,
+      origin,
+      text,
+      reference: null,
+      reply: null,
+      dependencies: { sourceIds: [], toolIds: [] },
+    };
   };
+  const receipt = async (eventId: string) => {
+    const saved = await host.pi.snapshot(Receipts, eventId, context);
+    assert.ok(saved?.receipt, `no receipt for ${eventId}`);
+    return saved.receipt;
+  };
+  const placement = async (eventId: string) =>
+    host.triggers.placement(await receipt(eventId));
+  const settled = (eventId: string, limitMs = 10_000) =>
+    waitFor(
+      () => placement(eventId),
+      (value) => finished.has(value.kind),
+      limitMs,
+      10
+    );
   const ledger = async () => {
     const value = (await host.pi.snapshot(WorkLedger, context)) ?? {
       identity: null,
@@ -565,14 +605,18 @@ export const setup = async (
     calls,
     delivered,
     transports,
-    setLocalControl: (handler: BotEventScope["prepareLocalControl"]) => {
-      localControl = handler;
+    webTrigger,
+    receipt,
+    placement,
+    settled,
+    setLocalAnswer: (handler: TriggerScope["localAnswer"]) => {
+      localAnswer = handler;
     },
     setEventDeliveryAuthorization: (handler: typeof deliveryAuthorization) => {
       deliveryAuthorization = handler;
     },
-    setEventSettlement: (handler: BotEventScope["prepareSettlement"]) => {
-      prepareSettlement = handler;
+    setGate: (value: "open" | "waiting") => {
+      gate = value;
     },
     registry: () => host.registry,
     models: () => host.models,
@@ -582,7 +626,7 @@ export const setup = async (
     pi: () => host.pi,
     database: () => host.database,
     storage: () => host.storage,
-    events: () => host.events,
+    triggers: () => host.triggers,
     eventSubmissions,
     pauseEventSubmit: (at: "before" | "after") => {
       submitPause = at;
@@ -621,6 +665,7 @@ export const setup = async (
       held?.resolve(true);
       held = undefined;
     },
+    // A human turn is a web trigger through the real admission path, so tool calls from that turn carry a human cause.
     invoke: async (
       name: string,
       tool: string,
@@ -639,17 +684,21 @@ export const setup = async (
         ),
         fauxAssistantMessage("The command was handled."),
       ]);
+      let status: string;
       if (human) {
-        await rememberHumanOperation(name, requestId);
+        const trigger = await webTrigger(name, requestId);
+        await host.triggers.admit(trigger, actor);
+        status = (await settled(trigger.id)).kind;
+      } else {
+        const submission = await current.native.submit(
+          { type: "input", content: requestId, requestId },
+          context
+        );
+        ({ status } = await submission.wait(context));
       }
-      const submission = await current.native.submit(
-        { type: "input", content: requestId, requestId },
-        context
-      );
-      const settled = await submission.wait(context);
       const watch = await current.native.watch(context);
       try {
-        return { settled, snapshot: chatPresentation(watch.value) };
+        return { settled: { status }, snapshot: chatPresentation(watch.value) };
       } finally {
         await watch.stop();
       }
@@ -684,14 +733,16 @@ export const setup = async (
         context
       );
     },
-    rememberHumanOperation,
     reopen: async () => {
+      stopped.abort();
+      stopped = new AbortController();
       await host.pi.close(context);
       host = await open();
       host.pi.resume();
     },
     close: async () => {
       held?.resolve(true);
+      stopped.abort();
       await host.pi.close(context);
       await Promise.all(progress);
       await rm(directory, { recursive: true });

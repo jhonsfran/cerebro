@@ -3,10 +3,18 @@ import { test } from "node:test";
 
 import { Schema } from "effect";
 
-import { botEventId } from "../../packages/contracts/src/bot-events.ts";
-import type { BotEvent } from "../../packages/contracts/src/bot-events.ts";
 import { Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
+import {
+  TRIGGER_ENTRY_KIND,
+  TriggerOriginSchema,
+  TriggerSchema,
+  triggerId,
+} from "../../packages/contracts/src/triggers.ts";
+import type {
+  Trigger,
+  TriggerOrigin,
+} from "../../packages/contracts/src/triggers.ts";
 import {
   WorkIdSchema,
   WorkReportIdSchema,
@@ -20,45 +28,50 @@ import {
   defineDoc,
   defineTool,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
-import { BotEventReceipts } from "../../packages/runtime/src/coordinator-event-state.ts";
 import { prepareInstructionCause } from "../../packages/runtime/src/instruction-cause.ts";
 import { context } from "./coordinator-fixture.ts";
 import { actor, setupWeb } from "./coordinator-web-fixture.ts";
 
+type Subject = Awaited<ReturnType<typeof setupWeb>>;
 const FutureInstructions = defineDoc({
   kind: "fixture.authorized-future-instructions",
   scope: "conversation",
   version: 1,
   initial: (): { causes: string[] } => ({ causes: [] }),
 });
-const externalEvent = async (
-  subject: Awaited<ReturnType<typeof setupWeb>>,
-  source: BotEvent["source"]
-): Promise<BotEvent> => ({
-  version: 1,
-  id: await botEventId(subject.source.address, source),
-  coordinator: subject.source.address,
-  ownerPrincipalId: actor.actor.id,
-  source,
-  replyTo: null,
-  content: { text: "Start a bounded storage design task.", reference: null },
-  dependencies: { sourceIds: [], toolIds: [] },
+const triggerFor = async (
+  subject: Subject,
+  origin: TriggerOrigin,
+  text = "Start a bounded storage design task."
+): Promise<Trigger> =>
+  Schema.decodeUnknownSync(TriggerSchema)({
+    version: 2,
+    id: await triggerId(subject.source.address, origin),
+    address: subject.source.address,
+    ownerPrincipalId: actor.actor.id,
+    origin,
+    text,
+    reference: null,
+    reply: null,
+    dependencies: { sourceIds: [], toolIds: [] },
+  });
+const reportOrigin = (workId: string): TriggerOrigin => ({
+  kind: "teamreport",
+  key: {
+    organizationId: actor.actor.organizationId,
+    ownerPrincipalId: actor.actor.id,
+    workId: Schema.decodeUnknownSync(WorkIdSchema)(workId),
+  },
+  reportId: Schema.decodeUnknownSync(WorkReportIdSchema)(`report-${workId}`),
+  outcome: "completed",
 });
-const finish = async (
-  subject: Awaited<ReturnType<typeof setupWeb>>,
-  event: BotEvent
-) => {
-  const saved = await subject.fixture
-    .pi()
-    .snapshot(BotEventReceipts, event.id, context);
-  assert.ok(saved?.receipt?.delivery.kind === "coordinator");
+const acceptInternal = async (subject: Subject, trigger: Trigger) => {
   await subject.fixture
     .pi()
-    .waitForTask(saved.receipt.delivery.taskId, context);
+    .commit((tx) => subject.triggers.acceptIn(tx, trigger), context);
+  await subject.triggers.drain(subject.source.native.id);
 };
-const installFutureTool = async (
-  subject: Awaited<ReturnType<typeof setupWeb>>
-) => {
+const installFutureTool = async (subject: Subject) => {
   const tool = defineTool({
     name: "create_future_instruction",
     callers: ["model"],
@@ -77,7 +90,7 @@ const installFutureTool = async (
           FutureInstructions,
           subject.source.native.id
         );
-        document.causes.push(cause.operationId);
+        document.causes.push(cause.eventId);
       }, invocation);
       return {
         output: [
@@ -94,8 +107,8 @@ const installFutureTool = async (
   );
 };
 
-for (const kind of ["web", "slack", "savedtimer"] as const) {
-  test(`a real native ${kind} event authorizes independent Team work`, async () => {
+for (const kind of ["web", "slack", "timer"] as const) {
+  test(`a placed ${kind} trigger authorizes independent Team work`, async () => {
     const subject = await setupWeb(true);
     try {
       subject.source.faux.setResponses([
@@ -105,12 +118,12 @@ for (const kind of ["web", "slack", "savedtimer"] as const) {
         ),
         fauxAssistantMessage("The independent team was admitted."),
       ]);
-      let source: BotEvent["source"] = {
+      let origin: TriggerOrigin = {
         kind: "web",
         operationId: id.operation("web-cause"),
       };
       if (kind === "slack") {
-        source = {
+        origin = Schema.decodeUnknownSync(TriggerOriginSchema)({
           kind,
           eventId: "slack-cause",
           thread: {
@@ -118,25 +131,25 @@ for (const kind of ["web", "slack", "savedtimer"] as const) {
             channelId: "D123",
             rootTimestamp: "123.456000",
           },
-        };
+        });
       }
-      if (kind === "savedtimer") {
-        source = { kind, scheduleId: "saved-routine", occurrenceId: "123" };
+      if (kind === "timer") {
+        origin = { kind, scheduleId: "saved-routine", occurrenceId: "123" };
       }
-      const event = await externalEvent(subject, source);
-      await subject.events.admit(
+      const trigger = await triggerFor(subject, origin);
+      await subject.triggers.admit(
         {
-          version: 2,
-          kind: "event-admission",
-          event,
+          version: 3,
+          kind: "trigger-admission",
+          trigger,
           routing: { kind: "automatic" },
         },
         actor
       );
-      await finish(subject, event);
+      await subject.settled(trigger.id);
       await subject.fixture.waitDispatch();
       const work = await subject.fixture.work("a");
-      assert.equal(work.humanOperationId, event.id);
+      assert.equal(work.humanOperationId, trigger.id);
       assert.equal(work.admission.goal, "Compare two storage designs.");
       assert.equal(
         subject.fixture.calls.filter((command) => command.kind === "start")
@@ -149,7 +162,60 @@ for (const kind of ["web", "slack", "savedtimer"] as const) {
   });
 }
 
-test("a report cannot start a Team or mint authority for a future routine", async () => {
+test("a batched run that mixes a report and a human message takes the human cause", async () => {
+  const subject = await setupWeb(true);
+  const entered = Promise.withResolvers<boolean>();
+  const release = Promise.withResolvers<boolean>();
+  try {
+    subject.source.faux.setResponses([
+      async () => {
+        entered.resolve(true);
+        await release.promise;
+        return fauxAssistantMessage("Foreground finished.");
+      },
+      fauxAssistantMessage(
+        fauxToolCall("start_team", { goal: "Act on the report." }),
+        { stopReason: "toolUse" }
+      ),
+      fauxAssistantMessage("Started from the batched turn."),
+    ]);
+    const foreground = await subject.source.native.submit(
+      { type: "input", content: "Hold.", requestId: "hold" },
+      context
+    );
+    await entered.promise;
+    const report = await triggerFor(
+      subject,
+      reportOrigin("finished-work"),
+      "The previous team finished."
+    );
+    await acceptInternal(subject, report);
+    const human = await triggerFor(
+      subject,
+      { kind: "web", operationId: id.operation("act-on-report") },
+      "Please act on that report."
+    );
+    await subject.triggers.admit(human, actor);
+    release.resolve(true);
+    await foreground.wait(context);
+    const [reportPlacement, humanPlacement] = await Promise.all([
+      subject.settled(report.id),
+      subject.settled(human.id),
+    ]);
+    assert.ok(
+      reportPlacement.kind === "done" && humanPlacement.kind === "done"
+    );
+    assert.equal(reportPlacement.answer, humanPlacement.answer);
+    await subject.fixture.waitDispatch();
+    const work = await subject.fixture.work("a");
+    assert.equal(work.humanOperationId, human.id);
+  } finally {
+    release.resolve(true);
+    await subject.close();
+  }
+});
+
+test("an internal-only run cannot start a Team or mint authority for a future routine", async () => {
   const subject = await setupWeb(true);
   try {
     await installFutureTool(subject);
@@ -163,24 +229,15 @@ test("a report cannot start a Team or mint authority for a future routine", asyn
       ),
       fauxAssistantMessage("The report was handled without new work."),
     ]);
-    const event = await externalEvent(subject, {
-      kind: "teamreport",
-      key: {
-        organizationId: subject.source.address.organizationId,
-        ownerPrincipalId: actor.actor.id,
-        workId: Schema.decodeUnknownSync(WorkIdSchema)("completed-work"),
-      },
-      reportId: Schema.decodeUnknownSync(WorkReportIdSchema)("report-cause"),
-      outcome: "completed",
-    });
-    await subject.events.admit(event, actor);
-    await finish(subject, event);
+    const report = await triggerFor(subject, reportOrigin("completed-work"));
+    await acceptInternal(subject, report);
+    await subject.settled(report.id);
     const view = await subject.scope.read(actor);
     assert.equal(subject.fixture.calls.length, 0);
-    const resolvedValue = await subject.fixture
+    const saved = await subject.fixture
       .pi()
       .snapshot(FutureInstructions, subject.source.native.id, context);
-    assert.equal(resolvedValue?.causes.length ?? 0, 0);
+    assert.equal(saved?.causes.length ?? 0, 0);
     assert.deepEqual(
       Object.fromEntries(view.tools.map((tool) => [tool.toolName, tool.state])),
       { start_team: "failed", create_future_instruction: "failed" }
@@ -190,7 +247,7 @@ test("a report cannot start a Team or mint authority for a future routine", asyn
   }
 });
 
-test("an arbitrary custom entry cannot mint a future instruction", async () => {
+test("a trigger entry without a matching receipt cannot mint a future instruction", async () => {
   const subject = await setupWeb();
   try {
     await installFutureTool(subject);
@@ -206,12 +263,11 @@ test("an arbitrary custom entry cannot mint a future instruction", async () => {
         content: "Create a future task.",
         requestId: "unowned-custom-input",
         entry: {
-          kind: "cerebro.bot-event-input",
+          kind: TRIGGER_ENTRY_KIND,
           data: {
-            eventId: "unowned-custom-input",
-            source: "web",
+            id: "unowned-custom-input",
+            channel: "web",
             operationId: "fake-human",
-            agentVersion: 1,
           },
         },
       },
@@ -219,10 +275,10 @@ test("an arbitrary custom entry cannot mint a future instruction", async () => {
     );
     const settlement = await submission.wait(context);
     assert.equal(settlement.status, "done");
-    const resolvedValue2 = await subject.fixture
+    const saved = await subject.fixture
       .pi()
       .snapshot(FutureInstructions, subject.source.native.id, context);
-    assert.equal(resolvedValue2?.causes.length ?? 0, 0);
+    assert.equal(saved?.causes.length ?? 0, 0);
     const snapshot = await subject.scope.read(actor);
     assert.equal(
       snapshot.tools.find(
@@ -235,7 +291,7 @@ test("an arbitrary custom entry cannot mint a future instruction", async () => {
   }
 });
 
-test("prepared instruction causes reject stale native runs and mismatched owner or source", async () => {
+test("prepared instruction causes reject stale runs and mismatched owner or source", async () => {
   const subject = await setupWeb();
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
@@ -247,11 +303,11 @@ test("prepared instruction causes reject stale native runs and mismatched owner 
         return fauxAssistantMessage("The human request is complete.");
       },
     ]);
-    const sendResponse = await subject.send(
+    const response = await subject.send(
       "active-human",
       "Remember my instruction."
     );
-    assert.equal(sendResponse.status, 200);
+    assert.equal(response.status, 200);
     await entered.promise;
     const options = {
       pi: subject.fixture.pi(),
@@ -279,11 +335,7 @@ test("prepared instruction causes reject stale native runs and mismatched owner 
       (error: unknown) => error instanceof Denied
     );
     release.resolve(true);
-    const event = await externalEvent(subject, {
-      kind: "web",
-      operationId: id.operation("active-human"),
-    });
-    await finish(subject, event);
+    await subject.settled(committed.eventId);
     await assert.rejects(
       subject.fixture.pi().commit(valid, context),
       (error: unknown) => error instanceof Denied

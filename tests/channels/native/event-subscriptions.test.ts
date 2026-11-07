@@ -7,9 +7,9 @@ import { Schema } from "effect";
 import { z } from "zod";
 
 import {
-  BotEventSourceSchema,
-  botEventId,
-} from "../../../packages/contracts/src/bot-events.ts";
+  TriggerOriginSchema,
+  triggerId,
+} from "../../../packages/contracts/src/triggers.ts";
 import {
   authorizedPilotInput,
   waitForFixture,
@@ -147,9 +147,9 @@ test(
         undefined
       );
       const nextDecision = await primaryDecision(next.event_id);
-      const expectedId = await botEventId(
+      const expectedId = await triggerId(
         live.target.sourceEventAddress,
-        Schema.decodeUnknownSync(BotEventSourceSchema)({
+        Schema.decodeUnknownSync(TriggerOriginSchema)({
           kind: "slack",
           eventId: nextDecision.decision.authority.eventId,
           thread: nextDecision.decision.authority.thread,
@@ -159,7 +159,7 @@ test(
       assert.ok(events.kind === "events");
       assert.ok(
         events.events.some(
-          (item) => item.id === expectedId && item.route === "coordinator"
+          (item) => item.id === expectedId && item.route === "inbox"
         )
       );
       await send(related, true);
@@ -195,7 +195,7 @@ test(
         (value) =>
           value.kind === "events" &&
           value.events.some(
-            (item) => item.id === expectedEvent.id && item.outcome === "done"
+            (item) => item.id === expectedEvent.id && item.placement === "done"
           )
       );
       assert.ok(settled.kind === "events");
@@ -647,9 +647,9 @@ test(
     );
     assert.ok(target);
     const route = `/api/product/conversations/${encodeURIComponent(target.conversationId)}`;
-    const id = await botEventId(
+    const id = await triggerId(
       target,
-      Schema.decodeUnknownSync(BotEventSourceSchema)({
+      Schema.decodeUnknownSync(TriggerOriginSchema)({
         kind: "slack",
         eventId: saved.decision.authority.eventId,
         thread: saved.decision.authority.thread,

@@ -406,15 +406,14 @@ test("work history and owned events keep empty-page continuations and replace ol
             ? [
                 {
                   id: "event-a",
-                  source: "slack",
+                  channel: "slack",
+                  actor: "human",
                   route: "teams",
                   duplicates: 3,
-                  admission: "delivered",
-                  outcome: "returned",
+                  placement: "routed",
                   workIds: [old.workId],
                   returns: [{ workId: old.workId, decision: "coordinator" }],
                   reply: {
-                    answerEntryId: "answer-entry",
                     taskId: "reply-task",
                     state: "unknown",
                     attempts: 1,
@@ -469,7 +468,8 @@ test("work history and owned events keep empty-page continuations and replace ol
   await act(() => view.getByRole("button", { name: "Older events" }).click());
   await waitFor(() => assert.ok(view.getByText("event-a")));
   assert.ok(view.getByText("unknown"));
-  assert.ok(view.getByText("answer-entry"));
+  assert.ok(view.getByText("routed"));
+  assert.ok(view.getByText("reply-task"));
   assert.deepEqual(
     fixture.calls
       .filter(({ query }) => query.kind === "history")

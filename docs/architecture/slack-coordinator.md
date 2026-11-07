@@ -4,12 +4,15 @@ Each person has one primary conversation for each agent. Web messages and filter
 
 ```mermaid
 flowchart TD
-  Web[Web chat] --> Inbox
+  Web[Web chat] --> Admit
   Slack[Signed Slack event] --> Queue[(Slack event queue)]
   Queue --> Filter[Filter and save external decision]
-  Filter --> Inbox
+  Filter --> Admit
   subgraph Identity[Identity cell for one organization and person]
-    Inbox[(Owned event receipts and Pi tasks)] --> Coordinator[Primary coordinator for the selected agent]
+    Admit[Trigger receipt and backlog] --> Gate{Publication gate open?}
+    Gate -->|No| Admit
+    Gate -->|Yes| PiInbox[(Pi inbox)]
+    PiInbox --> Coordinator[Primary coordinator for the selected agent]
     Coordinator --> Work[Saved work and FIFO admission]
   end
   Work --> Commands[(Team command queue)]
@@ -25,15 +28,34 @@ flowchart TD
   end
   A --> Reports[(Report queue)]
   B --> Reports
-  Reports --> Inbox
-  Coordinator --> WebReply[Web answer]
-  Coordinator --> Reply[Exact Slack reply intent]
-  Reply --> SlackPost[Checked Slack post]
+  Reports --> Admit
+  Coordinator --> WebReply[Web answer in the transcript]
+  Coordinator -->|reply_event| Reply[Saved reply for one trigger]
+  Reply --> Port[Reply port for the recorded destination]
+  Port --> SlackPost[Checked Slack post]
 ```
 
 A Team is a separate cell. Its lead and workers are private Pi conversations inside that cell. They are not separate Durable Objects or public chats. The identity cell holds the person's agent conversations and shared admission limits. Native conversation IDs are local to a cell. Use the cell name and native ID together when debugging.
 
 Always on means durable state and event-driven wake-up. No model loop runs while the agent is idle. Pi tasks, existing queues, and lifecycle alarms resume accepted work.
+
+## How a trigger reaches the coordinator
+
+Every channel turns its input into a trigger. A trigger names the conversation, the owner, its origin, the text, and where a reply may go. Web triggers have no reply destination; the transcript is the reply. A Slack trigger records the thread it came from. A timer copies the destination of the trigger that scheduled it. A Team report copies the destination of the trigger that started its work.
+
+Admission saves a receipt and adds the trigger to a short backlog in the same commit. The receipt dedups by trigger ID and payload digest. A drain then hands each backlogged trigger to Pi with the trigger ID as its request ID, so a repeated submit after a crash finds the existing submission and places nothing twice. The drain runs after admission, on restore, and from the coordination wake. A conversation holds at most 64 waiting triggers across the backlog and Pi's inbox.
+
+Pi's inbox is the queue. Triggers that arrive while a turn runs wait as follow-ups. When the turn ends, Pi places all of them into the next turn together, one user message per trigger. A burst of three messages costs one model turn, and all three settle with the same answer.
+
+The publication gate sits before Pi's inbox. When a newer definition is published, the drain stops handing triggers to Pi. Inputs already in Pi finish under the definition they were placed under. Once Pi is idle with no live run, queued input, pending approval, or admission lease, the new definition is configured in one commit. The drain then places the waiting triggers under it. A later publication replaces a refresh that is still waiting, so held inputs run under the latest definition.
+
+## Replies
+
+A reply to an external channel is an explicit model decision. The coordinator calls `reply_event` with a trigger ID and text. The tool reads the trigger's receipt, so a reply can only go to the destination that trigger recorded. A web trigger has none, and the tool says the transcript is the reply. Each trigger takes one reply. Repeating the same call returns the saved reply, and different text for the same trigger is rejected.
+
+The tool checks current access before it saves the reply. A denial saves a blocked reply that is never posted. Otherwise the reply outbox posts it through the reply port for the destination kind. Slack is the only port today.
+
+If a turn ends while a Slack trigger it placed has no reply, the coordinator receives one nudge as a durable follow-up input. The nudge joins any other waiting inputs in the next turn. It is hidden from the web transcript. A nudge turn keeps the human cause of the trigger it nudges. After that one nudge, an unreplied trigger stays unreplied, and the Inspector shows it.
 
 ## What one input does
 
@@ -45,7 +67,8 @@ flowchart TD
   Route -->|Yes| Team[Existing private Team]
   Route -->|No| Model[Coordinator model]
   Model -->|Answer| Answer[Conversation answer]
-  Model -->|start_team| Save[Save independent work]
+  Model -->|reply_event| Reply[Saved reply to the trigger's destination]
+  Model -->|start_team| Save[Save independent work and follow the trigger's thread]
   Save --> Ack[Return admission receipt]
   Ack --> Model
   Save --> Capacity{Capacity available?}
@@ -56,28 +79,28 @@ flowchart TD
   Report --> Model
 ```
 
-Ordinary text reaches the coordinator. It does not automatically update whichever Team is active. The model can answer directly, start another task, ask for clarification, or use an explicit Team tool. A report gives the coordinator a result to explain. It cannot authorize another Team or a future instruction by itself.
+Ordinary text reaches the coordinator. It does not automatically update whichever Team is active. The model can answer directly, start another task, ask for clarification, or use an explicit Team tool. Work started from a Slack thread follows that thread, so later messages in it reach the Team without a tool call; `unsubscribe_work` stops that. A report gives the coordinator a result to explain. It cannot authorize another Team or a future instruction by itself. When a turn mixes a report with a person's message, the person's message is the cause.
 
 ## Roles and tools
 
 | Role | Tools |
 | --- | --- |
-| Coordinator | Start, inspect, message, stop, and recall work; explicit subscriptions; authorized reminders; UI rendering. |
+| Coordinator | Start, inspect, message, stop, and recall work; explicit subscriptions; replies to external channels; authorized reminders; UI rendering. |
 | Lead | Read tools and delegate_worker; return an unrelated subscribed event once. |
 | Worker | Permitted read tools; no further delegation or scheduling. |
 
 Roles derive from the agent's pinned definition. The lead and workers run the agent's model, enabled tools, and grants, with a system overlay in front of the agent's instructions. The coordinator does not run task connector tools. Each Team saves the agent pin at admission. Current permissions still apply before execution and content transfer.
 
-Publishing a coordinator definition stages a complete profile. Existing native work drains first. Provider, instructions, tools, skills, and permission callbacks then change together in the same conversation. New events can wait durably during this boundary.
+Publishing a coordinator definition stages a complete profile. Existing native work drains first. Provider, instructions, tools, skills, and permission callbacks then change together in the same conversation. New triggers wait durably in the backlog during this boundary.
 
 ## Two receipt boundaries
 
 | Boundary | Purpose |
 | --- | --- |
 | External Slack decision | One provider event saves its exact owner, callback digest, and frozen bot targets. |
-| Owned BotEvent | Each target primary admits that event once and associates it with its exact native submission and answer. |
+| Trigger receipt | Each target primary admits that trigger once and records its reply destination. Where the trigger is (backlog, queued, placed, done) is read from Pi, not stored. |
 
-A duplicate with matching content reuses the saved decision. Changed content conflicts. Each target has an independent receipt. Replies use the event's exact settled answer, never the most recent assistant message. Web answers do not become Slack replies.
+A duplicate with matching content reuses the saved decision. Changed content conflicts. Each target has an independent receipt. A Slack reply carries only the text the coordinator passed to `reply_event`. Web answers do not become Slack replies.
 
 A Slack post first saves an unknown outcome and synchronizes storage. Confirmed success saves its timestamp. A rate limit can retry. An uncertain post never sends again automatically. Every attempt checks the original Slack link, source, and complete content access.
 
@@ -93,4 +116,4 @@ The development Inspector reads source-owned metadata and selected private detai
 
 ## MVP boundaries
 
-Slack support covers linked direct messages and their threads. Coordinator inputs run in durable order; private Teams run concurrently. The hierarchy is bounded to one lead and two workers. Team tools are read-only. Burst inference batching, endpoint execution daemons, and a separate semantic-progress Watchdog remain future work.
+Slack support covers linked direct messages and their threads. Coordinator inputs run in durable order, and a burst that arrives during a turn runs in the next turn together. Private Teams run concurrently. The hierarchy is bounded to one lead and two workers. Team tools are read-only. Endpoint execution daemons and a separate semantic-progress Watchdog remain future work.

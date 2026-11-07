@@ -1,3 +1,4 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Assertions read one field of freshly awaited durable state. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -6,9 +7,9 @@ import { Schema } from "effect";
 import { InvalidInput } from "../../packages/contracts/src/failures.ts";
 import { TeamEventCommandSchema } from "../../packages/contracts/src/team-events.ts";
 import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
-import { BotEventReceipts } from "../../packages/runtime/src/coordinator-event-state.ts";
 import { TeamEventReceipts } from "../../packages/runtime/src/team-events.ts";
 import { TeamState } from "../../packages/runtime/src/team-state.ts";
+import { Receipts } from "../../packages/runtime/src/triggers.ts";
 import { waitFor } from "./helpers.ts";
 import {
   actor,
@@ -47,7 +48,7 @@ const subject = async (holdReturn = false) => {
       if (returnHeld) {
         throw new Error("Return queue is temporarily unavailable.");
       }
-      await source.events().receiveReturn(delivery, actor);
+      await source.triggers().receiveReturn(delivery, actor);
     },
   });
   const settle = async () => {
@@ -136,9 +137,7 @@ test("the lead returns a saved event through its durable outbox while original w
     assert.ok(record?.record?.state.kind === "returned");
     const { taskId } = record.record.state;
     await fixture.team.pi().waitForTask(taskId, context);
-    const source = await fixture.source.events().read(fixture.event.id, actor);
-    assert.ok(source.delivery.kind === "coordinator");
-    await fixture.source.pi().waitForTask(source.delivery.taskId, context);
+    assert.equal((await fixture.source.settled(fixture.event.id)).kind, "done");
     assert.equal(fixture.team.returns.length, 1);
     assert.equal(fixture.team.returns[0]?.eventId, fixture.event.id);
     assert.equal(
@@ -224,7 +223,7 @@ test("changed event metadata under the same command ID is rejected", async () =>
   try {
     const changed = Schema.decodeUnknownSync(TeamEventCommandSchema)({
       ...fixture.command,
-      event: { ...fixture.command.event, replyTo: null },
+      event: { ...fixture.command.event, reply: null },
     });
     await assert.rejects(
       fixture.team.runtime().receive(changed),
@@ -235,7 +234,7 @@ test("changed event metadata under the same command ID is rejected", async () =>
     const record = await fixture.team
       .pi()
       .snapshot(TeamEventReceipts, fixture.event.id, context);
-    assert.equal(record?.record?.command.event.replyTo?.kind, "slack");
+    assert.equal(record?.record?.command.event.reply?.kind, "slack");
     assert.equal(record?.record?.state.kind, "admitted");
   } finally {
     await fixture.close();
@@ -268,9 +267,7 @@ test("a newly arriving event at terminal work saves a return before rejection is
       .snapshot(TeamEventReceipts, next.id, context);
     assert.ok(record?.record?.state.kind === "returned");
     await fixture.team.pi().waitForTask(record.record.state.taskId, context);
-    const handback = await fixture.source.events().read(next.id, actor);
-    assert.ok(handback.delivery.kind === "coordinator");
-    await fixture.source.pi().waitForTask(handback.delivery.taskId, context);
+    assert.equal((await fixture.source.settled(next.id)).kind, "done");
     assert.equal(
       fixture.team.returns.filter((value) => value.eventId === next.id).length,
       1
@@ -321,9 +318,7 @@ test("a saved return outbox reopens and delivers once without a new role model r
     assert.equal(restored.record.state.taskId, taskId);
     assert.equal(fixture.team.calls.length, calls);
     assert.equal(fixture.team.returns.length, 1);
-    const source = await fixture.source.events().read(fixture.event.id, actor);
-    assert.ok(source.delivery.kind === "coordinator");
-    await fixture.source.pi().waitForTask(source.delivery.taskId, context);
+    assert.equal((await fixture.source.settled(fixture.event.id)).kind, "done");
     assert.equal(
       fixture.source.eventSubmissions.filter(
         (requestId) => requestId === fixture.event.id
@@ -361,15 +356,16 @@ test("private return reasoning stays out of queue wire, source receipts, event p
       .waitForTask(privateRecord.record.state.taskId, context);
     assert.equal(fixture.team.returns.length, 1);
     assert.equal(JSON.stringify(fixture.team.returns).includes(reason), false);
-    const source = await fixture.source.events().read(fixture.event.id, actor);
-    assert.ok(source.delivery.kind === "coordinator");
-    await fixture.source.pi().waitForTask(source.delivery.taskId, context);
+    assert.equal((await fixture.source.settled(fixture.event.id)).kind, "done");
+    const source = await fixture.source
+      .triggers()
+      .read(fixture.event.id, actor);
     const pages = await fixture.source
-      .events()
+      .triggers()
       .list(fixture.source.source("a").address, actor);
     const stored = await fixture.source
       .pi()
-      .snapshot(BotEventReceipts, fixture.event.id, context);
+      .snapshot(Receipts, fixture.event.id, context);
     assert.equal(JSON.stringify(source).includes(reason), false);
     assert.equal(JSON.stringify(pages).includes(reason), false);
     assert.equal(JSON.stringify(stored).includes(reason), false);

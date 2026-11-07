@@ -12,7 +12,7 @@ test("a bindings document saved under an older version is rejected instead of mi
     const previous = defineDoc({
       kind: "cerebro.conversation-bindings",
       scope: "session",
-      version: 3,
+      version: 4,
       initial: () => ({
         conversations: {
           [source.address.sessionId]: {
@@ -20,7 +20,6 @@ test("a bindings document saved under an older version is rejected instead of mi
             agentVersion: 1,
             nativeId: source.native.id,
             refresh: null,
-            releaseEvent: null,
           },
         },
       }),

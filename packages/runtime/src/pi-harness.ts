@@ -6,6 +6,11 @@ import type {
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
 import {
+  REPLY_NUDGE_ENTRY_KIND,
+  TRIGGER_ENTRY_KIND,
+  webTriggerData,
+} from "@cerebro/contracts/triggers";
+import {
   MAX_SNAPSHOT_UI_BYTES,
   parseUiPresentation,
   uiPresentationBytes,
@@ -19,9 +24,20 @@ import type {
 } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
-import { webEventData } from "./coordinator-event-input.ts";
-
 export type { Harness } from "@earendil-works/pi-durable";
+
+/** Trigger and nudge entries stay out of the web transcript unless they carry a web operation. */
+const webInputOf = (entry: { kind: string; data?: unknown } | undefined) => {
+  if (
+    entry?.kind !== TRIGGER_ENTRY_KIND &&
+    entry?.kind !== REPLY_NUDGE_ENTRY_KIND
+  ) {
+    return { hidden: false, web: undefined };
+  }
+  const web =
+    entry.kind === TRIGGER_ENTRY_KIND ? webTriggerData(entry.data) : undefined;
+  return { hidden: web === undefined, web };
+};
 
 export const snapshotToolIds = (snapshot: ChatSnapshot): readonly string[] => [
   ...new Set(
@@ -128,11 +144,8 @@ const queuedInputs = (inbox: typeof inboxSchema.Type): ChatQueuedInput[] =>
     if (item.mode === "write") {
       return [];
     }
-    const web =
-      item.entry?.kind === "cerebro.bot-event-input"
-        ? webEventData(item.entry.data)
-        : undefined;
-    if (item.entry?.kind === "cerebro.bot-event-input" && !web) {
+    const { hidden, web } = webInputOf(item.entry);
+    if (hidden) {
       return [];
     }
     return [
@@ -349,11 +362,8 @@ const presentedEntry = (
   entry: ConversationView["entries"][number]
 ): ChatMessage[] => {
   const messages: ChatMessage[] = [];
-  const web =
-    entry.kind === "cerebro.bot-event-input"
-      ? webEventData(entry.data)
-      : undefined;
-  if (entry.kind === "cerebro.bot-event-input" && !web) {
+  const { hidden, web } = webInputOf(entry);
+  if (hidden) {
     return [];
   }
   for (const [index, message] of (entry.model ?? []).entries()) {

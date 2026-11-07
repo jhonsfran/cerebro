@@ -10,20 +10,20 @@ import type {
 } from "@earendil-works/pi-durable";
 
 import type { ConversationProfile } from "./conversation-profile.ts";
-import type { CoordinatorEvents } from "./coordinator-events.ts";
 import { chatSnapshot, piContext } from "./pi-harness.ts";
+import type { Triggers } from "./triggers.ts";
 
 export const conversationSnapshot = async (
   options: {
     readonly pi: Harness;
     readonly native: Conversation;
-    readonly events: CoordinatorEvents;
+    readonly triggers: Pick<Triggers, "queuedWeb">;
   },
   view: ConversationView,
   profile: ConversationProfile
 ): Promise<ChatSnapshot> => {
   const { runtime, reminders: schedules, coordination } = profile;
-  const { pi, native, events } = options;
+  const { pi, native, triggers } = options;
   const approvals = await pi.commit(() => runtime.approvals.all(), piContext());
   const [reminders, inspection, live, backgroundWork] = await Promise.all([
     schedules.list(),
@@ -73,8 +73,8 @@ export const conversationSnapshot = async (
     ...snapshot.messages.map((message) => message.operationId),
     ...snapshot.queuedInputs.map((input) => input.operationId),
   ]);
-  const pendingInputs = await events.pendingWeb(native.id);
-  const pending = pendingInputs.filter(
+  const backlog = await triggers.queuedWeb(native.id);
+  const pending = backlog.filter(
     (input) => !visibleOperations.has(input.operationId)
   );
   return {

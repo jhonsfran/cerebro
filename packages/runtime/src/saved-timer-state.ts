@@ -1,33 +1,21 @@
-import {
-  BotEventSchema,
-  BotEventAddressSchema,
-} from "@cerebro/contracts/bot-events";
-import type { BotEvent } from "@cerebro/contracts/bot-events";
 import type { EventAddress } from "@cerebro/contracts/events";
 import { Denied, InvalidInput } from "@cerebro/contracts/failures";
 import type { PrincipalId } from "@cerebro/contracts/identity";
-import { SlackReplyDestinationSchema } from "@cerebro/contracts/slack-events";
-import type { SlackReplyDestination } from "@cerebro/contracts/slack-events";
-import { FixedReplyOriginSchema } from "@cerebro/contracts/timer-events";
-import type { FixedReplyOrigin } from "@cerebro/contracts/timer-events";
-import { canonicalToolArguments } from "@cerebro/contracts/tools";
+import type { ReplyDestination } from "@cerebro/contracts/triggers";
 import { defineDocFamily } from "@earendil-works/pi-durable";
 import type {
   ConversationId,
-  Harness,
   JsonObject,
   Tx,
 } from "@earendil-works/pi-durable";
-import { Schema } from "effect";
 
-import { BotEventReceipts, eventOf } from "./coordinator-event-state.ts";
 import { sameWorkSource } from "./coordinator-ledger.ts";
 import type { InstructionCause } from "./instruction-cause.ts";
-import { piContext } from "./pi-harness.ts";
+import { Receipts } from "./trigger-receipts.ts";
 
 interface ReminderOrigin extends JsonObject {
   creatingEventId: string | null;
-  reply: FixedReplyOrigin;
+  reply: ReplyDestination | null;
 }
 export const ReminderOrigins = defineDocFamily({
   kind: "cerebro.reminder-origin",
@@ -35,7 +23,10 @@ export const ReminderOrigins = defineDocFamily({
   history: "latest",
   fork: "initial",
   family: true,
-  version: 1,
+  version: 2,
+  migrate: (): { record: ReminderOrigin | null } => {
+    throw new Error("Unsupported reminder origin version.");
+  },
   initial: (_seed: null): { record: ReminderOrigin | null } => ({
     record: null,
   }),
@@ -46,40 +37,8 @@ export interface SavedTimerOccurrence {
   readonly occurrence: number;
   readonly instruction: string;
 }
-export interface TimerOccurrenceRecord extends JsonObject {
-  source: { [Key in keyof EventAddress]: EventAddress[Key] };
-  reminderId: string;
-  fingerprint: string;
-  occurrence: number;
-  event: BotEvent;
-  replyOrigin: FixedReplyOrigin;
-  destination: SlackReplyDestination | null;
-}
-const timerOccurrenceSchema = Schema.Struct({
-  source: BotEventAddressSchema,
-  reminderId: Schema.String,
-  fingerprint: Schema.String,
-  occurrence: Schema.Number,
-  event: BotEventSchema,
-  replyOrigin: FixedReplyOriginSchema,
-  destination: Schema.NullOr(SlackReplyDestinationSchema),
-});
-export const copyTimerOccurrence = (
-  record: TimerOccurrenceRecord
-): TimerOccurrenceRecord =>
-  Schema.decodeUnknownSync(Schema.fromJsonString(timerOccurrenceSchema), {
-    onExcessProperty: "error",
-  })(JSON.stringify(record));
-export const TimerOccurrences = defineDocFamily({
-  kind: "cerebro.timer-occurrence",
-  scope: "session",
-  family: true,
-  version: 1,
-  initial: (_seed: null): { record: TimerOccurrenceRecord | null } => ({
-    record: null,
-  }),
-});
 
+/** A schedule answers where its cause did: the destination is copied from the cause trigger's receipt. */
 export const saveReminderOriginIn = async (
   tx: Tx,
   input: {
@@ -99,88 +58,23 @@ export const saveReminderOriginIn = async (
   if (saved.record) {
     return;
   }
-  let reply: FixedReplyOrigin = { kind: "web" };
-  if (input.cause?.eventId) {
-    const original = await tx.doc(BotEventReceipts, input.cause.eventId, null);
-    if (!original.receipt) {
+  let reply: ReplyDestination | null = null;
+  if (input.cause) {
+    const original = await tx.doc(Receipts, input.cause.eventId, null);
+    const trigger = original.receipt?.trigger;
+    if (!trigger) {
       throw new InvalidInput({ reason: "The schedule origin is unavailable." });
     }
-    const event = eventOf(original.receipt);
     if (
-      event.ownerPrincipalId !== input.ownerPrincipalId ||
-      !sameWorkSource(event.coordinator, input.address)
+      trigger.ownerPrincipalId !== input.ownerPrincipalId ||
+      !sameWorkSource(trigger.address, input.address)
     ) {
       throw new Denied({
         code: "unauthorized",
         reason: "The schedule origin belongs to another source.",
       });
     }
-    if (event.source.kind === "slack") {
-      reply = {
-        kind: "slack-event",
-        source: event.coordinator,
-        ownerPrincipalId: event.ownerPrincipalId,
-        eventId: event.id,
-      };
-    } else if (event.source.kind === "savedtimer") {
-      const occurrence = await tx.doc(TimerOccurrences, event.id, null);
-      if (
-        occurrence.record &&
-        canonicalToolArguments(occurrence.record.event) ===
-          canonicalToolArguments(event)
-      ) {
-        reply = occurrence.record.replyOrigin;
-      }
-    }
+    ({ reply } = trigger);
   }
   saved.record = { creatingEventId: input.cause?.eventId ?? null, reply };
-};
-
-export const resolveFixedReplyOrigin = async (
-  pi: Harness,
-  origin: FixedReplyOrigin
-): Promise<BotEvent | null> => {
-  if (origin.kind === "web") {
-    return null;
-  }
-  const original = await pi.snapshot(
-    BotEventReceipts,
-    origin.eventId,
-    piContext()
-  );
-  const event = original?.receipt && eventOf(original.receipt);
-  if (
-    !event ||
-    event.source.kind !== "slack" ||
-    event.ownerPrincipalId !== origin.ownerPrincipalId ||
-    !sameWorkSource(event.coordinator, origin.source)
-  ) {
-    throw new Denied({
-      code: "unauthorized",
-      reason: "The timer reply origin changed.",
-    });
-  }
-  return event;
-};
-
-export const timerReplyDestination = async (
-  pi: Harness,
-  event: BotEvent
-): Promise<SlackReplyDestination | null> => {
-  if (event.source.kind !== "savedtimer") {
-    return null;
-  }
-  const saved = await pi.snapshot(TimerOccurrences, event.id, piContext());
-  if (!saved?.record) {
-    return null;
-  }
-  if (
-    canonicalToolArguments(saved.record.event) !== canonicalToolArguments(event)
-  ) {
-    throw new Denied({
-      code: "unauthorized",
-      reason: "The saved timer occurrence changed.",
-    });
-  }
-  return saved.record.destination;
 };

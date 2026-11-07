@@ -1,7 +1,6 @@
 import { createSlackApi } from "@cerebro/channels/slack-api";
 import {
   readSlackPrimaryEvent,
-  readSlackReplyDestination,
   slackEventKey,
 } from "@cerebro/channels/slack-primary-events";
 import { deliverSlackMessage } from "@cerebro/channels/slack-replies";
@@ -9,8 +8,8 @@ import { ChannelError } from "@cerebro/channels/types";
 import type { SlackConfiguration } from "@cerebro/channels/types";
 import { Denied } from "@cerebro/contracts/failures";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
+import type { ReplyPorts } from "@cerebro/contracts/triggers";
 import { withDatabase } from "@cerebro/db";
-import type { EventReplyServices } from "@cerebro/runtime/coordinator-replies";
 
 import type { WorkerEnv } from "../bindings";
 
@@ -30,20 +29,14 @@ export const withCurrentSlackAccess = async <Value>(
   }
 };
 
-export const createSlackEventReplies = (
+export const createSlackReplyPort = (
   env: WorkerEnv,
   configuration: SlackConfiguration | undefined
-): EventReplyServices | undefined => {
+): ReplyPorts["slack"] => {
   if (!configuration?.botToken) {
     return undefined;
   }
   return {
-    destination: (event) =>
-      withCurrentSlackAccess(() =>
-        withDatabase(env, (database) =>
-          readSlackReplyDestination(database, configuration, event)
-        )
-      ),
     authorize: (destination) =>
       withCurrentSlackAccess(async () => {
         const { decision } = await withDatabase(env, (database) =>

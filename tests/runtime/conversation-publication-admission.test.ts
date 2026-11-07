@@ -1,14 +1,15 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Assertions read one field of freshly awaited durable state. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { Effect } from "effect";
 
-import { botEventId } from "../../packages/contracts/src/bot-events.ts";
 import { Denied, Unavailable } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
+import { triggerId } from "../../packages/contracts/src/triggers.ts";
 import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import { Bindings } from "../../packages/runtime/src/conversation-bindings.ts";
-import { BotEventReceipts } from "../../packages/runtime/src/coordinator-event-state.ts";
+import { Receipts } from "../../packages/runtime/src/triggers.ts";
 import { context } from "./coordinator-fixture.ts";
 import { actor, setupWeb } from "./coordinator-web-fixture.ts";
 import { waitFor } from "./helpers.ts";
@@ -20,24 +21,14 @@ const binding = async (subject: Subject) => {
   assert.ok(value);
   return value;
 };
-const receipt = async (subject: Subject, operationId: string) => {
-  const eventId = await botEventId(subject.source.address, {
+const webId = (subject: Subject, operationId: string) =>
+  triggerId(subject.source.address, {
     kind: "web",
     operationId: id.operation(operationId),
   });
-  const saved = await subject.fixture
-    .pi()
-    .snapshot(BotEventReceipts, eventId, context);
-  assert.ok(saved?.receipt);
-  return saved.receipt;
-};
 const settle = async (subject: Subject, operationId: string) => {
-  const saved = await receipt(subject, operationId);
-  assert.equal(saved.delivery.kind, "coordinator");
-  if (saved.delivery.kind === "coordinator") {
-    await subject.fixture.pi().waitForTask(saved.delivery.taskId, context);
-  }
-  return await receipt(subject, operationId);
+  await subject.drain();
+  return await subject.settled(await webId(subject, operationId));
 };
 const schedule = (subject: Subject, operationId: string) =>
   subject.scope.handle(
@@ -66,7 +57,7 @@ test("a missing frozen definition makes old reads and control writes unavailable
       };
     }, context);
     await assert.rejects(
-      subject.scope.advancePublication("missing-staged-profile"),
+      subject.scope.advancePublication(),
       /The fixture definition does not exist/u
     );
     await assert.rejects(subject.scope.read(actor), Unavailable);
@@ -131,6 +122,7 @@ for (const { operation, check } of [
         agent: { ...subject.configuration.agent, version: 2 },
       });
       await subject.send("current-control", "Adopt the current profile.");
+      await subject.drain();
       await waitFor(
         () => binding(subject),
         (value) => value.agentVersion === 2
@@ -157,27 +149,21 @@ for (const { operation, check } of [
 for (const held of [false, true]) {
   test(`new web input admits after a physical model publication with ${held ? "a held" : "no live"} old turn`, async () => {
     let currentModel = "fixture/test";
-    const subject = await setupWeb(
-      false,
-      true,
-      (configuration) => ({
-        ...configuration,
-        authority: {
-          ...configuration.authority,
-          require: (request, options) =>
-            request.model && request.model !== currentModel
-              ? Effect.fail(
-                  new Denied({
-                    code: "revoked",
-                    reason:
-                      "The current agent does not enable this capability.",
-                  })
-                )
-              : configuration.authority.require(request, options),
-        },
-      }),
-      1
-    );
+    const subject = await setupWeb(false, true, (configuration) => ({
+      ...configuration,
+      authority: {
+        ...configuration.authority,
+        require: (request, options) =>
+          request.model && request.model !== currentModel
+            ? Effect.fail(
+                new Denied({
+                  code: "revoked",
+                  reason: "The current agent does not enable this capability.",
+                })
+              )
+            : configuration.authority.require(request, options),
+      },
+    }));
     const entered = Promise.withResolvers<boolean>();
     const release = Promise.withResolvers<boolean>();
     try {
@@ -215,35 +201,53 @@ for (const held of [false, true]) {
       });
       const response = await subject.send("new-model", "Save this input now.");
       assert.equal(response.status, 200, await response.clone().text());
-      const accepted = await receipt(subject, "new-model");
-      assert.equal(accepted.delivery.kind, "coordinator");
-      if (held && accepted.delivery.kind === "coordinator") {
+      const newModel = await webId(subject, "new-model");
+      if (held) {
         await waitFor(
           () => binding(subject),
-          (value) => value.refresh?.agentVersion === 2
+          (value) => value.refresh?.agentVersion === 2,
+          10_000,
+          20
         );
-        const task = await subject.fixture
-          .pi()
-          .commit((tx) => tx.task(accepted.delivery.taskId), context);
-        assert.equal(task?.state.status, "running");
-        if (task?.state.status === "running") {
-          assert.equal(task.state.checkpoint.attempt, 0);
-        }
+        assert.equal(
+          await subject.triggers.drain(subject.source.native.id),
+          "waiting"
+        );
+        assert.equal((await subject.placement(newModel)).kind, "backlog");
+        assert.deepEqual(
+          (await subject.scope.read(actor)).queuedInputs.map((input) => ({
+            operationId: input.operationId,
+            text: input.text,
+          })),
+          [{ operationId: "new-model", text: "Save this input now." }]
+        );
         const waiting = await binding(subject);
         assert.equal(waiting.agentVersion, 1);
         assert.equal(next.state.callCount, 0);
       }
       release.resolve(true);
       const completed = await settle(subject, "new-model");
-      assert.ok(
-        completed.delivery.kind === "coordinator" &&
-          completed.delivery.admission.kind === "settled" &&
-          completed.delivery.admission.outcome === "done"
-      );
+      assert.equal(completed.kind, "done");
       const applied = await binding(subject);
       assert.equal(applied.agentVersion, 2);
       assert.equal(next.state.callCount, 1);
       assert.equal(subject.source.faux.state.callCount, held ? 1 : 0);
+      const placed = await subject.fixture
+        .pi()
+        .commit(
+          (tx) =>
+            completed.kind === "done" ? tx.entry(completed.answer) : undefined,
+          context
+        );
+      const [answer] = placed?.model ?? [];
+      assert.ok(answer?.role === "assistant");
+      assert.equal(answer.provider, next.provider.id);
+      assert.deepEqual(
+        answer.content.flatMap((block) =>
+          block.type === "text" ? [block.text] : []
+        ),
+        ["New physical model answered."]
+      );
     } finally {
       release.resolve(true);
       await subject.close();
@@ -257,33 +261,28 @@ for (const publish of [false, true]) {
     const release = Promise.withResolvers<boolean>();
     let currentModel = "fixture/test";
     let delay = true;
-    const subject = await setupWeb(
-      false,
-      true,
-      (configuration) => ({
-        ...configuration,
-        authority: {
-          ...configuration.authority,
-          require: (request, options) =>
-            Effect.gen(function* currentModelEntitlement() {
-              if (delay && request.model) {
-                delay = false;
-                yield* Effect.promise(async () => {
-                  entered.resolve(true);
-                  await release.promise;
-                });
-              }
-              if (request.model && request.model !== currentModel) {
-                return yield* Effect.fail(
-                  new Denied({ code: "revoked", reason: "Model disabled." })
-                );
-              }
-              return yield* configuration.authority.require(request, options);
-            }),
-        },
-      }),
-      1
-    );
+    const subject = await setupWeb(false, true, (configuration) => ({
+      ...configuration,
+      authority: {
+        ...configuration.authority,
+        require: (request, options) =>
+          Effect.gen(function* currentModelEntitlement() {
+            if (delay && request.model) {
+              delay = false;
+              yield* Effect.promise(async () => {
+                entered.resolve(true);
+                await release.promise;
+              });
+            }
+            if (request.model && request.model !== currentModel) {
+              return yield* Effect.fail(
+                new Denied({ code: "revoked", reason: "Model disabled." })
+              );
+            }
+            return yield* configuration.authority.require(request, options);
+          }),
+      },
+    }));
     try {
       const response = await subject.send("readiness-race", "Keep this input.");
       assert.equal(response.status, 200, await response.clone().text());
@@ -307,19 +306,7 @@ for (const publish of [false, true]) {
       }
       release.resolve(true);
       const completed = await settle(subject, "readiness-race");
-      assert.ok(
-        completed.delivery.kind === "coordinator" &&
-          completed.delivery.admission.kind === "settled"
-      );
-      if (
-        completed.delivery.kind === "coordinator" &&
-        completed.delivery.admission.kind === "settled"
-      ) {
-        assert.equal(
-          completed.delivery.admission.outcome,
-          publish ? "done" : "blocked"
-        );
-      }
+      assert.equal(completed.kind, publish ? "done" : "withdrawn");
       const applied = await binding(subject);
       assert.equal(applied.agentVersion, publish ? 2 : 1);
       assert.equal(next.state.callCount, publish ? 1 : 0);
@@ -372,13 +359,9 @@ for (const revoked of ["execute", "read", "content"] as const) {
       assert.equal(subject.source.faux.state.callCount, 0);
       const applied = await binding(subject);
       assert.deepEqual(applied.refresh, null);
-      const eventId = await botEventId(subject.source.address, {
-        kind: "web",
-        operationId: id.operation("revoked-input"),
-      });
       const saved = await subject.fixture
         .pi()
-        .snapshot(BotEventReceipts, eventId, context);
+        .snapshot(Receipts, await webId(subject, "revoked-input"), context);
       assert.equal(saved?.receipt, undefined);
     } finally {
       await subject.close();

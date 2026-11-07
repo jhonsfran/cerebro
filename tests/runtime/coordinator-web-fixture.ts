@@ -1,17 +1,18 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Assertions read one field of freshly awaited durable state. */
 import { registerHooks } from "node:module";
 
 import type { PiHarness } from "agents/harness/pi";
 import { Effect } from "effect";
 
-import type { BotEvent } from "../../packages/contracts/src/bot-events.ts";
 import { Denied, InvalidInput } from "../../packages/contracts/src/failures.ts";
-import { id } from "../../packages/contracts/src/identity.ts";
+import type { Trigger } from "../../packages/contracts/src/triggers.ts";
 import { configure } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import { Bindings } from "../../packages/runtime/src/conversation-bindings.ts";
-import { createCoordinatorEvents } from "../../packages/runtime/src/coordinator-events.ts";
-import { createCoordinatorReplies } from "../../packages/runtime/src/coordinator-replies.ts";
+import { createReplies } from "../../packages/runtime/src/replies.ts";
 import type { SessionHostConfiguration } from "../../packages/runtime/src/session-agent.ts";
-import { context, setup } from "./coordinator-fixture.ts";
+import { createTriggers } from "../../packages/runtime/src/triggers.ts";
+import { actor, context, setup } from "./coordinator-fixture.ts";
+import { waitFor } from "./helpers.ts";
 
 const hooks = registerHooks({
   resolve(specifier, importContext, nextResolve) {
@@ -45,14 +46,7 @@ const settleProgress = async (promise: Promise<unknown>): Promise<unknown> => {
   }
 };
 
-export const actor = {
-  actor: {
-    id: id.principal("owner-A"),
-    organizationId: id.organization("org-A"),
-    kind: "human" as const,
-    state: "active" as const,
-  },
-};
+export { actor } from "./coordinator-fixture.ts";
 
 export const setupWeb = async (
   team = false,
@@ -70,7 +64,9 @@ export const setupWeb = async (
     let modelEnabled = true;
     let read = true;
     let content = true;
-    let deliveryAuthorization: ((event: BotEvent) => Promise<void>) | undefined;
+    let deliveryAuthorization:
+      | ((trigger: Trigger) => Promise<void>)
+      | undefined;
     const progress: Promise<unknown>[] = [];
     const storage = {
       sql: {
@@ -136,28 +132,21 @@ export const setupWeb = async (
       },
     });
     let latest = configuration;
-    let replyHoldCalls = 0;
     const definitions = new Map([[1, configuration]]);
-    const replies = createCoordinatorReplies({
+    const waitUntil = (promise: Promise<unknown>) => {
+      progress.push(settleProgress(promise));
+    };
+    const replies = createReplies({
       pi: fixture.pi(),
       persist: () => storage.sync(),
-      resolve: async () => {
-        const current = await ready.promise;
-        return await current.eventScope();
-      },
-      waitUntil: (promise) => {
-        progress.push(settleProgress(promise));
-      },
+      resolve: async () => (await ready.promise).replyScope(),
+      waitUntil,
     });
-    const events = createCoordinatorEvents({
+    const triggers = createTriggers({
       pi: fixture.pi(),
-      holdReplies: () => {
-        replyHoldCalls += 1;
-        return replies.hold();
-      },
       targetIn: async (tx) => {
         if (!refresh) {
-          return { nativeId: source.native.id, agentVersion: 1 };
+          return { nativeId: source.native.id };
         }
         const bindings = await tx.doc(Bindings);
         const binding = bindings.conversations[source.address.sessionId];
@@ -167,26 +156,23 @@ export const setupWeb = async (
         return binding;
       },
       resolve: async () => {
-        const scope = await ready.promise;
-        const current = await scope.eventScope();
+        const current = await (await ready.promise).triggerScope();
         return {
           ...current,
-          authorize: async (...args) => {
-            await current.authorize(...args);
-            if (args[1] === undefined) {
-              await deliveryAuthorization?.(args[0]);
+          authorize: async (trigger, caller, action, signal) => {
+            await current.authorize(trigger, caller, action, signal);
+            if (action === "deliver") {
+              await deliveryAuthorization?.(trigger);
             }
           },
         };
       },
       scan: () => Promise.resolve({ keys: [] }),
-      waitUntil: (promise) => {
-        progress.push(settleProgress(promise));
-      },
+      waitUntil,
     });
     fixture.registry().install({
-      name: "fixture.bot-events",
-      tasks: [events.definition, replies.definition],
+      name: "fixture.replies",
+      tasks: [replies.definition],
     });
     let aborts = 0;
     const harness = {
@@ -244,7 +230,7 @@ export const setupWeb = async (
               },
             }
           : {}),
-        events,
+        triggers,
         replies,
         scanWorkKeys: () => Promise.resolve({ keys: [] }),
         install: (extension) => fixture.registry().install(extension),
@@ -253,9 +239,7 @@ export const setupWeb = async (
         storage,
         harness,
         jobs: fixture.lifecycleJobs,
-        waitUntil: (promise) => {
-          progress.push(settleProgress(promise));
-        },
+        waitUntil,
       },
       async (registration) => {
         for (const extension of registration.extensions) {
@@ -274,7 +258,6 @@ export const setupWeb = async (
             agentVersion: 1,
             nativeId: source.native.id,
             refresh: null,
-            releaseEvent: null,
           };
         }, context);
         return source.native;
@@ -282,6 +265,8 @@ export const setupWeb = async (
     );
     ready.resolve(scope);
     await scope.restore();
+    const placement = async (triggerId: string) =>
+      triggers.placement(await fixture.receipt(triggerId));
     return {
       fixture,
       configuration,
@@ -293,9 +278,27 @@ export const setupWeb = async (
       },
       source,
       scope,
-      events,
+      triggers,
       replies,
-      replyHoldCalls: () => replyHoldCalls,
+      placement,
+      // The coordination job's drain, run until the gate opens and the backlog is empty.
+      drain: () =>
+        waitFor(
+          () => triggers.drain(source.native.id),
+          (state) => state === "idle",
+          10_000,
+          20
+        ),
+      settled: (triggerId: string) =>
+        waitFor(
+          () => placement(triggerId),
+          (value) =>
+            ["done", "unanswered", "withdrawn", "local-answer"].includes(
+              value.kind
+            ),
+          10_000,
+          10
+        ),
       setModelEnabled: (value: boolean) => {
         modelEnabled = value;
       },

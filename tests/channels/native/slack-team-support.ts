@@ -4,16 +4,16 @@ import { createHash } from "node:crypto";
 import { Schema } from "effect";
 import { z } from "zod";
 
-import {
-  BotEventSourceSchema,
-  botEventId,
-} from "../../../packages/contracts/src/bot-events.ts";
 import type { ChatSnapshot } from "../../../packages/contracts/src/session-service.ts";
 import { toSlackText } from "../../../packages/contracts/src/slack-text.ts";
 import { canonicalToolArguments } from "../../../packages/contracts/src/tools.ts";
+import {
+  TriggerOriginSchema,
+  triggerId,
+} from "../../../packages/contracts/src/triggers.ts";
 import { WorkKeySchema } from "../../../packages/contracts/src/work.ts";
 import type { TeamReportDelivery } from "../../../packages/contracts/src/work.ts";
-import { conciseSlackText } from "../../../packages/runtime/src/coordinator-replies.ts";
+import { conciseSlackText } from "../../../packages/runtime/src/replies.ts";
 import {
   authorizedPilotInput,
   waitForFixture,
@@ -39,19 +39,19 @@ export const slackInputEvidence = async (input: {
 }) => {
   const { admitted, before, physical } = input;
   const { decision } = admitted.saved;
-  const source = Schema.decodeUnknownSync(BotEventSourceSchema)({
+  const origin = Schema.decodeUnknownSync(TriggerOriginSchema)({
     kind: "slack",
     eventId: decision.authority.eventId,
     thread: decision.authority.thread,
   });
-  const id = await botEventId(admitted.target, source);
+  const id = await triggerId(admitted.target, origin);
   const text = `Slack event.\n${JSON.stringify({ eventId: id, content: { text: decision.text, reference: null } })}`;
   const wire = authorizedPilotInput(text);
   const digest = createHash("sha256").update(wire).digest("hex");
   const requests = physical.model
     .slice(before.model.length)
     .filter((call) => call.role === teamRoles.coordinator);
-  assert.equal(requests.length, input.requestCount);
+  assert.equal(requests.length, input.requestCount + 1);
   assert.ok(
     requests.every(
       (call) =>
@@ -71,7 +71,7 @@ export const slackInputEvidence = async (input: {
       value.events.some(
         (item) =>
           item.id === id &&
-          item.admission === "settled" &&
+          item.placement === "done" &&
           item.reply?.state === "sent"
       )
   );
@@ -81,11 +81,11 @@ export const slackInputEvidence = async (input: {
   assert.equal(saved.length, 1);
   const [record] = saved;
   assert.ok(record?.reply);
-  assert.equal(record.source, "slack");
-  assert.equal(record.route, "coordinator");
-  assert.equal(record.outcome, "done");
+  assert.equal(record.channel, "slack");
+  assert.equal(record.route, "inbox");
+  assert.equal(record.placement, "done");
   const answers = admitted.snapshot.messages.filter(
-    (message) => message.entryId === record.reply?.answerEntryId
+    (message) => message.role === "assistant" && message.text === input.answer
   );
   assert.equal(answers.length, 1);
   const [answer] = answers;
@@ -179,7 +179,7 @@ export const slackReportEvidence = async (input: {
       value.events.some(
         (item) =>
           item.id === event.id &&
-          item.admission === "settled" &&
+          item.placement === "done" &&
           item.reply?.state === "sent"
       )
   );
@@ -189,11 +189,11 @@ export const slackReportEvidence = async (input: {
   assert.equal(saved.length, 1);
   const [record] = saved;
   assert.ok(record?.reply);
-  assert.equal(record.source, "teamreport");
-  assert.equal(record.route, "coordinator");
-  assert.equal(record.outcome, "done");
+  assert.equal(record.channel, "teamreport");
+  assert.equal(record.route, "inbox");
+  assert.equal(record.placement, "done");
   const answers = input.snapshot.messages.filter(
-    (message) => message.entryId === record.reply?.answerEntryId
+    (message) => message.role === "assistant" && message.text === text
   );
   assert.equal(answers.length, 1);
   const [answer] = answers;

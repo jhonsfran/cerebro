@@ -4,20 +4,16 @@ import { test } from "node:test";
 
 import { Effect, Schema } from "effect";
 
-import {
-  BotEventSchema,
-  botEventId,
-} from "../../packages/contracts/src/bot-events.ts";
 import { Unavailable } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
+import {
+  TriggerSchema,
+  triggerId,
+} from "../../packages/contracts/src/triggers.ts";
 import { TeamReportDeliverySchema } from "../../packages/contracts/src/work.ts";
 import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import type { ToolExecutionApi } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import { createSourceDependencyStore } from "../../packages/runtime/src/content-dependency-store.ts";
-import {
-  BotEventQueue,
-  BotEventReceipts,
-} from "../../packages/runtime/src/coordinator-events.ts";
 import { createCoordinatorHistory } from "../../packages/runtime/src/coordinator-history.ts";
 import { coordinatorOperationKey } from "../../packages/runtime/src/coordinator-ledger.ts";
 import {
@@ -25,6 +21,11 @@ import {
   SourceReportReceipts,
 } from "../../packages/runtime/src/coordinator-report.ts";
 import { readImportedContent } from "../../packages/runtime/src/imported-content.ts";
+import {
+  Backlog,
+  MAX_WAITING,
+  Receipts,
+} from "../../packages/runtime/src/triggers.ts";
 import { context, setup } from "./coordinator-fixture.ts";
 
 const actor = {
@@ -101,20 +102,23 @@ const subject = async () => {
           importDependencies: mirror.importDependencies,
         },
       },
-      events: {
-        ...fixture.events(),
-        enqueueIn: async (tx, event) => {
-          const receipt = await fixture.events().enqueueIn(tx, event);
+      triggers: {
+        drain: (nativeId) => fixture.triggers().drain(nativeId),
+        acceptIn: async (tx, trigger, routeIn) => {
+          const receipt = await fixture
+            .triggers()
+            .acceptIn(tx, trigger, routeIn);
           if (failEnqueue) {
             throw new Error("Report event intent failed.");
           }
           return receipt;
         },
       },
+      waitUntil: () => {},
       persist: () => Promise.resolve(),
     });
   };
-  const eventId = await botEventId(source.address, {
+  const eventId = await triggerId(source.address, {
     kind: "teamreport",
     key: delivery.report.key,
     reportId: delivery.report.id,
@@ -154,7 +158,7 @@ const subject = async () => {
           reportKey,
           context
         ),
-      event: await fixture.pi().snapshot(BotEventReceipts, eventId, context),
+      event: await fixture.pi().snapshot(Receipts, eventId, context),
     }),
   };
 };
@@ -204,29 +208,30 @@ test("normal full-inbox report rejection leaves canonical and raw provenance unc
       context
     );
     await entered.promise;
-    const events = await Promise.all(
-      Array.from({ length: 96 }, async (_, index) => {
-        const source = {
-          kind: "savedtimer" as const,
+    const triggers = await Promise.all(
+      Array.from({ length: MAX_WAITING }, async (_, index) => {
+        const origin = {
+          kind: "timer" as const,
           scheduleId: "capacity",
           occurrenceId: String(index),
         };
-        return Schema.decodeUnknownSync(BotEventSchema)({
-          version: 1,
-          id: await botEventId(f.source.address, source),
-          coordinator: f.source.address,
+        return Schema.decodeUnknownSync(TriggerSchema)({
+          version: 2,
+          id: await triggerId(f.source.address, origin),
+          address: f.source.address,
           ownerPrincipalId: actor.actor.id,
-          source,
-          replyTo: null,
-          content: { text: "Capacity event.", reference: null },
+          origin,
+          text: "Capacity event.",
+          reference: null,
+          reply: null,
           dependencies: { sourceIds: [], toolIds: [] },
         });
       })
     );
     await f.fixture.pi().commit(async (tx) => {
-      for (const event of events) {
-        // oxlint-disable-next-line no-await-in-loop -- Each saved event consumes one slot before the next capacity check.
-        await f.fixture.events().enqueueIn(tx, event);
+      for (const trigger of triggers) {
+        // oxlint-disable-next-line no-await-in-loop -- Each saved trigger consumes one slot before the next capacity check.
+        await f.fixture.triggers().acceptIn(tx, trigger);
       }
     }, context);
     await assert.rejects(
@@ -234,8 +239,10 @@ test("normal full-inbox report rejection leaves canonical and raw provenance unc
       (error: unknown) => error instanceof Unavailable
     );
     await assertRejectedReport(f);
-    const queue = await f.fixture.pi().snapshot(BotEventQueue, context);
-    assert.equal(Object.keys(queue?.pending ?? {}).length, 96);
+    const backlog = await f.fixture
+      .pi()
+      .snapshot(Backlog, f.source.native.id, context);
+    assert.equal(backlog?.ids.length, MAX_WAITING);
   } finally {
     release.resolve(true);
     await f.fixture.close();
@@ -254,7 +261,7 @@ test("accepted report replay repairs a partial raw mirror failure after reopen w
     assert.deepEqual(accepted.sources, reportDependencies.sourceIds);
     assert.deepEqual(accepted.tools, []);
     assert.ok(accepted.event?.receipt);
-    const eventTask = accepted.event.receipt.delivery.taskId;
+    const acceptedReceipt = accepted.event.receipt;
     const currentDependencies =
       await f.source.coordinator.services?.contentDependencies();
     assert.ok(
@@ -265,12 +272,16 @@ test("accepted report replay repairs a partial raw mirror failure after reopen w
     await f.fixture.reopen();
     const replay = await f.receive();
     assert.equal(replay.accepted, true);
-    await f.fixture.pi().waitForTask(eventTask, context);
+    await f.fixture.triggers().drain(f.source.native.id);
+    await f.fixture.settled(f.eventId);
     const repaired = await f.state();
     assert.deepEqual(repaired.canonical, reportDependencies);
     assert.deepEqual(repaired.sources, reportDependencies.sourceIds);
     assert.deepEqual(repaired.tools, reportDependencies.toolIds);
-    assert.equal(repaired.event?.receipt?.delivery.taskId, eventTask);
+    assert.deepEqual(repaired.event?.receipt, {
+      ...acceptedReceipt,
+      duplicates: 0,
+    });
     assert.equal(
       f.fixture.eventSubmissions.filter((requestId) => requestId === f.eventId)
         .length,
@@ -279,7 +290,11 @@ test("accepted report replay repairs a partial raw mirror failure after reopen w
     await f.receive();
     assert.deepEqual(await f.mirror.all(), reportDependencies.sourceIds);
     assert.deepEqual(await f.mirror.tools(), reportDependencies.toolIds);
-    assert.equal(f.fixture.eventSubmissions.length, 1);
+    assert.equal(
+      f.fixture.eventSubmissions.filter((requestId) => requestId === f.eventId)
+        .length,
+      1
+    );
   } finally {
     await f.fixture.close();
   }

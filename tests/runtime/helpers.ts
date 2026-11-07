@@ -11,7 +11,6 @@ import { promisify } from "node:util";
 
 import { Schema } from "effect";
 
-import { BotEventAddressSchema } from "../../packages/contracts/src/bot-events.ts";
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/identity.ts";
@@ -22,8 +21,9 @@ import {
   ChatReceipt,
   ChatSnapshot,
 } from "../../packages/contracts/src/session-service.ts";
+import { EventAddressSchema } from "../../packages/contracts/src/work.ts";
 
-const sourceAddress = BotEventAddressSchema;
+const sourceAddress = EventAddressSchema;
 const inputRelation = {
   address: sourceAddress,
   operationId: Schema.String,
@@ -348,7 +348,8 @@ export const control = async (stack: Stack, input: unknown): Promise<void> => {
 export const waitFor = async <Value>(
   read: () => Promise<Value> | Value,
   matches: (value: Value) => boolean,
-  timeoutMs = 60_000
+  timeoutMs = 60_000,
+  intervalMs = 500
 ): Promise<Value> => {
   const deadline = Date.now() + timeoutMs;
   let last: Value | undefined;
@@ -362,7 +363,7 @@ export const waitFor = async <Value>(
     } catch (error) {
       lastError = error;
     }
-    await delay(500);
+    await delay(intervalMs);
   }
   throw new Error(
     `Condition failed. Last value: ${JSON.stringify(last)}. Last error: ${String(lastError)}`

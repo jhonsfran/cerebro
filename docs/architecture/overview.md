@@ -19,7 +19,9 @@ Each organization identity has one IdentityAgent Durable Object, addressed by or
 
 ## Background agent teams
 
-Every web and Slack conversation has tools to start independent teams. Each conversation keeps its history and work pointer, and all conversations share one identity-wide active-work index. Each work ID selects a private TeamAgent cell with a lead and at most two worker conversations. Every role runs the conversation agent's pinned model and grants, with a system overlay in front of its instructions. Team tools are read-only. Results enter the original conversation after current access checks, then reach web observers and the Slack thread that raised the event.
+Every web and Slack conversation has tools to start independent teams. Each conversation keeps its history and work pointer, and all conversations share one identity-wide active-work index. Each work ID selects a private TeamAgent cell with a lead and at most two worker conversations. Every role runs the conversation agent's pinned model and grants, with a system overlay in front of its instructions. Team tools are read-only. Work started from a Slack thread follows that thread. A report enters the original conversation as an internal trigger after current access checks. It carries the reply destination of the trigger that started the work, so the coordinator can answer that Slack thread with `reply_event`.
+
+Every input reaches the coordinator as a trigger: a web message, a Slack message, a timer occurrence, or a Team report or notice. Pi's inbox is the queue. Triggers that arrive during a turn run in the next turn together, one user message each. Replies to external channels are an explicit model decision through `reply_event`; the coordinator can only reply to the destination a trigger recorded.
 
 Durable queues transport Slack events, team commands, and reports. Web prompts use the existing authenticated conversation API. Pi remains the execution engine in each cell. Public background state and its cancellation control stay separate from foreground generation. See the [cell diagram and code](slack-coordinator.md) for placement, limits, controls, and recovery.
 
@@ -73,15 +75,17 @@ The tool checks current conversation authority and validates a complete rooted t
 
 Each presentation is limited to 32 KiB, 64 elements, and eight levels. Tables allow eight columns and 50 rows. A snapshot retains at most 128 KiB of presentations, with newer reports taking priority. Omitted and unsupported presentations retain text output. Public tool arguments omit the specification to avoid duplicate copies. Delegated child conversations use text results.
 
-Reload and reconnect reconstruct reports from durable tool results. Compaction and reset follow the active transcript. The browser offers a text summary for each report. Committed assistant messages carry their native reply outcome. Slack uses a completed answer, or the tool summary after a settled turn without an answer. Failed and interrupted reply fragments do not suppress or replace that summary.
+Reload and reconnect reconstruct reports from durable tool results. Compaction and reset follow the active transcript. The browser offers a text summary for each report. Committed assistant messages carry their native reply outcome. Failed and interrupted reply fragments do not suppress or replace that summary. Slack never receives an assistant message automatically; it receives only the text the coordinator passes to `reply_event`.
 
 ## Send, Stop, and reconnect
 
-Send authenticates the user, verifies current access, and calls Pi submit with the client's operation ID. Pi accepts the input durably and returns a receipt. The receipt confirms acceptance, not completion. Sending while busy uses Pi's inbox. The browser and API limit a message to 16,000 characters. An oversized draft stays editable and does not create pending work.
+Send authenticates the user, verifies current access, and admits a web trigger keyed by the client's operation ID. Admission saves a receipt and hands the trigger to Pi's inbox. The response confirms acceptance, not completion. Sending while busy queues the message in Pi's inbox, and every message queued during a turn runs in the next turn together. The browser and API limit a message to 16,000 characters. An oversized draft stays editable and does not create pending work.
 
-A retry keeps the same operation ID. Pi stores one input for that operation. The client matches receipts by operation ID. PiHarness's `accepted` field is advisory under concurrent retries. The browser retains unconfirmed sends and retries transient failures after a valid connection. Accepted inputs waiting in Pi's inbox remain visible as queued messages.
+While a newly published definition waits for the conversation to go idle, accepted messages wait in a short backlog instead of Pi's inbox. Once Pi is idle, the new definition is configured in one commit and the backlog runs under it. No input runs under a definition older than the one published when it reached Pi.
 
-Stop calls native Pi abort for the selected conversation. It can stop active work and withdraw queued input in that conversation, without stopping sibling conversations. The UI does not promise an independent run for each message.
+A retry keeps the same operation ID. The trigger receipt stores one input for that operation, and Pi stores one submission for it. The client matches receipts by operation ID. The `accepted` field is advisory under concurrent retries. The browser retains unconfirmed sends and retries transient failures after a valid connection. Accepted inputs waiting in the backlog or in Pi's inbox remain visible as queued messages.
+
+Stop clears the backlog and calls native Pi abort for the selected conversation. It can stop active work and withdraw queued input in that conversation, without stopping sibling conversations. The UI does not promise an independent run for each message.
 
 Observation sends complete authorized snapshots of the native conversation view. Reconnect starts with current messages, partial output, queued inputs, tool execution state, and approvals. Each snapshot checks read access for active tool requests as well as committed results. Invalid protocol data stops automatic reconnect. An interrupted connection can reconnect from a fresh snapshot. Closing the browser releases the observer without stopping accepted work.
 

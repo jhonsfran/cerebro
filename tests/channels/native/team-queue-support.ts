@@ -3,21 +3,21 @@ import { createHash } from "node:crypto";
 import { Schema } from "effect";
 import { z } from "zod";
 
-import {
-  BotEventSchema,
-  botEventId,
-} from "../../../packages/contracts/src/bot-events.ts";
 import type { EventAddress } from "../../../packages/contracts/src/events.ts";
 import {
   normalizeTeamReport,
   normalizeTeamCommand,
 } from "../../../packages/contracts/src/team-events.ts";
 import { canonicalToolArguments } from "../../../packages/contracts/src/tools.ts";
+import {
+  TriggerSchema,
+  inputText,
+  triggerId,
+} from "../../../packages/contracts/src/triggers.ts";
 import type {
   WorkKey,
   TeamReportDelivery,
 } from "../../../packages/contracts/src/work.ts";
-import { botEventInput } from "../../../packages/runtime/src/coordinator-event-input.ts";
 import { authorizedPilotInput } from "../../slice-1/application.ts";
 
 export interface WorkTarget {
@@ -78,8 +78,8 @@ export const matchingTeamEvent = (
     .map(normalizeTeamCommand)
     .find(
       (delivery) =>
-        delivery.event?.source.kind === "slack" &&
-        delivery.event.source.eventId === externalEventId &&
+        delivery.event?.origin.kind === "slack" &&
+        delivery.event.origin.eventId === externalEventId &&
         canonicalToolArguments(delivery.command.work.key) ===
           canonicalToolArguments(target.key) &&
         canonicalToolArguments(delivery.command.work.sourceEventAddress) ===
@@ -87,7 +87,7 @@ export const matchingTeamEvent = (
     );
 export const reportEvent = async (delivery: TeamReportDelivery) => {
   const { report } = delivery;
-  const source = {
+  const origin = {
     kind: "teamreport" as const,
     key: report.key,
     reportId: report.id,
@@ -100,17 +100,15 @@ export const reportEvent = async (delivery: TeamReportDelivery) => {
   if (report.kind === "failed") {
     text = report.reason;
   }
-  return Schema.decodeUnknownSync(BotEventSchema)({
-    version: 1,
-    id: await botEventId(delivery.sourceEventAddress, source),
-    coordinator: delivery.sourceEventAddress,
+  return Schema.decodeUnknownSync(TriggerSchema)({
+    version: 2,
+    id: await triggerId(delivery.sourceEventAddress, origin),
+    address: delivery.sourceEventAddress,
     ownerPrincipalId: report.key.ownerPrincipalId,
-    source,
-    replyTo: null,
-    content: {
-      text: text.slice(0, 2000),
-      reference: { kind: "work", key: report.key },
-    },
+    origin,
+    text: text.slice(0, 2000),
+    reference: { kind: "work", key: report.key },
+    reply: null,
     dependencies: report.contentDependencies,
   });
 };
@@ -118,7 +116,7 @@ export const reportInputDigest = async (
   delivery: TeamReportDelivery,
   sourceContext: "none" | "pilot" = "none"
 ) => {
-  const text = botEventInput(await reportEvent(delivery));
+  const text = inputText(await reportEvent(delivery));
   return createHash("sha256")
     .update(sourceContext === "pilot" ? authorizedPilotInput(text) : text)
     .digest("hex");

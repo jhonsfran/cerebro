@@ -18,8 +18,8 @@ import {
 import { NodeSqliteDatabase } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/node.js";
 import { SqliteStorage } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/storage.js";
 import { Bindings } from "../../packages/runtime/src/conversation-bindings.ts";
-import { createCoordinatorEvents } from "../../packages/runtime/src/coordinator-events.ts";
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
+import { createTriggers } from "../../packages/runtime/src/triggers.ts";
 
 test("authenticated fresh-identity discovery needs no default bot, source scope, or configured model", async () => {
   const context = piContext();
@@ -37,7 +37,7 @@ test("authenticated fresh-identity discovery needs no default bot, source scope,
   );
   let sourceOpens = 0;
   try {
-    const events = createCoordinatorEvents({
+    const triggers = createTriggers({
       pi,
       targetIn: () =>
         Promise.reject(new Error("There is no default bot binding.")),
@@ -88,7 +88,7 @@ test("authenticated fresh-identity discovery needs no default bot, source scope,
       { onExcessProperty: "error" }
     )(await request.json());
     assert.deepEqual(
-      await events.listSubscribedBotSources(input.thread, authenticated),
+      await triggers.listSubscribedBotSources(input.thread, authenticated),
       []
     );
     assert.equal(sourceOpens, 0);

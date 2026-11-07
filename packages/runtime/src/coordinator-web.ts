@@ -1,15 +1,18 @@
-import { botEventId } from "@cerebro/contracts/bot-events";
-import type { BotEvent } from "@cerebro/contracts/bot-events";
 import { Conflict, Denied, Unavailable } from "@cerebro/contracts/failures";
 import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { ContentDependencies } from "@cerebro/contracts/session";
 import type { ChatReceipt } from "@cerebro/contracts/session-service";
+import {
+  TRIGGER_ENTRY_KIND,
+  triggerEntryData,
+  triggerId,
+} from "@cerebro/contracts/triggers";
+import type { Trigger } from "@cerebro/contracts/triggers";
 import type { Conversation, Harness, Tx } from "@earendil-works/pi-durable";
 import { Effect } from "effect";
 
 import type { createConversationResources } from "./conversation-resources.ts";
-import type { CoordinatorEvents, EventRouteIn } from "./coordinator-events.ts";
 import {
   SourceOperations,
   WorkDocuments,
@@ -21,14 +24,17 @@ import {
 import type { CoordinatorWorkRecord } from "./coordinator-ledger.ts";
 import { appendPassiveAnswer } from "./passive-history.ts";
 import { piContext } from "./pi-harness.ts";
+import { prepareReply } from "./replies.ts";
+import type { ReplyOutbox, ReplyScope } from "./replies.ts";
 import type { SessionHostConfiguration } from "./session-agent.ts";
+import type { RouteIn, Triggers } from "./triggers.ts";
 
-const sourceWorkIdsIn = async (tx: Tx, event: BotEvent): Promise<string[]> => {
+const sourceWorkIdsIn = async (tx: Tx, trigger: Trigger): Promise<string[]> => {
   const ledger = await tx.doc(WorkLedger);
   if (
     ledger.identity &&
-    (ledger.identity.organizationId !== event.coordinator.organizationId ||
-      ledger.identity.ownerPrincipalId !== event.ownerPrincipalId)
+    (ledger.identity.organizationId !== trigger.address.organizationId ||
+      ledger.identity.ownerPrincipalId !== trigger.ownerPrincipalId)
   ) {
     throw new Denied({
       code: "unauthorized",
@@ -42,7 +48,7 @@ const sourceWorkIdsIn = async (tx: Tx, event: BotEvent): Promise<string[]> => {
     })),
     ...ledger.queue,
   ]
-    .filter((item) => sameWorkSource(item.source, event.coordinator))
+    .filter((item) => sameWorkSource(item.source, trigger.address))
     .map((item) => item.workId)
     .toSorted();
 };
@@ -66,7 +72,9 @@ const dependenciesOf = (
 export const createCoordinatorWeb = (options: {
   readonly pi: Harness;
   readonly native: Conversation;
-  readonly events: CoordinatorEvents;
+  readonly triggers: Pick<Triggers, "admit">;
+  readonly replies: Pick<ReplyOutbox, "enqueueIn">;
+  readonly replyScope: ReplyScope;
   readonly runtime: Pick<
     ReturnType<typeof createConversationResources>,
     "authorize"
@@ -74,29 +82,26 @@ export const createCoordinatorWeb = (options: {
     Partial<Pick<ReturnType<typeof createConversationResources>, "guardIn">> & {
       readonly configuration: Pick<
         SessionHostConfiguration,
-        "address" | "agent" | "ownerContext" | "checkDependencies"
+        | "address"
+        | "agent"
+        | "ownerContext"
+        | "checkDependencies"
+        | "contentDependencies"
       > & {
         readonly provider: Pick<SessionHostConfiguration["provider"], "model">;
       };
     };
 }) => {
   const { pi, native, runtime } = options;
-  const prepareLocalControl = async (
-    event: BotEvent,
+  const localAnswer = async (
+    trigger: Trigger,
     action: "status" | "stop",
-    context: ExecutionContext,
-    saveAnswerIn?: (
-      tx: Tx,
-      answer: {
-        readonly id: Awaited<ReturnType<typeof appendPassiveAnswer>>["id"];
-        readonly text: string;
-      }
-    ) => Promise<void>
-  ): Promise<EventRouteIn> => {
+    context: ExecutionContext
+  ): Promise<RouteIn> => {
     await runtime.authorize(context, "coordinate");
     await runtime.authorize(context, "transfer");
     const ids = await pi.commit(
-      (tx) => sourceWorkIdsIn(tx, event),
+      (tx) => sourceWorkIdsIn(tx, trigger),
       piContext()
     );
     const documents = await Promise.all(
@@ -110,8 +115,8 @@ export const createCoordinatorWeb = (options: {
     };
     for (const record of prepared.records) {
       requireWorkSource(record, {
-        address: event.coordinator,
-        ownerPrincipalId: event.ownerPrincipalId,
+        address: trigger.address,
+        ownerPrincipalId: trigger.ownerPrincipalId,
       });
     }
     await Effect.runPromise(
@@ -123,9 +128,19 @@ export const createCoordinatorWeb = (options: {
         }
       )
     );
+    const reply = trigger.reply
+      ? await prepareReply({
+          trigger,
+          scope: options.replyScope,
+          recorded: (await runtime.configuration.contentDependencies?.()) ?? {
+            sourceIds: [],
+            toolIds: [],
+          },
+        })
+      : undefined;
     return async (tx) => {
       await runtime.guardIn?.(tx);
-      const currentIds = await sourceWorkIdsIn(tx, event);
+      const currentIds = await sourceWorkIdsIn(tx, trigger);
       if (JSON.stringify(currentIds) !== JSON.stringify(prepared.ids)) {
         throw new Unavailable({
           reason: "Team work changed. Retry this control.",
@@ -164,18 +179,9 @@ export const createCoordinatorWeb = (options: {
         answer = `Choose a work ID and use stop_work to cancel it.\n${statuses}`;
       }
       await tx.appendEntry(native.id, {
-        kind: "cerebro.bot-event-input",
-        data: {
-          eventId: event.id,
-          source: event.source.kind,
-          agentVersion: runtime.configuration.agent.version,
-          ...(event.source.kind === "web"
-            ? { operationId: event.source.operationId }
-            : {}),
-        },
-        model: [
-          { role: "user", content: event.content.text, timestamp: Date.now() },
-        ],
+        kind: TRIGGER_ENTRY_KIND,
+        data: triggerEntryData(trigger),
+        model: [{ role: "user", content: trigger.text, timestamp: Date.now() }],
       });
       const entry = await appendPassiveAnswer(
         tx,
@@ -183,8 +189,16 @@ export const createCoordinatorWeb = (options: {
         answer,
         runtime.configuration.provider.model
       );
-      await saveAnswerIn?.(tx, { id: entry.id, text: answer });
-      return { kind: "local-answer", action, answerEntryId: entry.id };
+      if (reply) {
+        await options.replies.enqueueIn(tx, {
+          trigger,
+          nativeId: native.id,
+          text: answer,
+          dependencies: reply.dependencies,
+          blocked: reply.blocked,
+        });
+      }
+      return { kind: "local-answer", action, answerEntry: entry.id };
     };
   };
 
@@ -213,25 +227,27 @@ export const createCoordinatorWeb = (options: {
     }
     const local = text === "status" || text === "stop";
     const owner = await Effect.runPromise(runtime.configuration.ownerContext());
-    const source = {
+    const { address } = runtime.configuration;
+    const origin = {
       kind: "web",
       operationId: id.operation(operationId),
     } as const;
-    const event: BotEvent = {
-      version: 1,
-      id: await botEventId(runtime.configuration.address, source),
-      coordinator: runtime.configuration.address,
+    const trigger: Trigger = {
+      version: 2,
+      id: await triggerId(address, origin),
+      address,
       ownerPrincipalId: owner.represented?.id ?? owner.actor.id,
-      source,
-      replyTo: { kind: "web", address: runtime.configuration.address },
-      content: { text, reference: null },
+      origin,
+      text,
+      reference: null,
+      reply: null,
       dependencies: { sourceIds: [], toolIds: [] },
     };
-    const admitted = await options.events.admit(
+    const admitted = await options.triggers.admit(
       {
-        version: 2,
-        kind: "event-admission",
-        event,
+        version: 3,
+        kind: "trigger-admission",
+        trigger,
         routing: local
           ? { kind: "local-control", action: text }
           : { kind: "automatic" },
@@ -244,5 +260,5 @@ export const createCoordinatorWeb = (options: {
       session: String(native.id),
     };
   };
-  return { send, prepareLocalControl };
+  return { send, localAnswer };
 };

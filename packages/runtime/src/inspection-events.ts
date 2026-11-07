@@ -1,24 +1,25 @@
 import type { EventAddress } from "@cerebro/contracts/events";
-import { Denied, InvalidInput } from "@cerebro/contracts/failures";
+import { Denied } from "@cerebro/contracts/failures";
 import type { PrincipalId } from "@cerebro/contracts/identity";
 import type { InspectionEvent } from "@cerebro/contracts/inspection";
 import type { ContentDependencies } from "@cerebro/contracts/session";
-import { digestToolArguments } from "@cerebro/contracts/tools";
+import { triggerActor } from "@cerebro/contracts/triggers";
 import type { ConversationId, Harness } from "@earendil-works/pi-durable";
 
-import { BotEventReceipts, eventOf } from "./coordinator-event-state.ts";
-import type { BotEventReceipt } from "./coordinator-event-state.ts";
 import { sameWorkSource } from "./coordinator-ledger.ts";
-import { CoordinatorReplies } from "./coordinator-replies.ts";
-import type { CoordinatorReply } from "./coordinator-replies.ts";
 import { piContext } from "./pi-harness.ts";
+import { Replies } from "./replies.ts";
+import type { Reply } from "./replies.ts";
+import { Receipts } from "./trigger-receipts.ts";
+import type { TriggerReceipt } from "./trigger-receipts.ts";
+import { placementIn } from "./triggers.ts";
+import type { TriggerPlacement } from "./triggers.ts";
 
 const inspectReply = (
-  record: CoordinatorReply | null | undefined
+  record: Reply | null | undefined
 ): InspectionEvent["reply"] =>
   record
     ? {
-        answerEntryId: String(record.answerEntryId),
         taskId: record.taskId === null ? null : String(record.taskId),
         state: record.delivery?.state ?? "pending",
         attempts: record.attempts,
@@ -32,21 +33,20 @@ const inspectReply = (
       }
     : null;
 const inspectEvent = (
-  receipt: BotEventReceipt,
-  record: CoordinatorReply | null | undefined
+  receipt: TriggerReceipt,
+  placement: TriggerPlacement,
+  record: Reply | null | undefined
 ): InspectionEvent => {
-  const event = eventOf(receipt);
-  const delivery =
-    receipt.delivery.kind === "coordinator" ? receipt.delivery.admission : null;
+  const { trigger } = receipt;
   const recipients =
     receipt.route.kind === "teams" ? receipt.route.recipients : [];
   return {
-    id: event.id,
-    source: event.source.kind,
+    id: trigger.id,
+    channel: trigger.origin.kind,
+    actor: triggerActor(trigger.origin),
     route: receipt.route.kind,
     duplicates: receipt.duplicates,
-    admission: delivery?.kind ?? "none",
-    outcome: delivery?.kind === "settled" ? delivery.outcome : null,
+    placement: placement.kind,
     workIds: (receipt.route.kind === "control"
       ? [receipt.route.workId]
       : recipients.map((item) => item.key.workId)
@@ -69,7 +69,7 @@ export const readInspectionEvents = async (input: {
   const results = await Promise.all(
     input.keys.map(async (key) => {
       const saved = await input.pi.snapshot(
-        BotEventReceipts,
+        Receipts,
         key,
         piContext(input.signal)
       );
@@ -77,43 +77,45 @@ export const readInspectionEvents = async (input: {
         return null;
       }
       const { receipt } = saved;
-      const event = eventOf(receipt);
-      if (!sameWorkSource(event.coordinator, input.address)) {
+      const { trigger } = receipt;
+      if (!sameWorkSource(trigger.address, input.address)) {
         return null;
       }
       if (
-        event.ownerPrincipalId !== input.ownerPrincipalId ||
+        trigger.ownerPrincipalId !== input.ownerPrincipalId ||
         receipt.nativeId !== input.nativeId ||
-        event.id !== key
+        trigger.id !== key
       ) {
         throw new Denied({
           code: "unauthorized",
           reason: "The event belongs to another source.",
         });
       }
-      if (receipt.digest !== (await digestToolArguments(receipt.input))) {
-        throw new InvalidInput({ reason: "The saved event changed." });
-      }
-      const reply = await input.pi.snapshot(
-        CoordinatorReplies,
-        event.id,
-        piContext(input.signal)
-      );
+      const [placement, reply] = await Promise.all([
+        input.pi.commit(
+          (tx) => placementIn(tx, receipt),
+          piContext(input.signal)
+        ),
+        input.pi.snapshot(Replies, trigger.id, piContext(input.signal)),
+      ]);
       if (
         reply?.record &&
-        (!sameWorkSource(reply.record.source, input.address) ||
-          reply.record.eventId !== event.id)
+        (!sameWorkSource(reply.record.destination.source, input.address) ||
+          reply.record.triggerId !== trigger.id)
       ) {
         throw new Denied({
           code: "unauthorized",
           reason: "The reply belongs to another source.",
         });
       }
-      const dependencies: ContentDependencies[] = [event.dependencies];
+      const dependencies: ContentDependencies[] = [trigger.dependencies];
       if (reply?.record) {
         dependencies.push(reply.record.dependencies);
       }
-      return { item: inspectEvent(receipt, reply?.record), dependencies };
+      return {
+        item: inspectEvent(receipt, placement, reply?.record),
+        dependencies,
+      };
     })
   );
   return {

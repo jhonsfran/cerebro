@@ -1,6 +1,5 @@
 import { Schema } from "effect";
 
-import { BotEventAddressSchema } from "../../packages/contracts/src/bot-events.ts";
 import {
   InspectionRole,
   InspectionWork,
@@ -10,10 +9,9 @@ import type {
   InspectionTeam,
 } from "../../packages/contracts/src/inspection.ts";
 import { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
+import { EventAddressSchema } from "../../packages/contracts/src/work.ts";
 
-export const inspectionAddress = Schema.decodeUnknownSync(
-  BotEventAddressSchema
-)({
+export const inspectionAddress = Schema.decodeUnknownSync(EventAddressSchema)({
   organizationId: "company",
   agentId: "agent",
   conversationId: "conversation",

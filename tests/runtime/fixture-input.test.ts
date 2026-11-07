@@ -1,16 +1,16 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Assertions read one field of freshly awaited durable state. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { Schema } from "effect";
 
-import {
-  BotEventSchema,
-  botEventId,
-} from "../../packages/contracts/src/bot-events.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import { ChatReceipt } from "../../packages/contracts/src/session-service.ts";
+import {
+  TriggerSchema,
+  triggerId,
+} from "../../packages/contracts/src/triggers.ts";
 import type { StorageWrite } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
-import { BotEventReceipts } from "../../packages/runtime/src/coordinator-event-state.ts";
 import { parseInputCorrelation } from "../slice-1/provider.mjs";
 import { context, setup } from "./coordinator-fixture.ts";
 import { actor, setupWeb } from "./coordinator-web-fixture.ts";
@@ -44,29 +44,19 @@ test("real web admissions join identical public operations to distinct exact sou
           operationId: id.operation(operationId),
         };
         const text = `Original evidence for ${name}.`;
-        const event = Schema.decodeUnknownSync(BotEventSchema)({
-          version: 1,
-          id: await botEventId(current.address, origin),
-          coordinator: current.address,
+        const event = Schema.decodeUnknownSync(TriggerSchema)({
+          version: 2,
+          id: await triggerId(current.address, origin),
+          address: current.address,
           ownerPrincipalId: actor.actor.id,
-          source: origin,
-          replyTo: null,
-          content: { text, reference: null },
+          origin,
+          text,
+          reference: null,
+          reply: null,
           dependencies: { sourceIds: [], toolIds: [] },
         });
-        await fixture.events().admit(event, actor);
-        const receipt = await fixture
-          .pi()
-          .snapshot(BotEventReceipts, event.id, context);
-        assert.equal(receipt?.receipt?.delivery.kind, "coordinator");
-        if (receipt?.receipt?.delivery.kind !== "coordinator") {
-          throw new Error(
-            "The real event was not admitted to the coordinator."
-          );
-        }
-        await fixture
-          .pi()
-          .waitForTask(receipt.receipt.delivery.taskId, context);
+        await fixture.triggers().admit(event, actor);
+        assert.equal((await fixture.settled(event.id)).kind, "done");
         const relation = await readInputCorrelation(
           fixture.pi(),
           source,
@@ -280,18 +270,12 @@ test("durable web admission with a disabled model retains the exact failed nativ
       Schema.Struct({ status: Schema.Literal("ok"), value: ChatReceipt })
     )(await response.json());
     assert.equal(accepted.value.accepted, true);
-    const stored = await subject.fixture.pi().snapshot(
-      BotEventReceipts,
-      await botEventId(subject.source.address, {
+    await subject.settled(
+      await triggerId(subject.source.address, {
         kind: "web",
         operationId: id.operation(operationId),
-      }),
-      context
+      })
     );
-    assert.ok(stored?.receipt?.delivery.kind === "coordinator");
-    await subject.fixture
-      .pi()
-      .waitForTask(stored.receipt.delivery.taskId, context);
     const relation = await readInputCorrelation(
       subject.fixture.pi(),
       {

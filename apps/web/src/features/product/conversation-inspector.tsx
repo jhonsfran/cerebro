@@ -180,11 +180,11 @@ const EventDetails = ({ event }: { event: InspectionEvent }) => (
     <h4 className="font-medium break-all">{event.id}</h4>
     <InspectionFacts
       rows={[
-        ["Source", event.source],
+        ["Channel", event.channel],
+        ["Actor", event.actor],
         ["Route", event.route],
         ["Duplicates", event.duplicates],
-        ["Admission", event.admission],
-        ["Outcome", event.outcome],
+        ["Placement", event.placement],
       ]}
     />
     {event.workIds.map((id) => (
@@ -202,7 +202,6 @@ const EventDetails = ({ event }: { event: InspectionEvent }) => (
         rows={[
           ["Reply", event.reply.state],
           ["Reply attempts", event.reply.attempts],
-          ["Answer entry", event.reply.answerEntryId],
           ["Reply task", event.reply.taskId],
           ["Reply deadline", inspectionTime(event.reply.deadlineAt)],
           ["Reply retry", inspectionTime(event.reply.retryAt)],

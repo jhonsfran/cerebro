@@ -1,6 +1,4 @@
-import type { BotEvent } from "@cerebro/contracts/bot-events";
-import { normalizeEventAdmission } from "@cerebro/contracts/bot-routing";
-import type { EventAdmission } from "@cerebro/contracts/bot-routing";
+import type { EventAddress } from "@cerebro/contracts/events";
 import {
   Conflict,
   Denied,
@@ -12,6 +10,11 @@ import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { ContentDependencies } from "@cerebro/contracts/session";
 import { TeamEventCommandSchema } from "@cerebro/contracts/team-events";
 import { digestToolArguments } from "@cerebro/contracts/tools";
+import { normalizeTriggerAdmission } from "@cerebro/contracts/triggers";
+import type {
+  TriggerAdmissionInput,
+  TriggerOrigin,
+} from "@cerebro/contracts/triggers";
 import { BoundedContentDependenciesSchema } from "@cerebro/contracts/work";
 import type { SlackThread } from "@cerebro/contracts/work";
 import { Type } from "@earendil-works/pi-ai";
@@ -26,9 +29,6 @@ import type {
 import { Schema } from "effect";
 
 import { coordinationToolResult } from "./coordination-tool-result.ts";
-import { eventOf } from "./coordinator-event-state.ts";
-import type { BotEventReceipt, EventSkip } from "./coordinator-event-state.ts";
-import type { EventRouteIn } from "./coordinator-events.ts";
 import {
   WorkDocuments,
   WorkLedger,
@@ -38,12 +38,18 @@ import {
   sameWorkSource,
   workAcceptsEvents,
 } from "./coordinator-ledger.ts";
-import type { CoordinationBinding } from "./coordinator-ledger.ts";
+import type {
+  CoordinationBinding,
+  CoordinatorWorkRecord,
+} from "./coordinator-ledger.ts";
 import type { createCoordinatorWork } from "./coordinator-work.ts";
 import { piContext } from "./pi-harness.ts";
+import { Receipts } from "./trigger-receipts.ts";
+import type { EventSkip, TriggerReceipt } from "./trigger-receipts.ts";
+import type { RouteIn } from "./triggers.ts";
 
 interface StoredBinding extends JsonObject {
-  address: BotEvent["coordinator"];
+  address: { [Key in keyof EventAddress]: EventAddress[Key] };
   ownerPrincipalId: CoordinationBinding["ownerPrincipalId"];
 }
 interface ThreadRecord extends JsonObject {
@@ -87,6 +93,10 @@ export const SubscriptionMutations = defineDocFamily({
     } | null;
   } => ({ receipt: null }),
 });
+const MAX_RELATIONS = 8;
+/** The thread an origin can be subscribed through; web and internal origins have none and never route. */
+export const originThread = (origin: TriggerOrigin): SlackThread | null =>
+  origin.kind === "slack" ? origin.thread : null;
 const requireBinding = (
   actual: CoordinationBinding,
   expected: CoordinationBinding
@@ -205,6 +215,70 @@ const relationIn = async (
   }
   return { threads, works };
 };
+const linkIn = (
+  relation: Awaited<ReturnType<typeof relationIn>>,
+  owner: StoredBinding,
+  thread: SlackThread,
+  key: string,
+  workId: string,
+  eventId: string
+): void => {
+  const { threads, works } = relation;
+  threads.record ??= {
+    binding: owner,
+    thread,
+    admittedEventId: eventId,
+    revision: 0,
+    workIds: [],
+  };
+  works.record ??= { binding: owner, threadKeys: [] };
+  threads.record.workIds = [...threads.record.workIds, workId];
+  works.record.threadKeys = [...works.record.threadKeys, key];
+  threads.record.revision += 1;
+};
+const relationSize = (
+  relation: Awaited<ReturnType<typeof relationIn>>
+): number =>
+  Math.max(
+    relation.threads.record?.workIds.length ?? 0,
+    relation.works.record?.threadKeys.length ?? 0
+  );
+
+/**
+ * Work started from a thread's trigger follows that thread without a tool call. A full relation or a
+ * cause without a thread leaves the work unsubscribed; the coordinator can still subscribe later.
+ */
+export const subscribeCauseIn = async (
+  tx: Tx,
+  binding: CoordinationBinding,
+  record: CoordinatorWorkRecord,
+  triggerId: string
+): Promise<void> => {
+  const owner: StoredBinding = {
+    address: { ...binding.address },
+    ownerPrincipalId: binding.ownerPrincipalId,
+  };
+  const saved = await tx.doc(Receipts, triggerId, null);
+  const trigger = saved.receipt?.trigger;
+  const thread = trigger && originThread(trigger.origin);
+  if (
+    !(trigger && thread) ||
+    trigger.ownerPrincipalId !== owner.ownerPrincipalId ||
+    !sameWorkSource(trigger.address, owner.address)
+  ) {
+    return;
+  }
+  const { workId } = record.admission.key;
+  const key = await keyFor(owner, thread);
+  const relation = await relationIn(tx, owner, key, workId);
+  if (
+    relation.threads.record?.workIds.includes(workId) ||
+    relationSize(relation) >= MAX_RELATIONS
+  ) {
+    return;
+  }
+  linkIn(relation, owner, thread, key, workId, triggerId);
+};
 
 export const createCoordinatorSubscriptions = (options: {
   readonly guardIn?: (tx: Tx) => Promise<void>;
@@ -220,7 +294,7 @@ export const createCoordinatorSubscriptions = (options: {
   readonly readEvent: (
     eventId: string,
     context: ExecutionContext
-  ) => Promise<BotEventReceipt>;
+  ) => Promise<TriggerReceipt>;
 }) => {
   const binding = (): StoredBinding => {
     const current = options.coordination.binding();
@@ -230,26 +304,23 @@ export const createCoordinatorSubscriptions = (options: {
     };
   };
   const requireEvent = async (eventId: string, context: ExecutionContext) => {
-    const receipt = await options.readEvent(eventId, context);
-    const event = eventOf(receipt);
-    if (
-      receipt.digest !== (await digestToolArguments(receipt.input)) ||
-      event.source.kind !== "slack"
-    ) {
+    const { trigger } = await options.readEvent(eventId, context);
+    const thread = originThread(trigger.origin);
+    if (!thread) {
       throw new InvalidInput({
-        reason: "A subscription requires an admitted Slack event.",
+        reason: "A subscription requires an admitted event with a thread.",
       });
     }
     if (
-      event.ownerPrincipalId !== binding().ownerPrincipalId ||
-      event.coordinator.organizationId !== binding().address.organizationId
+      trigger.ownerPrincipalId !== binding().ownerPrincipalId ||
+      trigger.address.organizationId !== binding().address.organizationId
     ) {
       throw new Denied({
         code: "unauthorized",
-        reason: "The Slack event belongs to another identity.",
+        reason: "The event belongs to another identity.",
       });
     }
-    return { event, thread: event.source.thread };
+    return { trigger, thread };
   };
   const mutate = async (
     workId: string,
@@ -322,38 +393,31 @@ export const createCoordinatorSubscriptions = (options: {
             reason: "Only active or queued work can subscribe to a thread.",
           });
         }
-        const { threads, works } = await relationIn(tx, binding(), key, workId);
+        const relation = await relationIn(tx, binding(), key, workId);
+        const { threads, works } = relation;
         const existing = threads.record?.workIds.includes(workId) ?? false;
         const result = { workId, eventId, subscribed: subscribe };
         if (existing === subscribe) {
           mutation.receipt = { digest, result };
           return result;
         }
-        const size = Math.max(
-          threads.record?.workIds.length ?? 0,
-          works.record?.threadKeys.length ?? 0
-        );
-        if (subscribe && size >= 8) {
+        if (subscribe && relationSize(relation) >= MAX_RELATIONS) {
           throw new InvalidInput({
             reason:
               "A work item and thread each support at most eight subscriptions.",
           });
         }
-        threads.record ??= {
-          binding: binding(),
-          thread,
-          admittedEventId: eventId,
-          revision: 0,
-          workIds: [],
-        };
-        works.record ??= { binding: binding(), threadKeys: [] };
-        threads.record.workIds = subscribe
-          ? [...threads.record.workIds, workId]
-          : threads.record.workIds.filter((id) => id !== workId);
-        works.record.threadKeys = subscribe
-          ? [...works.record.threadKeys, key]
-          : works.record.threadKeys.filter((id) => id !== key);
-        threads.record.revision += 1;
+        if (subscribe) {
+          linkIn(relation, binding(), thread, key, workId, eventId);
+        } else if (threads.record && works.record) {
+          threads.record.workIds = threads.record.workIds.filter(
+            (id) => id !== workId
+          );
+          works.record.threadKeys = works.record.threadKeys.filter(
+            (id) => id !== key
+          );
+          threads.record.revision += 1;
+        }
         mutation.receipt = { digest, result };
         return result;
       },
@@ -362,16 +426,16 @@ export const createCoordinatorSubscriptions = (options: {
   };
 
   const prepare = async (
-    input: EventAdmission,
+    input: TriggerAdmissionInput,
     context: ExecutionContext
-  ): Promise<EventRouteIn> => {
-    const { event, routing, wire } = normalizeEventAdmission(input);
+  ): Promise<RouteIn> => {
+    const { trigger, routing, wire } = normalizeTriggerAdmission(input);
     if (!options.coordination.services) {
-      return () => Promise.resolve({ kind: "coordinator" });
+      return () => Promise.resolve({ kind: "inbox" });
     }
     const owner = binding();
     requireBinding(
-      { address: event.coordinator, ownerPrincipalId: event.ownerPrincipalId },
+      { address: trigger.address, ownerPrincipalId: trigger.ownerPrincipalId },
       owner
     );
     await options.authorize(context);
@@ -380,7 +444,7 @@ export const createCoordinatorSubscriptions = (options: {
         reason: "This event does not use subscription routing.",
       });
     }
-    const thread = event.source.kind === "slack" ? event.source.thread : null;
+    const thread = originThread(trigger.origin);
     const key = thread ? await keyFor(owner, thread) : null;
     const snapshot = key
       ? await options.pi.snapshot(ThreadSubscriptions, key, piContext())
@@ -412,7 +476,7 @@ export const createCoordinatorSubscriptions = (options: {
               ? admission.contentDependencies
               : transferDependencies(
                   admission.contentDependencies,
-                  event.dependencies
+                  trigger.dependencies
                 );
           if (!transferred) {
             return { workId, kind: "full" as const };
@@ -445,7 +509,7 @@ export const createCoordinatorSubscriptions = (options: {
       });
     }
     const digest = await digestToolArguments(wire);
-    const suffix = await coordinatorOperationKey(event.id);
+    const suffix = await coordinatorOperationKey(trigger.id);
     return async (tx) => {
       await options.guardIn?.(tx);
       if (key && thread) {
@@ -462,7 +526,7 @@ export const createCoordinatorSubscriptions = (options: {
         current.record ??= {
           binding: owner,
           thread,
-          admittedEventId: event.id,
+          admittedEventId: trigger.id,
           revision: 0,
           workIds: [],
         };
@@ -507,7 +571,7 @@ export const createCoordinatorSubscriptions = (options: {
         const result = await options.coordination.commandIn(
           tx,
           target.record.admission.key.workId,
-          event.id,
+          trigger.id,
           { kind: "cancel" },
           "tool"
         );
@@ -526,14 +590,14 @@ export const createCoordinatorSubscriptions = (options: {
             id: `event:${record.admission.key.workId}:${suffix}`,
             kind: "input",
             work: record.admission,
-            text: event.content.text,
+            text: trigger.text,
             contentDependencies: dependencies,
           },
           event: {
-            id: event.id,
+            id: trigger.id,
             digest,
-            source: event.source,
-            replyTo: event.replyTo,
+            origin: trigger.origin,
+            reply: trigger.reply,
           },
         }),
       }));
@@ -541,7 +605,7 @@ export const createCoordinatorSubscriptions = (options: {
       skipped.push(...routed.skipped);
       return routed.recipients.length > 0
         ? { kind: "teams", recipients: routed.recipients, skipped }
-        : { kind: "coordinator", skipped };
+        : { kind: "inbox", skipped };
     };
   };
   const tools = options.coordination.services
@@ -551,8 +615,8 @@ export const createCoordinatorSubscriptions = (options: {
           callers: ["model"],
           replay: "safe",
           description: subscribe
-            ? "Route future events from a previously admitted Slack event's thread to this work. Requires an owned event ID and work ID."
-            : "Remove this work's explicit subscription to a previously admitted Slack event's thread.",
+            ? "Route future events from a previously admitted event's thread to this work. Requires an owned event ID and work ID."
+            : "Remove this work's explicit subscription to a previously admitted event's thread.",
           parameters: Type.Object({
             eventId: Type.String({ minLength: 1, maxLength: 512 }),
             workId: Type.String({ minLength: 1, maxLength: 512 }),
@@ -651,7 +715,7 @@ export const listSubscribedBotSources = async (options: {
       return source;
     })
   );
-  const unique = new Map<string, BotEvent["coordinator"]>();
+  const unique = new Map<string, EventAddress>();
   for (const source of sources) {
     if (source) {
       unique.set(

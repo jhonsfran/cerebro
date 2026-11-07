@@ -1,5 +1,9 @@
 import { NotFound } from "@cerebro/contracts/failures";
 import {
+  REPLY_NUDGE_ENTRY_KIND,
+  TRIGGER_ENTRY_KIND,
+} from "@cerebro/contracts/triggers";
+import {
   AssistantEntry,
   GenerationTask,
   ResetEntry,
@@ -25,11 +29,14 @@ const PAGE_SIZE = 64;
 type RunEntry = Pick<EntryRecord, "kind" | "model">;
 
 const startsRun = (entry: RunEntry): boolean =>
-  entry.kind === UserEntry.kind || entry.kind === ResetEntry.kind;
+  entry.kind === UserEntry.kind ||
+  entry.kind === ResetEntry.kind ||
+  entry.kind === TRIGGER_ENTRY_KIND ||
+  entry.kind === REPLY_NUDGE_ENTRY_KIND;
 
 /**
- * Tool call IDs of the current run in transcript order, from entries newest first. A person's or scheduled message,
- * or a context reset, starts a run; compaction does not, so a summarized run keeps its count.
+ * Tool call IDs of the current run in transcript order, from entries newest first. A person's message, a placed
+ * trigger, a reply nudge, or a context reset starts a run; compaction does not, so a summarized run keeps its count.
  */
 export const runToolCallIds = (newestFirst: readonly RunEntry[]): string[] => {
   const start = newestFirst.findIndex(startsRun);

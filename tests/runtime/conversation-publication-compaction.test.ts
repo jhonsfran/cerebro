@@ -9,7 +9,6 @@ import {
   LiveDoc,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import { Bindings } from "../../packages/runtime/src/conversation-bindings.ts";
-import { BotEventQueue } from "../../packages/runtime/src/coordinator-event-state.ts";
 import { context } from "./coordinator-fixture.ts";
 import { actor, setupWeb } from "./coordinator-web-fixture.ts";
 import { waitFor } from "./helpers.ts";
@@ -21,15 +20,8 @@ const binding = async (subject: Awaited<ReturnType<typeof setupWeb>>) => {
   return value;
 };
 const settle = async (subject: Awaited<ReturnType<typeof setupWeb>>) => {
-  await waitFor(
-    async () => {
-      const queue = await subject.fixture.pi().snapshot(BotEventQueue, context);
-      return Object.values(queue?.pending ?? {}).filter(
-        (item) => item.nativeId === subject.source.native.id
-      ).length;
-    },
-    (count) => count === 0
-  );
+  await subject.drain();
+  await subject.source.native.waitForIdle(context);
 };
 
 test("an accepted manual compaction receipt still replays while new native admission is closed", async () => {

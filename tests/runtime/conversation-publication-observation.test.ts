@@ -7,10 +7,8 @@ import { Effect } from "effect";
 import { Denied } from "../../packages/contracts/src/failures.ts";
 import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import { Bindings } from "../../packages/runtime/src/conversation-bindings.ts";
-import { BotEventQueue } from "../../packages/runtime/src/coordinator-event-state.ts";
 import { context } from "./coordinator-fixture.ts";
 import { actor, setupWeb } from "./coordinator-web-fixture.ts";
-import { waitFor } from "./helpers.ts";
 
 const binding = async (subject: Awaited<ReturnType<typeof setupWeb>>) => {
   const saved = await subject.fixture.pi().snapshot(Bindings, context);
@@ -19,24 +17,12 @@ const binding = async (subject: Awaited<ReturnType<typeof setupWeb>>) => {
   return value;
 };
 const settle = async (subject: Awaited<ReturnType<typeof setupWeb>>) => {
-  await waitFor(
-    async () => {
-      const queue = await subject.fixture.pi().snapshot(BotEventQueue, context);
-      return Object.values(queue?.pending ?? {}).filter(
-        (item) => item.nativeId === subject.source.native.id
-      ).length;
-    },
-    (count) => count === 0
-  );
+  await subject.drain();
+  await subject.source.native.waitForIdle(context);
 };
 
-test("a held event reauthorizes after adoption instead of becoming a permanent input failure", async () => {
-  const subject = await setupWeb(
-    false,
-    true,
-    (configuration) => configuration,
-    1
-  );
+test("a trigger held in its delivery check keeps its place across a publication and the next input runs under the adopted profile", async () => {
+  const subject = await setupWeb(false, true);
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
   try {
@@ -44,10 +30,10 @@ test("a held event reauthorizes after adoption instead of becoming a permanent i
       fauxAssistantMessage("First retained input answered."),
       fauxAssistantMessage("Second retained input answered."),
     ]);
-    subject.setDeliveryAuthorization(async (event) => {
+    subject.setDeliveryAuthorization(async (trigger) => {
       if (
-        event.source.kind === "web" &&
-        event.source.operationId === "held-old-authority"
+        trigger.origin.kind === "web" &&
+        trigger.origin.operationId === "held-old-authority"
       ) {
         entered.resolve(true);
         await release.promise;
@@ -60,12 +46,9 @@ test("a held event reauthorizes after adoption instead of becoming a permanent i
       agent: { ...subject.configuration.agent, version: 2 },
     });
     await subject.send("current-authority", "Keep the second accepted input.");
-    await waitFor(
-      () => binding(subject),
-      (value) => value.agentVersion === 2
-    );
     release.resolve(true);
     await settle(subject);
+    assert.equal((await binding(subject)).agentVersion, 2);
     const snapshot = await subject.scope.read(actor);
     assert.deepEqual(
       snapshot.messages
@@ -84,41 +67,36 @@ test("an old delayed delivery denial cannot discard an input permitted by the ad
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
   let delayed = false;
-  const subject = await setupWeb(
-    false,
-    true,
-    (configuration) => ({
-      ...configuration,
-      ownerContext: () => Effect.succeed({ actor: { ...actor.actor } }),
-      authority: {
-        ...configuration.authority,
-        require: (request, options) => {
-          if (
-            !delayed &&
-            request.context !== actor &&
-            request.action === "execute" &&
-            request.pinnedAgent.version === 1
-          ) {
-            delayed = true;
-            return Effect.gen(function* oldDeliveryDenial() {
-              yield* Effect.promise(async () => {
-                entered.resolve(true);
-                await release.promise;
-              });
-              return yield* Effect.fail(
-                new Denied({
-                  code: "revoked",
-                  reason: "The old delivery policy denied this input.",
-                })
-              );
+  const subject = await setupWeb(false, true, (configuration) => ({
+    ...configuration,
+    ownerContext: () => Effect.succeed({ actor: { ...actor.actor } }),
+    authority: {
+      ...configuration.authority,
+      require: (request, options) => {
+        if (
+          !delayed &&
+          request.context !== actor &&
+          request.action === "execute" &&
+          request.pinnedAgent.version === 1
+        ) {
+          delayed = true;
+          return Effect.gen(function* oldDeliveryDenial() {
+            yield* Effect.promise(async () => {
+              entered.resolve(true);
+              await release.promise;
             });
-          }
-          return configuration.authority.require(request, options);
-        },
+            return yield* Effect.fail(
+              new Denied({
+                code: "revoked",
+                reason: "The old delivery policy denied this input.",
+              })
+            );
+          });
+        }
+        return configuration.authority.require(request, options);
       },
-    }),
-    1
-  );
+    },
+  }));
   try {
     subject.source.faux.setResponses([
       fauxAssistantMessage("First input answered."),
@@ -137,12 +115,9 @@ test("an old delayed delivery denial cannot discard an input permitted by the ad
       "new-delivery-permission",
       "Retain the next accepted input."
     );
-    await waitFor(
-      () => binding(subject),
-      (value) => value.agentVersion === 2
-    );
     release.resolve(true);
     await settle(subject);
+    assert.equal((await binding(subject)).agentVersion, 2);
     assert.deepEqual(
       (await subject.scope.read(actor)).messages
         .filter((message) => message.role === "user")

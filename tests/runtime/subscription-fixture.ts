@@ -3,63 +3,67 @@ import assert from "node:assert/strict";
 import { Schema } from "effect";
 
 import {
-  BotEventSchema,
-  BotEventSourceSchema,
-  botEventId,
-} from "../../packages/contracts/src/bot-events.ts";
-import { RoutedEventAdmissionSchema } from "../../packages/contracts/src/bot-routing.ts";
-import { id } from "../../packages/contracts/src/identity.ts";
+  TriggerAdmissionSchema,
+  TriggerOriginSchema,
+  TriggerSchema,
+  triggerId,
+} from "../../packages/contracts/src/triggers.ts";
+import type { Trigger } from "../../packages/contracts/src/triggers.ts";
 import type { SlackThread } from "../../packages/contracts/src/work.ts";
 import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import { WorkLedger } from "../../packages/runtime/src/coordinator-ledger.ts";
 import type { setup } from "./coordinator-fixture.ts";
-import { context } from "./coordinator-fixture.ts";
+import { actor, context } from "./coordinator-fixture.ts";
 
-export { context, setup } from "./coordinator-fixture.ts";
+export { actor, context, setup } from "./coordinator-fixture.ts";
 export type SubscriptionFixture = Awaited<ReturnType<typeof setup>>;
-export const actor = {
-  actor: {
-    id: id.principal("owner-A"),
-    organizationId: id.organization("org-A"),
-    kind: "human" as const,
-    state: "active" as const,
-  },
-};
 export const eventFor = async (
   fixture: SubscriptionFixture,
   eventId: string,
   name = "a",
   thread?: SlackThread,
   text = "A realistic follow-up constraint."
-) => {
+): Promise<Trigger & { origin: { kind: "slack"; thread: SlackThread } }> => {
   const source = fixture.source(name);
-  const origin = Schema.decodeUnknownSync(BotEventSourceSchema)({
+  const origin = Schema.decodeUnknownSync(TriggerOriginSchema)({
     kind: "slack",
     eventId,
     thread: thread ?? source.thread,
   });
   assert.ok(origin.kind === "slack");
-  return Schema.decodeUnknownSync(BotEventSchema)({
-    version: 1,
-    id: await botEventId(source.address, origin),
-    coordinator: source.address,
+  const trigger = Schema.decodeUnknownSync(TriggerSchema)({
+    version: 2,
+    id: await triggerId(source.address, origin),
+    address: source.address,
     ownerPrincipalId: actor.actor.id,
-    source: origin,
-    replyTo: { kind: "slack", thread: origin.thread },
-    content: { text, reference: null },
+    origin,
+    text,
+    reference: null,
+    reply: {
+      kind: "slack",
+      authority: {
+        appId: "app-A",
+        eventId,
+        userId: "slack-A",
+        thread: origin.thread,
+      },
+      ownerPrincipalId: actor.actor.id,
+      source: source.address,
+    },
     dependencies: { sourceIds: [], toolIds: [] },
   });
+  return { ...trigger, origin };
 };
-export const automatic = (event: Awaited<ReturnType<typeof eventFor>>) =>
-  Schema.decodeUnknownSync(RoutedEventAdmissionSchema)({
-    version: 2,
-    kind: "event-admission",
-    event,
+export const automatic = (trigger: Trigger) =>
+  Schema.decodeUnknownSync(TriggerAdmissionSchema)({
+    version: 3,
+    kind: "trigger-admission",
+    trigger,
     routing: { kind: "automatic" },
   });
 export const admit = async (
   fixture: SubscriptionFixture,
-  event: Awaited<ReturnType<typeof eventFor>>,
+  trigger: Trigger,
   name = "a"
 ) => {
   fixture
@@ -67,14 +71,14 @@ export const admit = async (
     .faux.setResponses([
       fauxAssistantMessage("The coordinator received the event."),
     ]);
-  const receipt = await fixture.events().admit(automatic(event), actor);
-  if (receipt.delivery.kind === "coordinator") {
-    await fixture.pi().waitForTask(receipt.delivery.taskId, context);
+  const receipt = await fixture.triggers().admit(automatic(trigger), actor);
+  if (receipt.route.kind === "inbox") {
+    await fixture.settled(trigger.id);
   }
   if (await fixture.pi().snapshot(WorkLedger, context)) {
     await fixture.waitDispatch();
   }
-  return await fixture.events().read(event.id, actor);
+  return await fixture.triggers().read(trigger.id, actor);
 };
 export const start = async (
   fixture: SubscriptionFixture,

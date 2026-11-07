@@ -1,3 +1,4 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Assertions read one field of freshly awaited durable state. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -10,12 +11,7 @@ import {
   ReminderPayload,
 } from "../../packages/runtime/src/conversation-reminders.ts";
 import {
-  BotEventReceipts,
-  eventOf,
-} from "../../packages/runtime/src/coordinator-event-state.ts";
-import {
   ReminderOrigins,
-  TimerOccurrences,
   saveReminderOriginIn,
 } from "../../packages/runtime/src/saved-timer-state.ts";
 import { submitSavedTimer } from "../../packages/runtime/src/saved-timer-submit.ts";
@@ -44,7 +40,6 @@ const setupTimer = async () => {
               new Denied({ code: "revoked", reason: "The source was revoked." })
             )
           : Promise.resolve(),
-      guardIn: () => Promise.resolve(),
       configuration: {
         address: original.address,
         ownerContext: () => Effect.succeed(actor),
@@ -55,11 +50,14 @@ const setupTimer = async () => {
                 new Denied({ code: "revoked", reason: "Content revoked." })
               )
             : Effect.void,
-        eventReplies: {
-          destination: () =>
-            Promise.reject(new Error("Web timers have no Slack destination.")),
-          authorize: () => Promise.resolve(),
-          deliver: () => Promise.resolve(),
+        replyPorts: {
+          slack: {
+            authorize: () =>
+              Promise.reject(
+                new Error("Web timers have no Slack destination.")
+              ),
+            deliver: () => Promise.resolve(),
+          },
         },
       },
     },
@@ -73,11 +71,12 @@ const setupTimer = async () => {
       nativeId: fixture.source("b").native.id,
       current,
       occurrence,
-      events: {
-        ...fixture.events(),
+      triggers: {
+        read: (...args) => fixture.triggers().read(...args),
         admit: async (...args) => {
-          admitted.push(args[0].id);
-          const receipt = await fixture.events().admit(...args);
+          const [input] = args;
+          admitted.push("trigger" in input ? input.trigger.id : input.id);
+          const receipt = await fixture.triggers().admit(...args);
           if (lose) {
             lose = false;
             throw new Error("Lost event response.");
@@ -138,11 +137,7 @@ const setupTimer = async () => {
     record: async () => {
       const eventId = admitted.at(-1);
       assert.ok(eventId);
-      const saved = await fixture
-        .pi()
-        .snapshot(TimerOccurrences, eventId, context);
-      assert.ok(saved?.record);
-      return saved.record;
+      return (await fixture.receipt(eventId)).trigger;
     },
     close: fixture.close,
   };
@@ -169,28 +164,21 @@ test("saved timers forward full instructions once to their own conversation with
     subject.lose();
     assert.ok(await subject.reminders().deliver(timer.id, input.runAt));
     const first = await subject.record();
-    assert.deepEqual(first.source, subject.original.address);
-    assert.deepEqual(first.event.coordinator, subject.original.address);
-    assert.equal(first.event.content.text, input.instruction);
-    assert.deepEqual(first.event.dependencies, {
+    assert.deepEqual(first.address, subject.original.address);
+    assert.equal(first.origin.kind, "timer");
+    assert.equal(first.text, input.instruction);
+    assert.deepEqual(first.dependencies, {
       sourceIds: [id.source("original-content")],
       toolIds: ["original-tool"],
     });
-    assert.equal(first.destination, null);
-    assert.deepEqual(first.replyOrigin, { kind: "web" });
+    assert.equal(first.reply, null);
     subject.changeDependencies();
     await subject.fixture.reopen();
     const delivery = await subject.reminders().deliver(timer.id, input.runAt);
     assert.ok(delivery);
     assert.deepEqual(await subject.record(), first);
-    assert.deepEqual(subject.admitted, [first.event.id, first.event.id]);
-    const receipt = await subject.fixture
-      .pi()
-      .snapshot(BotEventReceipts, first.event.id, context);
-    assert.ok(receipt?.receipt?.delivery.kind === "coordinator");
-    await subject.fixture
-      .pi()
-      .waitForTask(receipt.receipt.delivery.taskId, context);
+    assert.deepEqual(subject.admitted, [first.id, first.id]);
+    assert.equal((await subject.fixture.settled(first.id)).kind, "done");
     const [advanced] = await subject.reminders().list();
     assert.ok(advanced);
     assert.equal(advanced.id, timer.id);
@@ -240,7 +228,7 @@ test("schedule and origin commit together before a timer arm can fail, and the g
       .snapshot(ReminderOrigins, subject.original.native.id, saved.id, context);
     assert.deepEqual(origin?.record, {
       creatingEventId: null,
-      reply: { kind: "web" },
+      reply: null,
     });
     assert.equal(
       jobs.get(
@@ -411,31 +399,26 @@ test("identical reminder IDs from distinct sessions have distinct event identiti
       },
     };
     let secondId: string | undefined;
-    const events = subject.fixture.events();
+    const triggers = subject.fixture.triggers();
     await submitSavedTimer({
       pi: subject.fixture.pi(),
       nativeId: sibling.native.id,
-      events: {
-        ...events,
+      triggers: {
+        read: (...args) => triggers.read(...args),
         admit: async (...args) => {
-          secondId = args[0].id;
-          return await events.admit(...args);
+          const [input] = args;
+          secondId = "trigger" in input ? input.trigger.id : input.id;
+          return await triggers.admit(...args);
         },
       },
       current: () => siblingProfile,
       occurrence,
     });
     assert.ok(secondId);
-    assert.notEqual(secondId, first.event.id);
-    const second = await subject.fixture
-      .pi()
-      .snapshot(TimerOccurrences, secondId, context);
-    assert.deepEqual(second?.record?.source, sibling.address);
-    const receipt = await subject.fixture
-      .pi()
-      .snapshot(BotEventReceipts, first.event.id, context);
-    assert.ok(receipt?.receipt);
-    assert.deepEqual(eventOf(receipt.receipt), first.event);
+    assert.notEqual(secondId, first.id);
+    const second = await subject.fixture.receipt(secondId);
+    assert.deepEqual(second.trigger.address, sibling.address);
+    assert.deepEqual((await subject.fixture.receipt(first.id)).trigger, first);
   } finally {
     await subject.close();
   }

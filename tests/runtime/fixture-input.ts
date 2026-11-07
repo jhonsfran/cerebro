@@ -12,15 +12,13 @@ import { Schema } from "effect";
 
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import type { PrincipalId } from "../../packages/contracts/src/identity.ts";
-import { digestToolArguments } from "../../packages/contracts/src/tools.ts";
-import { webEventData } from "../../packages/runtime/src/coordinator-event-input.ts";
 import {
-  BotEventReceipts,
-  eventOf,
-} from "../../packages/runtime/src/coordinator-event-state.ts";
-import type { BotEventReceipt } from "../../packages/runtime/src/coordinator-event-state.ts";
+  TRIGGER_ENTRY_KIND,
+  webTriggerData,
+} from "../../packages/contracts/src/triggers.ts";
 import { sameWorkSource } from "../../packages/runtime/src/coordinator-ledger.ts";
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
+import { Receipts } from "../../packages/runtime/src/triggers.ts";
 
 export interface InputCorrelation {
   readonly address: EventAddress;
@@ -61,24 +59,6 @@ const placedInput = async (tx: Tx, source: Source, requestId: string) => {
   }
   return { entry, submission };
 };
-const admissionMatches = (
-  receipt: BotEventReceipt,
-  entry: EntryRecord,
-  submission: SubmissionRecord
-): boolean => {
-  if (receipt.delivery.kind !== "coordinator") {
-    return false;
-  }
-  const { admission } = receipt.delivery;
-  return (
-    "requestId" in admission &&
-    admission.requestId === submission.requestId &&
-    submission.entry === entry.id &&
-    (!("submissionId" in admission) ||
-      admission.submissionId === submission.id) &&
-    (!("entry" in admission) || admission.entry === entry.id)
-  );
-};
 
 const webInputIn = async (
   tx: Tx,
@@ -87,30 +67,28 @@ const webInputIn = async (
   submission: SubmissionRecord
 ): Promise<InputCorrelation> => {
   const data =
-    entry.kind === "cerebro.bot-event-input"
-      ? webEventData(entry.data)
-      : undefined;
+    entry.kind === TRIGGER_ENTRY_KIND ? webTriggerData(entry.data) : undefined;
   if (!data) {
-    throw new Error("The fixture input is not a validated web event.");
+    throw new Error("The fixture input is not a validated web trigger.");
   }
-  const { receipt } = await tx.doc(BotEventReceipts, data.eventId, null);
+  const { receipt } = await tx.doc(Receipts, data.id, null);
   if (!receipt) {
-    throw new Error("The fixture input has no saved event receipt.");
+    throw new Error("The fixture input has no saved trigger receipt.");
   }
-  const event = eventOf(receipt);
+  const { trigger } = receipt;
   const message = entry.model?.[0];
   if (
-    event.id !== data.eventId ||
-    event.source.kind !== "web" ||
-    event.source.operationId !== data.operationId ||
-    event.ownerPrincipalId !== source.ownerPrincipalId ||
-    !sameWorkSource(event.coordinator, source.address) ||
+    trigger.id !== data.id ||
+    trigger.origin.kind !== "web" ||
+    trigger.origin.operationId !== data.operationId ||
+    trigger.ownerPrincipalId !== source.ownerPrincipalId ||
+    !sameWorkSource(trigger.address, source.address) ||
     String(receipt.nativeId) !== source.nativeSessionId ||
-    receipt.digest !== (await digestToolArguments(receipt.input)) ||
-    !admissionMatches(receipt, entry, submission) ||
-    submission.requestId !== data.eventId ||
+    receipt.route.kind !== "inbox" ||
+    submission.entry !== entry.id ||
+    submission.requestId !== data.id ||
     message?.role !== "user" ||
-    message.content !== event.content.text
+    message.content !== trigger.text
   ) {
     throw new Error(
       "The fixture event, source, and native input do not agree."
@@ -119,7 +97,7 @@ const webInputIn = async (
   return {
     address: source.address,
     operationId: data.operationId,
-    eventId: data.eventId,
+    eventId: data.id,
     nativeRequestId: submission.requestId,
     submissionId: String(submission.id),
     entryId: String(entry.id),
@@ -167,8 +145,8 @@ export const readInputCorrelation = (
         ...page.items.filter(
           (entry) =>
             String(entry.conversationId) === source.nativeSessionId &&
-            entry.kind === "cerebro.bot-event-input" &&
-            webEventData(entry.data)?.operationId === operationId
+            entry.kind === TRIGGER_ENTRY_KIND &&
+            webTriggerData(entry.data)?.operationId === operationId
         )
       );
       remaining -= page.items.length;
@@ -178,11 +156,11 @@ export const readInputCorrelation = (
       }
     } while (cursor);
     const [entry] = candidates;
-    const data = entry && webEventData(entry.data);
+    const data = entry && webTriggerData(entry.data);
     if (candidates.length !== 1 || !entry || !data) {
       throw new Error("Exactly one saved fixture web input is required.");
     }
-    const placed = await placedInput(tx, source, data.eventId);
+    const placed = await placedInput(tx, source, data.id);
     if (placed.entry.id !== entry.id || entry.model?.[0]?.content !== text) {
       throw new Error("The fixture input does not match the original text.");
     }
@@ -205,7 +183,7 @@ export const physicalInput = (
       return { kind: "maintenance" as const, ...common };
     }
     const { entry, submission } = await placedInput(tx, source, requestId);
-    if (entry.kind === "cerebro.bot-event-input" && webEventData(entry.data)) {
+    if (entry.kind === TRIGGER_ENTRY_KIND && webTriggerData(entry.data)) {
       return {
         kind: "web" as const,
         ...(await webInputIn(tx, source, entry, submission)),
@@ -259,12 +237,11 @@ export const matchCommittedInput = (
       continue;
     }
     const data =
-      entry.value.kind === "cerebro.bot-event-input"
-        ? webEventData(entry.value.data)
+      entry.value.kind === TRIGGER_ENTRY_KIND
+        ? webTriggerData(entry.value.data)
         : undefined;
     if (
-      (data?.operationId === operationId &&
-        data.eventId === submission.requestId) ||
+      (data?.operationId === operationId && data.id === submission.requestId) ||
       (entry.value.kind === "pi.user" && submission.requestId === operationId)
     ) {
       return {

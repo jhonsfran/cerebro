@@ -19,6 +19,11 @@ import { createCoordinatorWeb } from "./coordinator-web.ts";
 import { createCoordinatorWork } from "./coordinator-work.ts";
 import { createGenerativeUiTool } from "./generative-ui-tool.ts";
 import { prepareInstructionCause } from "./instruction-cause.ts";
+import {
+  createReplyNudge,
+  createReplyTool,
+  profileReplyScope,
+} from "./replies.ts";
 import { createRunLimits } from "./run-limits.ts";
 import { saveReminderOriginIn } from "./saved-timer-state.ts";
 import type { SavedTimerOccurrence } from "./saved-timer-state.ts";
@@ -36,7 +41,7 @@ const run = async <A>(
 export const profileInstructions = (
   configuration: SessionHostConfiguration
 ): string =>
-  `${configuration.agent.instructions}\nHandle conversation and coordinate independent work. Use start_team for each independent task when available. Keep Team histories private and recall bounded results when needed.`;
+  `${configuration.agent.instructions}\nHandle conversation and coordinate independent work. Use start_team for each independent task when available. Keep Team histories private and recall bounded results when needed. An event that names an eventId arrived from an external channel; answer it with reply_event when a reply is wanted. Web messages need no reply_event.`;
 
 export interface ProfileState {
   readonly approvals: ReturnType<typeof createApprovalStore>;
@@ -130,8 +135,8 @@ export const createConversationProfile = async (
     guardIn: runtime.guardIn,
     shared: shared.coordination,
     dispatchAccess: shared.dispatchAccess,
-    terminalNoticeIn: terminalNoticeIn(services.events),
-    returnEventIn: services.events.returnEventIn,
+    terminalNoticeIn: terminalNoticeIn(services.triggers),
+    returnEventIn: services.triggers.returnEventIn,
     address: configuration.address,
     authorize: async (signal) =>
       runtime.authorize(
@@ -168,16 +173,23 @@ export const createConversationProfile = async (
     runtime,
     coordination,
   };
+  const replyScope = profileReplyScope({
+    runtime,
+    requireCurrent: () => shared.requireCurrent(identity),
+  });
   const web = createCoordinatorWeb({
     pi: services.pi,
     native,
     runtime,
-    events: services.events,
+    triggers: services.triggers,
+    replies: services.replies,
+    replyScope,
   });
   const receiveReport = createCoordinatorReport({
     ...source,
     persist: () => services.storage.sync(),
-    events: services.events,
+    triggers: services.triggers,
+    waitUntil: services.waitUntil,
   });
   const subscriptions = createCoordinatorSubscriptions({
     guardIn: runtime.guardIn,
@@ -194,7 +206,7 @@ export const createConversationProfile = async (
         })
       );
     },
-    readEvent: services.events.read,
+    readEvent: services.triggers.read,
   });
   shared.coordination ??= {
     admissions: coordination.admissions,
@@ -203,11 +215,24 @@ export const createConversationProfile = async (
   const suffix = `:${profileKey(identity)}`;
   const tools: Extension = {
     name: `cerebro-tools:${configuration.address.sessionId}${suffix}`,
-    hooks: createRunLimits({ pi: services.pi }),
+    hooks: [
+      ...createRunLimits({ pi: services.pi }),
+      createReplyNudge({ pi: services.pi, nativeId: native.id }),
+    ],
     tools: [
       ...reminders.tools,
       ...coordination.tools,
       ...subscriptions.tools,
+      createReplyTool({
+        pi: services.pi,
+        nativeId: native.id,
+        replies: services.replies,
+        scope: replyScope,
+        contentDependencies: () =>
+          configuration.contentDependencies?.() ??
+          Promise.resolve({ sourceIds: [], toolIds: [] }),
+        guardIn: runtime.guardIn,
+      }),
       createGenerativeUiTool({ authorize }),
     ],
   };

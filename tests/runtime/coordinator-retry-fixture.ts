@@ -5,15 +5,12 @@ import { Schema } from "effect";
 import { createSlackApi } from "../../packages/channels/src/slack-api.ts";
 import { deliverSlackMessage } from "../../packages/channels/src/slack-replies.ts";
 import {
-  BotEventSchema,
-  botEventId,
-} from "../../packages/contracts/src/bot-events.ts";
-import { SlackReplyDestinationSchema } from "../../packages/contracts/src/slack-events.ts";
-import {
-  CoordinatorReplies,
-  createCoordinatorReplies,
-} from "../../packages/runtime/src/coordinator-replies.ts";
+  TriggerOriginSchema,
+  TriggerSchema,
+  triggerId,
+} from "../../packages/contracts/src/triggers.ts";
 import { appendPassiveAnswer } from "../../packages/runtime/src/passive-history.ts";
+import { Replies, createReplies } from "../../packages/runtime/src/replies.ts";
 import { context, setup } from "./coordinator-fixture.ts";
 
 export const setupRetry = async () => {
@@ -42,23 +39,28 @@ export const setupRetry = async () => {
     },
   };
   const install = () => {
-    const replies = createCoordinatorReplies({
+    const replies = createReplies({
       pi: fixture.pi(),
       persist: () => Promise.resolve(),
       resolve: () =>
         Promise.resolve({
-          deliverReply: async (record, store) => {
-            assert.ok(record.destination);
-            await deliverSlackMessage({
-              message: { key: record.key, text: record.text },
-              thread: {
-                channelId: record.destination.authority.thread.channelId,
-                threadTs: record.destination.authority.thread.rootTimestamp,
-                conversationId: record.destination.source.conversationId,
+          authorize: () => Promise.resolve(),
+          ports: {
+            slack: {
+              authorize: () => Promise.resolve(),
+              deliver: async ({ destination, key, text, store }) => {
+                await deliverSlackMessage({
+                  message: { key, text },
+                  thread: {
+                    channelId: destination.authority.thread.channelId,
+                    threadTs: destination.authority.thread.rootTimestamp,
+                    conversationId: destination.source.conversationId,
+                  },
+                  store,
+                  slack,
+                });
               },
-              store,
-              slack,
-            });
+            },
           },
         }),
       waitUntil: (promise) => {
@@ -89,54 +91,48 @@ export const setupRetry = async () => {
       ),
     enqueue: async (eventId: string, name = "a", savedRetryAt?: number) => {
       const source = fixture.source(name);
-      const eventSource = {
-        kind: "slack" as const,
+      const origin = Schema.decodeUnknownSync(TriggerOriginSchema)({
+        kind: "slack",
         eventId,
         thread: source.thread,
-      };
-      const event = Schema.decodeUnknownSync(BotEventSchema)({
-        version: 1,
-        id: await botEventId(source.address, eventSource),
-        coordinator: source.address,
-        ownerPrincipalId: source.ownerPrincipalId,
-        source: eventSource,
-        replyTo: { kind: "slack", thread: source.thread },
-        content: { text: "status", reference: null },
-        dependencies: { sourceIds: [], toolIds: [] },
       });
-      const destination = Schema.decodeUnknownSync(SlackReplyDestinationSchema)(
-        {
-          source: source.address,
-          ownerPrincipalId: source.ownerPrincipalId,
+      const trigger = Schema.decodeUnknownSync(TriggerSchema)({
+        version: 2,
+        id: await triggerId(source.address, origin),
+        address: source.address,
+        ownerPrincipalId: source.ownerPrincipalId,
+        origin,
+        text: "status",
+        reference: null,
+        reply: {
+          kind: "slack",
           authority: {
             appId: "app-A",
             eventId,
             userId: "slack-A",
             thread: source.thread,
           },
-        }
-      );
+          ownerPrincipalId: source.ownerPrincipalId,
+          source: source.address,
+        },
+        dependencies: { sourceIds: [], toolIds: [] },
+      });
       await fixture.pi().commit(async (tx) => {
-        const entry = await appendPassiveAnswer(
+        await appendPassiveAnswer(
           tx,
           source.native.id,
           "The team has no active work.",
           source.faux.getModel()
         );
         await replies.enqueueIn(tx, {
-          event,
+          trigger,
           nativeId: source.native.id,
-          answer: {
-            kind: "local",
-            entryId: entry.id,
-            text: "The team has no active work.",
-          },
-          destination,
+          text: "The team has no active work.",
           dependencies: { sourceIds: [], toolIds: [] },
           blocked: false,
         });
         if (savedRetryAt !== undefined) {
-          const saved = await tx.doc(CoordinatorReplies, event.id, null);
+          const saved = await tx.doc(Replies, trigger.id, null);
           assert.ok(saved.record);
           saved.record.delivery = {
             state: "retry",
@@ -146,12 +142,12 @@ export const setupRetry = async () => {
         }
       }, context);
       fixture.pi().resume();
-      return event;
+      return trigger;
     },
-    read: async (eventId: string) => {
+    read: async (triggerIdValue: string) => {
       const saved = await fixture
         .pi()
-        .snapshot(CoordinatorReplies, eventId, context);
+        .snapshot(Replies, triggerIdValue, context);
       assert.ok(saved?.record);
       return saved.record;
     },

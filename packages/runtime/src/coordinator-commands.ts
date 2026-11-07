@@ -15,7 +15,6 @@ import type { ConversationId, Tx } from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 import type { createCoordinatorDispatch } from "./coordinator-dispatch.ts";
-import type { EventRecipient, EventSkip } from "./coordinator-event-state.ts";
 import {
   CommandReceipts,
   SourceOperations,
@@ -31,6 +30,7 @@ import type {
   CoordinatorWorkRecord,
 } from "./coordinator-ledger.ts";
 import { discardQueuedCommandsIn } from "./coordinator-retired-events.ts";
+import type { EventRecipient, EventSkip } from "./trigger-receipts.ts";
 
 type CoordinatorInput =
   | { readonly kind: "cancel" }

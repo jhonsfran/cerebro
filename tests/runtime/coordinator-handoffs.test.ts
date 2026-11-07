@@ -1,3 +1,4 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Assertions read one field of freshly awaited durable state. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -7,8 +8,6 @@ import { Conflict, Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import { TeamReportDeliverySchema } from "../../packages/contracts/src/work.ts";
 import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
-import { eventOf } from "../../packages/runtime/src/coordinator-event-state.ts";
-import { BotEventQueue } from "../../packages/runtime/src/coordinator-events.ts";
 import { coordinatorOperationKey } from "../../packages/runtime/src/coordinator-ledger.ts";
 import {
   createCoordinatorReport,
@@ -19,6 +18,7 @@ import {
   readImportedContent,
 } from "../../packages/runtime/src/imported-content.ts";
 import { chatPresentation } from "../../packages/runtime/src/pi-harness.ts";
+import { Backlog } from "../../packages/runtime/src/triggers.ts";
 import { context, setup } from "./coordinator-fixture.ts";
 
 const actor = {
@@ -75,12 +75,13 @@ const subject = async () => {
   const receive = createCoordinatorReport({
     ...ports,
     persist: () => Promise.resolve(),
-    events: {
-      ...fixture.events(),
-      enqueueIn: async (tx, event) => {
-        const receipt = await fixture.events().enqueueIn(tx, event);
+    waitUntil: () => {},
+    triggers: {
+      drain: (nativeId) => fixture.triggers().drain(nativeId),
+      acceptIn: async (tx, trigger, routeIn) => {
+        const receipt = await fixture.triggers().acceptIn(tx, trigger, routeIn);
         if (eventFails) {
-          throw new Error("Event intent failed after task creation.");
+          throw new Error("Event intent failed after the backlog write.");
         }
         return receipt;
       },
@@ -107,11 +108,10 @@ const subject = async () => {
     }
   };
   const settleReports = async () => {
-    const page = await fixture.events().list(source.address, actor);
+    await fixture.triggers().drain(source.native.id);
+    const page = await fixture.triggers().list(source.address, actor);
     await Promise.all(
-      page.items.map((receipt) =>
-        fixture.pi().waitForTask(receipt.delivery.taskId, context)
-      )
+      page.items.map((receipt) => fixture.settled(receipt.trigger.id))
     );
   };
   source.faux.setResponses([
@@ -154,11 +154,15 @@ test("a failed report event task creation rolls back its receipt, provenance, te
       await readImportedContent(f.fixture.pi(), f.source.native.id),
       { sourceIds: [], toolIds: [] }
     );
-    const events = await f.fixture.events().list(f.source.address, actor);
-    assert.equal(events.items.length, 0);
-    assert.equal(
-      await f.fixture.pi().snapshot(BotEventQueue, context),
-      undefined
+    const events = await f.fixture.triggers().list(f.source.address, actor);
+    assert.deepEqual(
+      events.items.filter((item) => item.trigger.origin.kind === "teamreport"),
+      []
+    );
+    assert.deepEqual(
+      (await f.fixture.pi().snapshot(Backlog, f.source.native.id, context))
+        ?.ids ?? [],
+      []
     );
     const key = await coordinatorOperationKey(
       JSON.stringify([f.delivery.report.key, f.delivery.report.id])
@@ -172,7 +176,16 @@ test("a failed report event task creation rolls back its receipt, provenance, te
     f.eventFails(false);
     await f.receive(f.delivery, actor);
     await f.settleReports();
-    assert.equal(f.fixture.eventSubmissions.length, 1);
+    const reports = await f.fixture.triggers().list(f.source.address, actor);
+    const report = reports.items.find(
+      (item) => item.trigger.origin.kind === "teamreport"
+    );
+    assert.ok(report);
+    assert.equal(
+      f.fixture.eventSubmissions.filter((value) => value === report.trigger.id)
+        .length,
+      1
+    );
   } finally {
     await f.fixture.close();
   }
@@ -274,10 +287,12 @@ test("full reports stay in work storage while event input and recall remain boun
     const work = await f.fixture.work("a");
     assert.ok(work.terminalReport?.kind === "completed");
     assert.equal(work.terminalReport.text.length, 16_000);
-    const events = await f.fixture.events().list(f.source.address, actor);
-    const [receipt] = events.items;
+    const events = await f.fixture.triggers().list(f.source.address, actor);
+    const receipt = events.items.find(
+      (item) => item.trigger.origin.kind === "teamreport"
+    );
     assert.ok(receipt);
-    assert.equal(eventOf(receipt).content.text.length, 2000);
+    assert.equal(receipt.trigger.text.length, 2000);
     assert.equal(
       JSON.stringify(await f.source.native.context(context)).includes(
         "x".repeat(2100)

@@ -1,10 +1,14 @@
 /* oxlint-disable no-redeclare -- Schemas define their corresponding TypeScript types. */
 import { Schema } from "effect";
 
-import { BotEventAddressSchema } from "./bot-events.ts";
 import type { EventAddress } from "./events.ts";
 import type { ExecutionContext } from "./identity.ts";
-import { AgentPinSchema, WorkAdmissionSchema, WorkIdSchema } from "./work.ts";
+import {
+  AgentPinSchema,
+  EventAddressSchema,
+  WorkAdmissionSchema,
+  WorkIdSchema,
+} from "./work.ts";
 
 export const INSPECTION_PAGE_SIZE = 24;
 export const INSPECTION_TEXT_LENGTH = 2000;
@@ -194,18 +198,32 @@ export const InspectionTool = Schema.Struct({
 export type InspectionTool = typeof InspectionTool.Type;
 export const InspectionEvent = Schema.Struct({
   id: identifier,
-  source: identifier,
+  channel: Schema.Literals([
+    "web",
+    "slack",
+    "timer",
+    "teamreport",
+    "teamnotice",
+  ]),
+  actor: Schema.Literals(["human", "routine", "internal"]),
   route: identifier,
   duplicates: count,
-  admission: identifier,
-  outcome: Schema.NullOr(identifier),
+  placement: Schema.Literals([
+    "backlog",
+    "queued",
+    "placed",
+    "done",
+    "unanswered",
+    "withdrawn",
+    "local-answer",
+    "routed",
+  ]),
   workIds: Schema.Array(identifier).check(Schema.isMaxLength(24)),
   returns: Schema.Array(
     Schema.Struct({ workId: identifier, decision: identifier })
   ).check(Schema.isMaxLength(24)),
   reply: Schema.NullOr(
     Schema.Struct({
-      answerEntryId: identifier,
       taskId: Schema.NullOr(identifier),
       state: Schema.Literals([
         "pending",
@@ -255,7 +273,7 @@ export const TeamInspectionFrame = Schema.Union([
 ]);
 export type TeamInspectionFrame = typeof TeamInspectionFrame.Type;
 const common = {
-  address: BotEventAddressSchema,
+  address: EventAddressSchema,
   profile: Schema.Struct({ agentVersion: count }),
 };
 export const InspectionFrame = Schema.Union([

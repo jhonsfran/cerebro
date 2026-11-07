@@ -3,18 +3,19 @@ import { registerHooks } from "node:module";
 
 import { Schema } from "effect";
 
-import {
-  BotEventSchema,
-  BotEventSourceSchema,
-  botEventId,
-} from "../../packages/contracts/src/bot-events.ts";
-import type { BotEvent } from "../../packages/contracts/src/bot-events.ts";
-import { RoutedEventAdmissionSchema } from "../../packages/contracts/src/bot-routing.ts";
 import { Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
-import { SlackReplyDestinationSchema } from "../../packages/contracts/src/slack-events.ts";
-import { BotEventReceipts } from "../../packages/runtime/src/coordinator-event-state.ts";
-import { CoordinatorReplies } from "../../packages/runtime/src/coordinator-replies.ts";
+import {
+  TriggerOriginSchema,
+  TriggerSchema,
+  triggerId,
+} from "../../packages/contracts/src/triggers.ts";
+import type { Trigger } from "../../packages/contracts/src/triggers.ts";
+import {
+  fauxAssistantMessage,
+  fauxToolCall,
+} from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
+import { Replies } from "../../packages/runtime/src/replies.ts";
 import { context } from "./coordinator-fixture.ts";
 import { actor, setupWeb } from "./coordinator-web-fixture.ts";
 import { waitFor } from "./helpers.ts";
@@ -40,6 +41,16 @@ const { deliverSlackMessage } =
   await import("../../packages/channels/src/slack-replies.ts");
 hooks.deregister();
 
+export const replyCall = (eventId: string, text: string, callId?: string) =>
+  fauxAssistantMessage(
+    fauxToolCall(
+      "reply_event",
+      { eventId, text },
+      callId ? { id: callId } : {}
+    ),
+    { stopReason: "toolUse" }
+  );
+
 export const setupReplies = async (team = false) => {
   let linked = true;
   let beforePost: (() => Promise<void>) | undefined;
@@ -48,40 +59,21 @@ export const setupReplies = async (team = false) => {
   const outcomes: ("sent" | "unknown" | "retry" | "failed")[] = [];
   const sourceIds = new Set([id.source("source-A")]);
   const toolIds = new Set<string>();
-  const subject = await setupWeb(
-    team,
-    true,
-    (configuration) => ({
-      ...configuration,
-      checkImportedDependencies: configuration.checkDependencies,
-      contentDependencies: () =>
-        Promise.resolve({ sourceIds: [...sourceIds], toolIds: [...toolIds] }),
-      importDependencies: (dependencies) => {
-        for (const sourceId of dependencies.sourceIds) {
-          sourceIds.add(sourceId);
-        }
-        for (const toolId of dependencies.toolIds) {
-          toolIds.add(toolId);
-        }
-      },
-      eventReplies: {
-        destination: (event) =>
-          Promise.resolve(
-            Schema.decodeUnknownSync(SlackReplyDestinationSchema)({
-              source: event.coordinator,
-              ownerPrincipalId: event.ownerPrincipalId,
-              authority: {
-                appId: "app-A",
-                eventId:
-                  event.source.kind === "slack"
-                    ? event.source.eventId
-                    : "invalid",
-                userId: "slack-A",
-                thread:
-                  event.replyTo?.kind === "slack" ? event.replyTo.thread : null,
-              },
-            })
-          ),
+  const subject = await setupWeb(team, true, (configuration) => ({
+    ...configuration,
+    checkImportedDependencies: configuration.checkDependencies,
+    contentDependencies: () =>
+      Promise.resolve({ sourceIds: [...sourceIds], toolIds: [...toolIds] }),
+    importDependencies: (dependencies) => {
+      for (const sourceId of dependencies.sourceIds) {
+        sourceIds.add(sourceId);
+      }
+      for (const toolId of dependencies.toolIds) {
+        toolIds.add(toolId);
+      }
+    },
+    replyPorts: {
+      slack: {
         authorize: () =>
           linked
             ? Promise.resolve()
@@ -139,9 +131,7 @@ export const setupReplies = async (team = false) => {
               },
               edit: () =>
                 Promise.reject(
-                  new Error(
-                    "Exact event replies must not edit unrelated messages."
-                  )
+                  new Error("Trigger replies must not edit unrelated messages.")
                 ),
               sendEphemeral: () =>
                 Promise.reject(new Error("No ephemeral reply expected.")),
@@ -149,60 +139,60 @@ export const setupReplies = async (team = false) => {
           });
         },
       },
-    }),
-    1
-  );
-  const event = async (
+    },
+  }));
+  const trigger = async (
     eventId: string,
     text: string,
     rootTimestamp = "1800000000.000001"
-  ): Promise<BotEvent> => {
-    const source = Schema.decodeUnknownSync(BotEventSourceSchema)({
+  ): Promise<Trigger> => {
+    const { address } = subject.source;
+    const thread = {
+      workspaceId: "workspace-A",
+      channelId: "D-A",
+      rootTimestamp,
+    };
+    const origin = Schema.decodeUnknownSync(TriggerOriginSchema)({
       kind: "slack",
       eventId,
-      thread: { workspaceId: "workspace-A", channelId: "D-A", rootTimestamp },
+      thread,
     });
-    return Schema.decodeUnknownSync(BotEventSchema)({
-      version: 1,
-      id: await botEventId(subject.source.address, source),
-      coordinator: subject.source.address,
+    return Schema.decodeUnknownSync(TriggerSchema)({
+      version: 2,
+      id: await triggerId(address, origin),
+      address,
       ownerPrincipalId: actor.actor.id,
-      source,
-      replyTo: {
+      origin,
+      text,
+      reference: null,
+      reply: {
         kind: "slack",
-        thread: "thread" in source ? source.thread : null,
+        authority: { appId: "app-A", eventId, userId: "slack-A", thread },
+        ownerPrincipalId: actor.actor.id,
+        source: address,
       },
-      content: { text, reference: null },
       dependencies: { sourceIds: [], toolIds: [] },
     });
   };
-  const admit = (value: BotEvent) =>
-    subject.events.admit(
-      Schema.decodeUnknownSync(RoutedEventAdmissionSchema)({
-        version: 2,
-        kind: "event-admission",
-        event: value,
+  const admit = (value: Trigger) =>
+    subject.triggers.admit(
+      {
+        version: 3,
+        kind: "trigger-admission",
+        trigger: value,
         routing:
-          value.content.text === "status" || value.content.text === "stop"
-            ? { kind: "local-control", action: value.content.text }
+          value.text === "status" || value.text === "stop"
+            ? { kind: "local-control", action: value.text }
             : { kind: "automatic" },
-      }),
+      },
       actor
     );
-  const settled = async (value: BotEvent) => {
-    const saved = await subject.fixture
-      .pi()
-      .snapshot(BotEventReceipts, value.id, context);
-    assert.ok(saved?.receipt);
-    if (saved.receipt.delivery.kind === "coordinator") {
-      await subject.fixture
-        .pi()
-        .waitForTask(saved.receipt.delivery.taskId, context);
-    }
+  const replied = async (triggerIdValue: string) => {
     const ready = await waitFor(
-      () =>
-        subject.fixture.pi().snapshot(CoordinatorReplies, value.id, context),
-      (result) => result?.record !== null && result?.record !== undefined
+      () => subject.fixture.pi().snapshot(Replies, triggerIdValue, context),
+      (result) => result?.record !== null && result?.record !== undefined,
+      10_000,
+      10
     );
     assert.ok(ready?.record);
     if (ready.record.taskId !== null) {
@@ -210,15 +200,15 @@ export const setupReplies = async (team = false) => {
     }
     const completed = await subject.fixture
       .pi()
-      .snapshot(CoordinatorReplies, value.id, context);
+      .snapshot(Replies, triggerIdValue, context);
     assert.ok(completed?.record);
     return completed.record;
   };
   return {
     ...subject,
-    event,
+    trigger,
     admit,
-    settled,
+    replied,
     posted,
     outcomes,
     loseSentOutcome: () => {
@@ -227,7 +217,7 @@ export const setupReplies = async (team = false) => {
     setLinked: (value: boolean) => {
       linked = value;
     },
-    beforePost: (operation: typeof beforePost) => {
+    beforePost: (operation?: typeof beforePost) => {
       beforePost = operation;
     },
   };

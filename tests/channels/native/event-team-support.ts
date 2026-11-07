@@ -96,7 +96,7 @@ export const subscribeLiveWork = async (
   assert.ok(events.kind === "events");
   assert.ok(
     events.events.some(
-      (item) => item.id === args.eventId && item.source === "slack"
+      (item) => item.id === args.eventId && item.channel === "slack"
     )
   );
   const detail = await inspect(route, {

@@ -489,7 +489,9 @@ const goalMessage = ({ family, key, text, current, offered, operationId }) => {
   return unavailable();
 };
 const realisticMessage = (input, operationId, prompt, latest, offered) => {
-  const results = joinedResults(input.messages);
+  const results = joinedResults(input.messages).filter(
+    (result) => result.name !== "reply_event"
+  );
   const current = results.filter((result) => result.index > latest);
   const external = externalPattern.exec(prompt);
   if (external) {
@@ -594,6 +596,51 @@ const fixtureTeamMessage = (input, operationId, purpose) => {
       role: "assistant",
     };
   }
+};
+
+const replyTarget = (messages, latest, prompt) => {
+  const slack = slackInput(prompt);
+  if (slack) {
+    return slack.eventId;
+  }
+  if (!prompt.startsWith("Internal coordinator event.")) {
+    return;
+  }
+  const event = parseJson(prompt.slice(prompt.indexOf("\n") + 1));
+  const slackSeen = messages
+    .slice(0, latest)
+    .some(
+      (message) =>
+        message.role === "user" &&
+        slackInput(messageText(message)) !== undefined
+    );
+  return slackSeen && identifier(event?.eventId) ? event.eventId : undefined;
+};
+// A Slack-origin turn posts its final answer through reply_event, then ends with the same text.
+export const withReply = (input, operationId, purpose, message) => {
+  if (
+    purpose !== "turn" ||
+    message.tool_calls?.length ||
+    typeof message.content !== "string" ||
+    !(input.tools ?? []).some((tool) => tool.function?.name === "reply_event")
+  ) {
+    return message;
+  }
+  const latest = input.messages.findLastIndex((item) => item.role === "user");
+  const eventId = replyTarget(
+    input.messages,
+    latest,
+    commandText(messageText(input.messages[latest]))
+  );
+  if (!eventId) {
+    return message;
+  }
+  const replied = joinedResults(input.messages).some(
+    (result) => result.index > latest && result.name === "reply_event"
+  );
+  return replied
+    ? message
+    : calls(operationId, "reply_event", [{ eventId, text: message.content }]);
 };
 
 export const teamMessage = (input, operationId, purpose) => {

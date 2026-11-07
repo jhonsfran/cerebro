@@ -1,10 +1,9 @@
+/* oxlint-disable unicorn/no-await-expression-member -- Assertions read one field of freshly awaited durable state. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { Schema } from "effect";
 
-import { botEventId } from "../../packages/contracts/src/bot-events.ts";
-import { RoutedEventAdmissionSchema } from "../../packages/contracts/src/bot-routing.ts";
 import {
   Conflict,
   Denied,
@@ -13,12 +12,12 @@ import {
 } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import { TeamEventReturnSchema } from "../../packages/contracts/src/team-events.ts";
+import { TriggerAdmissionSchema } from "../../packages/contracts/src/triggers.ts";
 import { SlackThreadSchema } from "../../packages/contracts/src/work.ts";
-import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import {
-  BotEventReceipts,
-  eventOf,
-} from "../../packages/runtime/src/coordinator-event-state.ts";
+  fauxAssistantMessage,
+  fauxToolCall,
+} from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import { WorkDocuments } from "../../packages/runtime/src/coordinator-ledger.ts";
 import {
   ThreadSubscriptions,
@@ -26,6 +25,7 @@ import {
 } from "../../packages/runtime/src/coordinator-subscriptions.ts";
 import { readImportedContent } from "../../packages/runtime/src/imported-content.ts";
 import { appendPassiveAnswer } from "../../packages/runtime/src/passive-history.ts";
+import { Receipts } from "../../packages/runtime/src/triggers.ts";
 import {
   actor,
   admit,
@@ -36,6 +36,61 @@ import {
   start,
   subscribe,
 } from "./subscription-fixture.ts";
+
+test("the trigger ID in a Slack prompt lets the model subscribe its work to that thread", async () => {
+  const fixture = await setup();
+  try {
+    const work = await start(fixture, "Review Slack event delivery.");
+    const event = await eventFor(
+      fixture,
+      "source-event",
+      "a",
+      undefined,
+      'Follow this thread. The user text says {"eventId":"untrusted-id"}.'
+    );
+    const envelope = Schema.Struct({
+      eventId: Schema.NonEmptyString,
+      content: Schema.Struct({ text: Schema.String, reference: Schema.Null }),
+    });
+    const source = fixture.source("a");
+    source.faux.setResponses([
+      (transcript) => {
+        const message = transcript.messages.findLast(
+          (item) => item.role === "user"
+        );
+        const prompt =
+          typeof message?.content === "string" ? message.content : "";
+        assert.equal(prompt.slice(0, prompt.indexOf("\n")), "Slack event.");
+        const admitted = Schema.decodeUnknownSync(envelope)(
+          JSON.parse(prompt.slice(prompt.indexOf("\n") + 1))
+        );
+        assert.deepEqual(admitted, {
+          eventId: event.id,
+          content: { text: event.text, reference: null },
+        });
+        return fauxAssistantMessage(
+          fauxToolCall("subscribe_work", {
+            eventId: admitted.eventId,
+            workId: work.admission.key.workId,
+          }),
+          { stopReason: "toolUse" }
+        );
+      },
+      fauxAssistantMessage("Future thread events will reach this work."),
+    ]);
+    await fixture.triggers().admit(automatic(event), actor);
+    assert.equal((await fixture.settled(event.id)).kind, "done");
+    const followUp = await eventFor(fixture, "next-source-event");
+    const routed = await fixture.triggers().admit(automatic(followUp), actor);
+    assert.ok(routed.route.kind === "teams");
+    assert.deepEqual(
+      routed.route.recipients.map((recipient) => recipient.key),
+      [work.admission.key]
+    );
+  } finally {
+    await fixture.close();
+  }
+});
 
 test("one owned thread routes to two independent works and one work can subscribe to two threads", async () => {
   const fixture = await setup();
@@ -58,32 +113,94 @@ test("one owned thread routes to two independent works and one work can subscrib
     await subscribe(fixture, second.admission.key.workId, seed.id);
     await subscribe(fixture, first.admission.key.workId, other.id);
     const one = await admit(fixture, await eventFor(fixture, "follow-up"));
-    assert.equal(one.route.kind, "teams");
     assert.ok(one.route.kind === "teams");
     assert.deepEqual(
       one.route.recipients.map((recipient) => recipient.key.workId).toSorted(),
       [first.admission.key.workId, second.admission.key.workId].toSorted()
     );
-    assert.equal(one.delivery.kind, "none");
+    assert.equal((await fixture.placement(one.trigger.id)).kind, "routed");
     const two = await admit(
       fixture,
-      await eventFor(
-        fixture,
-        "other-follow-up",
-        "a",
-        other.source.kind === "slack" ? other.source.thread : undefined
-      )
+      await eventFor(fixture, "other-follow-up", "a", other.origin.thread)
     );
     assert.ok(two.route.kind === "teams");
     assert.deepEqual(
       two.route.recipients.map((recipient) => recipient.key.workId),
       [first.admission.key.workId]
     );
-    assert.equal(fixture.eventSubmissions.length, 2);
+    assert.deepEqual(
+      fixture.eventSubmissions.filter(
+        (requestId) =>
+          requestId === one.trigger.id || requestId === two.trigger.id
+      ),
+      []
+    );
     assert.equal(
       fixture.transports.filter((wire) => wire.kind === "event-command").length,
       3
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("start_team from a Slack thread trigger subscribes the work to that thread until unsubscribe_work", async () => {
+  const fixture = await setup();
+  try {
+    const cause = await eventFor(
+      fixture,
+      "thread-cause",
+      "a",
+      undefined,
+      "Ask a team to review the storage choice."
+    );
+    fixture
+      .source("a")
+      .faux.setResponses([
+        fauxAssistantMessage(
+          fauxToolCall("start_team", { goal: "Review the storage choice." }),
+          { stopReason: "toolUse" }
+        ),
+        fauxAssistantMessage("The team is reviewing it."),
+      ]);
+    await fixture.triggers().admit(automatic(cause), actor);
+    await fixture.settled(cause.id);
+    await fixture.waitDispatch();
+    const work = await fixture.work("a");
+    assert.equal(work.humanOperationId, cause.id);
+    const reverse = await fixture
+      .pi()
+      .snapshot(WorkSubscriptions, work.admission.key.workId, context);
+    assert.equal(reverse?.record?.threadKeys.length, 1);
+    const followUp = await admit(
+      fixture,
+      await eventFor(
+        fixture,
+        "thread-follow-up",
+        "a",
+        undefined,
+        "Also check backups."
+      )
+    );
+    assert.ok(followUp.route.kind === "teams");
+    assert.deepEqual(
+      followUp.route.recipients.map((recipient) => recipient.key),
+      [work.admission.key]
+    );
+    const command = fixture.transports.find(
+      (wire) =>
+        wire.kind === "event-command" && wire.event.id === followUp.trigger.id
+    );
+    assert.ok(command?.kind === "event-command");
+    assert.equal(command.command.text, "Also check backups.");
+    assert.deepEqual(command.event.reply, followUp.trigger.reply);
+    await subscribe(fixture, work.admission.key.workId, cause.id, "a", true);
+    const after = await admit(
+      fixture,
+      await eventFor(fixture, "after-unsubscribe", "a")
+    );
+    assert.equal(after.route.kind, "inbox");
+    assert.equal((await fixture.placement(after.trigger.id)).kind, "done");
   } finally {
     await fixture.close();
   }
@@ -100,16 +217,16 @@ test("duplicate admission retains its original recipients after unsubscribe and 
     const first = await admit(fixture, event);
     await subscribe(fixture, work.admission.key.workId, seed.id, "a", true);
     const count = fixture.transports.length;
-    const replay = await fixture.events().admit(automatic(event), actor);
+    const replay = await fixture.triggers().admit(automatic(event), actor);
     assert.deepEqual(replay.route, first.route);
     assert.equal(replay.duplicates, 1);
     assert.equal(fixture.transports.length, count);
     await assert.rejects(
-      fixture.events().admit(
-        Schema.decodeUnknownSync(RoutedEventAdmissionSchema)({
-          version: 2,
-          kind: "event-admission",
-          event,
+      fixture.triggers().admit(
+        Schema.decodeUnknownSync(TriggerAdmissionSchema)({
+          version: 3,
+          kind: "trigger-admission",
+          trigger: event,
           routing: {
             kind: "control",
             workId: work.admission.key.workId,
@@ -131,23 +248,13 @@ test("web chat has no implicit active-work subscription", async () => {
   const fixture = await setup();
   try {
     await start(fixture, "One task continues.");
-    const slack = await eventFor(fixture, "web-operation");
-    const source = {
-      kind: "web" as const,
-      operationId: id.operation("new-topic"),
-    };
-    const event = {
-      ...slack,
-      id: await botEventId(slack.coordinator, source),
-      source,
-      replyTo: { kind: "web" as const, address: slack.coordinator },
-    };
+    const trigger = await fixture.webTrigger("a", "new-topic", "A new topic.");
     const before = fixture.transports.length;
-    const receipt = await admit(fixture, event);
-    assert.equal(receipt.route.kind, "coordinator");
+    const receipt = await admit(fixture, trigger);
+    assert.equal(receipt.route.kind, "inbox");
     assert.equal(fixture.transports.length, before);
     assert.equal(
-      fixture.eventSubmissions.filter((requestId) => requestId === event.id)
+      fixture.eventSubmissions.filter((requestId) => requestId === trigger.id)
         .length,
       1
     );
@@ -223,7 +330,7 @@ test("queued cancellation marks only that recipient not-delivered and remains ex
       { workId: queued.admission.key.workId },
       "cancel-queued"
     );
-    const after = await fixture.events().read(event.id, actor);
+    const after = await fixture.triggers().read(event.id, actor);
     assert.ok(after.route.kind === "teams");
     assert.deepEqual(
       after.route.recipients.find(
@@ -237,8 +344,8 @@ test("queued cancellation marks only that recipient not-delivered and remains ex
       )?.disposition,
       { kind: "admitted" }
     );
-    assert.equal(after.delivery.kind, "none");
-    assert.equal(fixture.eventSubmissions.length, inputs);
+    assert.equal((await fixture.placement(event.id)).kind, "routed");
+    assert.equal(fixture.eventSubmissions.length, inputs + 1);
     assert.equal(
       fixture.transports.some(
         (wire) =>
@@ -248,11 +355,10 @@ test("queued cancellation marks only that recipient not-delivered and remains ex
       false
     );
     await fixture.reopen();
-    const replay = await fixture.events().admit(automatic(event), actor);
+    const replay = await fixture.triggers().admit(automatic(event), actor);
     assert.deepEqual(replay.route, after.route);
-    assert.equal(replay.delivery.kind, "none");
     await assert.rejects(
-      fixture.events().receiveReturn(
+      fixture.triggers().receiveReturn(
         {
           version: 2,
           kind: "event-return",
@@ -269,7 +375,7 @@ test("queued cancellation marks only that recipient not-delivered and remains ex
       .faux.setResponses([
         fauxAssistantMessage("The active recipient returned this event."),
       ]);
-    await fixture.events().receiveReturn(
+    await fixture.triggers().receiveReturn(
       {
         version: 2,
         kind: "event-return",
@@ -279,9 +385,7 @@ test("queued cancellation marks only that recipient not-delivered and remains ex
       },
       actor
     );
-    const returned = await fixture.events().read(event.id, actor);
-    assert.ok(returned.delivery.kind === "coordinator");
-    await fixture.pi().waitForTask(returned.delivery.taskId, context);
+    assert.equal((await fixture.settled(event.id)).kind, "done");
     assert.equal(
       fixture.eventSubmissions.filter((requestId) => requestId === event.id)
         .length,
@@ -306,13 +410,13 @@ test("queued expiry saves not-delivered before clearing commands without creatin
     fixture.advance(1001);
     await fixture.source("a").coordinator.wake();
     await fixture.waitDispatch();
-    const receipt = await fixture.events().read(event.id, actor);
+    const receipt = await fixture.triggers().read(event.id, actor);
     assert.ok(receipt.route.kind === "teams");
     assert.deepEqual(receipt.route.recipients[0]?.disposition, {
       kind: "not-delivered",
       reason: "expired",
     });
-    assert.equal(receipt.delivery.kind, "none");
+    assert.equal((await fixture.placement(event.id)).kind, "routed");
     const expired = await fixture
       .pi()
       .snapshot(WorkDocuments, queued.admission.key.workId, context);
@@ -326,7 +430,7 @@ test("queued expiry saves not-delivered before clearing commands without creatin
       false
     );
     await fixture.reopen();
-    const replay = await fixture.events().admit(automatic(event), actor);
+    const replay = await fixture.triggers().admit(automatic(event), actor);
     assert.deepEqual(replay.route, receipt.route);
     assert.equal(
       fixture.eventSubmissions.filter((requestId) => requestId === event.id)
@@ -542,11 +646,11 @@ test("one recipient transfer limit does not block another recipient's valid even
     assert.deepEqual(command.command.contentDependencies, event.dependencies);
     const explicit = await eventFor(fixture, "explicit-overflow");
     await assert.rejects(
-      fixture.events().admit(
+      fixture.triggers().admit(
         {
-          version: 2,
-          kind: "event-admission",
-          event: { ...explicit, dependencies: event.dependencies },
+          version: 3,
+          kind: "trigger-admission",
+          trigger: { ...explicit, dependencies: event.dependencies },
           routing: {
             kind: "control",
             action: "update",
@@ -584,7 +688,7 @@ test("subscription preparation retries a changed relation instead of admitting a
     );
     assert.equal(fixture.transports.length, count);
     assert.equal(
-      await fixture.pi().snapshot(BotEventReceipts, event.id, context),
+      await fixture.pi().snapshot(Receipts, event.id, context),
       undefined
     );
     const accepted = await admit(fixture, event);
@@ -629,19 +733,18 @@ test("two recipient returns create one coordinator input, preserve authority and
         ),
       ]);
     await Promise.all([
-      fixture.events().receiveReturn(returned(first), actor),
-      fixture.events().receiveReturn(returned(second), actor),
+      fixture.triggers().receiveReturn(returned(first), actor),
+      fixture.triggers().receiveReturn(returned(second), actor),
     ]);
-    const saved = await fixture.events().read(event.id, actor);
-    assert.ok(saved.delivery.kind === "coordinator");
-    await fixture.pi().waitForTask(saved.delivery.taskId, context);
-    const completed = await fixture.events().read(event.id, actor);
+    const completed = await fixture.settled(event.id);
+    assert.equal(completed.kind, "done");
+    const saved = await fixture.triggers().read(event.id, actor);
     assert.equal(
       fixture.eventSubmissions.filter((requestId) => requestId === event.id)
         .length,
       1
     );
-    assert.deepEqual(eventOf(saved), event);
+    assert.deepEqual(saved.trigger, event);
     assert.ok(saved.route.kind === "teams");
     assert.equal(
       saved.route.recipients.filter(
@@ -649,9 +752,8 @@ test("two recipient returns create one coordinator input, preserve authority and
       ).length,
       2
     );
-    await fixture.events().receiveReturn(returned(first), actor);
-    const replay = await fixture.events().read(event.id, actor);
-    assert.deepEqual(replay.delivery, completed.delivery);
+    await fixture.triggers().receiveReturn(returned(first), actor);
+    assert.deepEqual(await fixture.placement(event.id), completed);
     const ledger = await fixture.ledger();
     assert.equal(
       ledger.works[first.admission.key.workId]?.status.kind,
@@ -678,7 +780,7 @@ test("a work that did not receive an event cannot return it", async () => {
     const event = await eventFor(fixture, "follow-up");
     const receipt = await admit(fixture, event);
     await assert.rejects(
-      fixture.events().receiveReturn(
+      fixture.triggers().receiveReturn(
         {
           version: 2,
           kind: "event-return",
@@ -690,8 +792,7 @@ test("a work that did not receive an event cannot return it", async () => {
       ),
       (error: unknown) => error instanceof Denied
     );
-    const saved = await fixture.events().read(event.id, actor);
-    assert.equal(saved.delivery.kind, "none");
+    assert.equal((await fixture.placement(event.id)).kind, "routed");
   } finally {
     await fixture.close();
   }
@@ -735,7 +836,7 @@ test("two bots can explicitly subscribe through one owned thread reference witho
     await subscribe(fixture, first.admission.key.workId, seed.id);
     await subscribe(fixture, second.admission.key.workId, seed.id, "b");
     const sources = await fixture
-      .events()
+      .triggers()
       .listSubscribedBotSources(fixture.source("a").thread, actor);
     assert.deepEqual(
       sources.map((source) => source.agentId).toSorted(),
@@ -772,7 +873,7 @@ test("two bots can explicitly subscribe through one owned thread reference witho
     );
     fixture.revoke("a");
     const eligible = await fixture
-      .events()
+      .triggers()
       .listSubscribedBotSources(fixture.source("a").thread, actor);
     assert.deepEqual(
       eligible.map((source) => source.agentId),
@@ -811,7 +912,7 @@ test("local controls save one exact passive answer with no native submission", a
   const fixture = await setup();
   try {
     const source = fixture.source("a");
-    fixture.setLocalControl((event, action) =>
+    fixture.setLocalAnswer((_trigger, action) =>
       Promise.resolve(async (tx) => {
         const answer = await appendPassiveAnswer(
           tx,
@@ -819,7 +920,7 @@ test("local controls save one exact passive answer with no native submission", a
           `Local ${action} answer.`,
           source.faux.getModel()
         );
-        return { kind: "local-answer", action, answerEntryId: answer.id };
+        return { kind: "local-answer", action, answerEntry: answer.id };
       })
     );
     const event = await eventFor(
@@ -829,17 +930,17 @@ test("local controls save one exact passive answer with no native submission", a
       undefined,
       "status"
     );
-    const input = Schema.decodeUnknownSync(RoutedEventAdmissionSchema)({
-      version: 2,
-      kind: "event-admission",
-      event,
+    const input = Schema.decodeUnknownSync(TriggerAdmissionSchema)({
+      version: 3,
+      kind: "trigger-admission",
+      trigger: event,
       routing: { kind: "local-control", action: "status" },
     });
-    const one = await fixture.events().admit(input, actor);
-    const two = await fixture.events().admit(input, actor);
+    const one = await fixture.triggers().admit(input, actor);
+    const two = await fixture.triggers().admit(input, actor);
     assert.equal(one.route.kind, "local-answer");
     assert.deepEqual(two.route, one.route);
-    assert.equal(one.delivery.kind, "none");
+    assert.equal((await fixture.placement(event.id)).kind, "local-answer");
     assert.equal(fixture.eventSubmissions.length, 0);
     assert.equal(
       await fixture
@@ -853,8 +954,8 @@ test("local controls save one exact passive answer with no native submission", a
     assert.ok(one.route.kind === "local-answer");
     const entries = await source.native.entries(
       {
-        minEntryId: one.route.answerEntryId,
-        maxEntryId: one.route.answerEntryId,
+        minEntryId: one.route.answerEntry,
+        maxEntryId: one.route.answerEntry,
       },
       1,
       undefined,
@@ -862,7 +963,7 @@ test("local controls save one exact passive answer with no native submission", a
     );
     assert.match(JSON.stringify(entries.items), /Local status answer\./u);
     assert.throws(() =>
-      Schema.decodeUnknownSync(RoutedEventAdmissionSchema)({
+      Schema.decodeUnknownSync(TriggerAdmissionSchema)({
         ...input,
         routing: { kind: "local-control", action: "stop" },
       })
@@ -883,7 +984,7 @@ test("command and return receipts recover after reopen without another route or 
     const original = await admit(fixture, event);
     const count = fixture.transports.length;
     await fixture.reopen();
-    const replay = await fixture.events().admit(automatic(event), actor);
+    const replay = await fixture.triggers().admit(automatic(event), actor);
     assert.deepEqual(replay.route, original.route);
     assert.equal(fixture.transports.length, count);
     fixture
@@ -898,15 +999,11 @@ test("command and return receipts recover after reopen without another route or 
       eventId: event.id,
       eventDigest: original.digest,
     };
-    await fixture.events().receiveReturn(returned, actor);
-    const accepted = await fixture.events().read(event.id, actor);
-    assert.ok(accepted.delivery.kind === "coordinator");
-    await fixture.pi().waitForTask(accepted.delivery.taskId, context);
-    const completed = await fixture.events().read(event.id, actor);
+    await fixture.triggers().receiveReturn(returned, actor);
+    const completed = await fixture.settled(event.id);
     await fixture.reopen();
-    await fixture.events().receiveReturn(returned, actor);
-    const restored = await fixture.events().read(event.id, actor);
-    assert.deepEqual(restored.delivery, completed.delivery);
+    await fixture.triggers().receiveReturn(returned, actor);
+    assert.deepEqual(await fixture.placement(event.id), completed);
     assert.equal(
       fixture.eventSubmissions.filter((requestId) => requestId === event.id)
         .length,

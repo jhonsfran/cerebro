@@ -35,9 +35,10 @@ test("two starts in one human turn are independent and replay keeps their admiss
     assert.equal(ids.length, 2);
     assert.equal(new Set(ids).size, 2);
     assert.equal(f.delivered.length, 2);
+    const cause = await f.webTrigger("a", "same-turn");
     assert.ok(
       Object.values(initial.works).every(
-        (record) => record.humanOperationId === "same-turn"
+        (record) => record.humanOperationId === cause.id
       )
     );
     f.setPinVersion(2);

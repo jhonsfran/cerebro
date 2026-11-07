@@ -4,9 +4,9 @@ import { test } from "node:test";
 
 import { Schema } from "effect";
 
+import { inputText } from "../../../packages/contracts/src/triggers.ts";
 import { TeamReportDeliverySchema } from "../../../packages/contracts/src/work.ts";
-import { coordinatorReportEvent } from "../../../packages/runtime/src/coordinator-event-content.ts";
-import { botEventInput } from "../../../packages/runtime/src/coordinator-event-input.ts";
+import { reportTriggerIn } from "../../../packages/runtime/src/coordinator-event-content.ts";
 import { TeamState } from "../../../packages/runtime/src/team-state.ts";
 import { context, setup, start } from "../../runtime/subscription-fixture.ts";
 import { teamProvenanceFixture } from "../../runtime/team-provenance-fixture.ts";
@@ -75,9 +75,11 @@ test("queue matching uses complete work identity and the canonical digest of a r
         matchingWorkReport(queue, work.admission, "another-report"),
         undefined
       );
-      const event = await coordinatorReportEvent(work, completed.report);
+      const trigger = await source
+        .pi()
+        .commit((tx) => reportTriggerIn(tx, work, completed.report), context);
       const expected = createHash("sha256")
-        .update(botEventInput(event))
+        .update(inputText(trigger))
         .digest("hex");
       assert.equal(await reportInputDigest(delivery), expected);
     } finally {

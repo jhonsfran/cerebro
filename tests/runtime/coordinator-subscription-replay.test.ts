@@ -380,16 +380,15 @@ test("a rejected native commit rolls back both subscription directions and the r
     await admit(fixture, seed);
     const args = { workId: work.admission.key.workId, eventId: seed.id };
     const source = fixture.source("a");
-    assert.ok(seed.source.kind === "slack");
     const key = await digestToolArguments([
       source.address.organizationId,
       source.ownerPrincipalId,
       source.address.agentId,
       source.address.conversationId,
       source.address.sessionId,
-      seed.source.thread.workspaceId,
-      seed.source.thread.channelId,
-      seed.source.thread.rootTimestamp,
+      seed.origin.thread.workspaceId,
+      seed.origin.thread.channelId,
+      seed.origin.thread.rootTimestamp,
     ]);
     const before = await fixture
       .pi()

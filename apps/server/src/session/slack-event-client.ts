@@ -1,8 +1,8 @@
 import type { ChannelOptions } from "@cerebro/channels/types";
-import { BotEventAddressSchema } from "@cerebro/contracts/bot-events";
 import type { EventAddress } from "@cerebro/contracts/events";
 import { Denied, Unavailable } from "@cerebro/contracts/failures";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
+import { EventAddressSchema } from "@cerebro/contracts/work";
 import { Schema } from "effect";
 
 import type { WorkerEnv } from "../bindings";
@@ -83,7 +83,7 @@ export const createSlackEventClient = (
   return {
     discover: async ({ context, thread }) =>
       Schema.decodeUnknownSync(
-        Schema.Array(BotEventAddressSchema).check(Schema.isMaxLength(18))
+        Schema.Array(EventAddressSchema).check(Schema.isMaxLength(18))
       )(await request(context, { thread })),
     admit: async ({ context, address, eventKey }) =>
       Schema.decodeUnknownSync(reference)(

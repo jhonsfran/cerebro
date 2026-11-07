@@ -2,37 +2,6 @@
 import { AgentDoc, InboxDoc, LiveDoc } from "@earendil-works/pi-durable";
 import type { ConversationId, Cursor, Tx } from "@earendil-works/pi-durable";
 
-import { BotEventQueue, BotEventReceipts } from "./coordinator-event-state.ts";
-
-export const oldestHeldEventIn = async (
-  tx: Tx,
-  root: ConversationId
-): Promise<string | null> => {
-  const queue = await tx.doc(BotEventQueue);
-  let oldest: { id: string; sequence: number } | undefined;
-  for (const [id, item] of Object.entries(queue.pending)) {
-    if (item.nativeId !== root) {
-      continue;
-    }
-    const saved = await tx.doc(BotEventReceipts, id, null);
-    const { receipt } = saved;
-    if (
-      receipt?.delivery.kind !== "coordinator" ||
-      receipt.delivery.admission.kind !== "held"
-    ) {
-      continue;
-    }
-    const task = await tx.task(receipt.delivery.taskId);
-    if (!task || task.abortRequested || task.state.status === "terminal") {
-      continue;
-    }
-    if (!oldest || receipt.sequence < oldest.sequence) {
-      oldest = { id, sequence: receipt.sequence };
-    }
-  }
-  return oldest?.id ?? null;
-};
-
 export const ownedConversationsIn = async (
   tx: Tx,
   root: ConversationId
@@ -68,7 +37,6 @@ export const nativeDrainIn = async (
         page.items.some(
           (task) =>
             task.state.status !== "terminal" &&
-            task.kind !== "cerebro.bot-event-delivery" &&
             task.kind !== "cerebro.coordinator-reply"
         )
       ) {
@@ -85,21 +53,6 @@ export const nativeDrainIn = async (
       live.compactions?.length ||
       live.tools?.some((tool) => tool.status !== "done") ||
       live.nestedTools?.some((tool) => tool.status !== "done")
-    ) {
-      return false;
-    }
-  }
-  const queue = await tx.doc(BotEventQueue);
-  for (const [key, item] of Object.entries(queue.pending)) {
-    if (item.nativeId !== root) {
-      continue;
-    }
-    const document = await tx.doc(BotEventReceipts, key, null);
-    const delivery = document.receipt?.delivery;
-    if (
-      delivery?.kind === "coordinator" &&
-      (delivery.admission.kind === "claimed" ||
-        delivery.admission.kind === "submitted")
     ) {
       return false;
     }

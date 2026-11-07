@@ -17,24 +17,26 @@ import {
 } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import type { JsonObject } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import { openNodeSqliteStorage } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/storage/sqlite/node.js";
-import { BotEventReceipts } from "../../packages/runtime/src/coordinator-event-state.ts";
 import {
   WorkDocuments,
   WorkLedger,
 } from "../../packages/runtime/src/coordinator-ledger.ts";
+import { Replies } from "../../packages/runtime/src/replies.ts";
+import { ReminderOrigins } from "../../packages/runtime/src/saved-timer-state.ts";
+import { Receipts } from "../../packages/runtime/src/triggers.ts";
 import { context, eventFor, setup } from "./subscription-fixture.ts";
 
-test("a v2 event receipt is rejected instead of migrated", async () => {
+test("a pre-cutover v3 event receipt is rejected instead of read as a trigger receipt", async () => {
   const fixture = await setup();
   try {
     const event = await eventFor(fixture, "old-event");
     const digest = await digestToolArguments(event);
     const nativeId = fixture.source("a").native.id;
     const previous = defineDocFamily({
-      kind: BotEventReceipts.definition.kind,
+      kind: Receipts.definition.kind,
       scope: "session",
       family: true,
-      version: 2,
+      version: 3,
       initial: (_seed: null): { receipt: JsonObject | null } => ({
         receipt: null,
       }),
@@ -56,8 +58,56 @@ test("a v2 event receipt is rejected instead of migrated", async () => {
       };
     }, context);
     await assert.rejects(
-      fixture.pi().snapshot(BotEventReceipts, event.id, context),
-      /Unsupported coordinator event version/u
+      fixture.pi().snapshot(Receipts, event.id, context),
+      /Unsupported trigger receipt version/u
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("pre-cutover reply records and reminder origins are rejected instead of migrated", async () => {
+  const fixture = await setup();
+  try {
+    const nativeId = fixture.source("a").native.id;
+    const previousReply = defineDocFamily({
+      kind: Replies.definition.kind,
+      scope: "session",
+      family: true,
+      version: 1,
+      initial: (_seed: null): { record: JsonObject | null } => ({
+        record: null,
+      }),
+    });
+    const previousOrigin = defineDocFamily({
+      kind: ReminderOrigins.definition.kind,
+      scope: "conversation",
+      history: "latest",
+      fork: "initial",
+      family: true,
+      version: 1,
+      initial: (_seed: null): { record: JsonObject | null } => ({
+        record: null,
+      }),
+    });
+    await fixture.pi().commit(async (tx) => {
+      const reply = await tx.doc(previousReply, "old-reply", null);
+      reply.record = { eventId: "old-reply", text: "old" };
+      const origin = await tx.doc(
+        previousOrigin,
+        nativeId,
+        "old-reminder",
+        null
+      );
+      origin.record = { creatingEventId: null, reply: { kind: "web" } };
+    }, context);
+    await assert.rejects(
+      fixture.pi().snapshot(Replies, "old-reply", context),
+      /Unsupported coordinator reply version/u
+    );
+    await assert.rejects(
+      fixture.pi().snapshot(ReminderOrigins, nativeId, "old-reminder", context),
+      /Unsupported reminder origin version/u
     );
   } finally {
     await fixture.close();

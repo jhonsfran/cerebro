@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 
-import { BotEventSchema } from "./bot-events.ts";
 import { canonicalToolArguments } from "./tools.ts";
+import { TriggerSchema } from "./triggers.ts";
 import {
   TeamCommandSchema,
   TeamReportDeliverySchema,
@@ -11,10 +11,10 @@ import {
 } from "./work.ts";
 
 export const TeamEventMetadataSchema = Schema.Struct({
-  id: BotEventSchema.fields.id,
+  id: TriggerSchema.fields.id,
   digest: Schema.NonEmptyString.check(Schema.isMaxLength(512)),
-  source: BotEventSchema.fields.source,
-  replyTo: BotEventSchema.fields.replyTo,
+  origin: TriggerSchema.fields.origin,
+  reply: TriggerSchema.fields.reply,
 });
 export const TeamEventCommandSchema = Schema.Struct({
   version: Schema.Literal(2),
@@ -42,12 +42,12 @@ export const TeamEventReturnSchema = Schema.Struct({
   version: Schema.Literal(2),
   kind: Schema.Literal("event-return"),
   work: WorkAdmissionSchema,
-  eventId: BotEventSchema.fields.id,
+  eventId: TriggerSchema.fields.id,
   eventDigest: TeamEventMetadataSchema.fields.digest,
 });
 export type TeamEventReturn = typeof TeamEventReturnSchema.Type;
 export const TeamEventReturnReceiptSchema = Schema.Struct({
-  eventId: BotEventSchema.fields.id,
+  eventId: TriggerSchema.fields.id,
   key: WorkKeySchema,
   accepted: Schema.Boolean,
 });

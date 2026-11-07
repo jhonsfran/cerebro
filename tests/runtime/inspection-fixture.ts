@@ -10,9 +10,9 @@ import { createSourceDependencyStore } from "../../packages/runtime/src/content-
 import { Bindings } from "../../packages/runtime/src/conversation-bindings.ts";
 import { readConversationInspection } from "../../packages/runtime/src/conversation-inspection.ts";
 import type { InspectionAccess } from "../../packages/runtime/src/conversation-inspection.ts";
-import { BotEventReceipts } from "../../packages/runtime/src/coordinator-event-state.ts";
 import { WorkDocuments } from "../../packages/runtime/src/coordinator-ledger.ts";
 import { scanInspectionKeys } from "../../packages/runtime/src/inspection-page.ts";
+import { Receipts } from "../../packages/runtime/src/triggers.ts";
 import { context, setup } from "./coordinator-fixture.ts";
 
 const unavailableTeam = () =>
@@ -49,7 +49,6 @@ export const inspectionFixture = async () => {
       agentVersion: 7,
       nativeId: source.native.id,
       refresh: null,
-      releaseEvent: null,
     };
     return createSourceDependencyStore(
       storage,
@@ -96,12 +95,7 @@ export const inspectionFixture = async () => {
   let eventScanner: Parameters<
     typeof readConversationInspection
   >[0]["scanEventKeys"] = (cursor) =>
-    scanInspectionKeys(
-      pi,
-      fixture.storage(),
-      BotEventReceipts.definition.kind,
-      cursor
-    );
+    scanInspectionKeys(pi, fixture.storage(), Receipts.definition.kind, cursor);
   return {
     fixture,
     source,

@@ -186,8 +186,8 @@ test(
         events.events.filter(
           (event) =>
             event.id === expectedEvent.id &&
-            event.source === "teamreport" &&
-            event.outcome === "done"
+            event.channel === "teamreport" &&
+            event.placement === "done"
         ).length,
         1
       );

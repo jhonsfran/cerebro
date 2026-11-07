@@ -4,28 +4,29 @@ import { test } from "node:test";
 
 import { Schema } from "effect";
 
-import {
-  BotEventSchema,
-  botEventId,
-} from "../../packages/contracts/src/bot-events.ts";
-import { EventAdmissionSchema } from "../../packages/contracts/src/bot-routing.ts";
 import { Denied, InvalidInput } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
 import { InspectionQuery } from "../../packages/contracts/src/inspection.ts";
 import { digestToolArguments } from "../../packages/contracts/src/tools.ts";
+import {
+  TriggerAdmissionSchema,
+  TriggerOriginSchema,
+  TriggerSchema,
+  triggerId,
+} from "../../packages/contracts/src/triggers.ts";
 import { WorkIdSchema } from "../../packages/contracts/src/work.ts";
 import {
   Bindings,
   ProfileChanged,
 } from "../../packages/runtime/src/conversation-bindings.ts";
-import { BotEventReceipts } from "../../packages/runtime/src/coordinator-event-state.ts";
 import {
   WorkDocuments,
   RecentTerminalWork,
 } from "../../packages/runtime/src/coordinator-ledger.ts";
-import { CoordinatorReplies } from "../../packages/runtime/src/coordinator-replies.ts";
 import { ImportedContent } from "../../packages/runtime/src/imported-content.ts";
 import { inspectionCursor } from "../../packages/runtime/src/inspection-page.ts";
+import { Replies } from "../../packages/runtime/src/replies.ts";
+import { Receipts } from "../../packages/runtime/src/triggers.ts";
 import { context } from "./coordinator-fixture.ts";
 import { inspectionFixture } from "./inspection-fixture.ts";
 
@@ -302,49 +303,54 @@ test("Inspector projects retained event routes and reply retries without stored 
   const subject = await inspectionFixture();
   const { fixture, source } = subject;
   try {
-    const origin = {
-      kind: "savedtimer" as const,
-      scheduleId: "inspection-timer",
-      occurrenceId: "first",
-    };
-    const event = Schema.decodeUnknownSync(BotEventSchema)({
-      version: 1,
-      id: await botEventId(source.address, origin),
-      source: origin,
-      coordinator: source.address,
+    const origin = Schema.decodeUnknownSync(TriggerOriginSchema)({
+      kind: "slack",
+      eventId: "inspection-slack",
+      thread: source.thread,
+    });
+    const destination = {
+      kind: "slack" as const,
+      authority: {
+        appId: "app-A",
+        eventId: "inspection-slack",
+        userId: "slack-A",
+        thread: source.thread,
+      },
       ownerPrincipalId: source.ownerPrincipalId,
-      replyTo: null,
-      content: { text: "hidden-event-content-marker", reference: null },
+      source: source.address,
+    };
+    const trigger = Schema.decodeUnknownSync(TriggerSchema)({
+      version: 2,
+      id: await triggerId(source.address, origin),
+      address: source.address,
+      ownerPrincipalId: source.ownerPrincipalId,
+      origin,
+      text: "hidden-event-content-marker",
+      reference: null,
+      reply: destination,
       dependencies: { sourceIds: [], toolIds: ["event-tool"] },
     });
-    const input = Schema.decodeUnknownSync(EventAdmissionSchema)({
-      version: 2,
-      kind: "event-admission",
-      event,
+    const input = Schema.decodeUnknownSync(TriggerAdmissionSchema)({
+      version: 3,
+      kind: "trigger-admission",
+      trigger,
       routing: { kind: "automatic" },
     });
     const digest = await digestToolArguments(input);
-    const entry = await fixture.pi().commit(async (tx) => {
-      const saved = await tx.doc(BotEventReceipts, event.id, null);
+    await fixture.pi().commit(async (tx) => {
+      const saved = await tx.doc(Receipts, trigger.id, null);
       saved.receipt = {
-        input,
+        trigger,
         digest,
         nativeId: source.native.id,
-        sequence: 1,
         duplicates: 3,
-        route: { kind: "teams", recipients: [], skipped: [] },
-        delivery: { kind: "none" },
+        route: { kind: "inbox", skipped: [] },
       };
-      const answer = await tx.appendEntry(source.native.id, {
-        kind: "display.answer",
-        data: { text: "hidden-answer-marker" },
-      });
-      const reply = await tx.doc(CoordinatorReplies, event.id, null);
+      const reply = await tx.doc(Replies, trigger.id, null);
       reply.record = {
-        eventId: event.id,
-        source: source.address,
-        answerEntryId: answer.id,
-        destination: null,
+        triggerId: trigger.id,
+        nativeId: source.native.id,
+        destination,
         dependencies: { sourceIds: [], toolIds: ["reply-tool"] },
         key: "hidden-delivery-key",
         text: "hidden-reply-text-marker",
@@ -357,22 +363,20 @@ test("Inspector projects retained event routes and reply retries without stored 
         attempts: 2,
         until: 5678,
       };
-      return answer;
     }, context);
     const frame = await subject.read({ kind: "events" });
     assert.ok(frame.kind === "events");
     assert.deepEqual(frame.events, [
       {
-        id: event.id,
-        source: "savedtimer",
-        route: "teams",
+        id: trigger.id,
+        channel: "slack",
+        actor: "human",
+        route: "inbox",
         duplicates: 3,
-        admission: "none",
-        outcome: null,
+        placement: "withdrawn",
         workIds: [],
         returns: [],
         reply: {
-          answerEntryId: String(entry.id),
           taskId: null,
           state: "retry",
           attempts: 2,

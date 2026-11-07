@@ -6,7 +6,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 
-import { teamMessage } from "./persistent-responses.mjs";
+import { teamMessage, withReply } from "./persistent-responses.mjs";
 
 export const boundaries = ["before-tool-dispatch", "after-tool-dispatch"];
 const canonical = (value) => {
@@ -569,9 +569,13 @@ export const createFixture = async ({
     if (response.destroyed) {
       return;
     }
-    const message =
+    const message = withReply(
+      input,
+      operationId,
+      purpose,
       teamMessage(input, operationId, purpose) ??
-      defaultMessage(request, input, purpose, operationId);
+        defaultMessage(request, input, purpose, operationId)
+    );
     const tool = Boolean(message.tool_calls?.length);
     const base = {
       created: 1,

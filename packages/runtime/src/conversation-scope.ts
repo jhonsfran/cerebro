@@ -41,10 +41,8 @@ import {
 import type { ProfileIdentity } from "./conversation-bindings.ts";
 import {
   nativeDrainIn,
-  oldestHeldEventIn,
   selectedRegistrationsIn,
 } from "./conversation-drain.ts";
-import { createConversationEventScope } from "./conversation-event-scope.ts";
 import { createNativeOperations } from "./conversation-native-operations.ts";
 import { observeConversation } from "./conversation-observation.ts";
 import {
@@ -59,16 +57,18 @@ import { conversationProvider } from "./conversation-provider.ts";
 import { createReminderSerialization } from "./conversation-reminders.ts";
 import { createConversationResources } from "./conversation-resources.ts";
 import { conversationSnapshot } from "./conversation-snapshot.ts";
-import type { BotEventScope, CoordinatorEvents } from "./coordinator-events.ts";
 import type { ScanWorkKeys } from "./coordinator-history.ts";
 import { sameWorkSource, CoordinatorAdmissions } from "./coordinator-ledger.ts";
-import type { CoordinatorReplyOutbox } from "./coordinator-replies.ts";
 import { piContext, snapshotToolIds } from "./pi-harness.ts";
+import { profileReplyScope } from "./replies.ts";
+import type { ReplyOutbox, ReplyScope } from "./replies.ts";
 import { submitSavedTimer } from "./saved-timer-submit.ts";
 import type {
   MetadataTransaction,
   SessionHostConfiguration,
 } from "./session-agent.ts";
+import { profileTriggerScope } from "./triggers.ts";
+import type { TriggerScope, Triggers } from "./triggers.ts";
 
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
@@ -103,8 +103,8 @@ export interface ConversationScopeServices {
     readonly deleteProvider: (id: string) => void;
     readonly uninstall: (extension: Extension) => void;
   };
-  readonly events: CoordinatorEvents;
-  readonly replies?: CoordinatorReplyOutbox;
+  readonly triggers: Triggers;
+  readonly replies: ReplyOutbox;
   readonly scanWorkKeys: ScanWorkKeys;
   readonly jobs: LifecycleJobs;
   readonly install: (extension: Extension) => void;
@@ -128,7 +128,7 @@ export class ConversationScope {
   private unavailable = false;
   private readonly profiles = new Map<string, ConversationProfile>();
   private readonly nativeOperations: ReturnType<typeof createNativeOperations>;
-  private advancing: Promise<void> | undefined;
+  private advancing: Promise<"open" | "waiting"> | undefined;
 
   private get profile(): ConversationProfile {
     if (this.unavailable || !this.current) {
@@ -182,7 +182,7 @@ export class ConversationScope {
         submitSavedTimer({
           pi: services.pi,
           nativeId: native.id,
-          events: services.events,
+          triggers: services.triggers,
           current: () => this.profile,
           occurrence,
         }),
@@ -432,33 +432,29 @@ export class ConversationScope {
     }
   }
 
-  async advancePublication(eventId: string): Promise<boolean> {
+  /**
+   * The publication gate. "open": the bound definition is current and the next placement may run under it.
+   * "waiting": a newer definition is published and Pi has not drained, so inputs stay in the backlog.
+   */
+  async advancePublication(): Promise<"open" | "waiting"> {
     if (!this.services.publication) {
-      return true;
+      return "open";
     }
-    this.advancing ??= this.advance(eventId);
+    this.advancing ??= this.advance();
     const { advancing } = this;
     try {
-      await advancing;
+      return await advancing;
     } finally {
       if (this.advancing === advancing) {
         this.advancing = undefined;
       }
     }
-    const bindings = await this.services.pi.snapshot(Bindings, piContext());
-    const binding =
-      bindings?.conversations[this.runtime.configuration.address.sessionId];
-    return (
-      !!binding &&
-      !binding.refresh &&
-      (!binding.releaseEvent || binding.releaseEvent === eventId)
-    );
   }
 
-  private async advance(_eventId: string): Promise<void> {
+  private async advance(): Promise<"open" | "waiting"> {
     const { publication } = this.services;
     if (!publication) {
-      return;
+      return "open";
     }
     const { address } = this.runtime.configuration;
     const initialBindings = await this.services.pi.snapshot(
@@ -467,34 +463,20 @@ export class ConversationScope {
     );
     let binding = initialBindings?.conversations[address.sessionId];
     if (!binding) {
-      return;
+      return "open";
     }
-    if (binding.releaseEvent) {
+    const latest = await publication.resolve("latest");
+    const wanted: ProfileIdentity = { agentVersion: latest.agent.version };
+    const stale = binding.refresh
+      ? wanted.agentVersion > binding.refresh.agentVersion
+      : !sameProfile(binding, wanted);
+    if (stale) {
+      const observed = binding;
       await this.services.pi.commit(async (tx) => {
         const bindings = await tx.doc(Bindings);
         const current = bindings.conversations[address.sessionId];
-        if (current?.releaseEvent) {
-          current.releaseEvent = await oldestHeldEventIn(tx, this.native.id);
-        }
-      }, piContext());
-      return;
-    }
-    if (!binding.refresh) {
-      const latest = await publication.resolve("latest");
-      const target: ProfileIdentity = { agentVersion: latest.agent.version };
-      if (sameProfile(binding, target)) {
-        return;
-      }
-      await this.services.pi.commit(async (tx) => {
-        const bindings = await tx.doc(Bindings);
-        const current = bindings.conversations[address.sessionId];
-        if (
-          current &&
-          !current.refresh &&
-          !current.releaseEvent &&
-          !sameProfile(current, target)
-        ) {
-          current.refresh = target;
+        if (current && sameProfile(current, observed)) {
+          current.refresh = wanted;
         }
       }, piContext());
       const frozenBindings = await this.services.pi.snapshot(
@@ -505,7 +487,7 @@ export class ConversationScope {
     }
     const target = binding?.refresh;
     if (!target) {
-      return;
+      return "open";
     }
     const candidate = await this.prepareTarget(target);
     const activated = await this.services.pi.commit(async (tx) => {
@@ -526,36 +508,36 @@ export class ConversationScope {
       ) {
         return false;
       }
-      const releaseEvent = await oldestHeldEventIn(tx, this.native.id);
       await configure(tx, this.native.id, candidate.registration.agent);
       current.agentVersion = target.agentVersion;
       current.refresh = null;
-      current.releaseEvent = releaseEvent;
       return true;
     }, piContext());
-    if (activated) {
-      await publication.reconcile(target.agentVersion);
-      const selected = await this.services.pi.commit(
-        (tx) => selectedRegistrationsIn(tx, this.native.id),
-        piContext()
-      );
-      for (const [key, profile] of this.profiles) {
-        if (
-          profile === this.current ||
-          profile.registration.extensions.some((extension) =>
-            selected.has(extension.name)
-          ) ||
-          selected.has(profile.registration.provider.id)
-        ) {
-          continue;
-        }
-        for (const extension of profile.registration.extensions) {
-          publication.uninstall(extension);
-        }
-        publication.deleteProvider(profile.registration.provider.id);
-        this.profiles.delete(key);
-      }
+    if (!activated) {
+      return "waiting";
     }
+    await publication.reconcile(target.agentVersion);
+    const selected = await this.services.pi.commit(
+      (tx) => selectedRegistrationsIn(tx, this.native.id),
+      piContext()
+    );
+    for (const [key, profile] of this.profiles) {
+      if (
+        profile === this.current ||
+        profile.registration.extensions.some((extension) =>
+          selected.has(extension.name)
+        ) ||
+        selected.has(profile.registration.provider.id)
+      ) {
+        continue;
+      }
+      for (const extension of profile.registration.extensions) {
+        publication.uninstall(extension);
+      }
+      publication.deleteProvider(profile.registration.provider.id);
+      this.profiles.delete(key);
+    }
+    return "open";
   }
 
   async restore(): Promise<void> {
@@ -563,14 +545,24 @@ export class ConversationScope {
     await this.coordination.restore();
   }
 
-  async eventScope(): Promise<BotEventScope> {
+  async triggerScope(): Promise<TriggerScope> {
     const { profile } = this;
-    return await createConversationEventScope(profile, {
+    return await profileTriggerScope(profile, {
       native: this.native,
-      replies: this.services.replies,
-      publication: !!this.services.publication,
       isCurrent: () => this.current === profile && !this.unavailable,
-      advancePublication: (eventId) => this.advancePublication(eventId),
+      gate: () => this.advancePublication(),
+    });
+  }
+
+  replyScope(): ReplyScope {
+    const { profile } = this;
+    return profileReplyScope({
+      runtime: profile.runtime,
+      requireCurrent: () => {
+        if (this.current !== profile || this.unavailable) {
+          throw new ProfileChanged();
+        }
+      },
     });
   }
 
@@ -632,7 +624,7 @@ export class ConversationScope {
           snapshot = await conversationSnapshot(
             {
               pi: this.services.pi,
-              events: this.services.events,
+              triggers: this.services.triggers,
               native: this.native,
             },
             watch.value,
@@ -691,11 +683,10 @@ export class ConversationScope {
         const stopped = await this.nativeOperations.run(
           (active) => active.runtime.authorize(context, "stop", request.signal),
           async () => {
-            const [value] = await Promise.all([
-              this.services.harness.abort({ session: String(this.native.id) }),
-              this.services.events.abortPending(this.native.id),
-            ]);
-            return value;
+            await this.services.triggers.withdraw(this.native.id);
+            return await this.services.harness.abort({
+              session: String(this.native.id),
+            });
           },
           false,
           request.signal
@@ -737,7 +728,7 @@ export class ConversationScope {
           });
         }
         return Response.json(
-          await this.services.events.receiveReturn(delivery, context)
+          await this.services.triggers.receiveReturn(delivery, context)
         );
       }
       if (path === "/send") {

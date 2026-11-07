@@ -28,7 +28,6 @@ export interface ConversationBinding extends JsonObject, ProfileIdentity {
   address: { [Key in keyof EventAddress]: EventAddress[Key] };
   nativeId: ConversationId;
   refresh: ProfileIdentity | null;
-  releaseEvent: string | null;
 }
 export const Bindings = defineDoc({
   initial: (): { conversations: Record<string, ConversationBinding> } => ({
@@ -36,7 +35,7 @@ export const Bindings = defineDoc({
   }),
   kind: "cerebro.conversation-bindings",
   scope: "session",
-  version: 4,
+  version: 5,
   migrate: (): { conversations: Record<string, ConversationBinding> } => {
     throw new Error("Unsupported conversation bindings version.");
   },

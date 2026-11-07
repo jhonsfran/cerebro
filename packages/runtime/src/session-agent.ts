@@ -1,5 +1,4 @@
 import type { AuthorityService } from "@cerebro/contracts/authority-service";
-import type { EventAdmission } from "@cerebro/contracts/bot-routing";
 import type { EventAddress } from "@cerebro/contracts/events";
 import {
   Denied,
@@ -18,6 +17,10 @@ import type {
   ContentDependencies,
 } from "@cerebro/contracts/session";
 import type { ToolExecutor } from "@cerebro/contracts/tool-service";
+import type {
+  ReplyPorts,
+  TriggerAdmissionInput,
+} from "@cerebro/contracts/triggers";
 import type { SlackThread } from "@cerebro/contracts/work";
 import { createModels } from "@earendil-works/pi-ai/models";
 import type { MutableModels } from "@earendil-works/pi-ai/models";
@@ -44,19 +47,8 @@ import type { InspectionAccess } from "./conversation-inspection.ts";
 import { ReminderPayload } from "./conversation-reminders.ts";
 import { ConversationScope } from "./conversation-scope.ts";
 import { terminalNoticeIn } from "./coordinator-event-content.ts";
-import { eventOf } from "./coordinator-event-state.ts";
-import {
-  BotEventReceipts,
-  createCoordinatorEvents,
-} from "./coordinator-events.ts";
-import type { CoordinatorEvents } from "./coordinator-events.ts";
 import type { ScanWorkKeys } from "./coordinator-history.ts";
 import { WorkDocuments } from "./coordinator-ledger.ts";
-import { createCoordinatorReplies } from "./coordinator-replies.ts";
-import type {
-  CoordinatorReplyOutbox,
-  EventReplyServices,
-} from "./coordinator-replies.ts";
 import { wakeCoordinatorJob } from "./coordinator-work.ts";
 import type { CoordinationServices } from "./coordinator-work.ts";
 import { readImportedContent } from "./imported-content.ts";
@@ -64,6 +56,10 @@ import { scanInspectionKeys } from "./inspection-page.ts";
 import { piContext } from "./pi-harness.ts";
 import type { ControlledProviderConfiguration } from "./pi-provider.ts";
 import type { PiToolConfiguration, PiRegisteredTool } from "./pi-tools.ts";
+import { createReplies } from "./replies.ts";
+import type { ReplyOutbox } from "./replies.ts";
+import { Receipts, createTriggers } from "./triggers.ts";
+import type { Triggers } from "./triggers.ts";
 
 export interface DefinitionSelection {
   readonly version: number | "latest";
@@ -84,10 +80,10 @@ export type ResolvedSessionRequest =
       readonly kind: "owned-event";
       readonly address: EventAddress;
       readonly context: ExecutionContext;
-      readonly admission: EventAdmission;
+      readonly admission: TriggerAdmissionInput;
     };
 export interface SessionHostConfiguration {
-  readonly eventReplies?: EventReplyServices;
+  readonly replyPorts?: ReplyPorts;
   readonly contentState?: ReturnType<typeof createSourceDependencyStore>;
   readonly reconcileVersion?: (version: number) => Promise<void>;
   readonly address: EventAddress;
@@ -123,8 +119,8 @@ export interface SessionHostConfiguration {
 interface NativeHost {
   readonly store: Storage;
   restoring: boolean;
-  readonly events: CoordinatorEvents;
-  readonly replies: CoordinatorReplyOutbox;
+  readonly triggers: Triggers;
+  readonly replies: ReplyOutbox;
   readonly scanWorkKeys: ScanWorkKeys;
   readonly pi: Harness;
   readonly models: MutableModels;
@@ -184,7 +180,7 @@ export class SessionAgent<
           registry,
           settings: {
             extensions: [],
-            followUpMode: "one-at-a-time",
+            followUpMode: "all",
             stream: { maxRetries: 0, transport: "sse" },
           },
         },
@@ -203,15 +199,17 @@ export class SessionAgent<
         registry,
         scanWorkKeys,
         restoring: true,
-        replies: createCoordinatorReplies({
+        replies: createReplies({
           pi,
           persist: () => this.ctx.storage.sync(),
-          resolve: (address) => this.botEventScope(address, host),
+          resolve: async (address) => {
+            const scope = await this.boundScope(address, host);
+            return scope.replyScope();
+          },
           waitUntil,
         }),
-        events: createCoordinatorEvents({
+        triggers: createTriggers({
           pi,
-          holdReplies: () => host.replies.hold(),
           targetIn: async (tx, address) => {
             const bindings = await tx.doc(Bindings);
             const binding = bindings.conversations[address.sessionId];
@@ -220,21 +218,18 @@ export class SessionAgent<
             }
             return binding;
           },
-          resolve: (address) => this.botEventScope(address, host),
+          resolve: async (address) => {
+            const scope = await this.boundScope(address, host);
+            return await scope.triggerScope();
+          },
           scan: (cursor) =>
-            scanInspectionKeys(
-              pi,
-              storage,
-              BotEventReceipts.definition.kind,
-              cursor
-            ),
+            scanInspectionKeys(pi, storage, Receipts.definition.kind, cursor),
           waitUntil,
         }),
       };
-      const { events } = host;
       registry.install({
         name: "cerebro.bot-events",
-        tasks: [events.definition, host.replies.definition],
+        tasks: [host.replies.definition],
       });
       const resetFailedIdentity = async () => {
         const end = await pi.closed;
@@ -267,7 +262,13 @@ export class SessionAgent<
           await scope.restore();
         }
         this.active = host;
-        await events.restore();
+        waitUntil(
+          host.triggers.drainAll(
+            Object.values(bindings?.conversations ?? {}).map(
+              (binding) => binding.nativeId
+            )
+          )
+        );
         await host.replies.hold();
         return pi;
       } catch (error) {
@@ -345,14 +346,13 @@ export class SessionAgent<
     }
   }
 
-  private async botEventScope(address: EventAddress, host: NativeHost) {
+  private async boundScope(address: EventAddress, host: NativeHost) {
     const bindings = await host.pi.snapshot(Bindings, piContext());
-    const scope = await this.openScope(
+    return await this.openScope(
       address,
       host,
       bindings?.conversations[address.sessionId]
     );
-    return await scope.eventScope();
   }
 
   private async createScope(
@@ -411,7 +411,7 @@ export class SessionAgent<
           uninstall: (extension) => host.registry.uninstall(extension),
         },
         harness: this.harness,
-        events: host.events,
+        triggers: host.triggers,
         replies: host.replies,
         install: (extension) => host.registry.install(extension),
         jobs: this.lifecycle.jobs,
@@ -454,7 +454,6 @@ export class SessionAgent<
               address: { ...address },
               agentVersion: configuration.agent.version,
               refresh: null,
-              releaseEvent: null,
               nativeId: created.id,
             };
             return created.id;
@@ -542,18 +541,20 @@ export class SessionAgent<
               return coordination;
             },
             terminalNoticeIn: this.active
-              ? terminalNoticeIn(this.active.events)
+              ? terminalNoticeIn(this.active.triggers)
               : undefined,
           });
-          const pending = await this.active?.events.wake(binding.nativeId);
+          const waiting =
+            (await this.active?.triggers.drain(binding.nativeId)) === "waiting";
           const pendingReplies = await this.active?.replies.hold(
             binding.nativeId
           );
-          return pending || pendingReplies
+          const delay = waiting ? 1000 : 5000;
+          return waiting || pendingReplies
             ? {
                 rescheduleAt: Math.min(
                   typeof outcome === "object" ? outcome.rescheduleAt : Infinity,
-                  Date.now() + 5000
+                  Date.now() + delay
                 ),
               }
             : outcome;
@@ -595,7 +596,7 @@ export class SessionAgent<
             reason: "The identity runtime is unavailable.",
           });
         }
-        const targets = await this.active.events.listSubscribedBotSources(
+        const targets = await this.active.triggers.listSubscribedBotSources(
           resolved.thread,
           resolved.context
         );
@@ -627,7 +628,7 @@ export class SessionAgent<
               scanInspectionKeys(
                 host.pi,
                 host.store,
-                BotEventReceipts.definition.kind,
+                Receipts.definition.kind,
                 cursor
               ),
           })
@@ -640,14 +641,14 @@ export class SessionAgent<
             reason: "The identity runtime is unavailable.",
           });
         }
-        const receipt = await this.active.events.admit(
+        const receipt = await this.active.triggers.admit(
           resolved.admission,
           context
         );
         await this.ctx.storage.sync();
         return Response.json({
           status: "ok",
-          value: { eventId: eventOf(receipt).id },
+          value: { eventId: receipt.trigger.id },
         });
       }
       return await scope.handle(request, context);

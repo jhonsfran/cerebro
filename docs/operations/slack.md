@@ -1,6 +1,6 @@
 # How to connect Slack
 
-Slack direct messages are events for a person's persistent agent. They use the same coordinator conversation as web chat. A Slack thread is a reply destination and can have explicit work subscriptions. It does not create another coordinator. Cerebro checks current account links, source access, and content access before each reply.
+Slack direct messages are events for a person's persistent agent. They use the same coordinator conversation as web chat. A Slack thread is a reply destination and can have work subscriptions. It does not create another coordinator. Replies are posted when the coordinator calls its reply tool. Cerebro checks current account links, source access, and content access before each reply.
 
 Answers only go to direct messages. If someone mentions the app in a channel, Cerebro tells only that person, in a message the others cannot see, to send a DM instead. That keeps company content out of shared channels.
 
@@ -56,8 +56,8 @@ Cerebro confirms the link in the DM. An unlinked person who writes to the app ge
 
 1. Cerebro verifies the [Slack request signature](https://docs.slack.dev/authentication/verifying-requests-from-slack/), workspace, and app. It saves an accepted event to the durable event queue before it acknowledges Slack. A queue failure gets an unsuccessful response so Slack can retry. URL verification returns its challenge after signature validation.
 2. The consumer filters bot messages, unsupported events, and unlinked users. An accepted message saves its owner and fixed target bots under the provider event ID. Explicit subscriptions can select several owned bots. Otherwise, the configured agent is the target. A retry reuses that decision. Changed content conflicts.
-3. Each target primary admits one owned event. Ordinary text reaches the coordinator. A follow-up with an explicit work subscription goes to that Team. An unrelated subscribed event can return to the coordinator once.
-4. The coordinator's exact settled answer creates a durable reply intent for the original thread. Concurrent web answers cannot become Slack replies. Current access is checked again before delivery.
+3. Each target primary admits one trigger and records the original thread as its reply destination. Ordinary text reaches the coordinator. A follow-up in a thread that a Team follows goes to that Team. An unrelated subscribed event can return to the coordinator once.
+4. A reply is posted only when the coordinator calls `reply_event` with the trigger's ID. The reply goes to the thread the trigger recorded, never anywhere the model names. Web answers never become Slack replies. Current access is checked when the reply is saved and again before delivery. If a turn ends without a reply to a Slack message, the coordinator gets one reminder to reply or to say why no reply is needed.
 
 The reply task saves an unknown outcome and synchronizes storage before posting. Confirmed success saves its Slack timestamp. An uncertain post does not send again automatically. This can leave a reply undelivered when Slack did not receive the original attempt. A known rate-limit response can retry after its saved delay.
 
@@ -67,9 +67,9 @@ The same coordinator and team runtime also supports [ordinary web chat](agent-te
 
 Publish the agent with the model and grants its Teams need. Set `channels.json`'s `agentId` to that agent, then run bootstrap again. Optional [team limits](../reference/runtime-configuration.md#coordination) go in `runtime.json`.
 
-The coordinator gets `start_team`, `get_work`, `message_team`, `stop_work`, `list_work`, `recall_work`, `subscribe_work`, and `unsubscribe_work`. The lead gets `delegate_worker` and `return_event`. Team connector tools are read-only. A report enters the coordinator as an internal event. It grants no new Slack destination. If the work retains an authorized Slack origin, the coordinator's answer can return only to that original thread.
+The coordinator gets `start_team`, `get_work`, `message_team`, `stop_work`, `list_work`, `recall_work`, `subscribe_work`, `unsubscribe_work`, and `reply_event`. The lead gets `delegate_worker` and `return_event`. Team connector tools are read-only. Work started from a Slack message follows that message's thread until the coordinator calls `unsubscribe_work`. A report enters the coordinator as an internal event. It grants no new Slack destination. If the work was started from a Slack message, the coordinator can reply to the report only in that original thread.
 
-Ordinary messages can start independent work while other Teams run. Only explicit subscriptions forward thread events directly. The exact lowercase `status` reads saved work without a model call. Exact `stop` lists work IDs when a target is needed. Ask the coordinator to stop a specific work ID. Two Teams can run and sixteen can wait for one person across their agents.
+Ordinary messages can start independent work while other Teams run. Only a thread that a Team follows forwards its messages directly. The exact lowercase `status` reads saved work without a model call. Exact `stop` lists work IDs when a target is needed. Ask the coordinator to stop a specific work ID. Two Teams can run and sixteen can wait for one person across their agents.
 
 The web development Inspector shows saved event decisions, work, private roles, model IDs, usage, and results. It requires current read access. Opening it does not admit work. An idle coordinator makes no model requests.
 

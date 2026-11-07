@@ -1,9 +1,8 @@
 import { contextByPrincipal } from "@cerebro/channels/security";
 import {
-  primarySlackBotEvent,
+  primarySlackTrigger,
   readSlackPrimaryEvent,
 } from "@cerebro/channels/slack-primary-events";
-import { RoutedEventAdmissionSchema } from "@cerebro/contracts/bot-routing";
 import type { EventAddress } from "@cerebro/contracts/events";
 import {
   Denied,
@@ -19,6 +18,7 @@ import type {
   ContentDependencies,
 } from "@cerebro/contracts/session";
 import { SlackEventReferenceSchema } from "@cerebro/contracts/slack-events";
+import { TriggerAdmissionSchema } from "@cerebro/contracts/triggers";
 import { SlackThreadSchema } from "@cerebro/contracts/work";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
@@ -46,7 +46,7 @@ import {
 } from "./proof";
 import type { SessionIdentity } from "./proof";
 import {
-  createSlackEventReplies,
+  createSlackReplyPort,
   withCurrentSlackAccess,
 } from "./slack-event-replies";
 
@@ -161,7 +161,7 @@ export const createRuntimeComposition = (
         );
         await storage.sync();
       },
-      eventReplies: createSlackEventReplies(env, slack),
+      replyPorts: { slack: createSlackReplyPort(env, slack) },
       coordination: createCoordinatorServices({
         env,
         agent,
@@ -267,14 +267,14 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
             })
           );
         }
-        const event = yield* tryAdapter(() =>
-          primarySlackBotEvent(decision, resolved.address)
+        const trigger = yield* tryAdapter(() =>
+          primarySlackTrigger(decision, resolved.address)
         );
-        const action = event.content.text;
-        const admission = Schema.decodeUnknownSync(RoutedEventAdmissionSchema)({
-          version: 2,
-          kind: "event-admission",
-          event,
+        const action = trigger.text;
+        const admission = Schema.decodeUnknownSync(TriggerAdmissionSchema)({
+          version: 3,
+          kind: "trigger-admission",
+          trigger,
           routing:
             action === "status" || action === "stop"
               ? { kind: "local-control", action }

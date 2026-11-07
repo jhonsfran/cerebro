@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { Effect } from "effect";
 
 import { Denied, Unavailable } from "../../packages/contracts/src/failures.ts";
+import { TRIGGER_ENTRY_KIND } from "../../packages/contracts/src/triggers.ts";
 import {
   fauxAssistantMessage,
   fauxToolCall,
@@ -15,7 +16,6 @@ import {
 } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import { Bindings } from "../../packages/runtime/src/conversation-bindings.ts";
 import { nativeDrainIn } from "../../packages/runtime/src/conversation-drain.ts";
-import { BotEventQueue } from "../../packages/runtime/src/coordinator-event-state.ts";
 import {
   WorkDocuments,
   WorkLedger,
@@ -31,15 +31,8 @@ const binding = async (subject: Awaited<ReturnType<typeof setupWeb>>) => {
   return value;
 };
 const settle = async (subject: Awaited<ReturnType<typeof setupWeb>>) => {
-  await waitFor(
-    async () => {
-      const queue = await subject.fixture.pi().snapshot(BotEventQueue, context);
-      return Object.values(queue?.pending ?? {}).filter(
-        (entry) => entry.nativeId === subject.source.native.id
-      ).length;
-    },
-    (count) => count === 0
-  );
+  await subject.drain();
+  await subject.source.native.waitForIdle(context);
 };
 
 test("an unchanged definition keeps its conversation state and native selection across a send", async () => {
@@ -361,12 +354,8 @@ test("report turns without a human cause cannot leave a new durable schedule", a
         requestId: "retained-report",
         content: "This is a Team report.",
         entry: {
-          kind: "cerebro.bot-event-input",
-          data: {
-            eventId: "retained-report",
-            source: "teamreport",
-            agentVersion: 1,
-          },
+          kind: TRIGGER_ENTRY_KIND,
+          data: { id: "retained-report", channel: "teamreport" },
         },
       },
       context
@@ -384,10 +373,21 @@ test("report turns without a human cause cannot leave a new durable schedule", a
   }
 });
 
-test("a frozen publication admits the oldest held event before a later publication", async () => {
+test("a later publication retargets a waiting refresh so every held input runs under the latest definition", async () => {
   const subject = await setupWeb(false, true);
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
+  const prompts: string[] = [];
+  const answer =
+    (text: string) =>
+    (transcript: { messages: { role: string; content: unknown }[] }) => {
+      prompts.push(
+        JSON.stringify(
+          transcript.messages.filter((message) => message.role === "system")
+        )
+      );
+      return fauxAssistantMessage(text);
+    };
   try {
     subject.source.faux.setResponses([
       async () => {
@@ -395,8 +395,7 @@ test("a frozen publication admits the oldest held event before a later publicati
         await release.promise;
         return fauxAssistantMessage("Original execution finished.");
       },
-      fauxAssistantMessage("First held event."),
-      fauxAssistantMessage("Second held event."),
+      answer("Both held inputs answered."),
     ]);
     const prior = await subject.source.native.submit(
       {
@@ -410,18 +409,40 @@ test("a frozen publication admits the oldest held event before a later publicati
     await entered.promise;
     subject.publish({
       ...subject.configuration,
-      agent: { ...subject.configuration.agent, version: 2 },
+      agent: {
+        ...subject.configuration.agent,
+        version: 2,
+        instructions: "Definition two.",
+      },
     });
     await subject.send("oldest-held", "Admit this first.");
     await waitFor(
       () => binding(subject),
-      (value) => value.refresh?.agentVersion === 2
+      (value) => value.refresh?.agentVersion === 2,
+      10_000,
+      20
     );
     subject.publish({
       ...subject.configuration,
-      agent: { ...subject.configuration.agent, version: 3 },
+      agent: {
+        ...subject.configuration.agent,
+        version: 3,
+        instructions: "Definition three.",
+      },
     });
     await subject.send("later-held", "Admit this second.");
+    await waitFor(
+      () => binding(subject),
+      (value) => value.refresh?.agentVersion === 3,
+      10_000,
+      20
+    );
+    assert.deepEqual(
+      (await subject.scope.read(actor)).queuedInputs.map(
+        (input) => input.operationId
+      ),
+      ["oldest-held", "later-held"]
+    );
     release.resolve(true);
     await prior.wait(context);
     await settle(subject);
@@ -431,13 +452,23 @@ test("a frozen publication admits the oldest held event before a later publicati
       undefined,
       context
     );
-    const heldEntries = entries.items
-      .filter((entry) => entry.kind === "cerebro.bot-event-input")
-      .toSorted((left, right) => left.id - right.id);
-    assert.equal(heldEntries[0]?.data.agentVersion, 2);
-    assert.equal(heldEntries[1]?.data.agentVersion, 3);
-    assert.equal(heldEntries[0]?.data.operationId, "oldest-held");
-    assert.equal((await binding(subject)).agentVersion, 3);
+    const held = entries.items
+      .filter((entry) => entry.kind === TRIGGER_ENTRY_KIND)
+      .toSorted((left, right) => left.id - right.id)
+      .map((entry) =>
+        entry.data &&
+        typeof entry.data === "object" &&
+        "operationId" in entry.data
+          ? entry.data.operationId
+          : null
+      );
+    assert.deepEqual(held, ["oldest-held", "later-held"]);
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0] ?? "", /Definition three\./u);
+    assert.doesNotMatch(prompts[0] ?? "", /Definition two\./u);
+    const applied = await binding(subject);
+    assert.equal(applied.agentVersion, 3);
+    assert.equal(applied.refresh, null);
   } finally {
     release.resolve(true);
     await subject.close();

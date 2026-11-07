@@ -1,5 +1,6 @@
 import { Effect, Schema } from "effect";
 
+import type { EventAddress } from "./events.ts";
 import type { BrandedId } from "./identity.ts";
 import type { ContentDependencies } from "./session.ts";
 
@@ -83,12 +84,13 @@ export const BoundedContentDependenciesSchema = Schema.Struct({
   ),
 }) satisfies Schema.Codec<ContentDependencies>;
 
-const sourceEventAddress = Schema.Struct({
+export const EventAddressSchema = Schema.Struct({
   agentId: identifier<"AgentId">(),
   conversationId: identifier<"ConversationId">(),
   organizationId: identifier<"OrganizationId">(),
   sessionId: identifier<"SessionId">(),
-});
+}) satisfies Schema.Codec<EventAddress>;
+const sourceEventAddress = EventAddressSchema;
 export const WorkAdmissionSchema = Schema.Struct({
   version: Schema.Literal(3),
   admittedAt: timestamp,

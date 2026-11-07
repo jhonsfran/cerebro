@@ -14,8 +14,8 @@ import {
 } from "../../packages/channels/src/slack-events";
 import type { SlackQueueDelivery } from "../../packages/channels/src/slack-events";
 import type { ChannelOptions } from "../../packages/channels/src/types";
-import { BotEventAddressSchema } from "../../packages/contracts/src/bot-events";
 import type { EventAddress } from "../../packages/contracts/src/events";
+import { EventAddressSchema } from "../../packages/contracts/src/work";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
 import {
   channelConversation,
@@ -177,7 +177,7 @@ const createBotSource = async (
       .where(eq(channelConversation.conversationId, conversationId))
   );
   assert.ok(row);
-  return Schema.decodeUnknownSync(BotEventAddressSchema)(row);
+  return Schema.decodeUnknownSync(EventAddressSchema)(row);
 };
 
 test("two explicit bots freeze one target each and replay after default and subscription changes", async () => {

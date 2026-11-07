@@ -1,7 +1,10 @@
 import { Schema } from "effect";
 
-import { BotEventAddressSchema } from "./bot-events.ts";
-import { WorkKeySchema, SlackThreadSchema } from "./work.ts";
+import {
+  EventAddressSchema,
+  WorkKeySchema,
+  SlackThreadSchema,
+} from "./work.ts";
 
 const identifier = Schema.NonEmptyString.check(Schema.isMaxLength(512));
 export const SlackEventAuthoritySchema = Schema.Struct({
@@ -16,18 +19,12 @@ export const SlackPrimaryDecisionSchema = Schema.Struct({
   ownerPrincipalId: WorkKeySchema.fields.ownerPrincipalId,
   authority: SlackEventAuthoritySchema,
   text: Schema.NonEmptyString.check(Schema.isMaxLength(16_000)),
-  targets: Schema.Array(BotEventAddressSchema).check(
+  targets: Schema.Array(EventAddressSchema).check(
     Schema.isMinLength(1),
     Schema.isMaxLength(18)
   ),
 });
 export type SlackPrimaryDecision = typeof SlackPrimaryDecisionSchema.Type;
-export const SlackReplyDestinationSchema = Schema.Struct({
-  authority: SlackEventAuthoritySchema,
-  ownerPrincipalId: WorkKeySchema.fields.ownerPrincipalId,
-  source: BotEventAddressSchema,
-});
-export type SlackReplyDestination = typeof SlackReplyDestinationSchema.Type;
 export type SlackDelivery =
   | { readonly state: "sent"; readonly text: string; readonly ts: string }
   | { readonly state: "unknown" | "failed"; readonly text: string }
