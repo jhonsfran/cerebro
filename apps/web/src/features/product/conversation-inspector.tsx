@@ -247,9 +247,7 @@ const InspectionWorkView = ({
   return (
     <>
       <p className="text-muted-foreground">
-        Definition {inspector.overview.value.profile.agentVersion} · Policy{" "}
-        {inspector.overview.value.profile.policyVersion} · Admission{" "}
-        {inspector.overview.value.admission}
+        Definition {inspector.overview.value.profile.agentVersion}
       </p>
       <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(12rem,1fr)_minmax(0,2fr)]">
         <section

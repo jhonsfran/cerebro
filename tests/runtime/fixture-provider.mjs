@@ -62,47 +62,7 @@ const chooseResponse = (input) => {
     };
   }
   if (result) {
-    return {
-      content: names.includes("subagent")
-        ? `CAP_PARENT_COMPLETED ${text(result)}`
-        : `CAP_CHILD_COMPLETED ${text(result)}`,
-      purpose: "turn",
-    };
-  }
-  if (names.includes("search_conversations")) {
-    return {
-      arguments: {
-        term:
-          /CAP_HISTORY (?<term>[A-Za-z0-9_-]+)/u.exec(prompt)?.groups?.term ??
-          "CAP_SEARCH_TOKEN",
-      },
-      name: "search_conversations",
-      purpose: "turn",
-    };
-  }
-  if (prompt.startsWith("CAP_DELEGATE") && names.includes("subagent")) {
-    return {
-      arguments: { task: "CAP_CHILD_APPLY fixture_effect once." },
-      name: "subagent",
-      purpose: "turn",
-    };
-  }
-  if (
-    prompt.startsWith("CAP_CHILD_APPLY") &&
-    names.includes("fixture_effect")
-  ) {
-    return {
-      arguments: { value: "delegated-fixture" },
-      name: "fixture_effect",
-      purpose: "turn",
-    };
-  }
-  if (prompt.startsWith("CAP_HISTORY") && names.includes("search_history")) {
-    return {
-      arguments: { question: prompt },
-      name: "search_history",
-      purpose: "turn",
-    };
+    return { content: `CAP_COMPLETED ${text(result)}`, purpose: "turn" };
   }
   if (prompt.startsWith("CAP_SCHEDULE") && names.includes("schedule")) {
     return {

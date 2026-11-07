@@ -31,9 +31,6 @@ export const snapshotToolIds = (snapshot: ChatSnapshot): readonly string[] => [
       ),
       ...snapshot.approvals.map((approval) => approval.toolId),
       ...snapshot.tools.map((tool) => tool.toolName),
-      ...(snapshot.activity?.children ?? []).flatMap((child) =>
-        child.tools.map((tool) => tool.toolName)
-      ),
     ].filter((toolName) => !isInternalToolName(toolName))
   ),
 ];

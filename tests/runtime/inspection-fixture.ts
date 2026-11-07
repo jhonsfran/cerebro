@@ -47,10 +47,7 @@ export const inspectionFixture = async () => {
     bindings.conversations[source.address.sessionId] = {
       address: source.address,
       agentVersion: 7,
-      policyVersion: 1,
       nativeId: source.native.id,
-      origin: null,
-      legacyVersion: null,
       refresh: null,
       releaseEvent: null,
     };

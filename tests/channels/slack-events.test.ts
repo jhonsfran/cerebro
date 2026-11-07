@@ -5,11 +5,9 @@ import { eq } from "drizzle-orm";
 import { Schema } from "effect";
 
 import { createApiHandler } from "../../packages/api/src/handler";
-import { readAcceptedLegacySlackInput } from "../../packages/channels/src/legacy-slack-input";
 import { assertQueuePayloadSize } from "../../packages/channels/src/queue-payload";
 import { digest } from "../../packages/channels/src/security";
 import { receiveQueuedSlackEvent } from "../../packages/channels/src/slack";
-import { parseSlackEventDecision } from "../../packages/channels/src/slack-event-receipts";
 import {
   normalizeSlackDelivery,
   parseSlackQueueDelivery,
@@ -28,7 +26,6 @@ import {
   identitySlackLink,
 } from "../../packages/db/src/schema/identity";
 import { fixtureSubmissionCount } from "./fixture-session";
-import { saveLegacySlackDecision } from "./fixture-slack-events";
 import { createTestProduct, object, array, signSlack, string } from "./helpers";
 
 const configuration = () => ({
@@ -254,142 +251,6 @@ test("an empty explicit lookup chooses the same primary as web and a second Slac
     database.select().from(channelConversation)
   );
   assert.equal(rows.length, 1);
-  assert.equal(rows[0]?.kind, "web");
-});
-
-test("a historical subscribed source selects that bot's canonical primary without rewriting old work sources", async () => {
-  let targets: readonly EventAddress[] = [];
-  const product = await queuedProduct(undefined, (base) => ({
-    ...base,
-    discover: () => Promise.resolve(targets),
-  }));
-  const ownerPrincipalId = await linkOwner(product);
-  const bot = await createBotSource(product, "historical-bot");
-  const legacyOptions = {
-    ...product.app.options,
-    slack: { ...product.slack, agentId: bot.agentId },
-  };
-  const legacy = await saveLegacySlackDecision(
-    legacyOptions,
-    eventPayload("retained-thread"),
-    ownerPrincipalId
-  );
-  targets = [Schema.decodeUnknownSync(BotEventAddressSchema)(legacy.address)];
-  await product.request(eventPayload("fresh-event"));
-  const accepted = await product.consume(product.nextDelivery());
-  assert.equal(primaryConversationId(accepted), bot.conversationId);
-  assert.notEqual(
-    primaryConversationId(accepted),
-    legacy.address.conversationId
-  );
-  const [old] = await product.app.options.withDatabase((database) =>
-    database
-      .select()
-      .from(channelConversation)
-      .where(
-        eq(channelConversation.conversationId, legacy.address.conversationId)
-      )
-  );
-  assert.equal(old?.kind, "slack");
-});
-
-test("literal legacy decisions keep their original digest and reject a changed default", async () => {
-  const product = await queuedProduct();
-  const owner = await linkOwner(product);
-  const payload = eventPayload("literal-legacy");
-  const retained = await saveLegacySlackDecision(
-    product.app.options,
-    payload,
-    owner
-  );
-  await product.request(payload);
-  const delivery = product.nextDelivery();
-  const accepted = object(await product.consume(delivery));
-  assert.equal(accepted.conversationId, retained.address.conversationId);
-  const [before] = await product.app.options.withDatabase((database) =>
-    database
-      .select()
-      .from(channelSlackEventReceipt)
-      .where(eq(channelSlackEventReceipt.eventKey, retained.eventKey))
-  );
-  assert.ok(before);
-  assert.equal(parseSlackEventDecision(before.decision).kind, "admit");
-  product.slack.agentId = "new-default";
-  await assert.rejects(product.consume(delivery, true), /configured agent/u);
-  await product.request(payload, true);
-  await assert.rejects(
-    product.consume(product.nextDelivery(), true),
-    /changed/u
-  );
-  const [after] = await product.app.options.withDatabase((database) =>
-    database
-      .select()
-      .from(channelSlackEventReceipt)
-      .where(eq(channelSlackEventReceipt.eventKey, retained.eventKey))
-  );
-  assert.deepEqual(after, before);
-});
-
-test("pre-placement legacy proof requires the exact saved decision, callback, address, and current owner link without writing receipts", async () => {
-  const product = await queuedProduct();
-  const owner = await linkOwner(product);
-  const payload = eventPayload(
-    "pre-placement-proof",
-    "The accepted old request."
-  );
-  const retained = await saveLegacySlackDecision(
-    product.app.options,
-    payload,
-    owner
-  );
-  const address = Schema.decodeUnknownSync(BotEventAddressSchema)(
-    retained.address
-  );
-  const read = (changes = {}) =>
-    product.app.options.withDatabase((database) =>
-      readAcceptedLegacySlackInput({
-        database,
-        configuration: product.slack,
-        address,
-        eventKey: retained.eventKey,
-        callback: payload,
-        ...changes,
-      })
-    );
-  const accepted = await read();
-  assert.equal(accepted.text, "The accepted old request.");
-  assert.equal(accepted.operationId, retained.eventKey);
-  assert.equal(fixtureSubmissionCount(), 0);
-  const snapshot = () =>
-    product.app.options.withDatabase(async (database) => {
-      const [saved] = await database
-        .select()
-        .from(channelSlackEventReceipt)
-        .where(eq(channelSlackEventReceipt.eventKey, retained.eventKey));
-      return saved;
-    });
-  const before = await snapshot();
-  await Promise.all([
-    assert.rejects(read({ eventKey: `${retained.eventKey}:missing` })),
-    assert.rejects(
-      read({
-        callback: eventPayload("pre-placement-proof", "Changed accepted text."),
-      })
-    ),
-    assert.rejects(
-      read({ address: { ...address, sessionId: "foreign-session" } })
-    ),
-    assert.rejects(read({ address: { ...address, agentId: "foreign-agent" } })),
-  ]);
-  assert.deepEqual(await snapshot(), before);
-  await product.app.options.withDatabase((database) =>
-    database
-      .delete(identitySlackLink)
-      .where(eq(identitySlackLink.principalId, owner))
-  );
-  await assert.rejects(read());
-  assert.deepEqual(await snapshot(), before);
-  assert.equal(fixtureSubmissionCount(), 0);
 });
 
 test("the provider event ID cannot be reused with a different logical payload", async () => {

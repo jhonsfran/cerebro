@@ -13,7 +13,7 @@ import type {
 import type { Database } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import { channelConversation } from "@cerebro/db/schema/agents";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 
 import { openPrimaryConversation } from "./primary-conversations";
 import { authorize, principalContext, unwrap } from "./security";
@@ -35,15 +35,6 @@ const same = (
   row.organizationId === options.organizationId &&
   row.ownerPrincipalId === context.actor.id;
 
-const requireActive = (row: Conversation): void => {
-  if (row.engine !== "pi-identity-v1" || row.retiredAt) {
-    throw new ChannelError(
-      409,
-      "retired",
-      "This conversation is retired. Start a new conversation."
-    );
-  }
-};
 export const createConversationService = (
   database: Database,
   options: ChannelOptions
@@ -106,7 +97,6 @@ export const createConversationService = (
   ) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "execute");
-    requireActive(row);
     return await options
       .sessions(database)
       .control({ address: conversationAddress(row), context, command });
@@ -117,7 +107,6 @@ export const createConversationService = (
     operationId: string,
     text: string
   ): Promise<ChatReceipt> => {
-    requireActive(conversation);
     if (!same(conversation, options, context)) {
       throw new ChannelError(
         404,
@@ -153,7 +142,6 @@ export const createConversationService = (
   const readConversation = async (userId: string, conversationId: string) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "read");
-    requireActive(row);
     const snapshot = await options.sessions(database).read({
       address: conversationAddress(row),
       context,
@@ -169,7 +157,6 @@ export const createConversationService = (
   const conversationAccess = async (userId: string, conversationId: string) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "read");
-    requireActive(row);
     return { address: conversationAddress(row), context };
   };
   const chatAccess = async (userId: string, conversationId: string) => {
@@ -196,9 +183,7 @@ export const createConversationService = (
       .where(
         and(
           eq(channelConversation.organizationId, options.organizationId),
-          eq(channelConversation.ownerPrincipalId, context.actor.id),
-          eq(channelConversation.engine, "pi-identity-v1"),
-          isNull(channelConversation.retiredAt)
+          eq(channelConversation.ownerPrincipalId, context.actor.id)
         )
       )
       .orderBy(asc(channelConversation.createdAt));
@@ -229,7 +214,6 @@ export const createConversationService = (
     decision: "allow" | "deny"
   ) => {
     const row = await requireConversation(conversationId, context, "approve");
-    requireActive(row);
     return {
       approval: await options.sessions(database).decide({
         address: conversationAddress(row),
@@ -248,7 +232,6 @@ export const createConversationService = (
   const stop = async (userId: string, conversationId: string) => {
     const context = await current(userId);
     const row = await requireConversation(conversationId, context, "execute");
-    requireActive(row);
     return await options.sessions(database).stop({
       address: conversationAddress(row),
       context,

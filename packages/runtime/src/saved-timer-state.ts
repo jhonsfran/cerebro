@@ -9,10 +9,7 @@ import type { PrincipalId } from "@cerebro/contracts/identity";
 import { SlackReplyDestinationSchema } from "@cerebro/contracts/slack-events";
 import type { SlackReplyDestination } from "@cerebro/contracts/slack-events";
 import { FixedReplyOriginSchema } from "@cerebro/contracts/timer-events";
-import type {
-  FixedReplyOrigin,
-  LegacyTimerReplyOrigin,
-} from "@cerebro/contracts/timer-events";
+import type { FixedReplyOrigin } from "@cerebro/contracts/timer-events";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
 import { defineDocFamily } from "@earendil-works/pi-durable";
 import type {
@@ -91,7 +88,6 @@ export const saveReminderOriginIn = async (
     readonly address: EventAddress;
     readonly ownerPrincipalId: PrincipalId;
     readonly cause?: InstructionCause;
-    readonly legacy?: LegacyTimerReplyOrigin;
   }
 ): Promise<void> => {
   const saved = await tx.doc(
@@ -103,7 +99,7 @@ export const saveReminderOriginIn = async (
   if (saved.record) {
     return;
   }
-  let reply: FixedReplyOrigin = input.legacy ?? { kind: "web" };
+  let reply: FixedReplyOrigin = { kind: "web" };
   if (input.cause?.eventId) {
     const original = await tx.doc(BotEventReceipts, input.cause.eventId, null);
     if (!original.receipt) {
@@ -119,7 +115,6 @@ export const saveReminderOriginIn = async (
         reason: "The schedule origin belongs to another source.",
       });
     }
-    reply = { kind: "web" };
     if (event.source.kind === "slack") {
       reply = {
         kind: "slack-event",
@@ -144,12 +139,9 @@ export const saveReminderOriginIn = async (
 export const resolveFixedReplyOrigin = async (
   pi: Harness,
   origin: FixedReplyOrigin
-): Promise<BotEvent | LegacyTimerReplyOrigin | null> => {
+): Promise<BotEvent | null> => {
   if (origin.kind === "web") {
     return null;
-  }
-  if (origin.kind === "legacy-slack-timer") {
-    return origin;
   }
   const original = await pi.snapshot(
     BotEventReceipts,

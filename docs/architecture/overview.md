@@ -17,19 +17,9 @@ flowchart TD
 
 Each organization identity has one IdentityAgent Durable Object, addressed by organization ID and owner principal ID. That object holds the identity's conversations across all product agents. One official PiHarness connects Pi to SQLite and Lifecycle wake-up jobs. Each product conversation maps to its own native Pi conversation. Pi controls inputs, busy-input queuing, generation, tool tasks, Stop, retries, and crash recovery. Cerebro composes the model, instructions, enabled tools, and grants. Current company authorization controls admission, model requests, tool calls, approval decisions, and reads.
 
-## Delegated work
-
-A subagent is a fresh native conversation owned by its parent tool task. It shares the parent product chat's pinned configuration, controlled tools, approvals, and source ledger. The tool reuses its child and submission after a restart. Children cannot delegate or schedule work. Each chat permits three active children and 32 children in total. A child permits eight model rounds and has a durable ten-minute deadline. Parent Stop cancels foreground children. Detached background subagents are not exposed.
-
-The activity panel projects native task ownership and bounded child transcripts. Child approvals use the parent route and native task identity. Read checks include historical child tool dependencies even when the displayed preview omits older entries.
-
-History search uses a child with only `search_conversations`. It scans bound product chats and checks current source-chat access before returning evidence. The receiving agent must also have access to the evidence's memory sources and tools. Search records source, tool, and chat provenance before it exposes excerpts. Later reads and model requests recheck that provenance. Searches omit child transcripts, prior search-derived turns, and duplicated inherited fork entries.
-
-Source and provenance copies are conservative. They include all recorded parent dependencies. Their SQL operations use Pi's mutation queue, but commit before Pi's physical storage transaction.
-
 ## Background agent teams
 
-An optional coordination profile gives web and Slack conversations tools to start independent teams. Each conversation keeps its history and work pointer, and all conversations share one identity-wide active-work index. Each work ID selects a private TeamAgent cell with a lead and at most two worker conversations. Published agents select each role's model and grants. Team tools are read-only. Results enter the original conversation after current access checks, then reach web observers and the configured Slack notifier.
+An optional coordination profile gives web and Slack conversations tools to start independent teams. Each conversation keeps its history and work pointer, and all conversations share one identity-wide active-work index. Each work ID selects a private TeamAgent cell with a lead and at most two worker conversations. Published agents select each role's model and grants. Team tools are read-only. Results enter the original conversation after current access checks, then reach web observers and the Slack thread that raised the event.
 
 Durable queues transport Slack events, team commands, and reports. Web prompts use the existing authenticated conversation API. Pi remains the execution engine in each cell. Public background state and its cancellation control stay separate from foreground generation. See the [cell diagram and code](slack-coordinator.md) for placement, limits, controls, and recovery.
 
@@ -44,8 +34,6 @@ Automatic compaction uses Pi defaults. Manual compaction creates its native task
 An identity shares storage and recovery across its conversations. Conversation state remains separate: each chat pins its agent version and has its own provider binding, tool extension set, approvals, source dependencies, observation, and notification jobs. Provider aliases bind each model request to its conversation configuration, including its permissions and limits. The internal Pi root is not a product conversation. Stop addresses one native conversation and its task-owned descendants.
 
 Cerebro serializes its SQLite metadata operations through Pi's commit queue. Configuration and store initialization run on that queue. Later source-dependency, approval, and Slack-delivery operations use the same queue so their SQL does not become part of a sibling conversation's native transaction. Durability flushes happen after the queued operation completes.
-
-The identity runtime starts fresh. New conversations use a new engine marker and Durable Object class. Previous runtime conversations are retired, and the old SessionAgent class cannot resume execution or dispatch tools. Accounts, agent definitions, connectors, and skills remain in company storage. Old transcripts and native tasks are not replayed into the new runtime.
 
 ## Tools and the external door
 

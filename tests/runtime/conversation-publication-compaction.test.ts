@@ -33,7 +33,7 @@ const settle = async (subject: Awaited<ReturnType<typeof setupWeb>>) => {
 };
 
 test("an accepted manual compaction receipt still replays while new native admission is closed", async () => {
-  const subject = await setupWeb(false, "web", true);
+  const subject = await setupWeb(false, true);
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
   try {
@@ -97,7 +97,7 @@ test("an accepted manual compaction receipt still replays while new native admis
   }
 });
 test("background compaction keeps its old provider until its summary and queued write finish", async () => {
-  const subject = await setupWeb(false, "web", true);
+  const subject = await setupWeb(false, true);
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
   try {
@@ -180,7 +180,7 @@ test("background compaction keeps its old provider until its summary and queued 
 });
 
 test("a new compaction request cannot save a recovery job after publication closes native admission", async () => {
-  const subject = await setupWeb(false, "web", true);
+  const subject = await setupWeb(false, true);
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
   try {

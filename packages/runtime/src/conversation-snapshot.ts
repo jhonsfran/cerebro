@@ -2,7 +2,6 @@ import type {
   ChatActivity,
   ChatSnapshot,
 } from "@cerebro/contracts/session-service";
-import { isInternalToolName } from "@cerebro/tools/tool-names";
 import { LiveDoc } from "@earendil-works/pi-durable";
 import type {
   Conversation,
@@ -12,7 +11,7 @@ import type {
 
 import type { ConversationProfile } from "./conversation-profile.ts";
 import type { CoordinatorEvents } from "./coordinator-events.ts";
-import { chatSnapshot, piContext, snapshotToolIds } from "./pi-harness.ts";
+import { chatSnapshot, piContext } from "./pi-harness.ts";
 
 export const conversationSnapshot = async (
   options: {
@@ -23,24 +22,17 @@ export const conversationSnapshot = async (
   view: ConversationView,
   profile: ConversationProfile
 ): Promise<ChatSnapshot> => {
-  const { runtime, work, reminders: schedules, coordination } = profile;
+  const { runtime, reminders: schedules, coordination } = profile;
   const { pi, native, events } = options;
   const approvals = await pi.commit(() => runtime.approvals.all(), piContext());
-  const [children, known, reminders, inspection, live, backgroundWork] =
-    await Promise.all([
-      work.children(),
-      work.known(),
-      schedules.list(),
-      pi.inspect(piContext()),
-      pi.snapshot(LiveDoc, native.id, piContext()),
-      coordination.current(),
-    ]);
-  const childrenByNativeId = new Map(
-    known.map((child) => [child.nativeId, child])
-  );
+  const [reminders, inspection, live, backgroundWork] = await Promise.all([
+    schedules.list(),
+    pi.inspect(piContext()),
+    pi.snapshot(LiveDoc, native.id, piContext()),
+    coordination.current(),
+  ]);
   const activity: ChatActivity = {
     ...(backgroundWork ? { backgroundWork } : {}),
-    children,
     reminders,
     compactions: (live?.compactions ?? []).map((compaction) => ({
       id: String(compaction.taskId),
@@ -56,29 +48,20 @@ export const conversationSnapshot = async (
         }
       : {}),
     tasks: inspection.tasks
-      .filter(
-        ({ record }) =>
-          record.conversationId === native.id ||
-          childrenByNativeId.has(record.conversationId)
-      )
-      .map(({ record }) => {
-        const child = childrenByNativeId.get(record.conversationId);
-        const ownerTaskId = record.owner ?? child?.ownerTaskId;
-        return {
-          id: String(record.id),
-          conversationId:
-            child?.id ?? runtime.configuration.address.conversationId,
-          kind: record.kind,
-          background: record.background === true,
-          ...(ownerTaskId === undefined
-            ? {}
-            : { ownerTaskId: String(ownerTaskId) }),
-          state:
-            record.state.status === "terminal"
-              ? "completing"
-              : record.state.status,
-        };
-      }),
+      .filter(({ record }) => record.conversationId === native.id)
+      .map(({ record }) => ({
+        id: String(record.id),
+        conversationId: runtime.configuration.address.conversationId,
+        kind: record.kind,
+        background: record.background === true,
+        ...(record.owner === undefined
+          ? {}
+          : { ownerTaskId: String(record.owner) }),
+        state:
+          record.state.status === "terminal"
+            ? "completing"
+            : record.state.status,
+      })),
   };
   const snapshot = chatSnapshot({
     address: runtime.configuration.address,
@@ -104,13 +87,3 @@ export const conversationSnapshot = async (
       activity.compactions.some((compaction) => compaction.reason === "manual"),
   };
 };
-export const snapshotAccessTools = async (
-  snapshot: ChatSnapshot,
-  profile: ConversationProfile
-): Promise<readonly string[]> =>
-  [
-    ...new Set([
-      ...snapshotToolIds(snapshot),
-      ...(await profile.work.toolIds()),
-    ]),
-  ].filter((name) => !isInternalToolName(name));

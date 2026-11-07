@@ -25,13 +25,8 @@ import { Effect } from "effect";
 
 import { checkContentDependencies, createCurrentAuthority } from "./access";
 import type { WorkerEnv } from "./bindings";
-import { slackSettings } from "./channels";
 import { runtimeConfiguration } from "./config";
 import { resolveSessionAddress } from "./session/address";
-import {
-  isCoordinatorConversation,
-  requireLegacySourceMatch,
-} from "./session/coordination";
 import { createExecutionComposition } from "./session/execution";
 import { authenticateSessionRequest } from "./session/proof";
 import {
@@ -67,10 +62,9 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
       ownerPrincipalId: work.key.ownerPrincipalId,
     };
     const options = { deadlineAt: Date.now() + 10_000 };
-    const { conversation } = await Effect.runPromise(
+    await Effect.runPromise(
       resolveSessionAddress(this.env, work.sourceEventAddress, identity)
     );
-    requireLegacySourceMatch(work, conversation);
     const { context, definition } = await withDatabase(
       this.env,
       async (database) => ({
@@ -170,20 +164,15 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
         reason: "The team source identity does not match.",
       });
     }
-    const slack = slackSettings(this.env);
-    const { conversation } = await Effect.runPromise(
+    await Effect.runPromise(
       resolveSessionAddress(this.env, resolved.address, identity)
     );
-    if (
-      !config.coordination ||
-      !isCoordinatorConversation(conversation, slack)
-    ) {
+    if (!config.coordination) {
       throw new Denied({
         code: "revoked",
         reason: "The team source is no longer configured.",
       });
     }
-    requireLegacySourceMatch(command.work, conversation);
     if (event) {
       await this.authorizeEventSource(
         command.work,

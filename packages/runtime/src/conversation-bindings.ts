@@ -9,16 +9,13 @@ import type {
 
 export interface ProfileIdentity extends JsonObject {
   agentVersion: number;
-  policyVersion: 0 | 1;
 }
 export const sameProfile = (
   left: ProfileIdentity,
   right: ProfileIdentity
-): boolean =>
-  left.agentVersion === right.agentVersion &&
-  left.policyVersion === right.policyVersion;
+): boolean => left.agentVersion === right.agentVersion;
 export const profileKey = (identity: ProfileIdentity): string =>
-  `v${identity.agentVersion}:p${identity.policyVersion}`;
+  `v${identity.agentVersion}`;
 export class ProfileChanged extends Unavailable {
   constructor() {
     super({
@@ -30,7 +27,6 @@ export class ProfileChanged extends Unavailable {
 export interface ConversationBinding extends JsonObject, ProfileIdentity {
   address: { [Key in keyof EventAddress]: EventAddress[Key] };
   nativeId: ConversationId;
-  legacyVersion: number | null;
   refresh: ProfileIdentity | null;
   releaseEvent: string | null;
 }
@@ -40,7 +36,7 @@ export const Bindings = defineDoc({
   }),
   kind: "cerebro.conversation-bindings",
   scope: "session",
-  version: 3,
+  version: 4,
   migrate: (): { conversations: Record<string, ConversationBinding> } => {
     throw new Error("Unsupported conversation bindings version.");
   },

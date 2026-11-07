@@ -6,9 +6,6 @@ import type { TeamCommandTransport } from "@cerebro/contracts/team-events";
 import {
   WorkCommandIdSchema,
   WorkAdmissionSchema,
-  WorkStatusSchema,
-  TeamCommandSchema,
-  WorkReportSchema,
   transitionWorkStatus,
 } from "@cerebro/contracts/work";
 import type {
@@ -100,82 +97,22 @@ export const retainTerminalWorkIn = async (
     ...recent.ids.filter((id) => id !== record.admission.key.workId),
   ].slice(0, 16);
 };
-const legacyRecordSchema = Schema.Struct({
-  admission: WorkAdmissionSchema,
-  status: WorkStatusSchema,
-  reportId: Schema.NullOr(Schema.String),
-  pendingCommands: Schema.Record(
-    Schema.String,
-    Schema.Struct({
-      digest: Schema.String,
-      taskId: Schema.declare<TaskId>(
-        (value): value is TaskId =>
-          typeof value === "number" && Number.isSafeInteger(value) && value > 0
-      ),
-    })
-  ),
-});
-const legacyLedgerSchema = Schema.Struct({
-  identity: Schema.NullOr(
-    Schema.Struct({
-      organizationId: Schema.String,
-      ownerPrincipalId: Schema.String,
-    })
-  ),
-  active: Schema.Record(
-    Schema.String,
-    Schema.Struct({
-      source: WorkAdmissionSchema.members[0].fields.sourceEventAddress,
-      deadlineAt: Schema.Number,
-    })
-  ),
-});
-const version2RecordSchema = Schema.Struct({
-  ...legacyRecordSchema.fields,
-  humanOperationId: Schema.NullOr(Schema.String),
-  dispatched: Schema.Boolean,
-  queuedCommands: Schema.Record(Schema.String, TeamCommandSchema),
-  terminalReport: Schema.NullOr(WorkReportSchema),
-});
 export const WorkLedger = defineDoc({
   kind: "cerebro.coordinator-index",
   scope: "session",
-  version: 2,
-  migrate: (value): WorkLedgerState => ({
-    ...Schema.decodeUnknownSync(legacyLedgerSchema)(value),
-    queue: [],
-  }),
+  version: 3,
+  migrate: (): WorkLedgerState => {
+    throw new Error("Unsupported coordinator index version.");
+  },
   initial: (): WorkLedgerState => ({ identity: null, active: {}, queue: [] }),
 });
 export const WorkDocuments = defineDocFamily({
   kind: "cerebro.coordinator-work",
   scope: "session",
   family: true,
-  version: 3,
-  migrate: (value, fromVersion): { record: CoordinatorWorkRecord | null } => {
-    if (fromVersion === 2) {
-      return Schema.decodeUnknownSync(
-        Schema.Struct({ record: Schema.NullOr(version2RecordSchema) }),
-        { onExcessProperty: "error" }
-      )(value);
-    }
-    if (fromVersion !== 1) {
-      throw new Error("Unsupported coordinator work version.");
-    }
-    const legacy = Schema.decodeUnknownSync(
-      Schema.Struct({ record: Schema.NullOr(legacyRecordSchema) })
-    )(value);
-    return {
-      record: legacy.record
-        ? {
-            ...legacy.record,
-            humanOperationId: null,
-            dispatched: true,
-            queuedCommands: {},
-            terminalReport: null,
-          }
-        : null,
-    };
+  version: 4,
+  migrate: (): { record: CoordinatorWorkRecord | null } => {
+    throw new Error("Unsupported coordinator work version.");
   },
   initial: (_seed: null): { record: CoordinatorWorkRecord | null } => ({
     record: null,
@@ -192,8 +129,7 @@ export const CommandReceipts = defineDocFamily({
 });
 type SourceRoute =
   | { kind: "coordinator"; workId: string | null }
-  | { kind: "team"; workId: string; commandId: string }
-  | { kind: "handled"; workId: string | null };
+  | { kind: "team"; workId: string; commandId: string };
 export const SourceWork = defineDoc({
   kind: "cerebro.coordinator-source-work",
   scope: "conversation",

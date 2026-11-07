@@ -52,20 +52,11 @@ export const agentPublishOperation = pgTable(
 export const channelConversation = pgTable("channel_conversation", {
   agentId: text("agent_id").notNull(),
   bindingKey: text("binding_key").notNull().unique(),
-  channelId: text("channel_id"),
   conversationId: text("conversation_id").primaryKey(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  engine: text("engine", { enum: ["legacy-v1", "pi-v1", "pi-identity-v1"] })
-    .notNull()
-    .default("legacy-v1"),
-  kind: text("kind", { enum: ["web", "slack"] }).notNull(),
   organizationId: text("organization_id").notNull(),
   ownerPrincipalId: text("owner_principal_id").notNull(),
-  retiredAt: timestamp("retired_at"),
-  rootTimestamp: text("root_timestamp"),
   sessionId: text("session_id").notNull(),
-  slackUserId: text("slack_user_id"),
-  workspaceId: text("workspace_id"),
 });
 export const channelConversationOperation = pgTable(
   "channel_conversation_operation",

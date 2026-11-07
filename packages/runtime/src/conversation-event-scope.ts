@@ -15,7 +15,6 @@ import type {
   CoordinatorReplyOutbox,
   ReplyAnswer,
 } from "./coordinator-replies.ts";
-import { requireFreshSourceIn } from "./source-admission.ts";
 
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
@@ -127,7 +126,6 @@ export const createConversationEventScope = async (
     native: options.native,
     requireCurrent,
     agentVersion: configuration.agent.version,
-    policyVersion: profile.identity.policyVersion,
     prepareAdmission: async (eventId) =>
       (await options.advancePublication(eventId)) && options.isCurrent(),
     claimIn: async (tx, eventId) => {
@@ -151,16 +149,8 @@ export const createConversationEventScope = async (
     admissions: coordination.admissions,
     prepareRoute: (input, context) =>
       coherent(async () => {
-        const fresh =
-          (operation: EventRouteIn): EventRouteIn =>
-          async (tx) => {
-            if (normalizeEventAdmission(input).routing.kind === "automatic") {
-              await requireFreshSourceIn(tx, options.native.id);
-            }
-            return await operation(tx);
-          };
         if (configuration.coordination) {
-          return guarded(fresh(await subscriptions.prepare(input, context)));
+          return guarded(await subscriptions.prepare(input, context));
         }
         if (normalizeEventAdmission(input).routing.kind !== "automatic") {
           throw new Denied({
@@ -168,9 +158,7 @@ export const createConversationEventScope = async (
             reason: "Team coordination is disabled.",
           });
         }
-        return guarded(
-          fresh(() => Promise.resolve({ kind: "coordinator" as const }))
-        );
+        return guarded(() => Promise.resolve({ kind: "coordinator" as const }));
       }),
     prepareLocalControl: (...args) =>
       coherent(async () => {

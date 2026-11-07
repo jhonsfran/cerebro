@@ -56,12 +56,10 @@ export const actor = {
 
 export const setupWeb = async (
   team = false,
-  conversationKind: "web" | "slack" = "web",
   refresh = false,
   customize: (
     configuration: SessionHostConfiguration
-  ) => SessionHostConfiguration = (configuration) => configuration,
-  initialPolicy: 0 | 1 = 0
+  ) => SessionHostConfiguration = (configuration) => configuration
 ) => {
   const fixture = await setup();
   try {
@@ -88,7 +86,6 @@ export const setupWeb = async (
     } as unknown as DurableObjectStorage;
     const configuration: SessionHostConfiguration = customize({
       address: source.address,
-      conversationKind,
       ...(team ? { coordination: source.coordinator.services } : {}),
       agent: {
         organizationId: source.address.organizationId,
@@ -217,9 +214,7 @@ export const setupWeb = async (
         ...(refresh
           ? {
               publication: {
-                identity: { agentVersion: 1, policyVersion: initialPolicy },
-                legacy: initialPolicy === 0,
-                primary: true,
+                identity: { agentVersion: 1 },
                 resolve: (version: number | "latest") => {
                   if (
                     version === "latest" ||
@@ -262,8 +257,6 @@ export const setupWeb = async (
           progress.push(settleProgress(promise));
         },
         scheduleNotify: () => Promise.resolve(),
-        search: () =>
-          Promise.reject(new Error("History search was not requested.")),
       },
       async (registration) => {
         for (const extension of registration.extensions) {
@@ -280,10 +273,7 @@ export const setupWeb = async (
           bindings.conversations[source.address.sessionId] = {
             address: { ...source.address },
             agentVersion: 1,
-            policyVersion: initialPolicy,
             nativeId: source.native.id,
-            origin: null,
-            legacyVersion: initialPolicy === 0 ? 1 : null,
             refresh: null,
             releaseEvent: null,
           };

@@ -89,7 +89,7 @@ afterEach(() => {
 
 const snapshot = (overrides: Partial<ChatSnapshot> = {}): ChatSnapshot =>
   Schema.decodeUnknownSync(ChatSnapshot)({
-    activity: { children: [], compactions: [], reminders: [], tasks: [] },
+    activity: { compactions: [], reminders: [], tasks: [] },
     address: {
       agentId: "agent",
       conversationId: "conversation",
@@ -174,146 +174,12 @@ const openActivity = (container: HTMLElement) => {
   }
 };
 
-test("subagent work and ownership are visible and child approval stays on the parent route", async () => {
-  const initial = snapshot({
-    activity: {
-      children: [
-        {
-          callId: "delegate-call",
-          id: "child",
-          ownerTaskId: "delegate-task",
-          purpose: "delegate",
-          state: "running",
-          title: "Check imports",
-          messages: [
-            {
-              id: "child-message",
-              role: "assistant",
-              state: "complete",
-              text: "I will check the imports.",
-            },
-          ],
-          tools: [
-            {
-              arguments: { query: "imports" },
-              callId: "child-call",
-              id: "child-tool",
-              messageId: "child-message",
-              output: "Waiting for approval",
-              state: "pending",
-              toolName: "write-ticket",
-            },
-          ],
-        },
-      ],
-      compactions: [],
-      reminders: [],
-      tasks: [
-        {
-          background: false,
-          conversationId: "child",
-          id: "child-task",
-          kind: "Tool",
-          ownerTaskId: "delegate-task",
-          state: "waiting",
-        },
-      ],
-    },
-    approvals: [
-      {
-        approvalId: "child-approval",
-        arguments: { title: "Import ticket" },
-        callId: "child-call",
-        expiresAt: Date.now() + 60_000,
-        operationId: "child-operation",
-        state: "pending",
-        taskId: "child-task",
-        toolId: "write-ticket",
-      },
-    ],
-    messages: [
-      {
-        id: "parent-message",
-        role: "assistant",
-        state: "complete",
-        text: "Parent work",
-      },
-    ],
-    tools: [
-      {
-        arguments: { title: "Different parent ticket" },
-        callId: "child-call",
-        id: "parent-tool",
-        messageId: "parent-message",
-        output: "Parent running",
-        state: "running",
-        toolName: "write-ticket",
-      },
-    ],
-  });
-  const server = installConversation(initial, (url, body) =>
-    url.endsWith("/control")
-      ? Response.json({
-          id: "child",
-          kind: Schema.decodeUnknownSync(ChatControl)(body).kind,
-        })
-      : Response.json({
-          approval: { approvalId: "child-approval", state: "allowed" },
-        })
-  );
-  const view = renderConversation(server.loaded);
-  await waitFor(() =>
-    assert.equal(
-      view.getByRole<HTMLButtonElement>("button", { name: "Approve request" })
-        .disabled,
-      false
-    )
-  );
-  await act(() => openActivity(view.container));
-  assert.equal(
-    view.getByText("I will check the imports.").textContent,
-    "I will check the imports."
-  );
-  assert.ok(
-    view
-      .getByRole("article", { name: "write-ticket Waiting" })
-      .textContent?.includes("Waiting for approval")
-  );
-  assert.ok(view.getByText("Task child-task · Owned by task delegate-task"));
-  assert.equal(
-    view
-      .getByRole("article", { name: "write-ticket Running" })
-      .querySelectorAll(".approval-card").length,
-    0
-  );
-  await act(() =>
-    view.getByRole("button", { name: "Approve request" }).click()
-  );
-  await waitFor(() =>
-    assert.equal(
-      view.getByRole<HTMLButtonElement>("button", { name: "Stop subagent" })
-        .disabled,
-      false
-    )
-  );
-  await act(() => view.getByRole("button", { name: "Stop subagent" }).click());
-  await waitFor(() => assert.equal(server.requests.length, 2));
-  assert.deepEqual(
-    server.requests.map((item) => item.body),
-    [{ decision: "allow" }, { childId: "child", kind: "stop-child" }]
-  );
-  assert.ok(
-    server.requests[0]?.url.endsWith("/conversation/approvals/child-approval")
-  );
-});
-
 test("scheduled follow-ups preserve retry intent, recurrence timezone and explicit future cancellation", async () => {
   let attempts = 0;
   const commands: ChatControl[] = [];
   const server = installConversation(
     snapshot({
       activity: {
-        children: [],
         compactions: [],
         tasks: [],
         reminders: [
@@ -407,7 +273,6 @@ test("scheduled follow-ups preserve retry intent, recurrence timezone and explic
 test("compaction status and failures render and a failed command retries with the same ID", async () => {
   const initial = snapshot({
     activity: {
-      children: [],
       reminders: [],
       tasks: [],
       compactions: [
@@ -449,7 +314,6 @@ test("compaction status and failures render and a failed command retries with th
     server.replace(
       snapshot({
         activity: {
-          children: [],
           reminders: [],
           tasks: [],
           compactions: [],

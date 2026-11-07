@@ -17,6 +17,7 @@ import {
 } from "../../packages/contracts/src/work.ts";
 
 const admission = () => ({
+  version: 2,
   admittedAt: 1_800_000_000_000,
   contentDependencies: { sourceIds: [], toolIds: [] },
   deadlineAt: 1_800_000_600_000,
@@ -34,17 +35,16 @@ const admission = () => ({
     organizationId: "org-A",
     sessionId: "session-A",
   },
-  sourceSlackThread: {
-    channelId: "D123",
-    rootTimestamp: "1800000000.000001",
-    workspaceId: "T123",
-  },
   worker: { agentId: "worker-A", agentVersion: 7 },
 });
+const threadMetadata = {
+  channelId: "D123",
+  rootTimestamp: "1800000000.000001",
+  workspaceId: "T123",
+};
 
 test("version 2 work and reports use an exact canonical source without Slack", () => {
-  const { sourceSlackThread, ...fields } = admission();
-  const work = { version: 2, ...fields };
+  const work = admission();
   const decode = Schema.decodeUnknownSync(WorkAdmissionSchema, {
     onExcessProperty: "error",
   });
@@ -68,35 +68,33 @@ test("version 2 work and reports use an exact canonical source without Slack", (
   for (const changed of [
     { ...work, version: 3 },
     { ...work, version: undefined },
-    { ...work, sourceSlackThread },
+    { ...work, threadMetadata },
     { ...work, unexpected: true },
-    { ...admission(), sourceSlackThread: { channelId: "D123" } },
-    { ...admission(), version: 2 },
   ]) {
     assert.throws(() => decode(changed));
   }
   for (const changed of [
     { ...delivery, version: 3 },
     { ...delivery, version: undefined },
-    { ...delivery, sourceSlackThread },
+    { ...delivery, threadMetadata },
     { ...delivery, unexpected: true },
     {
       report,
       sourceEventAddress: work.sourceEventAddress,
-      sourceSlackThread: { channelId: "D123" },
+      threadMetadata: { channelId: "D123" },
     },
   ]) {
     assert.throws(() => decodeReport(changed));
   }
 });
 
-test("legacy command JSON and old stringify digests retain their field order", () => {
+test("command JSON and stringify digests retain their field order", () => {
   const work = admission();
   const cases = [
     {
       command: { id: "start-A", kind: "start", work },
       digest:
-        "5c01c90edd222791ee32f193200db5d5e2a0c2d3b91572638a97391cdd5eed71",
+        "09a56a063655aaf8eae566319dce0742ca995a0b3e5874562913fc98c9615067",
     },
     {
       command: {
@@ -107,12 +105,12 @@ test("legacy command JSON and old stringify digests retain their field order", (
         work,
       },
       digest:
-        "aa1008cc55f03bc0c1e0cc850ec6a6258f3c3acc8e2490c7eeff48c8113ad28d",
+        "9c0e6ed33ae4a0688fe22bd533fb0e5697f10d61a5418987498c487e6e7d0dba",
     },
     {
       command: { id: "cancel-A", kind: "cancel", work },
       digest:
-        "ce06c5028c5e5d6912c4fce9fcd1438204c2d475b7342721939942b9ab38b399",
+        "455a4f541ed80559b594c23c366aaa8ec347e9eb394f7c0accfe083867235068",
     },
   ];
   for (const { command, digest } of cases) {
@@ -142,13 +140,6 @@ test("work admission preserves public source identity and published role pins", 
     { lead: { ...value.lead, agentVersion: 0 } },
     { worker: { ...value.worker, agentVersion: 1.5 } },
     { sourceEventAddress: { ...value.sourceEventAddress, sessionId: "" } },
-    { sourceSlackThread: { ...value.sourceSlackThread, channelId: "" } },
-    {
-      sourceSlackThread: {
-        ...value.sourceSlackThread,
-        rootTimestamp: "1800000000",
-      },
-    },
     { admittedAt: Number.POSITIVE_INFINITY },
     { deadlineAt: value.admittedAt },
     { deadlineAt: value.deadlineAt + 1 },

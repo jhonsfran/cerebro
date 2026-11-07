@@ -88,33 +88,6 @@ test("local Inspector starts closed and opens one overview before loading a sele
   assert.equal(view.queryByText("Saved result work-b"), null);
 });
 
-test("production Inspector stays closed and closed historical admission remains inspectable", async () => {
-  const fixture = inspectorFixture({
-    mode: "production",
-    snapshot: inspectionSnapshot({
-      admission: {
-        kind: "closed",
-        phase: "archived",
-        primary: inspectionAddress,
-      },
-    }),
-  });
-  const view = fixture.mount();
-  await waitFor(() =>
-    assert.ok(
-      view.getByText(/This historical conversation accepts no new messages/u)
-    )
-  );
-  assert.equal(
-    view.queryByRole("textbox", { name: "Message", exact: true }),
-    null
-  );
-  assert.equal(fixture.calls.length, 0);
-  await openInspector(view);
-  await waitFor(() => assert.equal(fixture.calls.length, 1));
-  assert.ok(view.getByText("Select work to inspect"));
-});
-
 for (const dismissal of ["Close", "Escape"] as const) {
   test(`${dismissal} cancels a pending Inspector read and preserves the chat draft and attachment`, async () => {
     const held = Promise.withResolvers<Response>();

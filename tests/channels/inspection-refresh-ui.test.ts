@@ -170,7 +170,6 @@ test("idle Inspector has no timer and streaming tokens do not trigger reads", as
     fixture.send({
       ...completed,
       activity: {
-        children: [],
         compactions: [],
         reminders: [],
         tasks: [],

@@ -16,6 +16,7 @@ import { createTestProduct, string } from "./helpers";
 
 const work = (organizationId: string, ownerPrincipalId: string) =>
   Schema.decodeUnknownSync(WorkAdmissionSchema)({
+    version: 2,
     admittedAt: 1000,
     deadlineAt: 61_000,
     goal: "Read.",
@@ -28,11 +29,6 @@ const work = (organizationId: string, ownerPrincipalId: string) =>
       agentId: "source",
       conversationId: "source",
       sessionId: "source",
-    },
-    sourceSlackThread: {
-      workspaceId: "T",
-      channelId: "D",
-      rootTimestamp: "1800000000.000001",
     },
     contentDependencies: { sourceIds: [], toolIds: [] },
   });
@@ -53,9 +49,9 @@ test("valid reports with oversized UTF-8 provenance get a stable constant transf
   });
   assert.throws(() =>
     assertQueuePayloadSize({
+      version: 2,
       report,
       sourceEventAddress: admission.sourceEventAddress,
-      sourceSlackThread: admission.sourceSlackThread,
     })
   );
   const transfer = prepareTeamReport(admission, report);
@@ -80,14 +76,8 @@ test("valid reports with oversized UTF-8 provenance get a stable constant transf
   assert.equal(cancelled.report.kind, "cancelled");
 });
 
-test("new canonical reports and size fallbacks preserve version 2 without Slack metadata", () => {
-  const legacy = work("org", "owner");
-  assert.ok("sourceSlackThread" in legacy);
-  const { sourceSlackThread, ...fields } = legacy;
-  assert.equal(sourceSlackThread.workspaceId, "T");
-  const admission = Schema.decodeUnknownSync(WorkAdmissionSchema, {
-    onExcessProperty: "error",
-  })({ version: 2, ...fields });
+test("reports and size fallbacks carry version 2 and the exact source address", () => {
+  const admission = work("org", "owner");
   const report = Schema.decodeUnknownSync(WorkReportSchema)({
     id: "report:report-work",
     key: admission.key,
@@ -96,9 +86,8 @@ test("new canonical reports and size fallbacks preserve version 2 without Slack 
     contentDependencies: { sourceIds: [], toolIds: [] },
   });
   const delivery = prepareTeamReport(admission, report);
-  assert.ok("version" in delivery);
   assert.equal(delivery.version, 2);
-  assert.equal("sourceSlackThread" in delivery, false);
+  assert.deepEqual(delivery.sourceEventAddress, admission.sourceEventAddress);
   const oversized = {
     ...report,
     contentDependencies: {
@@ -110,9 +99,8 @@ test("new canonical reports and size fallbacks preserve version 2 without Slack 
     },
   };
   const fallback = prepareTeamReport(admission, oversized);
-  assert.ok("version" in fallback);
   assert.equal(fallback.version, 2);
-  assert.equal("sourceSlackThread" in fallback, false);
+  assert.deepEqual(fallback.sourceEventAddress, admission.sourceEventAddress);
   assert.equal(fallback.report.kind, "failed");
   assert.deepEqual(prepareTeamReport(admission, oversized), fallback);
 });

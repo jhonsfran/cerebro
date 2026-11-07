@@ -53,8 +53,6 @@ test("the real Inspector gateway permits current READ without execute or a publi
       ...address,
       bindingKey: "inspection-owned-source",
       ownerPrincipalId,
-      engine: "pi-identity-v1",
-      kind: "web",
     });
     await database
       .delete(identityGrant)
@@ -101,9 +99,7 @@ test("the real Inspector gateway permits current READ without execute or a publi
           return Response.json({
             kind: "overview",
             address,
-            profile: { agentVersion: 7, policyVersion: 1 },
-            admission: "archived",
-            primary: address,
+            profile: { agentVersion: 7 },
             work: [],
             refresh: false,
           });
@@ -186,8 +182,6 @@ test("the real private Inspector authorizes the complete raw and canonical union
       ...address,
       bindingKey: "inspection-owned-source",
       ownerPrincipalId,
-      engine: "pi-identity-v1",
-      kind: "web",
     });
     await database
       .delete(identityGrant)

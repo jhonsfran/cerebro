@@ -20,6 +20,7 @@ const journey = runtimeJourney("teams");
 const admission = (goal: string, timeoutMs = 60_000) => {
   const admittedAt = Date.now();
   return Schema.decodeUnknownSync(WorkAdmissionSchema)({
+    version: 2,
     admittedAt,
     deadlineAt: admittedAt + timeoutMs,
     goal,
@@ -36,11 +37,6 @@ const admission = (goal: string, timeoutMs = 60_000) => {
       agentId: "coordinator",
       conversationId: "public-source",
       sessionId: "public-source",
-    },
-    sourceSlackThread: {
-      workspaceId: "T-team",
-      channelId: "D-team",
-      rootTimestamp: "1800000000.000001",
     },
     contentDependencies: { sourceIds: ["source-A"], toolIds: [] },
   });

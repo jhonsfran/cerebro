@@ -1,7 +1,5 @@
 import { LiveDoc } from "@earendil-works/pi-durable";
 import type { PiHarness } from "agents/harness/pi";
-import type { LifecycleJobs } from "agents/lifecycle";
-import { z } from "zod";
 
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import { InvalidInput } from "../../packages/contracts/src/failures.ts";
@@ -9,7 +7,6 @@ import { piContext } from "../../packages/runtime/src/pi-harness.ts";
 import type { MetadataTransaction } from "../../packages/runtime/src/session-agent.ts";
 
 export const capabilityFixture = async (
-  request: Request,
   path: string,
   address: EventAddress,
   services: {
@@ -17,7 +14,6 @@ export const capabilityFixture = async (
     readonly storage: DurableObjectStorage;
     readonly nativeSession: (address: EventAddress) => Promise<string>;
     readonly harness: PiHarness;
-    readonly jobs: LifecycleJobs;
   }
 ): Promise<Response> => {
   const nativeId = await services.nativeSession(address);
@@ -33,34 +29,6 @@ export const capabilityFixture = async (
           .filter(({ record }) => record.conversationId === native.id)
           .map(({ record }) => record),
       },
-    });
-  }
-  if (path === "/fixture/capabilities/expire-child") {
-    const { childId } = z
-      .object({ childId: z.string().min(1) })
-      .parse(await request.json());
-    const job = services.jobs.list().find((candidate) => {
-      const parsed = z
-        .object({ childId: z.string(), sessionId: z.string() })
-        .safeParse(candidate.payload);
-      return (
-        parsed.success &&
-        parsed.data.childId === childId &&
-        parsed.data.sessionId === address.sessionId
-      );
-    });
-    if (!job) {
-      throw new InvalidInput({
-        reason: "The child has no durable deadline job.",
-      });
-    }
-    await services.transaction(() =>
-      services.jobs.reschedule(job.id, Date.now())
-    );
-    await services.storage.sync();
-    return Response.json({
-      status: "ok",
-      value: { previousDeadline: job.time, rescheduled: true },
     });
   }
   if (path === "/fixture/capabilities/storage") {

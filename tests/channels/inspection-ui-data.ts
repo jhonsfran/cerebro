@@ -19,7 +19,7 @@ export const inspectionAddress = Schema.decodeUnknownSync(
   conversationId: "conversation",
   sessionId: "session",
 });
-export const inspectionProfile = { agentVersion: 2, policyVersion: 1 } as const;
+export const inspectionProfile = { agentVersion: 2 } as const;
 export const inspectionWork = (
   workId = "work-a",
   changes: Partial<InspectionWork> = {}
@@ -73,8 +73,6 @@ export const inspectionOverview = (
   kind: "overview",
   address: inspectionAddress,
   profile: inspectionProfile,
-  admission: "open",
-  primary: null,
   work,
   refresh,
 });
@@ -197,6 +195,6 @@ export const inspectionSnapshot = (
     messages: [],
     queuedInputs: [],
     busy: false,
-    activity: { children: [], compactions: [], reminders: [], tasks: [] },
+    activity: { compactions: [], reminders: [], tasks: [] },
     ...changes,
   });

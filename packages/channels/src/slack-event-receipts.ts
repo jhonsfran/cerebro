@@ -20,11 +20,6 @@ import { ChannelError } from "./types";
 import type { ChannelOptions, SlackConfiguration } from "./types";
 
 const LINK_COMMAND = /^(?:link|\/link)\s+(?<code>[a-f0-9]{64})$/iu;
-const identifier = z
-  .string()
-  .min(1)
-  .max(512)
-  .refine((value) => value.trim() === value);
 const ignoredReason = z.enum([
   "bot",
   "subtype",
@@ -33,21 +28,12 @@ const ignoredReason = z.enum([
   "unlinked",
   "link-command",
 ]);
-const legacyDecisionSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("admit"),
-    ownerPrincipalId: identifier,
-    sourceEventAddress: z.strictObject({
-      agentId: identifier,
-      conversationId: identifier,
-      organizationId: identifier,
-      sessionId: identifier,
-    }),
-  }),
-  z.strictObject({ kind: z.literal("ignored"), reason: ignoredReason }),
-]);
+const ignoredDecisionSchema = z.strictObject({
+  kind: z.literal("ignored"),
+  reason: ignoredReason,
+});
 export type SlackEventDecision =
-  | z.infer<typeof legacyDecisionSchema>
+  | z.infer<typeof ignoredDecisionSchema>
   | SlackPrimaryDecision;
 type SlackCallback = z.infer<typeof slackCallbackSchema>;
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -97,9 +83,9 @@ const classify = (event: SlackCallback["event"]): SlackInput => {
 };
 
 export const parseSlackEventDecision = (value: unknown): SlackEventDecision => {
-  const legacy = legacyDecisionSchema.safeParse(value);
-  if (legacy.success) {
-    return legacy.data;
+  const ignored = ignoredDecisionSchema.safeParse(value);
+  if (ignored.success) {
+    return ignored.data;
   }
   try {
     return Schema.decodeUnknownSync(SlackPrimaryDecisionSchema, {
@@ -152,12 +138,10 @@ const eligibleTargets = async (
           "The subscribed bot belongs to another source."
         );
       }
-      return row.retiredAt || row.engine !== "pi-identity-v1"
-        ? null
-        : row.agentId;
+      return row.agentId;
     })
   );
-  const agents = new Set(candidates.filter((agentId) => agentId !== null));
+  const agents = new Set(candidates);
   return await Promise.all(
     [...agents].map(async (agentId) =>
       addressOf(
@@ -179,7 +163,7 @@ export const resolveSlackEventDecision = async (
 ) => {
   const input = classify(payload.event);
   const eventKey = `slack:${options.organizationId}:${configuration.appId}:${configuration.workspaceId}:${payload.event_id}`;
-  const legacyDigest = await digest({
+  const ignoredDigest = await digest({
     agentId: configuration.agentId,
     callback: payload,
   });
@@ -188,7 +172,7 @@ export const resolveSlackEventDecision = async (
     const decision = parseSlackEventDecision(prior.decision);
     if (
       prior.digest !==
-      (decision.kind === "primary-events-v2" ? primaryDigest : legacyDigest)
+      (decision.kind === "primary-events-v2" ? primaryDigest : ignoredDigest)
     ) {
       throw new ChannelError(
         409,
@@ -322,53 +306,10 @@ export const resolveSlackEventDecision = async (
     await tx.insert(channelSlackEventReceipt).values({
       decision,
       digest:
-        decision.kind === "primary-events-v2" ? primaryDigest : legacyDigest,
+        decision.kind === "primary-events-v2" ? primaryDigest : ignoredDigest,
       eventKey,
     });
     return { created: true, decision };
   });
   return { ...result, eventKey, input };
-};
-
-export const readSlackEventTarget = async (
-  database: Database,
-  options: Pick<ChannelOptions, "organizationId">,
-  configuration: SlackConfiguration,
-  decision: Extract<SlackEventDecision, { kind: "admit" }>,
-  message: DirectMessage
-) => {
-  const link = await createIdentityRepository(database).resolveSlackLink(
-    configuration.workspaceId,
-    message.user
-  );
-  const { sourceEventAddress: address } = decision;
-  const [conversation] = await database
-    .select()
-    .from(channelConversation)
-    .where(eq(channelConversation.conversationId, address.conversationId));
-  if (
-    !link ||
-    link.organizationId !== options.organizationId ||
-    link.principalId !== decision.ownerPrincipalId ||
-    !conversation ||
-    conversation.organizationId !== options.organizationId ||
-    conversation.organizationId !== address.organizationId ||
-    conversation.ownerPrincipalId !== decision.ownerPrincipalId ||
-    conversation.agentId !== address.agentId ||
-    conversation.agentId !== configuration.agentId ||
-    conversation.sessionId !== address.sessionId ||
-    conversation.kind !== "slack" ||
-    conversation.engine !== "pi-identity-v1" ||
-    conversation.workspaceId !== configuration.workspaceId ||
-    conversation.channelId !== message.channel ||
-    conversation.slackUserId !== message.user ||
-    conversation.rootTimestamp !== (message.threadTs ?? message.ts)
-  ) {
-    throw new ChannelError(
-      403,
-      "forbidden",
-      "The saved Slack event target is no longer accessible."
-    );
-  }
-  return conversation;
 };

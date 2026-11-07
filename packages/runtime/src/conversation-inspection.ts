@@ -37,7 +37,6 @@ import {
   readOwnedWork,
 } from "./inspection-work.ts";
 import { piContext } from "./pi-harness.ts";
-import { SourceAdmission } from "./source-admission.ts";
 
 export interface InspectionAccess {
   readonly authorize: (input: {
@@ -145,10 +144,7 @@ export const readConversationInspection = async (
   if (!binding || !sameWorkSource(binding.address, address)) {
     throw new NotFound({ resource: "Saved source binding" });
   }
-  const profile = {
-    agentVersion: binding.agentVersion,
-    policyVersion: binding.policyVersion,
-  };
+  const profile = { agentVersion: binding.agentVersion };
   const additional: ContentDependencies[] = [];
   let observed: readonly CoordinatorWorkRecord[] = [];
   let eventKeys: readonly string[] | undefined;
@@ -203,28 +199,19 @@ export const readConversationInspection = async (
     const work = await Promise.all(
       records.map((record) => projectInspectionWork(pi, record, signal))
     );
-    if (query.kind === "history") {
-      frame = { ...common, kind: "history", work, next };
-    } else {
-      const savedAdmission = await pi.snapshot(
-        SourceAdmission,
-        binding.nativeId,
-        piContext(signal)
-      );
-      const admission = savedAdmission?.state ?? { kind: "open" as const };
-      frame = {
-        ...common,
-        kind: "overview",
-        work,
-        admission: admission.kind,
-        primary: admission.kind === "open" ? null : admission.primary,
-        refresh: work.some(
-          (item) =>
-            item.reservationHeld ||
-            (item.status === "queued" && item.deadlineAt > Date.now())
-        ),
-      };
-    }
+    frame =
+      query.kind === "history"
+        ? { ...common, kind: "history", work, next }
+        : {
+            ...common,
+            kind: "overview",
+            work,
+            refresh: work.some(
+              (item) =>
+                item.reservationHeld ||
+                (item.status === "queued" && item.deadlineAt > Date.now())
+            ),
+          };
   } else {
     const record = await owned(query.workId);
     observed = [record];

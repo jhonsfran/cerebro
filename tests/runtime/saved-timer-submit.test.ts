@@ -5,8 +5,6 @@ import { Effect, Schema } from "effect";
 
 import { Conflict, Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
-import { LegacyTimerReplyOriginSchema } from "../../packages/contracts/src/timer-events.ts";
-import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import {
   createConversationReminders,
   ReminderPayload,
@@ -21,7 +19,6 @@ import {
   saveReminderOriginIn,
 } from "../../packages/runtime/src/saved-timer-state.ts";
 import { submitSavedTimer } from "../../packages/runtime/src/saved-timer-submit.ts";
-import { createSourceAdmission } from "../../packages/runtime/src/source-admission.ts";
 import { context, setup } from "./coordinator-fixture.ts";
 import { actor } from "./coordinator-web-fixture.ts";
 
@@ -31,15 +28,7 @@ const setupTimer = async () => {
     c: "coordinator-A",
   });
   const original = fixture.source("b");
-  const primary = fixture.source("a");
-  const legacy = Schema.decodeUnknownSync(LegacyTimerReplyOriginSchema)({
-    kind: "legacy-slack-timer",
-    source: original.address,
-    ownerPrincipalId: actor.actor.id,
-    authority: { appId: "app-A", userId: "slack-A", thread: original.thread },
-  });
   let denied = false;
-  let linked = true;
   let lose = false;
   let clock = Date.now();
   let dependencies = {
@@ -58,8 +47,6 @@ const setupTimer = async () => {
       guardIn: () => Promise.resolve(),
       configuration: {
         address: original.address,
-        primaryAddress: primary.address,
-        legacyTimerOrigin: legacy,
         ownerContext: () => Effect.succeed(actor),
         contentDependencies: () => Promise.resolve(dependencies),
         checkDependencies: () =>
@@ -69,16 +56,9 @@ const setupTimer = async () => {
               )
             : Effect.void,
         eventReplies: {
-          destination: (origin: unknown) => {
-            assert.deepEqual(origin, legacy);
-            return Promise.resolve(legacy);
-          },
-          authorize: () =>
-            linked
-              ? Promise.resolve()
-              : Promise.reject(
-                  new Denied({ code: "revoked", reason: "Link revoked." })
-                ),
+          destination: () =>
+            Promise.reject(new Error("Web timers have no Slack destination.")),
+          authorize: () => Promise.resolve(),
           deliver: () => Promise.resolve(),
         },
       },
@@ -100,21 +80,11 @@ const setupTimer = async () => {
           const receipt = await fixture.events().admit(...args);
           if (lose) {
             lose = false;
-            throw new Error("Lost primary event response.");
+            throw new Error("Lost event response.");
           }
           return receipt;
         },
       },
-    });
-  const source = () =>
-    createSourceAdmission({
-      pi: fixture.pi(),
-      nativeId: fixture.source("b").native.id,
-      address: original.address,
-      primary: primary.address,
-      busy: () => false,
-      jobs: fixture.lifecycleJobs,
-      persist: () => Promise.resolve(),
     });
   const reminders = (
     extra: Partial<Parameters<typeof createConversationReminders>[0]> = {}
@@ -129,7 +99,7 @@ const setupTimer = async () => {
       authorize: profile.runtime.authorize,
       submit: () =>
         Promise.reject(
-          new Error("Forwarding must not submit a new old-native input.")
+          new Error("Timers must not submit a native input directly.")
         ),
       submitOccurrence: submit,
       now: () => clock,
@@ -139,17 +109,13 @@ const setupTimer = async () => {
           reminderId,
           address: original.address,
           ownerPrincipalId: actor.actor.id,
-          legacy,
         }),
       ...extra,
     });
   return {
     fixture,
     original,
-    primary,
-    legacy,
     admitted,
-    source,
     reminders,
     submit,
     profile,
@@ -162,9 +128,6 @@ const setupTimer = async () => {
     },
     deny: () => {
       denied = true;
-    },
-    unlink: () => {
-      linked = false;
     },
     changeDependencies: () => {
       dependencies = {
@@ -185,7 +148,7 @@ const setupTimer = async () => {
   };
 };
 
-test("retained source timers forward full instructions once to the same agent primary, with immutable dependencies and original destination", async () => {
+test("saved timers forward full instructions once to their own conversation with immutable dependencies", async () => {
   const subject = await setupTimer();
   try {
     const input = {
@@ -201,24 +164,20 @@ test("retained source timers forward full instructions once to the same agent pr
       onExcessProperty: "error",
     })(before.payload);
     assert.equal(payload.reminderId.length, 521);
-    assert.equal(payload.input.instruction.length, 32_000);
-    await subject.source().restore();
+    assert.equal(payload.occurrence, input.runAt);
     subject.setTime(input.runAt);
-    assert.ok(await subject.reminders().deliver(timer.id, input.runAt));
-    assert.equal(subject.admitted.length, 0);
-    await subject.source().advance();
     subject.lose();
     assert.ok(await subject.reminders().deliver(timer.id, input.runAt));
     const first = await subject.record();
     assert.deepEqual(first.source, subject.original.address);
-    assert.deepEqual(first.event.coordinator, subject.primary.address);
+    assert.deepEqual(first.event.coordinator, subject.original.address);
     assert.equal(first.event.content.text, input.instruction);
     assert.deepEqual(first.event.dependencies, {
       sourceIds: [id.source("original-content")],
       toolIds: ["original-tool"],
     });
-    assert.deepEqual(first.destination, subject.legacy);
-    assert.deepEqual(first.replyOrigin, subject.legacy);
+    assert.equal(first.destination, null);
+    assert.deepEqual(first.replyOrigin, { kind: "web" });
     subject.changeDependencies();
     await subject.fixture.reopen();
     const delivery = await subject.reminders().deliver(timer.id, input.runAt);
@@ -232,8 +191,7 @@ test("retained source timers forward full instructions once to the same agent pr
     await subject.fixture
       .pi()
       .waitForTask(receipt.receipt.delivery.taskId, context);
-    const savedResult1 = await subject.reminders().list();
-    const [advanced] = savedResult1;
+    const [advanced] = await subject.reminders().list();
     assert.ok(advanced);
     assert.equal(advanced.id, timer.id);
     assert.equal(advanced.lastDeliveredAt, input.runAt);
@@ -246,8 +204,8 @@ test("retained source timers forward full instructions once to the same agent pr
     );
     await subject.reminders().cancel(timer.id);
     assert.equal(subject.fixture.lifecycleJobs.get(jobId), undefined);
-    const savedResult2 = await subject.reminders().list();
-    assert.equal(savedResult2[0]?.state, "cancelled");
+    const [cancelled] = await subject.reminders().list();
+    assert.equal(cancelled?.state, "cancelled");
   } finally {
     await subject.close();
   }
@@ -282,7 +240,7 @@ test("schedule and origin commit together before a timer arm can fail, and the g
       .snapshot(ReminderOrigins, subject.original.native.id, saved.id, context);
     assert.deepEqual(origin?.record, {
       creatingEventId: null,
-      reply: subject.legacy,
+      reply: { kind: "web" },
     });
     assert.equal(
       jobs.get(
@@ -304,9 +262,8 @@ test("schedule and origin commit together before a timer arm can fail, and the g
     );
     assert.ok(armed);
     assert.equal(
-      Schema.decodeUnknownSync(ReminderPayload)(armed.payload).input
-        .instruction,
-      input.instruction
+      Schema.decodeUnknownSync(ReminderPayload)(armed.payload).reminderId,
+      saved.id
     );
     assert.deepEqual(
       await subject.reminders().schedule(input, "canonical-gap"),
@@ -329,7 +286,6 @@ test("a raw generic wake that survives rollback cannot create a schedule or lose
           reminderId,
           address: subject.original.address,
           ownerPrincipalId: actor.actor.id,
-          legacy: subject.legacy,
         });
         throw new Error("Crash before canonical commit.");
       },
@@ -400,8 +356,8 @@ test("a generic wake that starts before schedule commit reads the canonical sche
         `cerebro-reminder:${subject.original.address.sessionId}:${saved.id}`
       )
     );
-    const savedResult3 = await subject.reminders().list();
-    assert.equal(savedResult3.length, 1);
+    const listed = await subject.reminders().list();
+    assert.equal(listed.length, 1);
     assert.equal(subject.admitted.length, 0);
   } finally {
     jobs.push = push;
@@ -409,11 +365,9 @@ test("a generic wake that starts before schedule commit reads the canonical sche
   }
 });
 
-test("a saved timer occurrence never replaces its payload, owner, or current source and link checks", async () => {
+test("a saved timer occurrence never replaces its payload, owner, or current source checks", async () => {
   const subject = await setupTimer();
   try {
-    await subject.source().restore();
-    await subject.source().advance();
     const occurrence = {
       reminderId: "reminder:fixed",
       fingerprint: "fixed-fingerprint",
@@ -421,13 +375,11 @@ test("a saved timer occurrence never replaces its payload, owner, or current sou
       occurrence: subject.now(),
     };
     subject.lose();
-    await assert.rejects(subject.submit(occurrence), /Lost primary/u);
+    await assert.rejects(subject.submit(occurrence), /Lost event/u);
     await assert.rejects(
       subject.submit({ ...occurrence, instruction: "Changed input." }),
       Conflict
     );
-    subject.unlink();
-    await assert.rejects(subject.submit(occurrence), Denied);
     assert.equal(subject.admitted.length, 1);
     subject.deny();
     await assert.rejects(subject.submit(occurrence), Denied);
@@ -437,108 +389,7 @@ test("a saved timer occurrence never replaces its payload, owner, or current sou
   }
 });
 
-for (const phase of ["queued", "placed", "done"] as const) {
-  test(`an original ${phase} timer input advances the retained occurrence without a second primary event after a crash gap`, async () => {
-    const subject = await setupTimer();
-    const entered = Promise.withResolvers<boolean>();
-    const release = Promise.withResolvers<boolean>();
-    try {
-      const { native } = subject.original;
-      subject.original.faux.setResponses([
-        async () => {
-          entered.resolve(true);
-          await release.promise;
-          return fauxAssistantMessage("The original accepted input completed.");
-        },
-        fauxAssistantMessage("The old queued timer completed."),
-      ]);
-      const runAt = subject.now() + 1000;
-      const input = { instruction: `Retained ${phase} instruction.`, runAt };
-      const timer = await subject.reminders().schedule(input, `old-${phase}`);
-      const oldText = `Scheduled instruction (${timer.id}, ${new Date(runAt).toISOString()}):\n${input.instruction}`;
-      const first =
-        phase === "queued"
-          ? await native.submit(
-              {
-                type: "input",
-                requestId: "prior-running",
-                content: "Other accepted work.",
-              },
-              context
-            )
-          : undefined;
-      if (first) {
-        await entered.promise;
-      }
-      const old = await native.submit(
-        { type: "input", requestId: `${timer.id}:${runAt}`, content: oldText },
-        context
-      );
-      if (phase !== "queued") {
-        await entered.promise;
-      }
-      if (phase === "done") {
-        release.resolve(true);
-        await old.wait(context);
-      }
-      const savedResult4 = await old.status(context);
-      assert.equal(savedResult4.status, phase === "placed" ? "placed" : phase);
-      await subject.source().restore();
-      subject.setTime(runAt);
-      await subject.reminders().deliver(timer.id, runAt);
-      assert.equal(subject.admitted.length, 0);
-      const savedResult5 = await subject.reminders().list();
-      assert.equal(savedResult5[0]?.state, "completed");
-      release.resolve(true);
-      await old.wait(context);
-      if (first) {
-        await first.wait(context);
-      }
-      assert.equal(
-        subject.original.faux.state.callCount,
-        phase === "queued" ? 2 : 1
-      );
-      await subject.source().advance();
-      const savedResult6 = await subject.source().read();
-      assert.equal(savedResult6.kind, "archived");
-      await subject.reminders().deliver(timer.id, runAt);
-      assert.equal(subject.admitted.length, 0);
-      assert.equal(subject.primary.faux.state.callCount, 0);
-    } finally {
-      release.resolve(true);
-      await subject.close();
-    }
-  });
-}
-
-test("old timer request IDs with changed retained text fail closed instead of creating a primary event", async () => {
-  const subject = await setupTimer();
-  try {
-    const occurrence = {
-      reminderId: "reminder:collision",
-      fingerprint: "fingerprint",
-      instruction: "Original instruction.",
-      occurrence: subject.now(),
-    };
-    const accepted = await subject.original.native.submit(
-      {
-        type: "input",
-        requestId: `${occurrence.reminderId}:${occurrence.occurrence}`,
-        content: "A different old native input.",
-      },
-      context
-    );
-    await accepted.wait(context);
-    await subject.source().restore();
-    await subject.source().advance();
-    await assert.rejects(subject.submit(occurrence), Conflict);
-    assert.equal(subject.admitted.length, 0);
-  } finally {
-    await subject.close();
-  }
-});
-
-test("identical reminder IDs from distinct original sessions have distinct primary event identities", async () => {
+test("identical reminder IDs from distinct sessions have distinct event identities", async () => {
   const subject = await setupTimer();
   try {
     const occurrence = {
@@ -547,8 +398,6 @@ test("identical reminder IDs from distinct original sessions have distinct prima
       instruction: "An independent retained timer.",
       occurrence: subject.now(),
     };
-    await subject.source().restore();
-    await subject.source().advance();
     await subject.submit(occurrence);
     const first = await subject.record();
     const sibling = subject.fixture.source("c");
@@ -558,7 +407,6 @@ test("identical reminder IDs from distinct original sessions have distinct prima
         configuration: {
           ...subject.profile.runtime.configuration,
           address: sibling.address,
-          legacyTimerOrigin: undefined,
         },
       },
     };

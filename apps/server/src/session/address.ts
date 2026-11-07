@@ -27,8 +27,6 @@ export const resolveSessionAddress = (
         );
       if (
         !row ||
-        row.engine !== "pi-identity-v1" ||
-        row.retiredAt ||
         row.organizationId !== identity.organizationId ||
         row.ownerPrincipalId !== identity.ownerPrincipalId
       ) {

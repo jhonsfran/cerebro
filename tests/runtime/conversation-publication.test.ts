@@ -5,9 +5,7 @@ import { test } from "node:test";
 import { Effect } from "effect";
 
 import { Denied, Unavailable } from "../../packages/contracts/src/failures.ts";
-import { id } from "../../packages/contracts/src/identity.ts";
 import {
-  Type,
   fauxAssistantMessage,
   fauxToolCall,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
@@ -44,8 +42,8 @@ const settle = async (subject: Awaited<ReturnType<typeof setupWeb>>) => {
   );
 };
 
-test("an unchanged definition adopts coordinator policy after native drain without changing conversation state", async () => {
-  const subject = await setupWeb(false, "web", true);
+test("an unchanged definition keeps its conversation state and native selection across a send", async () => {
+  const subject = await setupWeb(false, true);
   try {
     const { approvals } = subject.scope.runtime;
     await subject.scope.reminders.schedule(
@@ -61,11 +59,7 @@ test("an unchanged definition adopts coordinator policy after native drain witho
     const old = await subject.fixture
       .pi()
       .snapshot(AgentDoc, subject.source.native.id, context);
-    assert.deepEqual(old?.extensions, ["cerebro-tools:source-a"]);
-    await subject.source.native.configure(
-      { tools: subject.scope.work.tools, modelTools: subject.scope.work.tools },
-      context
-    );
+    assert.deepEqual(old?.extensions, ["cerebro-tools:source-a:v1"]);
     const response = await subject.send(
       "same-definition",
       "Explain the current policy."
@@ -73,7 +67,6 @@ test("an unchanged definition adopts coordinator policy after native drain witho
     assert.equal(response.status, 200, await response.clone().text());
     await settle(subject);
     assert.equal((await binding(subject)).agentVersion, 1);
-    assert.equal((await binding(subject)).policyVersion, 1);
     assert.equal((await binding(subject)).nativeId, subject.source.native.id);
     assert.equal(subject.scope.runtime.approvals, approvals);
     assert.equal(
@@ -83,17 +76,16 @@ test("an unchanged definition adopts coordinator policy after native drain witho
     const agent = await subject.fixture
       .pi()
       .snapshot(AgentDoc, subject.source.native.id, context);
-    assert.deepEqual(agent?.extensions, ["cerebro-tools:source-a:v1:p1"]);
+    assert.deepEqual(agent?.extensions, ["cerebro-tools:source-a:v1"]);
     assert.equal(agent?.tools, undefined);
     assert.equal(agent?.modelTools, undefined);
-    assert.equal(agent?.model?.provider, "cerebro:source-a:v1:p1");
+    assert.equal(agent?.model?.provider, "cerebro:source-a:v1");
     const names = subject.fixture
       .registry()
       .snapshot()
-      .extension("cerebro-tools:source-a:v1:p1")
+      .extension("cerebro-tools:source-a:v1")
       ?.tools?.map((tool) => tool.name);
     assert.ok(names?.includes("schedule"));
-    assert.ok(!names?.includes("subagent"));
     const after = await subject.source.native.entries(
       {},
       64,
@@ -109,7 +101,7 @@ test("an unchanged definition adopts coordinator policy after native drain witho
 });
 
 test("a published profile waits for an old native request and changes physical model, instructions, input, and tools together", async () => {
-  const subject = await setupWeb(false, "web", true);
+  const subject = await setupWeb(false, true);
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
   try {
@@ -181,7 +173,6 @@ test("a published profile waits for an old native request and changes physical m
     assert.ok(request.includes("Version two instructions."));
     assert.ok(request.includes("Current memory grant."));
     assert.ok(request.includes("coordinator-b"));
-    assert.equal(offered.has("subagent"), false);
     assert.equal((await subject.scope.read(actor)).agentVersion, 2);
   } finally {
     release.resolve(true);
@@ -189,120 +180,8 @@ test("a published profile waits for an old native request and changes physical m
   }
 });
 
-test("a pending old approval keeps its waiter and exact native tool selection until the write completes", async () => {
-  let writes = 0;
-  const subject = await setupWeb(false, "web", true, (configuration) => ({
-    ...configuration,
-    agent: {
-      ...configuration.agent,
-      enabledToolIds: [id.tool("legacy_write")],
-    },
-    authority: {
-      ...configuration.authority,
-      require: (request) =>
-        Effect.succeed({
-          request,
-          policyVersion: "current",
-          evaluatedAt: Date.now(),
-        }),
-    },
-    tools: [
-      {
-        definition: {
-          id: id.tool("legacy_write"),
-          version: "1",
-          effect: "write",
-          connectorId: "fixture",
-          connectorFingerprint: id.digest("legacy-write"),
-        },
-        description: "Write under the admitted definition.",
-        parameters: Type.Object({}),
-        idempotent: true,
-      },
-    ],
-    executor: {
-      execute: () =>
-        Effect.sync(() => {
-          writes += 1;
-          return { output: "written" };
-        }),
-    },
-  }));
-  try {
-    subject.source.faux.setResponses([
-      fauxAssistantMessage(fauxToolCall("legacy_write", {}), {
-        stopReason: "toolUse",
-      }),
-      fauxAssistantMessage("Old write complete."),
-    ]);
-    const prior = await subject.source.native.submit(
-      {
-        type: "input",
-        requestId: "old-write",
-        content: "Perform the approved write.",
-      },
-      context
-    );
-    subject.fixture.pi().resume();
-    const pendingSnapshot = await waitFor(
-      () => subject.scope.read(actor),
-      (snapshot) =>
-        snapshot.approvals.some((value) => value.state === "pending") ||
-        !snapshot.busy
-    );
-    const approval = pendingSnapshot.approvals.find(
-      (value) => value.state === "pending"
-    );
-    const nativeTasks = await subject.fixture
-      .pi()
-      .commit(
-        (tx) => tx.scanTasks({ conversationId: subject.source.native.id }, 64),
-        context
-      );
-    assert.ok(approval, JSON.stringify({ pendingSnapshot, nativeTasks }));
-    const store = subject.scope.runtime.approvals;
-    subject.publish({
-      ...subject.configuration,
-      agent: {
-        ...subject.configuration.agent,
-        version: 2,
-        instructions: "New restricted definition.",
-      },
-      tools: [],
-    });
-    await subject.send("after-approval", "Continue after the old write.");
-    await waitFor(
-      () => binding(subject),
-      (value) => value.refresh !== null
-    );
-    assert.equal((await binding(subject)).agentVersion, 1);
-    const old = await subject.fixture
-      .pi()
-      .snapshot(AgentDoc, subject.source.native.id, context);
-    assert.deepEqual(old?.extensions, ["cerebro-tools:source-a"]);
-    const decision = await subject.scope.handle(
-      new Request("https://session.internal/decide", {
-        method: "POST",
-        body: JSON.stringify({
-          approvalId: approval.approvalId,
-          decision: "allow",
-        }),
-      }),
-      actor
-    );
-    assert.equal(decision.status, 200, await decision.clone().text());
-    await prior.wait(context);
-    await settle(subject);
-    assert.equal(writes, 1);
-    assert.equal(subject.scope.runtime.approvals, store);
-    assert.equal((await binding(subject)).agentVersion, 2);
-  } finally {
-    await subject.close();
-  }
-});
-
 test("background tasks and tasks beyond the first page block native activation", async () => {
-  const subject = await setupWeb(false, "web", true);
+  const subject = await setupWeb(false, true);
   const held = defineTask({
     name: "fixture.profile-background",
     version: 1,
@@ -341,6 +220,10 @@ test("background tasks and tasks beyond the first page block native activation",
       false
     );
     await subject.source.native.waitForIdle(context);
+    subject.publish({
+      ...subject.configuration,
+      agent: { ...subject.configuration.agent, version: 2 },
+    });
     await subject.send(
       "background-boundary",
       "Wait for native background work."
@@ -349,7 +232,7 @@ test("background tasks and tasks beyond the first page block native activation",
       () => binding(subject),
       (value) => value.refresh !== null
     );
-    assert.equal((await binding(subject)).policyVersion, 0);
+    assert.equal((await binding(subject)).agentVersion, 1);
     for (const task of ids.slice(0, 69)) {
       await subject.fixture.pi().abortTask(task, context);
     }
@@ -361,14 +244,14 @@ test("background tasks and tasks beyond the first page block native activation",
     );
     await subject.fixture.pi().abortTask(ids[69], context);
     await settle(subject);
-    assert.equal((await binding(subject)).policyVersion, 1);
+    assert.equal((await binding(subject)).agentVersion, 2);
   } finally {
     await subject.close();
   }
 });
 
 test("an unprepared adopted binding makes the scope unavailable synchronously", async () => {
-  const subject = await setupWeb(false, "web", true);
+  const subject = await setupWeb(false, true);
   try {
     await subject.fixture.pi().commit(async (tx) => {
       const bindings = await tx.doc(Bindings);
@@ -392,7 +275,7 @@ test("a delayed authenticated schedule control repeats authorization before the 
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
   let delay = false;
-  const subject = await setupWeb(false, "web", true, (configuration) => ({
+  const subject = await setupWeb(false, true, (configuration) => ({
     ...configuration,
     authority: {
       ...configuration.authority,
@@ -459,8 +342,8 @@ test("a delayed authenticated schedule control repeats authorization before the 
   }
 });
 
-test("retained report turns cannot leave a new durable schedule seed through a legacy profile", async () => {
-  const subject = await setupWeb(true, "web", true);
+test("report turns without a human cause cannot leave a new durable schedule", async () => {
+  const subject = await setupWeb(true, true);
   try {
     subject.source.faux.setResponses([
       fauxAssistantMessage(
@@ -483,7 +366,6 @@ test("retained report turns cannot leave a new durable schedule seed through a l
             eventId: "retained-report",
             source: "teamreport",
             agentVersion: 1,
-            policyVersion: 0,
           },
         },
       },
@@ -497,14 +379,13 @@ test("retained report turns cannot leave a new durable schedule seed through a l
       ).length,
       0
     );
-    assert.equal((await binding(subject)).policyVersion, 0);
   } finally {
     await subject.close();
   }
 });
 
 test("a frozen publication admits the oldest held event before a later publication", async () => {
-  const subject = await setupWeb(false, "web", true);
+  const subject = await setupWeb(false, true);
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
   try {
@@ -564,7 +445,7 @@ test("a frozen publication admits the oldest held event before a later publicati
 });
 
 test("existing active and queued Team admissions keep their role pins while new work resolves current pins", async () => {
-  const subject = await setupWeb(true, "web", true);
+  const subject = await setupWeb(true, true);
   try {
     for (let index = 0; index < 3; index += 1) {
       await subject.fixture.invoke(
@@ -630,7 +511,7 @@ test("existing active and queued Team admissions keep their role pins while new 
 });
 
 test("idle native child selections retain their exact profile while unselected publications are removed", async () => {
-  const subject = await setupWeb(false, "web", true);
+  const subject = await setupWeb(false, true);
   const childTask = defineTask({
     name: "fixture.profile-child",
     version: 1,
@@ -685,8 +566,8 @@ test("idle native child selections retain their exact profile while unselected p
       JSON.stringify(task.state)
     );
     const childId = task.state.outcome.result.id;
-    const oldProvider = "cerebro:source-a:v1:p1";
-    const oldExtension = "cerebro-tools:source-a:v1:p1";
+    const oldProvider = "cerebro:source-a:v1";
+    const oldExtension = "cerebro-tools:source-a:v1";
     subject.publish({
       ...subject.configuration,
       agent: { ...subject.configuration.agent, version: 2 },
@@ -717,19 +598,17 @@ test("idle native child selections retain their exact profile while unselected p
       undefined
     );
     assert.equal(
-      subject.fixture.models().getModel("cerebro:source-a:v2:p1", "test"),
+      subject.fixture.models().getModel("cerebro:source-a:v2", "test"),
       undefined
     );
-    assert.ok(
-      subject.fixture.models().getModel("cerebro:source-a:v3:p1", "test")
-    );
+    assert.ok(subject.fixture.models().getModel("cerebro:source-a:v3", "test"));
   } finally {
     await subject.close();
   }
 });
 
 test("a real retained no-Team human input can schedule and its accepted fingerprint replays", async () => {
-  const subject = await setupWeb(false, "web", true);
+  const subject = await setupWeb(false, true);
   try {
     subject.source.faux.setResponses([
       fauxAssistantMessage(
@@ -767,25 +646,18 @@ test("a real retained no-Team human input can schedule and its accepted fingerpr
       ).length,
       1
     );
-    assert.equal((await binding(subject)).policyVersion, 0);
   } finally {
     await subject.close();
   }
 });
 
 test("a fresh coordinator starts with its complete policy instructions and explicit native selection", async () => {
-  const subject = await setupWeb(
-    false,
-    "web",
-    true,
-    (configuration) => configuration,
-    1
-  );
+  const subject = await setupWeb(false, true);
   try {
     const agent = await subject.fixture
       .pi()
       .snapshot(AgentDoc, subject.source.native.id, context);
-    assert.equal(agent?.model?.provider, "cerebro:source-a:v1:p1");
+    assert.equal(agent?.model?.provider, "cerebro:source-a:v1");
     assert.ok(agent?.instructions?.includes("coordinate independent work"));
     const response = await subject.send(
       "fresh-policy",
@@ -793,7 +665,7 @@ test("a fresh coordinator starts with its complete policy instructions and expli
     );
     assert.equal(response.status, 200, await response.clone().text());
     await settle(subject);
-    assert.equal((await binding(subject)).policyVersion, 1);
+    assert.equal((await binding(subject)).agentVersion, 1);
     assert.equal(subject.source.faux.state.callCount, 1);
   } finally {
     await subject.close();

@@ -1,5 +1,5 @@
 /* eslint-disable no-await-in-loop -- Docker mutations must complete in order. */
-import { execFile, spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -75,11 +75,7 @@ const optionsFrom = (args) => {
     }
     if (flag === "--file") {
       options.files.push(path.resolve(value));
-    } else if (
-      flag === "--project" ||
-      flag === "--directory" ||
-      flag === "--retirement-fence"
-    ) {
+    } else if (flag === "--project" || flag === "--directory") {
       const key = flag.slice(2);
       if (options[key]) {
         throw new Error(`Duplicate ${flag}`);
@@ -263,14 +259,6 @@ const readManifest = async (directory) => {
       throw new Error(`Archive checksum mismatch for ${entry.logicalName}`);
     }
   }
-  if (
-    manifest.engineRetirement &&
-    (manifest.engineRetirement.engine !== "pi-v1" ||
-      manifest.engineRetirement.project !== manifest.sourceProject ||
-      !["fenced", "retired"].includes(manifest.engineRetirement.phase))
-  ) {
-    throw new Error("Invalid retirement fence in BackupManifest");
-  }
   return manifest;
 };
 
@@ -288,24 +276,6 @@ const archiveArguments = (directory, volumeName, readonly) => [
   "tar",
   helperImage,
 ];
-
-const backupRetirement = async (options) => {
-  const engineRetirement = options["retirement-fence"]
-    ? {
-        ...JSON.parse(
-          await readFile(path.resolve(options["retirement-fence"]), "utf-8")
-        ).fence,
-        project: options.project,
-      }
-    : undefined;
-  if (
-    engineRetirement &&
-    (engineRetirement.engine !== "pi-v1" || engineRetirement.phase !== "fenced")
-  ) {
-    throw new Error("Backup requires the committed execution fence.");
-  }
-  return engineRetirement;
-};
 
 const backup = async (options, config) => {
   const containers = await containersFor(options.project);
@@ -439,9 +409,7 @@ const backup = async (options, config) => {
   if (failure) {
     throw failure;
   }
-  const engineRetirement = await backupRetirement(options);
   await writeAtomic(path.join(options.directory, "manifest.json"), {
-    engineRetirement,
     images,
     release,
     schemaVersion: 1,
@@ -452,79 +420,7 @@ const backup = async (options, config) => {
   process.stdout.write(`Backup complete in ${options.directory}\n`);
 };
 
-const restoreRetirement = async (options, overridePath) => {
-  const compose = [...composeArguments(options), "-f", overridePath];
-  await run("docker", [
-    ...compose,
-    "up",
-    "-d",
-    "--no-deps",
-    "--wait",
-    "--wait-timeout",
-    "120",
-    ...storageServices,
-  ]);
-  const containers = await containersFor(options.project);
-  const postgres = containers.find(
-    (container) =>
-      container.Config.Labels["com.docker.compose.service"] === "postgres"
-  );
-  const { retirementSql } = await import("./retirement-sql.mjs");
-  const result = spawnSync(
-    "docker",
-    [
-      "exec",
-      "-i",
-      postgres.Id,
-      "psql",
-      "-U",
-      "cerebro",
-      "-d",
-      "cerebro",
-      "-X",
-      "-qAt",
-      "-v",
-      "ON_ERROR_STOP=1",
-    ],
-    { encoding: "utf-8", input: retirementSql, timeout: 30_000 }
-  );
-  if (result.error || result.status !== 0) {
-    throw new Error("Restore retirement failed. Execution remains stopped.");
-  }
-  const retired = JSON.parse(result.stdout.trim());
-  const restored = await containersFor(options.project);
-  if (
-    retired.phase !== "retired" ||
-    retired.engine !== "pi-v1" ||
-    restored.some(
-      (container) =>
-        container.State.Running &&
-        !storageServices.has(
-          container.Config.Labels["com.docker.compose.service"]
-        )
-    )
-  ) {
-    throw new Error("The restored execution fence is invalid.");
-  }
-  await writeFile(
-    path.join(options.directory, `${options.project}.retirement.json`),
-    `${JSON.stringify(retired, null, 2)}\n`,
-    { flag: "wx", mode: 0o600 }
-  );
-  process.stdout.write(
-    `Retirement reapplied in ${options.project}. Only stores are running. Enable only a reviewed Pi release.\n`
-  );
-};
-
 const restore = async (options, config, manifest) => {
-  if (
-    manifest.engineRetirement &&
-    manifest.engineRetirement.phase !== "retired"
-  ) {
-    throw new Error(
-      "Complete the source retirement before restoring its retained stores."
-    );
-  }
   if (options.project === manifest.sourceProject) {
     throw new Error("The restore project must differ from the source project.");
   }
@@ -661,10 +557,6 @@ const restore = async (options, config, manifest) => {
     ]),
   ].join("\n");
   await writeFile(overridePath, `${override}\n`, { flag: "wx", mode: 0o600 });
-  if (manifest.engineRetirement) {
-    await restoreRetirement(options, overridePath);
-    return;
-  }
   process.stdout.write(
     `Restore complete in Compose project ${options.project}. Start with the image override ${overridePath} and do not rebuild.\n`
   );

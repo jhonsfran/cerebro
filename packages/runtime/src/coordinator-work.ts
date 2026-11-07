@@ -651,26 +651,6 @@ export const createCoordinatorWork = (options: {
         });
       });
     },
-    rememberHumanOperation: async (operationId: string): Promise<void> => {
-      if (!options.services) {
-        return;
-      }
-      const key = await coordinatorOperationKey(operationId);
-      await options.pi.commit(async (tx) => {
-        await options.guardIn?.(tx);
-        const ledger = await tx.doc(WorkLedger);
-        requireWorkIdentity(ledger, binding());
-        const operation = await tx.doc(
-          SourceOperations,
-          options.nativeId,
-          key,
-          operationId
-        );
-        if (!operation.route) {
-          operation.route = { kind: "coordinator", workId: null };
-        }
-      }, piContext());
-    },
     restore: async (): Promise<void> => {
       const current = await records();
       const pending = await pendingDispatches();

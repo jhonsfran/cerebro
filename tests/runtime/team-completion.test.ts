@@ -52,6 +52,7 @@ const fixture = async (kind: "sources" | "tools", block = false) => {
   const root = await pi.root(context);
   const admittedAt = Date.now();
   const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
+    version: 2,
     admittedAt,
     deadlineAt: admittedAt + 60_000,
     goal: "private-goal-marker",
@@ -68,11 +69,6 @@ const fixture = async (kind: "sources" | "tools", block = false) => {
       agentId: "coordinator",
       conversationId: "public",
       sessionId: "public",
-    },
-    sourceSlackThread: {
-      workspaceId: "T",
-      channelId: "D",
-      rootTimestamp: "1800000000.000001",
     },
     contentDependencies: { sourceIds: [], toolIds: [] },
   });

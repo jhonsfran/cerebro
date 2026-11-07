@@ -13,7 +13,6 @@ import type {
   SlackReplyDestination,
 } from "@cerebro/contracts/slack-events";
 import { toSlackText } from "@cerebro/contracts/slack-text";
-import type { LegacyTimerReplyOrigin } from "@cerebro/contracts/timer-events";
 import { digestToolArguments } from "@cerebro/contracts/tools";
 import {
   defineDoc,
@@ -43,9 +42,7 @@ export type ReplyOrigin =
     };
 
 export interface EventReplyServices {
-  readonly destination: (
-    event: BotEvent | LegacyTimerReplyOrigin
-  ) => Promise<SlackReplyDestination>;
+  readonly destination: (event: BotEvent) => Promise<SlackReplyDestination>;
   readonly authorize: (destination: SlackReplyDestination) => Promise<void>;
   readonly deliver: (input: {
     readonly destination: SlackReplyDestination;

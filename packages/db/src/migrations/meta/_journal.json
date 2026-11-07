@@ -148,6 +148,13 @@
       "when": 1794021333727,
       "tag": "0020_drop_fork_origin",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794023115145,
+      "tag": "0021_drop_slack_conversation_columns",
+      "breakpoints": true
     }
   ]
 }

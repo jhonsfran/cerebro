@@ -18,7 +18,6 @@ import type {
   ContentDependencies,
 } from "@cerebro/contracts/session";
 import type { ChatSnapshot } from "@cerebro/contracts/session-service";
-import type { LegacyTimerReplyOrigin } from "@cerebro/contracts/timer-events";
 import type { ToolExecutor } from "@cerebro/contracts/tool-service";
 import type { SlackThread } from "@cerebro/contracts/work";
 import { createModels } from "@earendil-works/pi-ai/models";
@@ -41,12 +40,10 @@ import { Bindings } from "./conversation-bindings.ts";
 import type { ConversationBinding } from "./conversation-bindings.ts";
 import { CompactPayload } from "./conversation-compaction.ts";
 import { selectedRegistrationsIn } from "./conversation-drain.ts";
-import { searchConversationHistory } from "./conversation-history.ts";
 import { readConversationInspection } from "./conversation-inspection.ts";
 import type { InspectionAccess } from "./conversation-inspection.ts";
 import { ReminderPayload } from "./conversation-reminders.ts";
 import { ConversationScope } from "./conversation-scope.ts";
-import type { SearchResult } from "./conversation-work.ts";
 import { terminalNoticeIn } from "./coordinator-event-content.ts";
 import { eventOf } from "./coordinator-event-state.ts";
 import {
@@ -89,23 +86,12 @@ export type ResolvedSessionRequest =
       readonly address: EventAddress;
       readonly context: ExecutionContext;
       readonly admission: EventAdmission;
-    }
-  | {
-      readonly kind: "accepted-legacy-input";
-      readonly address: EventAddress;
-      readonly context: ExecutionContext;
-      readonly operationId: string;
-      readonly text: string;
     };
 export interface SessionHostConfiguration {
-  readonly primaryAddress?: EventAddress;
-  readonly legacyTimerOrigin?: LegacyTimerReplyOrigin;
   readonly eventReplies?: EventReplyServices;
-  readonly publicationPolicy?: "primary" | "pinned";
   readonly contentState?: ReturnType<typeof createSourceDependencyStore>;
   readonly reconcileVersion?: (version: number) => Promise<void>;
   readonly address: EventAddress;
-  readonly conversationKind?: "web" | "slack";
   readonly coordination?: CoordinationServices;
   readonly contentDependencies?: () => Promise<ContentDependencies>;
   readonly importDependencies?: (dependencies: ContentDependencies) => void;
@@ -114,10 +100,6 @@ export interface SessionHostConfiguration {
     dependencies: ContentDependencies,
     options: ReadOptions
   ) => Effect.Effect<void, ContractFailure>;
-  readonly inheritDependencies?: (
-    source: EventAddress,
-    toolIds: readonly string[]
-  ) => void;
   readonly agent: AgentDefinition;
   readonly authority: AuthorityService;
   readonly executor: ToolExecutor;
@@ -151,10 +133,6 @@ interface NativeHost {
   readonly registry: Registry;
 }
 const notifyPayload = Schema.Struct({ sessionId: Schema.NonEmptyString });
-const childPayload = Schema.Struct({
-  sessionId: Schema.NonEmptyString,
-  childId: Schema.NonEmptyString,
-});
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
 ): Promise<A> => {
@@ -285,9 +263,6 @@ export class SessionAgent<
             reportPiFailure(this.ctx.id.name, error, binding.address);
           }
         }
-        await Promise.all(
-          [...this.scopes.values()].map((scope) => scope.prepareAdmission())
-        );
         host.restoring = false;
         for (const scope of this.scopes.values()) {
           // oxlint-disable-next-line no-await-in-loop -- Install all saved definitions before progress APIs enable Pi scheduling.
@@ -416,17 +391,7 @@ export class SessionAgent<
       configuration,
       {
         publication: {
-          identity: {
-            agentVersion: configuration.agent.version,
-            policyVersion:
-              binding?.policyVersion ??
-              (configuration.publicationPolicy === "primary" ? 1 : 0),
-          },
-          legacy: binding
-            ? binding.legacyVersion === binding.agentVersion &&
-              binding.policyVersion === 0
-            : configuration.publicationPolicy !== "primary",
-          primary: configuration.publicationPolicy === "primary",
+          identity: { agentVersion: configuration.agent.version },
           resolve: (version) =>
             run(
               this.configure(
@@ -455,7 +420,6 @@ export class SessionAgent<
         metadata,
         pi: host.pi,
         scanWorkKeys: host.scanWorkKeys,
-        search: (term, signal) => this.search(address, host, term, signal),
         scheduleNotify: (target, nativeId) =>
           host.pi.commit(
             () => this.scheduleNotify(target, nativeId),
@@ -496,12 +460,6 @@ export class SessionAgent<
             bindings.conversations[address.sessionId] = {
               address: { ...address },
               agentVersion: configuration.agent.version,
-              policyVersion:
-                configuration.publicationPolicy === "primary" ? 1 : 0,
-              legacyVersion:
-                configuration.publicationPolicy === "primary"
-                  ? null
-                  : configuration.agent.version,
               refresh: null,
               releaseEvent: null,
               nativeId: created.id,
@@ -536,7 +494,7 @@ export class SessionAgent<
       piContext()
     );
     try {
-      await scope.restoreProfiles([...selections], binding.legacyVersion);
+      await scope.restoreProfiles([...selections]);
     } catch {
       this.scopes.delete(binding.address.sessionId);
       throw new Unavailable({
@@ -545,43 +503,6 @@ export class SessionAgent<
       });
     }
     await scope.runtime.configuration.reconcileVersion?.(binding.agentVersion);
-  }
-
-  private async search(
-    address: EventAddress,
-    host: NativeHost,
-    term: string,
-    signal?: AbortSignal
-  ): Promise<SearchResult> {
-    const target = this.scopes.get(address.sessionId);
-    if (!target) {
-      throw new NotFound({ resource: "Search conversation" });
-    }
-    const bindings = await host.pi.snapshot(Bindings, piContext(signal));
-    const { runtime } = target;
-    return searchConversationHistory(
-      {
-        target,
-        addresses: Object.values(bindings?.conversations ?? {}).map(
-          (binding) => binding.address
-        ),
-        open: async (source) =>
-          this.scopes.get(source.sessionId) ??
-          (await this.openScope(
-            source,
-            host,
-            bindings?.conversations[source.sessionId]
-          )),
-        metadata: (operation) =>
-          host.pi.commit(async (tx) => {
-            await runtime.guardIn(tx);
-            return await operation();
-          }, piContext(signal)),
-        persist: () => this.ctx.storage.sync(),
-      },
-      term,
-      signal
-    );
   }
 
   private async scope(address: EventAddress): Promise<ConversationScope> {
@@ -621,11 +542,9 @@ export class SessionAgent<
     if (
       ![
         "cerebro-notify",
-        "cerebro-child",
         "cerebro-reminder",
         "cerebro-compact",
         "cerebro-coordination",
-        "cerebro-source-cutover",
       ].includes(job.fn)
     ) {
       return;
@@ -666,22 +585,13 @@ export class SessionAgent<
             : outcome;
         }
         const scope = await this.scope(binding.address);
-        if (job.fn === "cerebro-source-cutover") {
-          return await scope.admission.advance();
-        }
-        if (job.fn === "cerebro-child") {
-          const payload = Schema.decodeUnknownSync(childPayload)(job.payload);
-          await scope.work.stop(payload.childId);
-          return;
-        }
         if (job.fn === "cerebro-reminder") {
           const payload = Schema.decodeUnknownSync(ReminderPayload)(
             job.payload
           );
           return await scope.reminders.deliver(
             payload.reminderId,
-            payload.occurrence,
-            payload.input
+            payload.occurrence
           );
         }
         if (job.fn === "cerebro-compact") {
@@ -751,15 +661,6 @@ export class SessionAgent<
         );
       }
       const scope = await this.scope(address);
-      if ("kind" in resolved && resolved.kind === "accepted-legacy-input") {
-        const receipt = await scope.acceptLegacyInput(
-          resolved,
-          context,
-          request.signal
-        );
-        await this.ctx.storage.sync();
-        return Response.json({ status: "ok", value: receipt });
-      }
       if ("kind" in resolved && resolved.kind === "owned-event") {
         if (!this.active) {
           throw new Unavailable({

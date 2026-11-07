@@ -21,13 +21,7 @@ import {
   sendMessage,
 } from "./web-team-support.ts";
 
-const forbiddenForeground = [
-  "fixture-read",
-  "fixture_effect",
-  "subagent",
-  "search_history",
-  "search_conversations",
-];
+const forbiddenForeground = ["fixture-read", "fixture_effect"];
 const inputDigest = (text: string) =>
   createHash("sha256").update(text).digest("hex");
 

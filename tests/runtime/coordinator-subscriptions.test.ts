@@ -25,10 +25,7 @@ import {
   WorkSubscriptions,
 } from "../../packages/runtime/src/coordinator-subscriptions.ts";
 import { readImportedContent } from "../../packages/runtime/src/imported-content.ts";
-import {
-  appendPassiveAnswer,
-  appendPassiveUser,
-} from "../../packages/runtime/src/passive-history.ts";
+import { appendPassiveAnswer } from "../../packages/runtime/src/passive-history.ts";
 import {
   actor,
   admit,
@@ -816,7 +813,6 @@ test("local controls save one exact passive answer with no native submission", a
     const source = fixture.source("a");
     fixture.setLocalControl((event, action) =>
       Promise.resolve(async (tx) => {
-        await appendPassiveUser(tx, source.native.id, event.content.text);
         const answer = await appendPassiveAnswer(
           tx,
           source.native.id,

@@ -56,14 +56,13 @@ const schedule = (subject: Subject, operationId: string) =>
   );
 
 test("a missing frozen definition makes old reads and control writes unavailable", async () => {
-  const subject = await setupWeb(false, "web", true);
+  const subject = await setupWeb(false, true);
   const { reminders } = subject.scope;
   try {
     await subject.fixture.pi().commit(async (tx) => {
       const bindings = await tx.doc(Bindings);
       bindings.conversations[subject.source.address.sessionId].refresh = {
         agentVersion: 99,
-        policyVersion: 1,
       };
     }, context);
     await assert.rejects(
@@ -91,7 +90,7 @@ for (const { operation, check } of [
     const release = Promise.withResolvers<boolean>();
     let delay = false;
     let checks = 0;
-    const subject = await setupWeb(false, "web", true, (configuration) => ({
+    const subject = await setupWeb(false, true, (configuration) => ({
       ...configuration,
       authority: {
         ...configuration.authority,
@@ -160,7 +159,6 @@ for (const held of [false, true]) {
     let currentModel = "fixture/test";
     const subject = await setupWeb(
       false,
-      "web",
       true,
       (configuration) => ({
         ...configuration,
@@ -261,7 +259,6 @@ for (const publish of [false, true]) {
     let delay = true;
     const subject = await setupWeb(
       false,
-      "web",
       true,
       (configuration) => ({
         ...configuration,
@@ -337,7 +334,7 @@ for (const publish of [false, true]) {
 for (const revoked of ["execute", "read", "content"] as const) {
   test(`web admission after publication still rejects revoked ${revoked} access`, async () => {
     let revocation = false;
-    const subject = await setupWeb(false, "web", true, (configuration) => ({
+    const subject = await setupWeb(false, true, (configuration) => ({
       ...configuration,
       authority: {
         ...configuration.authority,

@@ -221,7 +221,6 @@ for (const point of ["before", "after"] as const) {
       assert.deepEqual(claimed.delivery.admission, {
         kind: "claimed",
         agentVersion: 1,
-        policyVersion: 0,
         requestId: event.id,
       });
       fixture.clearEventPause();
@@ -352,7 +351,7 @@ test("internal report input cannot reuse a human operation to authorize start_te
       reportId: Schema.decodeUnknownSync(WorkReportIdSchema)("report-one"),
       outcome: "completed",
     });
-    await fixture.source("a").coordinator.rememberHumanOperation(event.id);
+    await fixture.rememberHumanOperation("a", event.id);
     fixture.source("a").faux.setResponses([
       fauxAssistantMessage(
         fauxToolCall("start_team", {
@@ -619,7 +618,7 @@ test("saved event reads require current read and content access without executio
       services: {},
       native: source.native,
       profile: {
-        identity: { agentVersion: 1, policyVersion: 0 },
+        identity: { agentVersion: 1 },
         coordination: source.coordinator,
         subscriptions: source.subscriptions,
         web: {

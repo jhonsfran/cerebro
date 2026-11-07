@@ -1,8 +1,6 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
-import { eq } from "drizzle-orm";
-
 import { openPrimaryConversation } from "../../packages/channels/src/primary-conversations";
 import { digest } from "../../packages/channels/src/security";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
@@ -190,102 +188,4 @@ test("primary identity and operation receipts isolate organizations and people",
     3
   );
   assert.equal(rows.operations.length, 3);
-});
-
-test("legacy create retries preserve their exact address and history while fresh operations open a separate primary", async () => {
-  const app = await prepare();
-  const operationId = "legacy-create";
-  const bindingKey = `pi-identity-v1:web:${await digest({ operationId, organizationId: app.options.organizationId, principalId: app.principalId })}`;
-  const conversationId = `conversation:${await digest(bindingKey)}`;
-  const sessionId = `session:${await digest({ agentId: app.agentId, conversationId, organizationId: app.options.organizationId })}`;
-  await app.options.withDatabase((db) =>
-    db.insert(channelConversation).values({
-      agentId: app.agentId,
-      bindingKey,
-      conversationId,
-      engine: "pi-identity-v1",
-      kind: "web",
-      organizationId: app.options.organizationId,
-      ownerPrincipalId: app.principalId,
-      sessionId,
-    })
-  );
-  const route = `/api/product/conversations/${conversationId}`;
-  const sent = await app.request(`${route}/messages`, "POST", {
-    operationId: "historical-input",
-    text: "Keep this historical context.",
-  });
-  assert.equal(sent.status, 200);
-  const scheduled = await app.request(`${route}/control`, "POST", {
-    instruction: "Keep this reminder in its original conversation.",
-    kind: "schedule",
-    operationId: "historical-reminder",
-    runAt: Date.now() + 60_000,
-  });
-  assert.equal(scheduled.status, 200);
-  const before = await app.read(conversationId);
-  const originalRows = await app.options.withDatabase((db) =>
-    db.select().from(channelConversation)
-  );
-  const otherAgent = await app.request("/api/product/agents", "POST", {
-    ...app.agentBody,
-    name: "Another agent",
-    operationId: "legacy-conflicting-agent",
-  });
-  assert.equal(otherAgent.status, 200);
-  const conflict = await app.open(
-    operationId,
-    string(object(await otherAgent.json()).agentId)
-  );
-  assert.equal(conflict.status, 409);
-  const rejected = await app.options.withDatabase(async (db) => ({
-    conversations: await db.select().from(channelConversation),
-    operations: await db.select().from(channelConversationOperation),
-  }));
-  assert.deepEqual(rejected, {
-    conversations: originalRows,
-    operations: [],
-  });
-  const replay = await app.open(operationId);
-  assert.equal(replay.status, 200);
-  assert.deepEqual(object(await replay.json()), {
-    agentId: app.agentId,
-    conversationId,
-    sessionId,
-  });
-  const noPrimary = await app.options.withDatabase((db) =>
-    db.select().from(channelConversation)
-  );
-  assert.deepEqual(noPrimary, originalRows);
-  const primary = await app.open("new-open");
-  assert.equal(primary.status, 200);
-  const opened = object(await primary.json());
-  assert.notEqual(opened.conversationId, conversationId);
-  assert.deepEqual(
-    object(await app.read(string(opened.conversationId))).messages,
-    []
-  );
-  assert.deepEqual(await app.read(conversationId), before);
-  const unchangedRows = await app.options.withDatabase((db) =>
-    db
-      .select()
-      .from(channelConversation)
-      .where(eq(channelConversation.conversationId, conversationId))
-  );
-  assert.deepEqual(unchangedRows, originalRows);
-  const receipt = await app.options.withDatabase((db) =>
-    db
-      .select()
-      .from(channelConversationOperation)
-      .where(eq(channelConversationOperation.operationId, operationId))
-  );
-  assert.equal(receipt[0]?.conversationId, conversationId);
-  assert.equal(receipt[0]?.sessionId, sessionId);
-  const secondReplay = await app.open(operationId);
-  assert.equal(secondReplay.status, 200);
-  assert.deepEqual(object(await secondReplay.json()), {
-    agentId: app.agentId,
-    conversationId,
-    sessionId,
-  });
 });

@@ -62,8 +62,6 @@ const requireReportSource = (
 ): void => {
   requireWorkSource(record, binding);
   const { admission } = record;
-  const legacyAdmission = "sourceSlackThread" in admission;
-  const legacyDelivery = "sourceSlackThread" in delivery;
   if (
     !sameWorkSource(
       admission.sourceEventAddress,
@@ -71,12 +69,7 @@ const requireReportSource = (
     ) ||
     admission.key.organizationId !== delivery.report.key.organizationId ||
     admission.key.ownerPrincipalId !== delivery.report.key.ownerPrincipalId ||
-    admission.key.workId !== delivery.report.key.workId ||
-    legacyAdmission !== legacyDelivery ||
-    (legacyAdmission &&
-      legacyDelivery &&
-      canonicalToolArguments(admission.sourceSlackThread) !==
-        canonicalToolArguments(delivery.sourceSlackThread))
+    admission.key.workId !== delivery.report.key.workId
   ) {
     throw new Denied({
       code: "unauthorized",

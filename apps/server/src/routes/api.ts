@@ -1,5 +1,4 @@
 import { createApiHandler } from "@cerebro/api/handler";
-import type { BackgroundWork } from "@cerebro/api/handler";
 import { Hono } from "hono";
 import type { Context, MiddlewareHandler } from "hono";
 
@@ -38,18 +37,7 @@ const api = (context: Context<Env>) => {
     );
     handlers.set(context.env, handler);
   }
-  return handler(context.req.raw, backgroundWork(context));
-};
-
-// Hono throws when the host gives no ExecutionContext, as in some tests.
-const backgroundWork = (context: Context<Env>) => {
-  let background: BackgroundWork | undefined;
-  try {
-    background = context.executionCtx;
-  } catch {
-    // No background work is possible; the handler finishes before responding.
-  }
-  return background;
+  return handler(context.req.raw);
 };
 
 export const apiRoutes = new Hono<Env>()

@@ -38,7 +38,6 @@ const eventData = Schema.Struct({
   eventId: Schema.NonEmptyString,
   source: Schema.String,
   agentVersion: Schema.Int,
-  policyVersion: Schema.optional(Schema.Literals([0, 1])),
 });
 interface EventCauseTarget extends InstructionTarget {
   readonly candidate: InstructionCandidate;
@@ -80,7 +79,6 @@ const eventInstructionCauseIn = async (
   if (
     claim.requestId !== candidate.operationId ||
     claim.agentVersion !== data.agentVersion ||
-    (claim.policyVersion ?? 0) !== (data.policyVersion ?? 0) ||
     (claim.kind !== "claimed" && claim.submissionId !== candidate.submissionId)
   ) {
     return;

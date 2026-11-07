@@ -26,7 +26,6 @@ import {
 import { CoordinatorReplies } from "../../packages/runtime/src/coordinator-replies.ts";
 import { ImportedContent } from "../../packages/runtime/src/imported-content.ts";
 import { inspectionCursor } from "../../packages/runtime/src/inspection-page.ts";
-import { SourceAdmission } from "../../packages/runtime/src/source-admission.ts";
 import { context } from "./coordinator-fixture.ts";
 import { inspectionFixture } from "./inspection-fixture.ts";
 
@@ -71,11 +70,6 @@ test("Inspector keeps owned recent work, queued work, and held reservations sepa
         kind: "failed",
         reason: "private-provider-error-marker",
       };
-      const admission = await tx.doc(SourceAdmission, source.native.id);
-      admission.state = {
-        kind: "archived",
-        primary: fixture.source("b").address,
-      };
     }, context);
     const calls = source.faux.state.callCount;
     const frame = await subject.read({ kind: "overview" });
@@ -83,9 +77,7 @@ test("Inspector keeps owned recent work, queued work, and held reservations sepa
     if (frame.kind !== "overview") {
       assert.fail();
     }
-    assert.deepEqual(frame.profile, { agentVersion: 7, policyVersion: 1 });
-    assert.equal(frame.admission, "archived");
-    assert.deepEqual(frame.primary, fixture.source("b").address);
+    assert.deepEqual(frame.profile, { agentVersion: 7 });
     assert.equal(frame.refresh, true);
     assert.equal(
       frame.work.find((item) => item.workId === first.admission.key.workId)

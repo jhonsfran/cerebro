@@ -5,22 +5,15 @@ import { Effect, Schema } from "effect";
 
 import { Conflict, Denied } from "../../packages/contracts/src/failures.ts";
 import { id } from "../../packages/contracts/src/identity.ts";
-import {
-  TeamReportDeliverySchema,
-  WorkAdmissionSchema,
-} from "../../packages/contracts/src/work.ts";
+import { TeamReportDeliverySchema } from "../../packages/contracts/src/work.ts";
 import { fauxAssistantMessage } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import { eventOf } from "../../packages/runtime/src/coordinator-event-state.ts";
 import { BotEventQueue } from "../../packages/runtime/src/coordinator-events.ts";
-import {
-  WorkDocuments,
-  coordinatorOperationKey,
-} from "../../packages/runtime/src/coordinator-ledger.ts";
+import { coordinatorOperationKey } from "../../packages/runtime/src/coordinator-ledger.ts";
 import {
   createCoordinatorReport,
   SourceReportReceipts,
 } from "../../packages/runtime/src/coordinator-report.ts";
-import { createCoordinatorSource } from "../../packages/runtime/src/coordinator-source.ts";
 import {
   ImportedContent,
   readImportedContent,
@@ -103,7 +96,6 @@ const subject = async () => {
       },
     },
   });
-  const route = createCoordinatorSource(ports);
   const record = await fixture.work("a");
   const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema)({
     version: 2,
@@ -140,7 +132,6 @@ const subject = async () => {
     source,
     delivery,
     receive,
-    route,
     messages,
     settleReports,
     notifications: () => notifications,
@@ -362,71 +353,6 @@ test("full reports stay in work storage while event input and recall remain boun
   }
 });
 
-test("exact controls list work and ordinary input returns to the coordinator", async () => {
-  const f = await subject();
-  try {
-    const calls = f.source.faux.state.callCount;
-    assert.equal(await f.route("status-op", "status", actor), true);
-    assert.equal(await f.route("update-op", "status please", actor), false);
-    await f.fixture.waitDispatch();
-    assert.deepEqual(
-      f.fixture.delivered
-        .filter((value) => value.kind === "input")
-        .map((value) => (value.kind === "input" ? value.text : "")),
-      []
-    );
-    await f.receive(f.delivery, actor);
-    await f.settleReports();
-    const before = await f.messages();
-    assert.equal(await f.route("update-op", "status please", actor), false);
-    assert.equal(await f.route("status-op", "status", actor), true);
-    assert.deepEqual(await f.messages(), before);
-    await assert.rejects(
-      f.route("update-op", "changed", actor),
-      (error: unknown) => error instanceof Conflict
-    );
-    assert.equal(await f.route("new-human", "Start fresh.", actor), false);
-    assert.equal(f.source.faux.state.callCount, calls + 1);
-  } finally {
-    await f.fixture.close();
-  }
-});
-
-test("exact controls list independent work IDs and bare stop selects no team", async () => {
-  const f = await subject();
-  try {
-    const first = await f.fixture.work("a");
-    await f.fixture.invoke(
-      "a",
-      "start_team",
-      { goal: "Second independent goal." },
-      "second-start"
-    );
-    const second = await f.fixture.work("a");
-    assert.notEqual(first.admission.key.workId, second.admission.key.workId);
-    assert.equal(await f.route("list-status", "status", actor), true);
-    assert.equal(await f.route("ambiguous-stop", "stop", actor), true);
-    const messages = await f.messages();
-    const answer = messages.at(-1)?.text ?? "";
-    assert.match(answer, /Choose a work ID/u);
-    assert.ok(answer.includes(first.admission.key.workId));
-    assert.ok(answer.includes(second.admission.key.workId));
-    await f.fixture.waitDispatch();
-    assert.equal(
-      f.fixture.delivered.some((command) => command.kind === "cancel"),
-      false
-    );
-    const ledger = await f.fixture.ledger();
-    assert.ok(
-      Object.values(ledger.works).every(
-        (record) => record.status.kind === "accepted"
-      )
-    );
-  } finally {
-    await f.fixture.close();
-  }
-});
-
 test("stop saves cancellation before late reports, and wrong sources or revoked access disclose nothing", async () => {
   const f = await subject();
   try {
@@ -464,10 +390,6 @@ test("stop saves cancellation before late reports, and wrong sources or revoked 
     );
     f.revoke();
     await assert.rejects(
-      f.route("revoked-op", "status", actor),
-      (error: unknown) => error instanceof Denied
-    );
-    await assert.rejects(
       f.receive(f.delivery, actor),
       (error: unknown) => error instanceof Denied
     );
@@ -482,8 +404,8 @@ test("report admission rejects format, owner, organization, source, and session 
     const before = await f.messages();
     const { report, sourceEventAddress } = f.delivery;
     const invalid = [
-      { report, sourceEventAddress, sourceSlackThread: f.source.thread },
-      { ...f.delivery, sourceSlackThread: f.source.thread },
+      { report, sourceEventAddress },
+      { ...f.delivery, unexpected: true },
       {
         ...f.delivery,
         report: {
@@ -532,75 +454,6 @@ test("report admission rejects format, owner, organization, source, and session 
   }
 });
 
-test("a retained legacy work requires its legacy report and exact saved thread before receipt replay", async () => {
-  const f = await subject();
-  try {
-    const record = await f.fixture.work("a");
-    assert.ok("version" in record.admission);
-    const { version, ...fields } = record.admission;
-    assert.equal(version, 2);
-    const legacy = Schema.decodeUnknownSync(WorkAdmissionSchema, {
-      onExcessProperty: "error",
-    })({ ...fields, sourceSlackThread: f.source.thread });
-    await f.fixture.pi().commit(async (tx) => {
-      const document = await tx.doc(
-        WorkDocuments,
-        record.admission.key.workId,
-        null
-      );
-      assert.ok(document.record);
-      document.record.admission = legacy;
-    }, context);
-    await assert.rejects(
-      f.receive(f.delivery, actor),
-      (error: unknown) => error instanceof Denied
-    );
-    const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
-      onExcessProperty: "error",
-    })({
-      report: f.delivery.report,
-      sourceEventAddress: legacy.sourceEventAddress,
-      sourceSlackThread: f.source.thread,
-    });
-    assert.ok("sourceSlackThread" in delivery);
-    const changed = {
-      ...delivery,
-      sourceSlackThread: {
-        ...delivery.sourceSlackThread,
-        rootTimestamp: "1800000099.000001",
-      },
-    };
-    await assert.rejects(
-      f.receive(changed, actor),
-      (error: unknown) => error instanceof Denied
-    );
-    const first = await f.receive(delivery, actor);
-    const replay = await f.receive(delivery, actor);
-    await f.settleReports();
-    assert.equal(first.accepted, true);
-    assert.equal(replay.accepted, true);
-    await assert.rejects(
-      f.receive(changed, actor),
-      (error: unknown) => error instanceof Denied
-    );
-    await assert.rejects(
-      f.receive(f.delivery, actor),
-      (error: unknown) => error instanceof Denied
-    );
-    const messages = await f.messages();
-    assert.equal(
-      messages.filter(
-        (message) =>
-          message.role === "assistant" &&
-          message.text === "Coordinator result. Result based on B."
-      ).length,
-      1
-    );
-  } finally {
-    await f.fixture.close();
-  }
-});
-
 test("report intents and exact controls do not wait for a held foreground generation", async () => {
   const f = await subject();
   const entered = Promise.withResolvers<boolean>();
@@ -622,13 +475,6 @@ test("report intents and exact controls do not wait for a held foreground genera
       context
     );
     await entered.promise;
-    await f.route("held-status", "status", actor, AbortSignal.timeout(1000));
-    await f.route(
-      "held-update",
-      "Update while busy.",
-      actor,
-      AbortSignal.timeout(1000)
-    );
     const receipt = await f.receive(
       f.delivery,
       actor,
@@ -678,38 +524,6 @@ test("receiving dependency denial blocks the first report while cancelled metada
     assert.equal(ignored.accepted, false);
     assert.equal(
       JSON.stringify(await f.messages()).includes("Result based on B."),
-      false
-    );
-  } finally {
-    await f.fixture.close();
-  }
-});
-
-test("a native request from before profile enablement keeps its coordinator route", async () => {
-  const f = await subject();
-  try {
-    f.source.faux.setResponses([
-      fauxAssistantMessage("Original ordinary reply."),
-    ]);
-    const original = await f.source.native.submit(
-      {
-        type: "input",
-        content: "Legacy ordinary input.",
-        requestId: "legacy-operation",
-      },
-      context
-    );
-    await original.wait(context);
-    const before = await f.messages();
-    const calls = f.source.faux.state.callCount;
-    assert.equal(
-      await f.route("legacy-operation", "Legacy ordinary input.", actor),
-      false
-    );
-    assert.deepEqual(await f.messages(), before);
-    assert.equal(f.source.faux.state.callCount, calls);
-    assert.equal(
-      f.fixture.delivered.some((command) => command.kind === "input"),
       false
     );
   } finally {

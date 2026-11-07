@@ -20,7 +20,7 @@ import {
 import type { ChatClient } from "@cerebro/contracts/session-service";
 import { withDatabase } from "@cerebro/db";
 import { channelConversation } from "@cerebro/db/schema/agents";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Schema } from "effect";
 import { z } from "zod";
 
@@ -100,16 +100,14 @@ export const createSessionClient = (env: WorkerEnv): ChatClient => {
                 channelConversation.conversationId,
                 input.address.conversationId
               ),
-              eq(channelConversation.sessionId, input.address.sessionId),
-              eq(channelConversation.engine, "pi-identity-v1"),
-              isNull(channelConversation.retiredAt)
+              eq(channelConversation.sessionId, input.address.sessionId)
             )
           )
       );
       if (!conversation) {
         throw new Denied({
           code: "unauthorized",
-          reason: "The conversation is retired or unavailable.",
+          reason: "The conversation is unavailable.",
         });
       }
       const identity = {

@@ -1,5 +1,3 @@
-import { readAcceptedLegacySlackInput } from "@cerebro/channels/legacy-slack-input";
-import { isPrimaryConversation } from "@cerebro/channels/primary-conversations";
 import { contextByPrincipal } from "@cerebro/channels/security";
 import {
   primarySlackBotEvent,
@@ -21,11 +19,7 @@ import type {
   ContentDependencies,
 } from "@cerebro/contracts/session";
 import { SlackEventReferenceSchema } from "@cerebro/contracts/slack-events";
-import { TeamEventReturnSchema } from "@cerebro/contracts/team-events";
-import {
-  SlackThreadSchema,
-  TeamReportDeliverySchema,
-} from "@cerebro/contracts/work";
+import { SlackThreadSchema } from "@cerebro/contracts/work";
 import { withDatabase } from "@cerebro/db";
 import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import type { channelConversation } from "@cerebro/db/schema/agents";
@@ -42,10 +36,7 @@ import type { WorkerEnv } from "../bindings";
 import { slackSettings } from "../channels";
 import { runtimeConfiguration } from "../config";
 import { resolveSessionAddress } from "./address";
-import {
-  createCoordinatorServices,
-  requireLegacySourceMatch,
-} from "./coordination";
+import { createCoordinatorServices } from "./coordination";
 import { createExecutionComposition } from "./execution";
 import { requireInspectionRead } from "./inspection-access";
 import { readPrivateTeamInspection } from "./inspection-client";
@@ -54,12 +45,10 @@ import {
   authenticateSessionRequest,
 } from "./proof";
 import type { SessionIdentity } from "./proof";
-import { createSlackNotifier } from "./slack";
 import {
   createSlackEventReplies,
   withCurrentSlackAccess,
 } from "./slack-event-replies";
-import { sourcePrimaryAddress, legacyTimerOrigin } from "./source-primary";
 
 const readOptions = (): ReadOptions => ({ deadlineAt: Date.now() + 10_000 });
 const identityName = z.tuple([
@@ -91,12 +80,6 @@ export const createRuntimeComposition = (
   selection?: DefinitionSelection
 ): Effect.Effect<SessionHostConfiguration, ContractFailure> =>
   Effect.gen(function* composeSession() {
-    const primary = yield* tryAdapter(() =>
-      isPrimaryConversation(conversation)
-    );
-    const primaryAddress = yield* tryAdapter(() =>
-      sourcePrimaryAddress(env, conversation, primary)
-    );
     const config = runtimeConfiguration(env);
     const slack = slackSettings(env);
     storage.sql.exec(
@@ -170,9 +153,6 @@ export const createRuntimeComposition = (
     );
     return {
       ...execution,
-      primaryAddress,
-      legacyTimerOrigin: legacyTimerOrigin(conversation, slack, address),
-      publicationPolicy: primary ? "primary" : "pinned",
       reconcileVersion: async (version: number) => {
         storage.sql.exec(
           "UPDATE cerebro_session_metadata SET agent_version=? WHERE session_id=?",
@@ -181,11 +161,7 @@ export const createRuntimeComposition = (
         );
         await storage.sync();
       },
-      conversationKind: conversation.kind,
-      eventReplies: createSlackEventReplies(env, slack, primary, {
-        agent,
-        owner: () => Effect.runPromise(execution.ownerContext()),
-      }),
+      eventReplies: createSlackEventReplies(env, slack),
       coordination: createCoordinatorServices({
         env,
         address,
@@ -194,31 +170,8 @@ export const createRuntimeComposition = (
         conversation,
         profile: config.coordination,
         contentDependencies: execution.contentDependencies,
-        slack,
         ownerContext: execution.ownerContext,
       }),
-      ...(slack?.botToken && conversation.kind === "slack"
-        ? {
-            notify: createSlackNotifier({
-              address,
-              agent,
-              authority: execution.authority,
-              checkContent: (context) =>
-                Effect.runPromise(
-                  execution.checkDependencies(
-                    context,
-                    { sourceIds: [], toolIds: [] },
-                    readOptions()
-                  )
-                ),
-              conversation,
-              env,
-              slack,
-              storage,
-              metadata,
-            }),
-          }
-        : {}),
     };
   });
 
@@ -276,68 +229,7 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
           identity
         )
       );
-      const { conversation } = yield* resolveSessionAddress(
-        this.env,
-        resolved.address,
-        identity
-      );
-      if (path === "/legacy-slack-input") {
-        const slack = slackSettings(this.env);
-        if (!slack) {
-          return yield* Effect.fail(
-            new Denied({ code: "revoked", reason: "Slack is not configured." })
-          );
-        }
-        const body = yield* tryAdapter(async () =>
-          z
-            .strictObject({
-              eventKey: z.string().min(1).max(4096),
-              callback: z.unknown(),
-            })
-            .parse(await request.clone().json())
-        );
-        const accepted = yield* tryAdapter(() =>
-          withCurrentSlackAccess(() =>
-            withDatabase(this.env, (database) =>
-              readAcceptedLegacySlackInput({
-                database,
-                configuration: slack,
-                address: resolved.address,
-                eventKey: body.eventKey,
-                callback: body.callback,
-              })
-            )
-          )
-        );
-        if (
-          accepted.ownerPrincipalId !== identity.ownerPrincipalId ||
-          resolved.context.actor.id !== accepted.ownerPrincipalId ||
-          "delegation" in resolved.context
-        ) {
-          return yield* Effect.fail(
-            new Denied({
-              code: "unauthorized",
-              reason: "The legacy Slack input belongs to another owner.",
-            })
-          );
-        }
-        const context = yield* tryAdapter(() =>
-          withDatabase(this.env, (database) =>
-            contextByPrincipal(
-              database,
-              identity.organizationId,
-              identity.ownerPrincipalId
-            )
-          )
-        );
-        return {
-          kind: "accepted-legacy-input" as const,
-          address: resolved.address,
-          context,
-          operationId: accepted.operationId,
-          text: accepted.text,
-        };
-      }
+      yield* resolveSessionAddress(this.env, resolved.address, identity);
       if (path === "/slack-event") {
         const slack = slackSettings(this.env);
         if (!slack) {
@@ -392,22 +284,6 @@ export class IdentityAgent extends SessionHost<WorkerEnv> {
               : { kind: "automatic" },
         });
         return { kind: "owned-event" as const, ...resolved, admission };
-      }
-      if (new URL(request.url).pathname === "/team-report") {
-        yield* tryAdapter(async () => {
-          const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
-            onExcessProperty: "error",
-          })(await request.clone().json());
-          requireLegacySourceMatch(delivery, conversation);
-        });
-      }
-      if (new URL(request.url).pathname === "/team-event-return") {
-        yield* tryAdapter(async () => {
-          const delivery = Schema.decodeUnknownSync(TeamEventReturnSchema, {
-            onExcessProperty: "error",
-          })(await request.clone().json());
-          requireLegacySourceMatch(delivery.work, conversation);
-        });
       }
       return resolved;
     });

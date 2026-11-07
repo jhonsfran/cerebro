@@ -113,21 +113,8 @@ export const ChatReminder = Schema.Struct({
 });
 export type ChatReminder = typeof ChatReminder.Type;
 
-export const ChatChild = Schema.Struct({
-  callId: Schema.NonEmptyString,
-  id: Schema.NonEmptyString,
-  messages: Schema.Array(ChatMessage),
-  ownerTaskId: Schema.NonEmptyString,
-  purpose: Schema.Literals(["delegate", "history"]),
-  state: Schema.Literals(["running", "succeeded", "failed", "interrupted"]),
-  title: Schema.String,
-  tools: Schema.Array(ChatToolExecution),
-});
-export type ChatChild = typeof ChatChild.Type;
-
 export const ChatActivity = Schema.Struct({
   backgroundWork: Schema.optional(BackgroundWorkSnapshot),
-  children: Schema.Array(ChatChild),
   compactionFailure: Schema.optional(Schema.String),
   compactions: Schema.Array(
     Schema.Struct({
@@ -164,10 +151,6 @@ export const ChatControl = Schema.Union([
     operationId: Schema.NonEmptyString,
   }),
   Schema.Struct({
-    childId: Schema.NonEmptyString,
-    kind: Schema.Literal("stop-child"),
-  }),
-  Schema.Struct({
     instruction: Schema.NonEmptyString,
     kind: Schema.Literal("schedule"),
     operationId: Schema.NonEmptyString,
@@ -185,7 +168,6 @@ export const ChatControlReceipt = Schema.Struct({
   kind: Schema.Literals([
     "stop-work",
     "compact",
-    "stop-child",
     "schedule",
     "cancel-schedule",
   ]),
@@ -193,16 +175,6 @@ export const ChatControlReceipt = Schema.Struct({
 export type ChatControlReceipt = typeof ChatControlReceipt.Type;
 
 export const ChatSnapshot = Schema.Struct({
-  admission: Schema.optional(
-    Schema.Union([
-      Schema.Struct({ kind: Schema.Literal("open") }),
-      Schema.Struct({
-        kind: Schema.Literal("closed"),
-        phase: Schema.Literals(["paused", "forwarding", "archived"]),
-        primary: address,
-      }),
-    ])
-  ),
   activity: Schema.optional(ChatActivity),
   address,
   agentVersion: Schema.Int.check(Schema.isGreaterThan(0)),

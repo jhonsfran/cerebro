@@ -8,9 +8,7 @@ import { id } from "../../packages/contracts/src/identity.ts";
 import { createModels } from "../../packages/runtime/node_modules/@earendil-works/pi-ai/dist/index.js";
 import {
   Harness,
-  UserEntry,
   createRegistry,
-  defineDoc,
 } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
 import type { MetadataTransaction } from "../../packages/runtime/src/session-agent.ts";
@@ -40,19 +38,6 @@ const { openPiSessionStore } =
 const { createSourceDependencyStore } =
   await import("../../packages/runtime/src/content-dependency-store.ts");
 platformImports.deregister();
-
-const addressFor = (name: string) => ({
-  agentId: id.agent(`agent:${name}`),
-  conversationId: id.conversation(`conversation:${name}`),
-  organizationId: id.organization("organization"),
-  sessionId: id.session(`session:${name}`),
-});
-const ForkReceipts = defineDoc({
-  initial: (): { forks: Record<string, number> } => ({ forks: {} }),
-  kind: "test.provenance-fork-receipts",
-  scope: "session",
-  version: 1,
-});
 
 const setup = async () => {
   const database = new DatabaseSync(":memory:");
@@ -204,128 +189,6 @@ test("source metadata cannot acknowledge a write inside a failed native Pi commi
     );
     assert.equal(fixture.sourceWritesInsideNativeTransaction(), 0);
     assert.deepEqual(fixture.sourceRows(), []);
-  } finally {
-    await fixture.close();
-  }
-});
-
-test("tool and chat provenance accesses wait for the native mutation queue", async () => {
-  const fixture = await setup();
-  try {
-    const source = await fixture.sourceStore(addressFor("source").sessionId);
-    const target = await fixture.sourceStore(addressFor("target").sessionId);
-    await source.add(["private-source"]);
-    await source.addTool("recorded-tool");
-    await fixture.metadata(() => source.inherit(addressFor("earlier"), []));
-    fixture.arm(false);
-    const native = fixture.createConversation();
-    await fixture.entered;
-    let copied = false;
-    const copy = fixture.metadata(() => {
-      target.inherit(addressFor("source"), ["native-tool"]);
-      copied = true;
-    });
-    const reads = Promise.all([target.all(), target.tools(), target.history()]);
-    const addTool = target.addTool("later-tool");
-    await Promise.resolve();
-    assert.equal(copied, false);
-    fixture.release();
-    await native;
-    await copy;
-    assert.deepEqual(await reads, [
-      ["private-source"],
-      ["native-tool", "recorded-tool"],
-      [addressFor("earlier"), addressFor("source")],
-    ]);
-    await addTool;
-    assert.deepEqual(await target.tools(), [
-      "later-tool",
-      "native-tool",
-      "recorded-tool",
-    ]);
-    assert.equal(fixture.sourceWritesInsideNativeTransaction(), 0);
-  } finally {
-    await fixture.close();
-  }
-});
-
-test("a failed native fork leaves conservative provenance and its retry creates one branch", async () => {
-  const fixture = await setup();
-  try {
-    const sourceAddress = addressFor("source");
-    const source = await fixture.sourceStore(sourceAddress.sessionId);
-    const target = await fixture.sourceStore(addressFor("target").sessionId);
-    await source.add(["private-source"]);
-    await source.addTool("recorded-tool");
-    await fixture.metadata(() => source.inherit(addressFor("earlier"), []));
-    const parent = await fixture.createConversation();
-    const entry = await fixture.host().commit(
-      (tx) =>
-        tx.appendEntry(parent.id, {
-          kind: UserEntry.kind,
-          model: [{ content: "Forked evidence", role: "user", timestamp: 0 }],
-        }),
-      piContext()
-    );
-    const branch = () =>
-      fixture.host().commit(async (tx) => {
-        const receipts = await tx.doc(ForkReceipts);
-        const existing = receipts.forks.operation;
-        if (existing !== undefined) {
-          return existing;
-        }
-        const created = await tx.forkConversation(parent.id, entry.id, {
-          ownership: { kind: "ownerless" },
-        });
-        target.inherit(sourceAddress, ["native-tool"]);
-        receipts.forks.operation = created.id;
-        return created.id;
-      }, piContext());
-    const count = async () => {
-      const conversations = await fixture
-        .storage()
-        .scanConversations({}, 100, undefined, piContext());
-      return conversations.items.length;
-    };
-    const before = await count();
-    fixture.arm(true);
-    const failed = assert.rejects(branch(), /Injected native commit failure/u);
-    await fixture.entered;
-    assert.deepEqual(
-      fixture.database
-        .prepare(
-          "SELECT source_id FROM cerebro_content_source WHERE session_id=?"
-        )
-        .all(addressFor("target").sessionId)
-        .map((row) => row.source_id),
-      ["private-source"]
-    );
-    fixture.release();
-    await failed;
-    await fixture.reopen();
-    assert.equal(await count(), before);
-    assert.deepEqual(await target.all(), ["private-source"]);
-    assert.deepEqual(await target.tools(), ["native-tool", "recorded-tool"]);
-    assert.deepEqual(await target.history(), [
-      addressFor("earlier"),
-      sourceAddress,
-    ]);
-    const created = await branch();
-    assert.equal(await branch(), created);
-    assert.equal(await count(), before + 1);
-    const native = await fixture.host().conversation(created, piContext());
-    assert.ok(native);
-    const transcript = await native.context(piContext());
-    assert.deepEqual(
-      transcript.messages.map((message) => message.content),
-      ["Forked evidence"]
-    );
-    assert.deepEqual(await target.all(), ["private-source"]);
-    assert.deepEqual(await target.tools(), ["native-tool", "recorded-tool"]);
-    assert.deepEqual(await target.history(), [
-      addressFor("earlier"),
-      sourceAddress,
-    ]);
   } finally {
     await fixture.close();
   }

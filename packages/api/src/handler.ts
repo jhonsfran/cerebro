@@ -1,9 +1,5 @@
 /* oxlint-disable no-await-in-loop -- Each body chunk must pass the byte limit before the reader requests another chunk. */
-import {
-  receiveSlackEvent,
-  receiveSlackInteraction,
-  verifySlackRequest,
-} from "@cerebro/channels/slack";
+import { receiveSlackEvent, verifySlackRequest } from "@cerebro/channels/slack";
 import { normalizeSlackDelivery } from "@cerebro/channels/slack-events";
 import { ChannelError } from "@cerebro/channels/types";
 import type { ProductHandlerOptions } from "@cerebro/channels/types";
@@ -23,13 +19,6 @@ const BODY_LIMIT_BYTES = 100_000;
 const OBSERVATION_PATH =
   /^\/api\/product\/conversations\/(?<conversationId>[^/]+)\/observations$/u;
 const SLACK_EVENTS_PATH = "/api/channels/slack/events";
-const SLACK_INTERACTIONS_PATH = "/api/channels/slack/interactions";
-
-// Lets a response return before background work finishes, as a Worker's
-// ExecutionContext does. Without one, the work completes before the response.
-export interface BackgroundWork {
-  readonly waitUntil: (promise: Promise<unknown>) => void;
-}
 
 const readBody = async (request: Request): Promise<string> => {
   if (Number(request.headers.get("Content-Length")) > BODY_LIMIT_BYTES) {
@@ -142,40 +131,6 @@ const receiveSlack = async (
   );
 };
 
-const receiveSlackAction = async (
-  options: ProductHandlerOptions,
-  request: Request,
-  raw: string,
-  background?: BackgroundWork
-): Promise<Response> => {
-  const slack = await verifiedSlack(options, request, raw);
-  const payload = new URLSearchParams(raw).get("payload");
-  if (!payload) {
-    throw new ChannelError(
-      422,
-      "invalid-input",
-      "The Slack action is invalid."
-    );
-  }
-  const body = parseJson(payload);
-  const receive = () =>
-    options.withDatabase((database) =>
-      receiveSlackInteraction(database, options, body, slack)
-    );
-  if (!background) {
-    return json(await receive());
-  }
-  const work = async () => {
-    try {
-      await receive();
-    } catch {
-      // Slack has already received HTTP 200 for this interaction.
-    }
-  };
-  background.waitUntil(work());
-  return new Response(null, { status: 200 });
-};
-
 export const createApiHandler = (
   options: ProductHandlerOptions,
   memory?: MemoryApiFactory
@@ -190,10 +145,7 @@ export const createApiHandler = (
       }),
     ],
   });
-  return async (
-    request: Request,
-    background?: BackgroundWork
-  ): Promise<Response> => {
+  return async (request: Request): Promise<Response> => {
     try {
       const url = new URL(request.url);
       const observation = OBSERVATION_PATH.exec(url.pathname);
@@ -213,17 +165,6 @@ export const createApiHandler = (
           : undefined;
       if (url.pathname === SLACK_EVENTS_PATH && request.method === "POST") {
         return await receiveSlack(options, request, raw ?? "");
-      }
-      if (
-        url.pathname === SLACK_INTERACTIONS_PATH &&
-        request.method === "POST"
-      ) {
-        return await receiveSlackAction(
-          options,
-          request,
-          raw ?? "",
-          background
-        );
       }
       const bounded =
         raw === undefined

@@ -59,23 +59,17 @@ import type {
 import { conversationProvider } from "./conversation-provider.ts";
 import { createReminderSerialization } from "./conversation-reminders.ts";
 import { createConversationResources } from "./conversation-resources.ts";
-import {
-  conversationSnapshot,
-  snapshotAccessTools,
-} from "./conversation-snapshot.ts";
-import type { SearchResult } from "./conversation-work.ts";
+import { conversationSnapshot } from "./conversation-snapshot.ts";
 import type { BotEventScope, CoordinatorEvents } from "./coordinator-events.ts";
 import type { ScanWorkKeys } from "./coordinator-history.ts";
 import { sameWorkSource, CoordinatorAdmissions } from "./coordinator-ledger.ts";
 import type { CoordinatorReplyOutbox } from "./coordinator-replies.ts";
-import { sendLegacyInput } from "./legacy-input.ts";
-import { piContext } from "./pi-harness.ts";
+import { piContext, snapshotToolIds } from "./pi-harness.ts";
 import { submitSavedTimer } from "./saved-timer-submit.ts";
 import type {
   MetadataTransaction,
   SessionHostConfiguration,
 } from "./session-agent.ts";
-import { createSourceAdmission } from "./source-admission.ts";
 
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
@@ -101,8 +95,6 @@ const decisionSchema = Schema.Struct({
 export interface ConversationScopeServices {
   readonly publication?: {
     readonly identity: ProfileIdentity;
-    readonly legacy: boolean;
-    readonly primary: boolean;
     readonly resolve: (
       version: number | "latest"
     ) => Promise<SessionHostConfiguration>;
@@ -117,10 +109,6 @@ export interface ConversationScopeServices {
   readonly scanWorkKeys: ScanWorkKeys;
   readonly jobs: LifecycleJobs;
   readonly install: (extension: Extension) => void;
-  readonly search: (
-    term: string,
-    signal?: AbortSignal
-  ) => Promise<SearchResult>;
   readonly pi: Harness;
   readonly harness: PiHarness;
   readonly storage: DurableObjectStorage;
@@ -145,7 +133,6 @@ export class ConversationScope {
   private unavailable = false;
   private readonly profiles = new Map<string, ConversationProfile>();
   private readonly nativeOperations: ReturnType<typeof createNativeOperations>;
-  readonly admission: ReturnType<typeof createSourceAdmission>;
   private advancing: Promise<void> | undefined;
 
   private get profile(): ConversationProfile {
@@ -163,9 +150,6 @@ export class ConversationScope {
   get runtime() {
     return this.profile.runtime;
   }
-  get work() {
-    return this.profile.work;
-  }
   get reminders() {
     return this.profile.reminders;
   }
@@ -179,8 +163,7 @@ export class ConversationScope {
   private constructor(
     native: Conversation,
     services: ConversationScopeServices,
-    approvals: ReturnType<typeof createApprovalStore>,
-    configuration: SessionHostConfiguration
+    approvals: ReturnType<typeof createApprovalStore>
   ) {
     this.native = native;
     this.services = services;
@@ -247,16 +230,6 @@ export class ConversationScope {
         });
       },
     };
-    this.admission = createSourceAdmission({
-      pi: services.pi,
-      nativeId: native.id,
-      address: configuration.address,
-      primary: configuration.primaryAddress,
-      busy: () =>
-        this.nativeOperations.pending() || this.shared.approvals.hasPending(),
-      jobs: services.jobs,
-      persist: () => services.storage.sync(),
-    });
   }
 
   private async guardIn(
@@ -293,15 +266,13 @@ export class ConversationScope {
   ): Promise<ConversationScope> {
     const identity = services.publication?.identity ?? {
       agentVersion: configuration.agent.version,
-      policyVersion: 0,
     };
-    const legacy = services.publication?.legacy ?? true;
     const runtime = createConversationResources(
       configuration,
       services.storage,
       services.metadata
     );
-    const suffix = legacy ? undefined : profileKey(identity);
+    const suffix = profileKey(identity);
     const provider = conversationProvider(
       configuration.address.sessionId,
       configuration.provider.model,
@@ -309,20 +280,20 @@ export class ConversationScope {
       suffix
     );
     const extension = {
-      name: `cerebro-tools:${configuration.address.sessionId}${suffix ? `:${suffix}` : ""}`,
+      name: `cerebro-tools:${configuration.address.sessionId}:${suffix}`,
       tools: runtime.tools,
     };
     const initialExtensions: Extension[] = [extension];
     if (configuration.skills?.length) {
       initialExtensions.push({
         ...(await companySkillsExtension(configuration.skills)),
-        name: `cerebro-skills:${configuration.address.sessionId}${suffix ? `:${suffix}` : ""}`,
+        name: `cerebro-skills:${configuration.address.sessionId}:${suffix}`,
       });
     }
     const native = await bind({
       agent: {
         extensions: initialExtensions,
-        instructions: profileInstructions(configuration, identity),
+        instructions: profileInstructions(configuration),
         tools: null,
         modelTools: null,
         model: {
@@ -333,13 +304,8 @@ export class ConversationScope {
       extensions: initialExtensions,
       provider,
     });
-    const scope = new ConversationScope(
-      native,
-      services,
-      runtime.approvals,
-      configuration
-    );
-    const profile = await scope.prepare(configuration, identity, legacy);
+    const scope = new ConversationScope(native, services, runtime.approvals);
+    const profile = await scope.prepare(configuration, identity);
     scope.current = profile;
     services.install({
       name: `cerebro-state:${configuration.address.sessionId}`,
@@ -360,10 +326,7 @@ export class ConversationScope {
               Schema.Struct({
                 conversations: Schema.Record(
                   Schema.String,
-                  Schema.Struct({
-                    agentVersion: Schema.Number,
-                    policyVersion: Schema.Literals([0, 1]),
-                  })
+                  Schema.Struct({ agentVersion: Schema.Number })
                 ),
               })
             )(change.value);
@@ -395,8 +358,7 @@ export class ConversationScope {
 
   private async prepare(
     configuration: SessionHostConfiguration,
-    identity: ProfileIdentity,
-    legacy = false
+    identity: ProfileIdentity
   ): Promise<ConversationProfile> {
     if (configuration.agent.version !== identity.agentVersion) {
       throw new Unavailable({
@@ -409,8 +371,7 @@ export class ConversationScope {
       this.native,
       this.shared,
       identity,
-      () => this.scheduleNotify(),
-      legacy
+      () => this.scheduleNotify()
     );
     for (const extension of profile.registration.extensions) {
       this.services.install(extension);
@@ -442,8 +403,7 @@ export class ConversationScope {
   }
 
   async restoreProfiles(
-    providers: readonly (string | undefined)[],
-    legacyVersion: number | null
+    providers: readonly (string | undefined)[]
   ): Promise<void> {
     const { publication } = this.services;
     if (!publication) {
@@ -464,36 +424,27 @@ export class ConversationScope {
       }
       const parts = provider
         .slice(prefix.length)
-        .match(/^:v(?<version>[0-9]+):p(?<policy>[01])$/u);
-      if (provider !== prefix && !parts) {
+        .match(/^:v(?<version>[1-9][0-9]*)$/u);
+      if (!parts) {
         throw new Unavailable({
           reason: "A native profile selection is invalid.",
         });
       }
-      const identity: ProfileIdentity = parts
-        ? {
-            agentVersion: Number(parts.groups?.version),
-            policyVersion: parts.groups?.policy === "1" ? 1 : 0,
-          }
-        : { agentVersion: legacyVersion ?? 0, policyVersion: 0 };
-      if (identity.agentVersion <= 0) {
-        throw new Unavailable({
-          reason: "A native profile registration has no saved definition.",
-        });
-      }
+      const identity: ProfileIdentity = {
+        agentVersion: Number(parts.groups?.version),
+      };
       if (this.profiles.has(profileKey(identity))) {
         continue;
       }
       await this.prepare(
         await publication.resolve(identity.agentVersion),
-        identity,
-        provider === prefix
+        identity
       );
     }
   }
 
   async advancePublication(eventId: string): Promise<boolean> {
-    if (!this.services.publication?.primary) {
+    if (!this.services.publication) {
       return true;
     }
     this.advancing ??= this.advance(eventId);
@@ -541,10 +492,7 @@ export class ConversationScope {
     }
     if (!binding.refresh) {
       const latest = await publication.resolve("latest");
-      const target: ProfileIdentity = {
-        agentVersion: latest.agent.version,
-        policyVersion: 1,
-      };
+      const target: ProfileIdentity = { agentVersion: latest.agent.version };
       if (sameProfile(binding, target)) {
         return;
       }
@@ -592,7 +540,6 @@ export class ConversationScope {
       const releaseEvent = await oldestHeldEventIn(tx, this.native.id);
       await configure(tx, this.native.id, candidate.registration.agent);
       current.agentVersion = target.agentVersion;
-      current.policyVersion = target.policyVersion;
       current.refresh = null;
       current.releaseEvent = releaseEvent;
       return true;
@@ -606,8 +553,6 @@ export class ConversationScope {
       for (const [key, profile] of this.profiles) {
         if (
           profile === this.current ||
-          (profile.identity.policyVersion === 0 &&
-            profile.identity.agentVersion === binding?.legacyVersion) ||
           profile.registration.extensions.some((extension) =>
             selected.has(extension.name)
           ) ||
@@ -624,12 +569,7 @@ export class ConversationScope {
     }
   }
 
-  async prepareAdmission(): Promise<void> {
-    await this.admission.restore();
-  }
-
   async restore(): Promise<void> {
-    await this.prepareAdmission();
     await this.reminders.restore();
     await this.coordination.restore();
   }
@@ -678,25 +618,13 @@ export class ConversationScope {
     let permission: "coordinate" | "stop" | "send" = "send";
     if (command.kind === "stop-work") {
       permission = "coordinate";
-    } else if (
-      command.kind === "stop-child" ||
-      command.kind === "cancel-schedule"
-    ) {
+    } else if (command.kind === "cancel-schedule") {
       permission = "stop";
     }
     await runtime.authorize(context, permission, signal);
     if (command.kind === "stop-work") {
       await coordination.cancel({ ...command, signal });
       return { id: command.workId, kind: command.kind };
-    }
-    if (command.kind === "stop-child") {
-      await this.nativeOperations.run(
-        (active) => active.runtime.authorize(context, "stop", signal),
-        () => this.work.stop(command.childId),
-        false,
-        signal
-      );
-      return { id: command.childId, kind: command.kind };
     }
     if (command.kind === "cancel-schedule") {
       const value = await reminders.cancel(command.scheduleId);
@@ -744,23 +672,11 @@ export class ConversationScope {
             watch.value,
             profile
           );
-          const admission = await this.admission.read();
-          snapshot = {
-            ...snapshot,
-            admission:
-              admission.kind === "open"
-                ? { kind: "open" }
-                : {
-                    kind: "closed",
-                    phase: admission.kind,
-                    primary: admission.primary,
-                  },
-          };
           await profile.runtime.authorize(
             context,
             "read",
             signal,
-            await snapshotAccessTools(snapshot, profile)
+            snapshotToolIds(snapshot)
           );
         } finally {
           await watch.stop();
@@ -777,35 +693,6 @@ export class ConversationScope {
       emit?.(snapshot);
       return snapshot;
     }
-  }
-
-  private sendLegacy(
-    command: { operationId: string; text: string },
-    context: ExecutionContext,
-    authority: "ordinary" | "saved-slack",
-    signal?: AbortSignal
-  ) {
-    return sendLegacyInput(
-      {
-        pi: this.services.pi,
-        native: this.native,
-        harness: this.services.harness,
-        current: () => this.profile,
-        operations: this.nativeOperations,
-        waitUntil: this.services.waitUntil,
-      },
-      { ...command, authority },
-      context,
-      signal
-    );
-  }
-
-  acceptLegacyInput(
-    command: { operationId: string; text: string },
-    context: ExecutionContext,
-    signal?: AbortSignal
-  ) {
-    return this.sendLegacy(command, context, "saved-slack", signal);
   }
 
   async handle(request: Request, context: ExecutionContext): Promise<Response> {
@@ -896,23 +783,12 @@ export class ConversationScope {
             )
           )
         );
-        if (runtime.configuration.conversationKind !== "slack") {
-          return Response.json({
-            status: "ok",
-            value: await profile.web.send(
-              command.operationId,
-              command.text,
-              context,
-              request.signal
-            ),
-          });
-        }
         return Response.json({
           status: "ok",
-          value: await this.sendLegacy(
-            command,
+          value: await profile.web.send(
+            command.operationId,
+            command.text,
             context,
-            "ordinary",
             request.signal
           ),
         });

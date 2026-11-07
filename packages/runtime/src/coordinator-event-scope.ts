@@ -27,7 +27,6 @@ export interface BotEventScope {
   readonly native: Conversation;
   readonly requireCurrent?: () => void;
   readonly agentVersion: number;
-  readonly policyVersion?: 0 | 1;
   readonly ownerPrincipalId: PrincipalId;
   readonly prepareAdmission?: (eventId: string) => Promise<boolean>;
   readonly claimIn?: (tx: Tx, eventId: string) => Promise<boolean>;
@@ -73,5 +72,4 @@ export type EventTargetIn = (
 ) => Promise<{
   readonly nativeId: ConversationId;
   readonly agentVersion: number;
-  readonly policyVersion?: 0 | 1;
 }>;

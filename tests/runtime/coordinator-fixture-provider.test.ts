@@ -24,7 +24,7 @@ test("the coordinator fixture supplies its tool call, initial answer and one rep
         },
       })
     );
-    await source.coordinator.rememberHumanOperation("fixture-human");
+    await fixture.rememberHumanOperation("a", "fixture-human");
     const human = await source.native.submit(
       {
         type: "input",

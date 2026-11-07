@@ -35,13 +35,11 @@ const inputSchema = Schema.Struct({
   runAt: Schema.Number.check(Schema.isFinite()),
 });
 export type ReminderInput = typeof inputSchema.Type;
-const payloadSchema = Schema.Struct({
-  input: inputSchema,
+export const ReminderPayload = Schema.Struct({
   occurrence: Schema.Number.check(Schema.isFinite()),
   reminderId: Schema.NonEmptyString,
   sessionId: Schema.NonEmptyString,
 });
-export const ReminderPayload = payloadSchema;
 
 interface StoredReminder extends JsonObject {
   fingerprint: string;
@@ -92,11 +90,6 @@ const instructionPreview = (instruction: string): string => {
 const copyStored = (value: StoredReminder): StoredReminder => ({
   ...value,
   ...(value.recurrence ? { recurrence: { ...value.recurrence } } : {}),
-});
-const initialInput = (value: StoredReminder): ReminderInput => ({
-  instruction: value.instruction,
-  ...(value.recurrence ? { recurrence: { ...value.recurrence } } : {}),
-  runAt: value.initialRunAt,
 });
 const fingerprint = (input: ReminderInput): string =>
   JSON.stringify([
@@ -178,7 +171,6 @@ export const createConversationReminders = (services: {
     reminderId: string,
     cause?: InstructionCause
   ) => Promise<void>;
-  readonly guardNewScheduleIn?: (tx: Tx) => Promise<void>;
   readonly pi: Harness;
   readonly nativeId: ConversationId;
   readonly sessionId: string;
@@ -212,7 +204,6 @@ export const createConversationReminders = (services: {
         fn: "cerebro-reminder",
         id: jobId(reminder.id),
         payload: {
-          input: initialInput(reminder),
           occurrence: reminder.runAt,
           reminderId: reminder.id,
           sessionId: services.sessionId,
@@ -262,8 +253,6 @@ export const createConversationReminders = (services: {
     doc.reminders[id] = created;
     return copyStored(created);
   };
-  const admit = (id: string, input: ReminderInput): Promise<StoredReminder> =>
-    services.pi.commit((tx) => admitIn(tx, id, input), piContext());
   const schedule = async (
     input: ReminderInput,
     operationId: string,
@@ -281,14 +270,7 @@ export const createConversationReminders = (services: {
     return serial(id, async () => {
       signal?.throwIfAborted();
       const existing = await read(id);
-      const retained = await services.metadata(() =>
-        services.jobs.get(jobId(id))
-      );
-      const normalized = normalize(
-        input,
-        now(),
-        existing !== undefined || retained !== undefined
-      );
+      const normalized = normalize(input, now(), existing !== undefined);
       if (existing) {
         if (existing.fingerprint !== fingerprint(normalized)) {
           throw new Conflict({
@@ -309,35 +291,17 @@ export const createConversationReminders = (services: {
         ((change) => services.pi.commit(change, piContext(signal)));
       const created = await firstWrite(async (tx) => {
         await services.guardIn?.(tx);
-        const pending = services.jobs.get(jobId(id));
-        if (pending) {
-          const seed = Schema.decodeUnknownSync(payloadSchema)(pending.payload);
-          if (
-            seed.sessionId !== services.sessionId ||
-            seed.reminderId !== id ||
-            fingerprint(seed.input) !== fingerprint(normalized)
-          ) {
-            throw new Conflict({
-              code: "digest-mismatch",
-              reason: "The reminder operation names another schedule.",
-            });
-          }
-        } else {
-          if (!toolCommit) {
-            await services.guardNewScheduleIn?.(tx);
-          }
-          const origin = await cause?.(tx);
-          signal?.throwIfAborted();
-          await services.jobs.push({
-            fn: "cerebro-coordination",
-            id: `cerebro-coordination:${services.sessionId}`,
-            payload: { sessionId: services.sessionId },
-            recoveryLoop: true,
-            singleflight: true,
-            time: now(),
-          });
-          await services.saveOriginIn?.(tx, id, origin);
-        }
+        const origin = await cause?.(tx);
+        signal?.throwIfAborted();
+        await services.jobs.push({
+          fn: "cerebro-coordination",
+          id: `cerebro-coordination:${services.sessionId}`,
+          payload: { sessionId: services.sessionId },
+          recoveryLoop: true,
+          singleflight: true,
+          time: now(),
+        });
+        await services.saveOriginIn?.(tx, id, origin);
         signal?.throwIfAborted();
         return await admitIn(tx, id, normalized);
       });
@@ -349,19 +313,6 @@ export const createConversationReminders = (services: {
   const cancel = async (id: string): Promise<ChatReminder> => {
     await (services.authorizeCancel ?? services.authorize)();
     return serial(id, async () => {
-      if (!(await read(id))) {
-        const retained = await services.metadata(() =>
-          services.jobs.get(jobId(id))
-        );
-        if (retained) {
-          const seed = Schema.decodeUnknownSync(payloadSchema)(
-            retained.payload
-          );
-          if (seed.sessionId === services.sessionId && seed.reminderId === id) {
-            await admit(id, normalize(seed.input, now(), true));
-          }
-        }
-      }
       const cancelled = await services.pi.commit(async (tx) => {
         await services.guardIn?.(tx);
         const doc = await tx.doc(Reminders, services.nativeId);
@@ -381,21 +332,10 @@ export const createConversationReminders = (services: {
   };
   const deliver = (
     id: string,
-    occurrence: number,
-    seed?: ReminderInput
+    occurrence: number
   ): Promise<LifecycleJobOutcome> =>
     serial(id, async () => {
-      let reminder = await read(id);
-      if (!reminder && seed) {
-        try {
-          reminder = await admit(id, normalize(seed, now(), true));
-        } catch (error) {
-          if (error instanceof InvalidInput) {
-            return;
-          }
-          throw error;
-        }
-      }
+      const reminder = await read(id);
       if (!reminder || reminder.state !== "scheduled") {
         return;
       }

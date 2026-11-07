@@ -56,7 +56,6 @@ test("background work snapshots and targeted stop controls survive strict JSON t
     tools: [],
     activity: {
       backgroundWork: work,
-      children: [],
       compactions: [],
       reminders: [],
       tasks: [],

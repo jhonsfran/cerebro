@@ -532,7 +532,7 @@ const realisticMessage = (input, operationId, prompt, latest, offered) => {
   return goalMessage({ family, key, text, current, offered, operationId });
 };
 
-const legacyTeamMessage = (input, operationId, purpose) => {
+const fixtureTeamMessage = (input, operationId, purpose) => {
   const latest = input.messages.findLastIndex(
     (message) => message.role === "user"
   );
@@ -547,7 +547,7 @@ const legacyTeamMessage = (input, operationId, purpose) => {
   const offered = new Set(
     (input.tools ?? []).map((tool) => tool.function?.name)
   );
-  const legacyCalls = (name, values) => ({
+  const toolCalls = (name, values) => ({
     content: null,
     role: "assistant",
     tool_calls: values.map((value, index) => ({
@@ -562,7 +562,7 @@ const legacyTeamMessage = (input, operationId, purpose) => {
           content: "SLACK_TEAM_FIXTURE coordinator accepted background work.",
           role: "assistant",
         }
-      : legacyCalls("start_team", [
+      : toolCalls("start_team", [
           {
             goal: "SLACK_TEAM_FIXTURE Analyze both worker checks and return a bounded summary.",
           },
@@ -577,7 +577,7 @@ const legacyTeamMessage = (input, operationId, purpose) => {
             .join(" ")}`,
           role: "assistant",
         }
-      : legacyCalls("delegate_worker", [
+      : toolCalls("delegate_worker", [
           { text: "SLACK_TEAM_FIXTURE worker:one. Return one bounded result." },
           { text: "SLACK_TEAM_FIXTURE worker:two. Return one bounded result." },
         ]);
@@ -620,6 +620,6 @@ export const teamMessage = (input, operationId, purpose) => {
   );
   return (
     realisticMessage(input, operationId, prompt, latest, offered) ??
-    legacyTeamMessage(input, operationId, purpose)
+    fixtureTeamMessage(input, operationId, purpose)
   );
 };

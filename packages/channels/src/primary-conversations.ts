@@ -35,9 +35,6 @@ const requireBinding = (
       "The conversation operation names another agent."
     );
   }
-  if (row.engine !== "pi-identity-v1" || row.retiredAt) {
-    throw new ChannelError(409, "retired", "This conversation is retired.");
-  }
   return row;
 };
 
@@ -80,8 +77,6 @@ export const resolvePrimaryConversationIn = async (
       ...owner,
       bindingKey,
       conversationId,
-      engine: "pi-identity-v1",
-      kind: "web",
       sessionId: `session:${await digest({ agentId: owner.agentId, conversationId, organizationId: owner.organizationId })}`,
     })
     .onConflictDoNothing();
@@ -145,14 +140,7 @@ export const openPrimaryConversation = async (
       }
       return conversation;
     }
-    const legacyKey = `pi-identity-v1:web:${await digest({ operationId: input.operationId, organizationId: input.organizationId, principalId: input.ownerPrincipalId })}`;
-    const [legacy] = await tx
-      .select()
-      .from(channelConversation)
-      .where(eq(channelConversation.bindingKey, legacyKey));
-    const conversation = legacy
-      ? requireBinding(legacy, input)
-      : await resolvePrimaryConversationIn(tx, input);
+    const conversation = await resolvePrimaryConversationIn(tx, input);
     await tx.insert(channelConversationOperation).values({
       ...receiptKey,
       agentId: conversation.agentId,

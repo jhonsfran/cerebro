@@ -487,7 +487,7 @@ test(
             assert.ok(call.completedAt !== undefined);
             assert.equal(
               call.toolNames.some((name) =>
-                ["fixture_effect", "fixture-read", "subagent"].includes(name)
+                ["fixture_effect", "fixture-read"].includes(name)
               ),
               false
             );

@@ -11,18 +11,12 @@ export const prepareTeamReport = (input: WorkAdmission, report: WorkReport) => {
   const work = Schema.decodeUnknownSync(WorkAdmissionSchema, {
     onExcessProperty: "error",
   })(input);
-  const source =
-    "sourceSlackThread" in work
-      ? {
-          sourceEventAddress: work.sourceEventAddress,
-          sourceSlackThread: work.sourceSlackThread,
-        }
-      : { version: 2, sourceEventAddress: work.sourceEventAddress };
   const delivery = Schema.decodeUnknownSync(TeamReportDeliverySchema, {
     onExcessProperty: "error",
   })({
+    version: 2,
     report,
-    ...source,
+    sourceEventAddress: work.sourceEventAddress,
   });
   try {
     assertQueuePayloadSize(delivery);

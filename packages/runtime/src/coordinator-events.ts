@@ -306,10 +306,7 @@ export const createCoordinatorEvents = (options: {
                 reason: "The coordinator event binding changed.",
               });
             }
-            if (
-              target.agentVersion !== scope.agentVersion ||
-              (target.policyVersion ?? 0) !== (scope.policyVersion ?? 0)
-            ) {
+            if (target.agentVersion !== scope.agentVersion) {
               throw new ProfileChanged();
             }
             if (deliveryOf(saved).admission.kind === "held") {
@@ -322,15 +319,13 @@ export const createCoordinatorEvents = (options: {
               deliveryOf(saved).admission = {
                 kind: "claimed",
                 agentVersion: target.agentVersion,
-                policyVersion: target.policyVersion ?? 0,
                 requestId: eventOf(saved).id,
               };
             }
             const claim = deliveryOf(saved).admission;
             if (
               (claim.kind === "claimed" || claim.kind === "submitted") &&
-              (claim.agentVersion !== target.agentVersion ||
-                (claim.policyVersion ?? 0) !== (target.policyVersion ?? 0))
+              claim.agentVersion !== target.agentVersion
             ) {
               throw new InvalidInput({
                 reason: "The event claim configuration changed.",
@@ -378,7 +373,6 @@ export const createCoordinatorEvents = (options: {
                     eventId: inputEvent.id,
                     source: inputEvent.source.kind,
                     agentVersion: claimed.agentVersion,
-                    policyVersion: claimed.policyVersion ?? 0,
                     ...(inputEvent.source.kind === "web"
                       ? { operationId: inputEvent.source.operationId }
                       : {}),
@@ -517,8 +511,7 @@ export const createCoordinatorEvents = (options: {
               if (
                 saved.requestId !== claim.requestId ||
                 saved.submissionId !== claim.submissionId ||
-                saved.agentVersion !== claim.agentVersion ||
-                (saved.policyVersion ?? 0) !== (claim.policyVersion ?? 0)
+                saved.agentVersion !== claim.agentVersion
               ) {
                 throw new InvalidInput({
                   reason: "The event settlement claim changed.",

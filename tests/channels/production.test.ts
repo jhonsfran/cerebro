@@ -139,15 +139,11 @@ test("the production gateway derives identity placement from the exact active co
       {
         ...otherOwner,
         bindingKey: "placement:other-owner",
-        engine: "pi-identity-v1",
-        kind: "web",
         ownerPrincipalId: "other-principal",
       },
       {
         ...otherOrganization,
         bindingKey: "placement:other-organization",
-        engine: "pi-identity-v1",
-        kind: "web",
         ownerPrincipalId,
       },
     ])
@@ -324,20 +320,6 @@ test("the production gateway derives identity placement from the exact active co
     }),
     Denied
   );
-  await app.options.withDatabase((db) =>
-    db
-      .update(channelConversation)
-      .set({ engine: "pi-v1" })
-      .where(eq(channelConversation.conversationId, first.conversationId))
-  );
-  await assert.rejects(send(first), Denied);
-  await app.options.withDatabase((db) =>
-    db
-      .update(channelConversation)
-      .set({ engine: "pi-identity-v1", retiredAt: new Date() })
-      .where(eq(channelConversation.conversationId, first.conversationId))
-  );
-  await assert.rejects(send(first), Denied);
   assert.equal(captured.length, dispatched);
 });
 

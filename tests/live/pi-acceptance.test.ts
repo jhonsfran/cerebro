@@ -54,7 +54,7 @@ const options = {
   toolId: "remote_lookup",
 };
 
-test("live acceptance decodes native receipts and rejects legacy or malformed responses without input text", () => {
+test("live acceptance decodes native receipts and rejects old-format or malformed responses without input text", () => {
   assert.deepEqual(
     decodeLiveReceipt({
       receipt: { accepted: true, operationId: "live-operation", session: "8" },
@@ -66,14 +66,13 @@ test("live acceptance decodes native receipts and rejects legacy or malformed re
     }
   );
   assert.throws(
-    () => decodeLiveReceipt({ receipt: { runId: "Private legacy ID" } }),
+    () => decodeLiveReceipt({ receipt: { runId: "Private old ID" } }),
     {
       message: "The live receipt does not match the native chat contract.",
     }
   );
   assert.throws(
-    () =>
-      decodeLiveSnapshot({ snapshot: { outputs: ["Private legacy output"] } }),
+    () => decodeLiveSnapshot({ snapshot: { outputs: ["Private old output"] } }),
     {
       message: "The live snapshot does not match the native chat contract.",
     }

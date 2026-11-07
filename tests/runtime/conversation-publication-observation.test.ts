@@ -33,7 +33,6 @@ const settle = async (subject: Awaited<ReturnType<typeof setupWeb>>) => {
 test("a held event reauthorizes after adoption instead of becoming a permanent input failure", async () => {
   const subject = await setupWeb(
     false,
-    "web",
     true,
     (configuration) => configuration,
     1
@@ -87,7 +86,6 @@ test("an old delayed delivery denial cannot discard an input permitted by the ad
   let delayed = false;
   const subject = await setupWeb(
     false,
-    "web",
     true,
     (configuration) => ({
       ...configuration,
@@ -161,7 +159,7 @@ test(
   "an open observer follows adoption and current revocation without dispatching model work",
   { timeout: 10_000 },
   async () => {
-    const subject = await setupWeb(false, "web", true);
+    const subject = await setupWeb(false, true);
     const abort = new AbortController();
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
@@ -215,7 +213,7 @@ test("a delayed read retries the whole profile after adoption and applies curren
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
   let delay = false;
-  const subject = await setupWeb(false, "web", true, (configuration) => ({
+  const subject = await setupWeb(false, true, (configuration) => ({
     ...configuration,
     authority: {
       ...configuration.authority,
@@ -268,7 +266,7 @@ test("a delayed old denial does not close a read authorized by the newly adopted
   const entered = Promise.withResolvers<boolean>();
   const release = Promise.withResolvers<boolean>();
   let delay = false;
-  const subject = await setupWeb(false, "web", true, (configuration) => ({
+  const subject = await setupWeb(false, true, (configuration) => ({
     ...configuration,
     authority: {
       ...configuration.authority,

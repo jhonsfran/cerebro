@@ -32,6 +32,7 @@ const setup = async () => {
   assert.ok(databaseUrl);
   const admittedAt = Date.now();
   const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
+    version: 2,
     admittedAt,
     deadlineAt: admittedAt + 60_000,
     goal: "Read the source.",
@@ -49,11 +50,6 @@ const setup = async () => {
       agentId: "source",
       conversationId: "public",
       sessionId: "public",
-    },
-    sourceSlackThread: {
-      workspaceId: "T",
-      channelId: "D",
-      rootTimestamp: "1800000000.000001",
     },
   });
   const configuration = JSON.stringify({

@@ -13,8 +13,7 @@ Answers only go to direct messages. If someone mentions the app in a channel, Ce
    - `app_mentions:read`, to answer a channel mention with the DM hint.
 3. Under **App Home**, enable the **Messages Tab** in **Show Tabs**. See [Slack's App Home setup](https://docs.slack.dev/surfaces/app-home/).
 4. Under **Event Subscriptions**, set the request URL to `https://<API_HOST>/api/channels/slack/events` and subscribe to the bot events `message.im` and `app_mention`. Slack verifies the URL when you save it, so the stack must be running.
-5. Under **Interactivity & Shortcuts**, turn interactivity on and set the request URL to `https://<API_HOST>/api/channels/slack/interactions`. The Approve and Deny buttons post here.
-6. Install the app to the workspace and copy the **Bot User OAuth Token**.
+5. Install the app to the workspace and copy the **Bot User OAuth Token**.
 
 ## Configure Cerebro
 
@@ -60,7 +59,7 @@ Cerebro confirms the link in the DM. An unlinked person who writes to the app ge
 3. Each target primary admits one owned event. Ordinary text reaches the coordinator. A follow-up with an explicit work subscription goes to that Team. An unrelated subscribed event can return to the coordinator once.
 4. The coordinator's exact settled answer creates a durable reply intent for the original thread. Concurrent web answers cannot become Slack replies. Current access is checked again before delivery.
 
-The reply task saves an unknown outcome and synchronizes storage before posting. Confirmed success saves its Slack timestamp. An uncertain post does not send again automatically. This can leave a reply undelivered when Slack did not receive the original attempt. A known rate-limit response can retry after its saved delay. Historical Slack sessions retain their saved progress messages and approval handling.
+The reply task saves an unknown outcome and synchronizes storage before posting. Confirmed success saves its Slack timestamp. An uncertain post does not send again automatically. This can leave a reply undelivered when Slack did not receive the original attempt. A known rate-limit response can retry after its saved delay.
 
 ## Enable background teams
 

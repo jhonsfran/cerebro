@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from "node:crypto";
-import { open, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { open, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export const writeAtomic = async (filename, value) => {
@@ -16,24 +16,4 @@ export const writeAtomic = async (filename, value) => {
   } finally {
     await directory.close();
   }
-};
-
-export const saveRecord = async (filename, record) =>
-  await writeAtomic(filename, {
-    record,
-    schemaVersion: 1,
-    sha256: createHash("sha256").update(JSON.stringify(record)).digest("hex"),
-  });
-
-export const loadRecord = async (filename) => {
-  const value = JSON.parse(await readFile(filename, "utf-8"));
-  if (
-    value.schemaVersion !== 1 ||
-    !value.record ||
-    createHash("sha256").update(JSON.stringify(value.record)).digest("hex") !==
-      value.sha256
-  ) {
-    throw new Error("Retirement record checksum mismatch.");
-  }
-  return value.record;
 };

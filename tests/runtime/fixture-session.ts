@@ -208,9 +208,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
         "CREATE TABLE IF NOT EXISTS fixture_conversation (session_id TEXT PRIMARY KEY, address TEXT NOT NULL)"
       );
       this.ctx.storage.sql.exec(
-        "CREATE TABLE IF NOT EXISTS fixture_content_reference (session_id TEXT NOT NULL, source_session_id TEXT NOT NULL, source_address TEXT NOT NULL, PRIMARY KEY(session_id, source_session_id))"
-      );
-      this.ctx.storage.sql.exec(
         "INSERT OR IGNORE INTO fixture_conversation VALUES (?, ?)",
         address.sessionId,
         JSON.stringify(address)
@@ -431,19 +428,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
         authority,
         contentDependencies: () =>
           Promise.resolve({ sourceIds: [], toolIds: [] }),
-        inheritDependencies: (source) => {
-          this.ctx.storage.sql.exec(
-            "INSERT OR IGNORE INTO fixture_content_reference VALUES (?, ?, ?)",
-            address.sessionId,
-            source.sessionId,
-            JSON.stringify(source)
-          );
-          this.ctx.storage.sql.exec(
-            "INSERT OR IGNORE INTO fixture_content_reference SELECT ?, source_session_id, source_address FROM fixture_content_reference WHERE session_id=?",
-            address.sessionId,
-            source.sessionId
-          );
-        },
         checkDependencies: (caller, _dependencies, options) =>
           Effect.flatMap(
             authority.require(
@@ -460,37 +444,15 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
               },
               options
             ),
-            () => {
-              const references = this.ctx.storage.sql
-                .exec<{ source_address: string }>(
-                  "SELECT source_address FROM fixture_content_reference WHERE session_id=?",
-                  address.sessionId
-                )
-                .toArray();
-              const permitted = references.every((reference) => {
-                const source = fixtureAddress.parse(
-                  JSON.parse(reference.source_address)
-                );
-                const sourceAddress: EventAddress = {
-                  agentId: id.agent(source.agentId),
-                  conversationId: id.conversation(source.conversationId),
-                  organizationId: id.organization(source.organizationId),
-                  sessionId: id.session(source.sessionId),
-                };
-                return (
-                  this.contentEnabled(sourceAddress) &&
-                  this.enabled(sourceAddress)
-                );
-              });
-              return this.contentEnabled(address) && permitted
+            () =>
+              this.contentEnabled(address)
                 ? Effect.void
                 : Effect.fail(
                     new Denied({
                       code: "unauthorized",
                       reason: "Fixture content access is revoked.",
                     })
-                  );
-            }
+                  )
           ),
         executor,
         ...(address.conversationId.startsWith("notify-")
@@ -779,12 +741,11 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
       const address = await requestAddress(request);
       await Effect.runPromise(this.resolve(request));
       if (path.startsWith("/fixture/capabilities/")) {
-        return await capabilityFixture(request, path, address, {
+        return await capabilityFixture(path, address, {
           transaction: (operation) => this.fixtureTransaction(operation),
           storage: this.ctx.storage,
           nativeSession: (value) => this.nativeSession(value),
           harness: this.harness,
-          jobs: this.lifecycle.jobs,
         });
       }
       const nativeId = await this.nativeSession(address);

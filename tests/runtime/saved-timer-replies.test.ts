@@ -23,7 +23,7 @@ import { setupReplies } from "./coordinator-reply-fixture.ts";
 import { actor } from "./coordinator-web-fixture.ts";
 
 test("timers and their private Team reports keep the creating Slack origin after unrelated web input and save direct origins for child timers", async () => {
-  const subject = await setupReplies(true, true);
+  const subject = await setupReplies(true);
   try {
     subject.source.faux.setResponses([
       fauxAssistantMessage(

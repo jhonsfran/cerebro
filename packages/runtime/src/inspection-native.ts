@@ -83,7 +83,6 @@ export const inspectUsage = (
   return total;
 };
 const textInput = Schema.Struct({ text: Schema.String });
-const termInput = Schema.Struct({ term: Schema.String });
 const workInput = Schema.Struct({ workId: Schema.String });
 const safeToolInput = (
   name: string,
@@ -94,11 +93,6 @@ const safeToolInput = (
     const parsed = Schema.decodeUnknownOption(textInput)(args);
     if (parsed._tag === "Some") {
       ({ text } = parsed.value);
-    }
-  } else if (name === "search_conversations") {
-    const parsed = Schema.decodeUnknownOption(termInput)(args);
-    if (parsed._tag === "Some") {
-      text = parsed.value.term;
     }
   } else if (name === "get_work" || name === "recall_work") {
     const parsed = Schema.decodeUnknownOption(workInput)(args);

@@ -1,4 +1,3 @@
-import { BotEventSchema } from "@cerebro/contracts/bot-events";
 import {
   EventAdmissionSchema,
   normalizeEventAdmission,
@@ -18,7 +17,6 @@ import { Schema } from "effect";
 
 type Claim = JsonObject & {
   agentVersion: number;
-  policyVersion?: 0 | 1;
   requestId: string;
 };
 export type BotEventAdmission =
@@ -100,10 +98,9 @@ const nativeId = <A extends number>() =>
   );
 const claim = {
   agentVersion: Schema.Int.check(Schema.isGreaterThan(0)),
-  policyVersion: Schema.optional(Schema.Literals([0, 1])),
   requestId: Schema.String,
 };
-const legacyAdmission = Schema.Union([
+const admissionSchema = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("held") }),
   Schema.Struct({ ...claim, kind: Schema.Literal("claimed") }),
   Schema.Struct({
@@ -133,17 +130,6 @@ const legacyAdmission = Schema.Union([
     reason: Schema.String,
   }),
 ]);
-const legacyReceipt = Schema.Struct({
-  event: BotEventSchema,
-  digest: Schema.String,
-  route: Schema.Struct({
-    kind: Schema.Literal("coordinator"),
-    nativeId: nativeId<ConversationId>(),
-  }),
-  taskId: nativeId<TaskId>(),
-  admission: legacyAdmission,
-  duplicates: Schema.Int,
-});
 const receiptFields = {
   input: EventAdmissionSchema,
   digest: Schema.String,
@@ -162,7 +148,7 @@ const skipped = Schema.mutable(
 const coordinatorDelivery = Schema.Struct({
   kind: Schema.Literal("coordinator"),
   taskId: nativeId<TaskId>(),
-  admission: legacyAdmission,
+  admission: admissionSchema,
 });
 const noDelivery = Schema.Struct({ kind: Schema.Literal("none") });
 export const BotEventReceiptSchema = Schema.Union([
@@ -226,34 +212,9 @@ export const BotEventReceipts = defineDocFamily({
   kind: "cerebro.bot-event",
   scope: "session",
   family: true,
-  version: 2,
-  migrate: (value, fromVersion): { receipt: BotEventReceipt | null } => {
-    if (fromVersion !== 1) {
-      throw new Error("Unsupported coordinator event version.");
-    }
-    const previous = Schema.decodeUnknownSync(
-      Schema.Struct({ receipt: Schema.NullOr(legacyReceipt) }),
-      { onExcessProperty: "error" }
-    )(value).receipt;
-    return {
-      receipt: previous
-        ? {
-            input: Schema.decodeUnknownSync(EventAdmissionSchema)(
-              previous.event
-            ),
-            digest: previous.digest,
-            nativeId: previous.route.nativeId,
-            sequence: 0,
-            duplicates: previous.duplicates,
-            route: { kind: "coordinator", skipped: [] },
-            delivery: {
-              kind: "coordinator",
-              taskId: previous.taskId,
-              admission: previous.admission,
-            },
-          }
-        : null,
-    };
+  version: 3,
+  migrate: (): { receipt: BotEventReceipt | null } => {
+    throw new Error("Unsupported coordinator event version.");
   },
   initial: (_seed: null): { receipt: BotEventReceipt | null } => ({
     receipt: null,

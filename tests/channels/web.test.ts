@@ -6,10 +6,8 @@ import { createApiHandler } from "../../packages/api/src/handler";
 import { createChannelService } from "../../packages/channels/src/service";
 import { Unavailable } from "../../packages/contracts/src/failures";
 import { id } from "../../packages/contracts/src/index";
-import { eq } from "../../packages/db/node_modules/drizzle-orm";
 import { createAgentRepository } from "../../packages/db/src/repositories/agents";
 import { createIdentityRepository } from "../../packages/db/src/repositories/identity";
-import { channelConversation } from "../../packages/db/src/schema/agents";
 import {
   createFixtureChatClient,
   fixtureSubmissionCount,
@@ -312,75 +310,6 @@ test("unavailable native Send admits a client retry once", async () => {
   assert.equal(first.accepted, true);
   assert.deepEqual(second, { ...first, accepted: false });
   assert.equal(fixtureSubmissionCount(), 1);
-});
-
-for (const engine of ["legacy-v1", "pi-v1", "pi-identity-v1"] as const) {
-  test(`retired ${engine} conversations reject native work and history`, async () => {
-    const app = await createTestProduct();
-    await app.install();
-    const agent = await app.createAgent();
-    const created = await app.request("/api/product/conversations", "POST", {
-      agentId: string(agent.agentId),
-      operationId: `retired-${engine}`,
-    });
-    const conversationId = string(object(await created.json()).conversationId);
-    await app.options.withDatabase((db) =>
-      db
-        .update(channelConversation)
-        .set({ engine, retiredAt: new Date() })
-        .where(eq(channelConversation.conversationId, conversationId))
-    );
-    const route = `/api/product/conversations/${conversationId}`;
-    assert.equal((await app.request(route)).status, 409);
-    assert.equal(
-      (
-        await app.request(`${route}/messages`, "POST", {
-          operationId: "retired-input",
-          text: "Cannot run",
-        })
-      ).status,
-      409
-    );
-    assert.equal((await app.request(`${route}/stop`, "POST", {})).status, 409);
-    assert.equal(fixtureSubmissionCount(), 0);
-    assert.deepEqual(
-      object(await (await app.request("/api/product/conversations")).json())
-        .conversations,
-      []
-    );
-  });
-}
-
-test("old Pi engine conversations are hidden and cannot execute without a retirement timestamp", async () => {
-  const app = await createTestProduct();
-  await app.install();
-  const agent = await app.createAgent();
-  const created = await app.request("/api/product/conversations", "POST", {
-    agentId: string(agent.agentId),
-    operationId: "old-engine",
-  });
-  const conversationId = string(object(await created.json()).conversationId);
-  await app.options.withDatabase((db) =>
-    db
-      .update(channelConversation)
-      .set({ engine: "pi-v1" })
-      .where(eq(channelConversation.conversationId, conversationId))
-  );
-  assert.deepEqual(
-    object(await (await app.request("/api/product/conversations")).json())
-      .conversations,
-    []
-  );
-  const rejected = await app.request(
-    `/api/product/conversations/${conversationId}/messages`,
-    "POST",
-    {
-      operationId: "old-input",
-      text: "Must not execute.",
-    }
-  );
-  assert.equal(rejected.status, 409);
-  assert.equal(fixtureSubmissionCount(), 0);
 });
 
 test("native approval denial retains its binding and decision", async () => {

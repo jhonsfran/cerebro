@@ -82,31 +82,13 @@ export const BoundedContentDependenciesSchema = Schema.Struct({
   ),
 }) satisfies Schema.Codec<ContentDependencies>;
 
-const LegacySlackWorkAdmissionSchema = Schema.Struct({
-  admittedAt: timestamp,
-  contentDependencies: BoundedContentDependenciesSchema,
-  deadlineAt: timestamp,
-  goal: text,
-  key: WorkKeySchema,
-  lead: RolePinSchema,
-  limits: WorkLimitsSchema,
-  sourceEventAddress: Schema.Struct({
-    agentId: identifier<"AgentId">(),
-    conversationId: identifier<"ConversationId">(),
-    organizationId: identifier<"OrganizationId">(),
-    sessionId: identifier<"SessionId">(),
-  }),
-  sourceSlackThread: SlackThreadSchema,
-  worker: RolePinSchema,
-}).check(
-  Schema.makeFilter(
-    (work) =>
-      work.key.organizationId === work.sourceEventAddress.organizationId &&
-      work.deadlineAt > work.admittedAt &&
-      work.deadlineAt - work.admittedAt <= work.limits.timeoutMs
-  )
-);
-const WorkAdmissionV2Schema = Schema.Struct({
+const sourceEventAddress = Schema.Struct({
+  agentId: identifier<"AgentId">(),
+  conversationId: identifier<"ConversationId">(),
+  organizationId: identifier<"OrganizationId">(),
+  sessionId: identifier<"SessionId">(),
+});
+export const WorkAdmissionSchema = Schema.Struct({
   version: Schema.Literal(2),
   admittedAt: timestamp,
   contentDependencies: BoundedContentDependenciesSchema,
@@ -115,7 +97,7 @@ const WorkAdmissionV2Schema = Schema.Struct({
   key: WorkKeySchema,
   lead: RolePinSchema,
   limits: WorkLimitsSchema,
-  sourceEventAddress: LegacySlackWorkAdmissionSchema.fields.sourceEventAddress,
+  sourceEventAddress,
   worker: RolePinSchema,
 }).check(
   Schema.makeFilter(
@@ -125,10 +107,6 @@ const WorkAdmissionV2Schema = Schema.Struct({
       work.deadlineAt - work.admittedAt <= work.limits.timeoutMs
   )
 );
-export const WorkAdmissionSchema = Schema.Union([
-  WorkAdmissionV2Schema,
-  LegacySlackWorkAdmissionSchema,
-]);
 export type WorkAdmission = typeof WorkAdmissionSchema.Type;
 
 export const TeamCommandSchema = Schema.Union([
@@ -197,21 +175,10 @@ export const WorkReportSchema = Schema.Union([
 ]);
 export type WorkReport = typeof WorkReportSchema.Type;
 
-const LegacySlackTeamReportDeliverySchema = Schema.Struct({
-  report: WorkReportSchema,
-  sourceEventAddress: LegacySlackWorkAdmissionSchema.fields.sourceEventAddress,
-  sourceSlackThread: SlackThreadSchema,
-}).check(
-  Schema.makeFilter(
-    (delivery) =>
-      delivery.report.key.organizationId ===
-      delivery.sourceEventAddress.organizationId
-  )
-);
-const TeamReportDeliveryV2Schema = Schema.Struct({
+export const TeamReportDeliverySchema = Schema.Struct({
   version: Schema.Literal(2),
   report: WorkReportSchema,
-  sourceEventAddress: LegacySlackWorkAdmissionSchema.fields.sourceEventAddress,
+  sourceEventAddress,
 }).check(
   Schema.makeFilter(
     (delivery) =>
@@ -219,10 +186,6 @@ const TeamReportDeliveryV2Schema = Schema.Struct({
       delivery.sourceEventAddress.organizationId
   )
 );
-export const TeamReportDeliverySchema = Schema.Union([
-  TeamReportDeliveryV2Schema,
-  LegacySlackTeamReportDeliverySchema,
-]);
 export type TeamReportDelivery = typeof TeamReportDeliverySchema.Type;
 export const TeamReportReceiptSchema = Schema.Struct({
   reportId: WorkReportIdSchema,

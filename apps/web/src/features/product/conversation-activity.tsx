@@ -1,11 +1,8 @@
 import type {
   ChatActivity,
-  ChatChild,
   ChatControl,
   ChatRecurrence,
-  ChatSnapshot,
 } from "@cerebro/contracts/session-service";
-import { Badge } from "@cerebro/ui/components/badge";
 import { Button } from "@cerebro/ui/components/button";
 import {
   Field,
@@ -36,18 +33,10 @@ import { Activity } from "lucide-react";
 import { useId, useRef, useState } from "react";
 
 import { BackgroundWork } from "./background-work";
-import { ConversationTranscript } from "./conversation-transcript";
 import { Disclosure } from "./disclosure";
 import { ErrorAlert } from "./feedback";
 import { operationFor } from "./intent";
 import type { OperationIntent } from "./intent";
-
-const childStates = {
-  failed: "Failed",
-  interrupted: "Interrupted",
-  running: "Running",
-  succeeded: "Completed",
-} satisfies Record<ChatChild["state"], string>;
 
 const recurrenceUnits = ["minute", "hour", "day", "week", "month"] as const;
 const isRecurrenceUnit = (value: unknown): value is ChatRecurrence["unit"] =>
@@ -62,74 +51,6 @@ const dateTime = new Intl.DateTimeFormat(undefined, {
 });
 
 type Control = (command: ChatControl) => Promise<boolean>;
-
-const ChildWork = ({
-  child,
-  disabled,
-  control,
-}: {
-  child: ChatChild;
-  disabled: boolean;
-  control: Control;
-}) => (
-  <Disclosure
-    className="bg-card border p-2"
-    summaryClassName="text-foreground w-full"
-    summary={
-      <>
-        <span className="text-muted-foreground font-normal">
-          {child.purpose === "history" ? "History search" : "Subagent"}
-        </span>
-        <strong className="min-w-0 truncate font-medium">
-          {child.title || "Delegated task"}
-        </strong>
-        <Badge
-          variant={child.state === "failed" ? "destructive" : "outline"}
-          className="ml-auto"
-        >
-          {childStates[child.state]}
-        </Badge>
-      </>
-    }
-  >
-    <p className="text-muted-foreground">
-      Approvals for this task appear in the main conversation.
-    </p>
-    {child.state === "running" ? (
-      <Button
-        variant="outline"
-        size="sm"
-        className="self-start"
-        type="button"
-        disabled={disabled}
-        onClick={() => control({ childId: child.id, kind: "stop-child" })}
-      >
-        Stop subagent
-      </Button>
-    ) : null}
-    {child.messages.length > 0 || child.tools.length > 0 ? (
-      <ConversationTranscript
-        snapshot={{
-          approvals: [],
-          messages: child.messages,
-          queuedInputs: [],
-          tools: child.tools,
-        }}
-        agentName="Subagent"
-        connecting={false}
-        disabled={disabled}
-        decide={() => Promise.resolve()}
-        label={`Subagent ${child.title || child.id} messages`}
-        nested
-      />
-    ) : (
-      <p className="text-muted-foreground">No messages yet.</p>
-    )}
-    <p className="text-muted-foreground break-all">
-      Task {child.ownerTaskId} · Conversation {child.id}
-    </p>
-  </Disclosure>
-);
 
 const ReminderForm = ({
   disabled,
@@ -300,20 +221,15 @@ export const ConversationActivity = ({
   activity,
   disabled,
   control,
-  admission,
 }: {
   activity: ChatActivity | undefined;
   disabled: boolean;
   control: Control;
-  admission?: ChatSnapshot["admission"];
 }) => {
   const compactIntent = useRef<OperationIntent | null>(null);
   if (!activity) {
     return null;
   }
-  const runningChildren = activity.children.filter(
-    (child) => child.state === "running"
-  ).length;
   const scheduled = activity.reminders.filter(
     (reminder) => reminder.state === "scheduled"
   ).length;
@@ -337,27 +253,13 @@ export const ConversationActivity = ({
           <>
             <Activity aria-hidden="true" className="size-3.5" />
             Activity
-            <span className="text-muted-foreground ml-auto hidden gap-3 font-normal sm:flex">
-              <span>{runningChildren} active subagents</span>
-              <span>{scheduled} scheduled follow-ups</span>
+            <span className="text-muted-foreground ml-auto hidden font-normal sm:flex">
+              {scheduled} scheduled follow-ups
             </span>
           </>
         }
       >
         <div className="flex max-h-[50svh] flex-col gap-4 overflow-y-auto border-t px-3 py-3">
-          {activity.children.length > 0 ? (
-            <section aria-label="Subagents" className="flex flex-col gap-2">
-              <h3 className="font-medium">Subagents</h3>
-              {activity.children.map((child) => (
-                <ChildWork
-                  child={child}
-                  control={control}
-                  disabled={disabled}
-                  key={child.id}
-                />
-              ))}
-            </section>
-          ) : null}
           {activity.tasks.length > 0 ? (
             <Disclosure summary={`Active tasks (${activity.tasks.length})`}>
               <ItemGroup className="gap-1">
@@ -433,9 +335,7 @@ export const ConversationActivity = ({
             ) : (
               <p className="text-muted-foreground">No follow-ups scheduled.</p>
             )}
-            {admission?.kind === "closed" ? null : (
-              <ReminderForm control={control} disabled={disabled} />
-            )}
+            <ReminderForm control={control} disabled={disabled} />
           </section>
           <Separator />
           <section

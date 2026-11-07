@@ -255,17 +255,12 @@ export const TeamInspectionFrame = Schema.Union([
 export type TeamInspectionFrame = typeof TeamInspectionFrame.Type;
 const common = {
   address: BotEventAddressSchema,
-  profile: Schema.Struct({
-    agentVersion: count,
-    policyVersion: Schema.Literals([0, 1]),
-  }),
+  profile: Schema.Struct({ agentVersion: count }),
 };
 export const InspectionFrame = Schema.Union([
   Schema.Struct({
     ...common,
     kind: Schema.Literal("overview"),
-    admission: Schema.Literals(["open", "paused", "forwarding", "archived"]),
-    primary: Schema.NullOr(BotEventAddressSchema),
     work: Schema.Array(InspectionWork).check(Schema.isMaxLength(48)),
     refresh: Schema.Boolean,
   }),

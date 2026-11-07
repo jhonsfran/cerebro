@@ -181,11 +181,7 @@ const setup = async () => {
     },
     due: async (row: LifecycleJob) => {
       const payload = Schema.decodeUnknownSync(ReminderPayload)(row.payload);
-      return await reminders.deliver(
-        payload.reminderId,
-        payload.occurrence,
-        payload.input
-      );
+      return await reminders.deliver(payload.reminderId, payload.occurrence);
     },
     jobs: {
       ...queued.jobs,
@@ -359,44 +355,6 @@ test("lost timer arm response retains the accepted canonical schedule for recove
     ]);
     assert.deepEqual(await fixture.submissions(), [
       { requestId: `reminder:gap:${runAt}`, status: "done" },
-    ]);
-  } finally {
-    await fixture.close();
-  }
-});
-
-test("a genuine legacy job-only seed recovers with its literal payload and original native occurrence ID", async () => {
-  const fixture = await setup();
-  try {
-    const runAt = fixture.now() + 1000;
-    const job = await fixture.jobs.push({
-      id: "cerebro-reminder:first:reminder:legacy-seed",
-      fn: "cerebro-reminder",
-      payload: {
-        input: { instruction: "Retained old seed.", runAt },
-        occurrence: runAt,
-        reminderId: "reminder:legacy-seed",
-        sessionId: "first",
-      },
-      time: runAt,
-      recoveryLoop: true,
-      singleflight: true,
-    });
-    assert.deepEqual(await fixture.reminders().list(), []);
-    await fixture.reopen();
-    fixture.setTime(runAt);
-    await fixture.due(job);
-    assert.deepEqual(await fixture.reminders().list(), [
-      {
-        id: "reminder:legacy-seed",
-        instruction: "Retained old seed.",
-        lastDeliveredAt: runAt,
-        runAt,
-        state: "completed",
-      },
-    ]);
-    assert.deepEqual(await fixture.submissions(), [
-      { requestId: `reminder:legacy-seed:${runAt}`, status: "done" },
     ]);
   } finally {
     await fixture.close();
@@ -622,7 +580,7 @@ test("maximum reminders have bounded Unicode previews while full instructions an
       reminders.every((reminder) => [...reminder.instruction].length <= 256)
     );
     const snapshot = Schema.decodeUnknownSync(ChatSnapshot)({
-      activity: { children: [], compactions: [], reminders, tasks: [] },
+      activity: { compactions: [], reminders, tasks: [] },
       address: {
         agentId: "agent",
         conversationId: "chat",
@@ -667,10 +625,6 @@ test("maximum reminders have bounded Unicode previews while full instructions an
         (_, index) => `reminder:active-${index}`
       ).toSorted()
     );
-    const [job] = fixture.jobs.list();
-    assert.ok(job);
-    const payload = Schema.decodeUnknownSync(ReminderPayload)(job.payload);
-    assert.equal(payload.input.instruction.length, 32_000);
     fixture.setTime(runAt);
     await fixture.reminders().deliver("reminder:active-0", runAt);
     await fixture.submissions();

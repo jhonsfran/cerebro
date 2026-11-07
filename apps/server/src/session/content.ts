@@ -38,7 +38,6 @@ export const createRuntimeContent = (
     dependencies,
     importDependencies: sources.importDependencies,
     historyDependencies: sources.history,
-    inheritDependencies: sources.inherit,
     recordTool: sources.addTool,
     prepareInput: (text: string, context: ExecutionContext) =>
       Effect.gen(function* prepareCurrentModelInput() {

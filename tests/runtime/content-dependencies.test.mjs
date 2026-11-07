@@ -33,13 +33,6 @@ const metadataFor = (database) => {
     return result;
   };
 };
-const addressFor = (name) => ({
-  agentId: `agent:${name}`,
-  conversationId: `conversation:${name}`,
-  organizationId: "organization",
-  sessionId: `session:${name}`,
-});
-
 test("source dependencies persist per conversation when an identity hosts multiple chats", async () => {
   const database = new DatabaseSync(":memory:");
   try {
@@ -83,32 +76,6 @@ test("source dependencies persist per conversation when an identity hosts multip
   }
 });
 
-test("fresh identity dependencies do not import legacy conversation metadata", async () => {
-  const database = new DatabaseSync(":memory:");
-  try {
-    database.exec("CREATE TABLE cerebro_pi_session (state TEXT NOT NULL)");
-    const state = JSON.stringify({
-      snapshot: { outputs: [{ dependencies: { sourceIds: ["old-source"] } }] },
-    });
-    database.prepare("INSERT INTO cerebro_pi_session VALUES (?)").run(state);
-    const metadata = metadataFor(database);
-    const dependencies = await metadata(() =>
-      createSourceDependencyStore(
-        storageFor(database),
-        "session:fresh",
-        metadata
-      )
-    );
-    assert.deepEqual(await dependencies.all(), []);
-    assert.equal(
-      database.prepare("SELECT state FROM cerebro_pi_session").get().state,
-      state
-    );
-  } finally {
-    database.close();
-  }
-});
-
 test("source reads and writes wait for an unrelated failed native transaction", async () => {
   const database = new DatabaseSync(":memory:");
   try {
@@ -141,112 +108,6 @@ test("source reads and writes wait for an unrelated failed native transaction", 
     assert.deepEqual(await read, []);
     await write;
     assert.deepEqual(await sources.all(), ["retained-source"]);
-  } finally {
-    database.close();
-  }
-});
-
-test("history inheritance copies source, tool and chat evidence monotonically into its receiving scope", async () => {
-  const database = new DatabaseSync(":memory:");
-  try {
-    const metadata = metadataFor(database);
-    const storage = storageFor(database);
-    const [earlier, source, target, sibling] = await Promise.all(
-      ["earlier", "source", "target", "sibling"].map((name) =>
-        metadata(() =>
-          createSourceDependencyStore(
-            storage,
-            addressFor(name).sessionId,
-            metadata
-          )
-        )
-      )
-    );
-    await earlier.add(["earlier-source", "shared-source"]);
-    await earlier.addTool("earlier-tool");
-    await source.add(["source-source", "shared-source"]);
-    await source.addTool("source-tool");
-    await target.add(["target-source"]);
-    await target.addTool("target-tool");
-    await sibling.add(["sibling-source"]);
-    await metadata(() =>
-      source.inherit(addressFor("earlier"), ["native-earlier-tool"])
-    );
-    await metadata(() =>
-      target.inherit(addressFor("source"), [
-        "native-source-tool",
-        "source-tool",
-      ])
-    );
-    await metadata(() =>
-      target.inherit(addressFor("source"), ["native-source-tool"])
-    );
-    assert.deepEqual(await target.all(), [
-      "earlier-source",
-      "shared-source",
-      "source-source",
-      "target-source",
-    ]);
-    assert.deepEqual(await target.tools(), [
-      "earlier-tool",
-      "native-earlier-tool",
-      "native-source-tool",
-      "source-tool",
-      "target-tool",
-    ]);
-    assert.deepEqual(await target.history(), [
-      addressFor("earlier"),
-      addressFor("source"),
-    ]);
-    assert.deepEqual(await source.history(), [addressFor("earlier")]);
-    assert.deepEqual(await source.tools(), [
-      "earlier-tool",
-      "native-earlier-tool",
-      "source-tool",
-    ]);
-    assert.deepEqual(await sibling.all(), ["sibling-source"]);
-    assert.deepEqual(await sibling.tools(), []);
-    assert.deepEqual(await sibling.history(), []);
-    const reopened = await metadata(() =>
-      createSourceDependencyStore(
-        storageFor(database),
-        addressFor("target").sessionId,
-        metadata
-      )
-    );
-    assert.deepEqual(await reopened.all(), await target.all());
-    assert.deepEqual(await reopened.tools(), await target.tools());
-    assert.deepEqual(await reopened.history(), await target.history());
-  } finally {
-    database.close();
-  }
-});
-
-test("history copies flatten cycles without recording the receiving chat as its own evidence", async () => {
-  const database = new DatabaseSync(":memory:");
-  try {
-    const metadata = metadataFor(database);
-    const storage = storageFor(database);
-    const [first, second] = await Promise.all(
-      ["first", "second"].map((name) =>
-        metadata(() =>
-          createSourceDependencyStore(
-            storage,
-            addressFor(name).sessionId,
-            metadata
-          )
-        )
-      )
-    );
-    await first.add(["first-source"]);
-    await second.add(["second-source"]);
-    await metadata(() => first.inherit(addressFor("second"), []));
-    await metadata(() => second.inherit(addressFor("first"), []));
-    await metadata(() => first.inherit(addressFor("second"), []));
-    assert.deepEqual(await first.all(), ["first-source", "second-source"]);
-    assert.deepEqual(await second.all(), ["first-source", "second-source"]);
-    assert.deepEqual(await first.history(), [addressFor("second")]);
-    assert.deepEqual(await second.history(), [addressFor("first")]);
   } finally {
     database.close();
   }

@@ -1,15 +1,6 @@
 import type { Api, AssistantMessage, Model } from "@earendil-works/pi-ai";
-import { AssistantEntry, UserEntry } from "@earendil-works/pi-durable";
+import { AssistantEntry } from "@earendil-works/pi-durable";
 import type { ConversationId, Tx } from "@earendil-works/pi-durable";
-
-export const appendPassiveUser = (
-  tx: Tx,
-  nativeId: ConversationId,
-  text: string
-) =>
-  tx.appendEntry(UserEntry, nativeId, {
-    model: [{ role: "user", content: text, timestamp: Date.now() }],
-  });
 
 export const appendPassiveAnswer = (
   tx: Tx,

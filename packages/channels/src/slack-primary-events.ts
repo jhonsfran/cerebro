@@ -80,9 +80,6 @@ export const readSlackPrimaryEvent = async (input: {
     conversation.agentId !== address.agentId ||
     conversation.sessionId !== address.sessionId ||
     conversation.ownerPrincipalId !== decision.ownerPrincipalId ||
-    conversation.kind !== "web" ||
-    conversation.engine !== "pi-identity-v1" ||
-    conversation.retiredAt ||
     !(await isPrimaryConversation(conversation))
   ) {
     throw new ChannelError(

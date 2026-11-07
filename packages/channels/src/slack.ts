@@ -5,11 +5,8 @@ import {
   channelSlackEventReceipt,
 } from "@cerebro/db/schema/agents";
 import { eq, sql } from "drizzle-orm";
-import { z } from "zod";
 
-import { receiveAcceptedLegacySlackInput } from "./legacy-slack-input";
 import { contextByPrincipal, digest } from "./security";
-import { createChannelService } from "./service";
 import { createSlackApi } from "./slack-api";
 import {
   resolveSlackEventDecision,
@@ -17,7 +14,6 @@ import {
 } from "./slack-event-receipts";
 import { parseSlackCallback, parseSlackQueueDelivery } from "./slack-events";
 import { readSlackPrimaryEvent } from "./slack-primary-events";
-import { APPROVE_ACTION, DENY_ACTION } from "./slack-replies";
 import { ChannelError } from "./types";
 import type { ChannelOptions, SlackConfiguration } from "./types";
 
@@ -207,43 +203,34 @@ export const receiveSlackEvent = async (
       "The saved Slack event decision does not match its input."
     );
   }
-  if (decision.kind === "primary-events-v2") {
-    const port = options.slackEvents;
-    if (!port) {
-      throw new ChannelError(
-        503,
-        "unavailable",
-        "Slack event routing is unavailable."
-      );
-    }
-    const context = await contextByPrincipal(
-      database,
-      options.organizationId,
-      decision.ownerPrincipalId
+  const port = options.slackEvents;
+  if (!port) {
+    throw new ChannelError(
+      503,
+      "unavailable",
+      "Slack event routing is unavailable."
     );
-    const events = await Promise.all(
-      decision.targets.map(async (address) => {
-        await readSlackPrimaryEvent({
-          database,
-          configuration,
-          address,
-          eventKey,
-        });
-        return {
-          address,
-          ...(await port.admit({ address, context, eventKey })),
-        };
-      })
-    );
-    return { accepted: true, events };
   }
-  return await receiveAcceptedLegacySlackInput({
+  const context = await contextByPrincipal(
     database,
-    options,
-    configuration,
-    eventKey,
-    callback,
-  });
+    options.organizationId,
+    decision.ownerPrincipalId
+  );
+  const events = await Promise.all(
+    decision.targets.map(async (address) => {
+      await readSlackPrimaryEvent({
+        database,
+        configuration,
+        address,
+        eventKey,
+      });
+      return {
+        address,
+        ...(await port.admit({ address, context, eventKey })),
+      };
+    })
+  );
+  return { accepted: true, events };
 };
 
 export const receiveQueuedSlackEvent = async (
@@ -295,87 +282,5 @@ export const receiveQueuedSlackEvent = async (
     },
     slack,
     delivery.sourceRetry || redelivery
-  );
-};
-
-const interactionSchema = z.object({
-  actions: z
-    .array(
-      z.object({
-        action_id: z.string(),
-        action_ts: z.string().min(1),
-        value: z.string().max(2000),
-      })
-    )
-    .min(1),
-  api_app_id: z.string().min(1),
-  team: z.object({ id: z.string().min(1) }),
-  type: z.literal("block_actions"),
-  user: z.object({ id: z.string().min(1) }),
-});
-const approvalValue = z.strictObject({
-  approvalId: z.string().min(1).max(512),
-  conversationId: z.string().min(1).max(512),
-});
-
-export const receiveSlackInteraction = async (
-  database: Database,
-  options: ChannelOptions,
-  payload: unknown,
-  configuration: SlackConfiguration
-) => {
-  const parsed = interactionSchema.safeParse(payload);
-  if (!parsed.success) {
-    return { ignored: true };
-  }
-  const interaction = parsed.data;
-  if (
-    interaction.team.id !== configuration.workspaceId ||
-    interaction.api_app_id !== configuration.appId
-  ) {
-    throw new ChannelError(
-      403,
-      "forbidden",
-      "The Slack workspace or app is not configured."
-    );
-  }
-  const [action] = interaction.actions;
-  if (
-    !action ||
-    (action.action_id !== APPROVE_ACTION && action.action_id !== DENY_ACTION)
-  ) {
-    return { ignored: true };
-  }
-  let value: z.infer<typeof approvalValue>;
-  try {
-    value = approvalValue.parse(JSON.parse(action.value));
-  } catch {
-    throw new ChannelError(
-      422,
-      "invalid-input",
-      "The Slack action is invalid."
-    );
-  }
-  const link = await createIdentityRepository(database).resolveSlackLink(
-    configuration.workspaceId,
-    interaction.user.id
-  );
-  if (!link || link.organizationId !== options.organizationId) {
-    throw new ChannelError(
-      403,
-      "forbidden",
-      "Link this Slack account before approving."
-    );
-  }
-  const context = await contextByPrincipal(
-    database,
-    options.organizationId,
-    link.principalId
-  );
-  return await createChannelService(database, options).approveAs(
-    context,
-    value.conversationId,
-    value.approvalId,
-    action.action_id === APPROVE_ACTION ? "allow" : "deny"
   );
 };

@@ -102,12 +102,7 @@ export const createFixtureChatClient = (
           eq(channelConversation.agentId, request.address.agentId)
         )
       );
-    if (
-      !row ||
-      row.ownerPrincipalId !== request.context.actor.id ||
-      row.retiredAt ||
-      row.engine !== "pi-identity-v1"
-    ) {
+    if (!row || row.ownerPrincipalId !== request.context.actor.id) {
       throw new ChannelError(
         404,
         "not-found",
@@ -149,7 +144,6 @@ export const createFixtureChatClient = (
         inputs: new Map(),
         snapshot: {
           activity: {
-            children: [],
             compactions: [],
             reminders: [],
             tasks: [],
@@ -179,7 +173,6 @@ export const createFixtureChatClient = (
       await access(request, "execute");
       const selected = await conversation(request);
       const activity: ChatActivity = selected.snapshot.activity ?? {
-        children: [],
         compactions: [],
         reminders: [],
         tasks: [],
@@ -208,24 +201,6 @@ export const createFixtureChatClient = (
           },
         };
         return { id: reminder.id, kind: command.kind };
-      }
-      if (command.kind === "stop-child") {
-        const child = activity.children.find(
-          (value) => value.id === command.childId
-        );
-        if (!child) {
-          throw new ChannelError(404, "not-found", "The child was not found.");
-        }
-        selected.snapshot = {
-          ...selected.snapshot,
-          activity: {
-            ...activity,
-            children: activity.children.map((value) =>
-              value.id === child.id ? { ...value, state: "interrupted" } : value
-            ),
-          },
-        };
-        return { id: child.id, kind: command.kind };
       }
       const digest = JSON.stringify(command);
       const retained = selected.commands.get(command.operationId);

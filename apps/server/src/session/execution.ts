@@ -139,8 +139,6 @@ export const createExecutionComposition = (
                   request.address.sessionId !== address.sessionId ||
                   request.address.conversationId !== address.conversationId ||
                   !owned ||
-                  owned.engine !== "pi-identity-v1" ||
-                  owned.retiredAt ||
                   owned.ownerPrincipalId !== ownerPrincipalId ||
                   owned.ownerPrincipalId !== request.context.actor.id
                 ) {
@@ -299,12 +297,7 @@ export const createExecutionComposition = (
                     eq(channelConversation.sessionId, source.sessionId)
                   )
                 );
-              if (
-                !row ||
-                row.ownerPrincipalId !== ownerPrincipalId ||
-                row.retiredAt ||
-                row.engine !== "pi-identity-v1"
-              ) {
+              if (!row || row.ownerPrincipalId !== ownerPrincipalId) {
                 throw new Denied({
                   code: "revoked",
                   reason:
@@ -435,7 +428,6 @@ export const createExecutionComposition = (
           toolIds: [...new Set([...recorded.toolIds, ...imported.toolIds])],
         };
       },
-      inheritDependencies: content.inheritDependencies,
       importDependencies: content.importDependencies,
       ownerContext,
       prepareInput: content.prepareInput,

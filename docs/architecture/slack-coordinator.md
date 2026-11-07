@@ -66,7 +66,7 @@ Ordinary text reaches the coordinator. It does not automatically update whicheve
 | Lead | Usually stronger | Read tools and delegate_worker; return an unrelated subscribed event once. |
 | Worker | Usually cheaper | Permitted read tools; no further delegation or scheduling. |
 
-The coordinator does not run task connector tools or foreground subagents. Each Team saves its lead and worker definition pins at admission. Current permissions still apply before execution and content transfer.
+The coordinator does not run task connector tools. Each Team saves its lead and worker definition pins at admission. Current permissions still apply before execution and content transfer.
 
 Publishing a coordinator definition stages a complete profile. Existing native work drains first. Provider, instructions, tools, skills, and permission callbacks then change together in the same conversation. New events can wait durably during this boundary.
 
@@ -90,8 +90,6 @@ Pi stores transcripts, tasks, receipts, and compacted context in SQLite. The nat
 Interrupted model requests can repeat and incur another charge. Request reservations are not monetary spend. Large artifacts belong in external storage, with bounded text and references in coordinator context.
 
 The development Inspector reads source-owned metadata and selected private details on demand. It shows saved models, role status, safe tool fields, retries, reservations, tokens, and results. It excludes credentials, system instructions, provider reasoning, and raw task payloads. Read access is required even in local mode. Inspection admits no new work. A cold active cell can resume already accepted execution during normal recovery. Terminal startup drains saved role tasks before it opens details, without loading a role provider. Repeated sealed reads keep usage and result IDs unchanged.
-
-Historical roots and forks retain their history and pins. Fresh ordinary input moves to the primary. Accepted old work and trusted retries can finish under their original source. Saved timer occurrences forward through retained receipts. Histories are not merged.
 
 ## MVP boundaries
 

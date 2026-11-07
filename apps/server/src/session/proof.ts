@@ -56,7 +56,6 @@ const proofSchema = z.strictObject({
     "/team-report",
     "/team-event-return",
     "/slack-event",
-    "/legacy-slack-input",
   ]),
 });
 const signedSchema = z.strictObject({

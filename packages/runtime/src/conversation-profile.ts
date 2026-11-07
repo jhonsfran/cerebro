@@ -12,10 +12,8 @@ import type { createReminderSerialization } from "./conversation-reminders.ts";
 import { createConversationReminders } from "./conversation-reminders.ts";
 import { createConversationResources } from "./conversation-resources.ts";
 import type { ConversationScopeServices } from "./conversation-scope.ts";
-import { createConversationWork } from "./conversation-work.ts";
 import { terminalNoticeIn } from "./coordinator-event-content.ts";
 import { createCoordinatorReport } from "./coordinator-report.ts";
-import { createCoordinatorSource } from "./coordinator-source.ts";
 import { createCoordinatorSubscriptions } from "./coordinator-subscriptions.ts";
 import { createCoordinatorWeb } from "./coordinator-web.ts";
 import { createCoordinatorWork } from "./coordinator-work.ts";
@@ -25,7 +23,6 @@ import { createRunLimits } from "./run-limits.ts";
 import { saveReminderOriginIn } from "./saved-timer-state.ts";
 import type { SavedTimerOccurrence } from "./saved-timer-state.ts";
 import type { SessionHostConfiguration } from "./session-agent.ts";
-import { requireFreshSourceIn } from "./source-admission.ts";
 
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
@@ -37,12 +34,9 @@ const run = async <A>(
   return result.success;
 };
 export const profileInstructions = (
-  configuration: SessionHostConfiguration,
-  identity: ProfileIdentity
+  configuration: SessionHostConfiguration
 ): string =>
-  identity.policyVersion === 1
-    ? `${configuration.agent.instructions}\nHandle conversation and coordinate independent work. Use start_team for each independent task when available. Keep Team histories private and recall bounded results when needed.`
-    : configuration.agent.instructions;
+  `${configuration.agent.instructions}\nHandle conversation and coordinate independent work. Use start_team for each independent task when available. Keep Team histories private and recall bounded results when needed.`;
 
 export interface ProfileState {
   readonly approvals: ReturnType<typeof createApprovalStore>;
@@ -70,8 +64,7 @@ export const createConversationProfile = async (
   native: Conversation,
   shared: ProfileState,
   identity: ProfileIdentity,
-  notify: () => Promise<void>,
-  legacy = false
+  notify: () => Promise<void>
 ) => {
   const runtime = createConversationResources(
     configuration,
@@ -90,30 +83,9 @@ export const createConversationProfile = async (
     const owner = await run(configuration.ownerContext());
     await runtime.authorize(owner, "send", signal);
   };
-  const work = createConversationWork({
-    address: configuration.address,
-    authorize,
-    ensureDeadline: (childId, deadlineAt) =>
-      services.metadata(async () => {
-        const id = `cerebro-child:${configuration.address.sessionId}:${childId}`;
-        if (!services.jobs.get(id)) {
-          await services.jobs.push({
-            id,
-            fn: "cerebro-child",
-            time: deadlineAt,
-            payload: { sessionId: configuration.address.sessionId, childId },
-            singleflight: true,
-          });
-        }
-      }),
-    nativeId: native.id,
-    pi: services.pi,
-    search: services.search,
-  });
   const reminders = createConversationReminders({
     serialize: shared.serialize,
     guardIn: runtime.guardIn,
-    guardNewScheduleIn: (tx) => requireFreshSourceIn(tx, native.id),
     saveOriginIn: (tx, reminderId, cause) =>
       saveReminderOriginIn(tx, {
         nativeId: native.id,
@@ -121,7 +93,6 @@ export const createConversationProfile = async (
         address: configuration.address,
         ownerPrincipalId,
         cause,
-        legacy: configuration.legacyTimerOrigin,
       }),
     prepareScheduleCause: async () => {
       const owner = await run(configuration.ownerContext());
@@ -134,16 +105,9 @@ export const createConversationProfile = async (
       });
     },
     authorize,
-    ...(configuration.primaryAddress
-      ? {
-          authorizeDelivery: async () =>
-            runtime.authorize(
-              await run(configuration.ownerContext()),
-              "transfer"
-            ),
-          submitOccurrence: shared.submitOccurrence,
-        }
-      : {}),
+    authorizeDelivery: async () =>
+      runtime.authorize(await run(configuration.ownerContext()), "transfer"),
+    submitOccurrence: shared.submitOccurrence,
     authorizeCancel: async () =>
       runtime.authorize(await run(configuration.ownerContext()), "stop"),
     jobs: services.jobs,
@@ -207,13 +171,11 @@ export const createConversationProfile = async (
     coordination,
     notify,
   };
-  const routeHuman = createCoordinatorSource(source);
   const web = createCoordinatorWeb({
     pi: services.pi,
     native,
     runtime,
     events: services.events,
-    replayHandled: routeHuman,
   });
   const receiveReport = createCoordinatorReport({
     ...source,
@@ -241,14 +203,11 @@ export const createConversationProfile = async (
     admissions: coordination.admissions,
     dispatch: coordination.dispatch,
   };
-  const suffix = legacy ? "" : `:${profileKey(identity)}`;
+  const suffix = `:${profileKey(identity)}`;
   const tools: Extension = {
     name: `cerebro-tools:${configuration.address.sessionId}${suffix}`,
-    hooks: [...work.hooks, ...createRunLimits({ pi: services.pi })],
+    hooks: createRunLimits({ pi: services.pi }),
     tools: [
-      ...(identity.policyVersion === 0
-        ? [...runtime.tools, ...work.tools]
-        : []),
       ...reminders.tools,
       ...coordination.tools,
       ...subscriptions.tools,
@@ -266,14 +225,14 @@ export const createConversationProfile = async (
     configuration.address.sessionId,
     configuration.provider.model,
     runtime.provider,
-    legacy ? undefined : profileKey(identity)
+    profileKey(identity)
   );
   const registration = {
     extensions,
     provider,
     agent: {
       extensions,
-      instructions: profileInstructions(configuration, identity),
+      instructions: profileInstructions(configuration),
       model: {
         modelId: configuration.provider.model.id,
         provider: provider.id,
@@ -285,11 +244,9 @@ export const createConversationProfile = async (
   return Object.freeze({
     identity: Object.freeze({ ...identity }),
     runtime,
-    work,
     reminders,
     compaction,
     coordination,
-    routeHuman,
     receiveReport,
     subscriptions,
     web,

@@ -109,7 +109,6 @@ test("a retained old Slack input reuses its exact native text and submission aft
             eventId: event.id,
             source: "slack",
             agentVersion: 1,
-            policyVersion: 0,
           },
         },
       },

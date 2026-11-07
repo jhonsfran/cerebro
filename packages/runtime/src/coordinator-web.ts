@@ -5,7 +5,6 @@ import { id } from "@cerebro/contracts/identity";
 import type { ExecutionContext } from "@cerebro/contracts/identity";
 import type { ContentDependencies } from "@cerebro/contracts/session";
 import type { ChatReceipt } from "@cerebro/contracts/session-service";
-import { InboxDoc } from "@earendil-works/pi-durable";
 import type { Conversation, Harness, Tx } from "@earendil-works/pi-durable";
 import { Effect } from "effect";
 
@@ -23,7 +22,6 @@ import type { CoordinatorWorkRecord } from "./coordinator-ledger.ts";
 import { appendPassiveAnswer } from "./passive-history.ts";
 import { piContext } from "./pi-harness.ts";
 import type { SessionHostConfiguration } from "./session-agent.ts";
-import { requireInputAdmissionIn } from "./source-admission.ts";
 
 const sourceWorkIdsIn = async (tx: Tx, event: BotEvent): Promise<string[]> => {
   const ledger = await tx.doc(WorkLedger);
@@ -81,12 +79,6 @@ export const createCoordinatorWeb = (options: {
         readonly provider: Pick<SessionHostConfiguration["provider"], "model">;
       };
     };
-  readonly replayHandled: (
-    operationId: string,
-    text: string,
-    context: ExecutionContext,
-    signal?: AbortSignal
-  ) => Promise<boolean>;
 }) => {
   const { pi, native, runtime } = options;
   const prepareLocalControl = async (
@@ -209,71 +201,15 @@ export const createCoordinatorWeb = (options: {
       key,
       piContext(signal)
     );
-    const submission = await pi.commit(
-      (tx) => tx.submissionByRequest(native.id, operationId),
-      piContext(signal)
-    );
-    if (
-      submission ||
-      (previous?.route && previous.route.kind !== "coordinator")
-    ) {
+    if (previous?.route && previous.route.kind !== "coordinator") {
       await runtime.authorize(context, "coordinate", signal);
-      await runtime.authorize(context, "transfer", signal);
-      if (
-        previous?.digest &&
-        previous.digest !== (await coordinatorOperationKey(text))
-      ) {
+      if (previous.digest !== (await coordinatorOperationKey(text))) {
         throw new Conflict({
           code: "digest-mismatch",
           reason: "The source operation payload changed.",
         });
       }
-      const replay = await pi.commit(async (tx) => {
-        await runtime.guardIn?.(tx);
-        await requireInputAdmissionIn(tx, {
-          nativeId: native.id,
-          address: runtime.configuration.address,
-          operationId,
-          text,
-        });
-        const current = await tx.submissionByRequest(native.id, operationId);
-        if (!current) {
-          return;
-        }
-        if (current.type !== "input") {
-          throw new Conflict({
-            code: "digest-mismatch",
-            reason: "The source operation identifies a native write.",
-          });
-        }
-        let original: unknown;
-        if (current.status === "queued") {
-          const inbox = await tx.doc(InboxDoc, native.id);
-          const item = inbox.items.find(
-            (candidate) => candidate.id === current.id
-          );
-          original = item && item.mode !== "write" ? item.content : undefined;
-        } else if (current.entry !== undefined) {
-          const entry = await tx.entry(current.entry);
-          const message = entry?.model?.[0];
-          original = message?.role === "user" ? message.content : undefined;
-        }
-        if (original !== undefined && original !== text) {
-          throw new Conflict({
-            code: "digest-mismatch",
-            reason: "The source operation payload changed.",
-          });
-        }
-        return current;
-      }, piContext(signal));
-      if (!replay) {
-        await options.replayHandled(operationId, text, context, signal);
-      }
-      return {
-        accepted: replay === undefined,
-        operationId,
-        session: String(native.id),
-      };
+      return { accepted: true, operationId, session: String(native.id) };
     }
     const local = text === "status" || text === "stop";
     const owner = await Effect.runPromise(runtime.configuration.ownerContext());

@@ -200,11 +200,11 @@ const TranscriptEntry = ({
 
 type TranscriptSnapshot = Pick<
   ChatSnapshot,
-  "messages" | "approvals" | "queuedInputs" | "tools" | "activity"
+  "messages" | "approvals" | "queuedInputs" | "tools"
 >;
 
 // Groups tool calls under the message that made them and attaches each pending
-// approval to its running call. A subagent's approvals stay unattached.
+// approval to its running call.
 const placeApprovals = (snapshot: TranscriptSnapshot) => {
   const results = new Set(
     snapshot.tools.flatMap((tool) =>
@@ -226,18 +226,10 @@ const placeApprovals = (snapshot: TranscriptSnapshot) => {
     }
   }
   const unassignedApprovals: ChatApproval[] = [];
-  const childConversations = new Set(
-    snapshot.activity?.children.map((child) => child.id)
-  );
-  const childTasks = new Set(
-    snapshot.activity?.tasks
-      .filter((task) => childConversations.has(task.conversationId))
-      .map((task) => task.id)
-  );
   for (const approval of approvals) {
-    const tool = childTasks.has(approval.taskId)
-      ? undefined
-      : activeCalls.get(JSON.stringify([approval.callId, approval.toolId]));
+    const tool = activeCalls.get(
+      JSON.stringify([approval.callId, approval.toolId])
+    );
     if (tool) {
       const assigned = activeApprovals.get(tool.id) ?? [];
       assigned.push(approval);
@@ -255,17 +247,12 @@ export const ConversationTranscript = ({
   connecting,
   disabled,
   decide,
-  label = "Conversation messages",
-  nested = false,
 }: {
   snapshot: TranscriptSnapshot;
   agentName: string;
   connecting: boolean;
   disabled: boolean;
   decide: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
-  label?: string;
-  // A subagent's transcript inside the activity panel.
-  nested?: boolean;
 }) => {
   const transcript = useRef<HTMLDivElement>(null);
   const following = useRef(true);
@@ -295,26 +282,22 @@ export const ConversationTranscript = ({
     snapshot.messages.length === 0 && snapshot.queuedInputs.length === 0;
   return (
     <div
-      className={cn(
-        "transcript overflow-y-auto",
-        nested ? "bg-background max-h-80 border" : "min-h-0 flex-1"
-      )}
+      className="transcript min-h-0 flex-1 overflow-y-auto"
       ref={transcript}
       role="log"
-      aria-label={label}
+      aria-label="Conversation messages"
       aria-live="polite"
       aria-relevant="additions text"
       onScroll={trackPosition}
     >
       <div
         className={cn(
-          "mx-auto flex w-full max-w-(--measure-chat) flex-col",
-          nested ? "gap-4 p-3" : "gap-6 px-4 py-6",
-          empty && !nested && "h-full"
+          "mx-auto flex w-full max-w-(--measure-chat) flex-col gap-6 px-4 py-6",
+          empty && "h-full"
         )}
       >
         {empty ? (
-          <Empty className={nested ? "p-4 md:p-4" : undefined}>
+          <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
                 <MessageSquare aria-hidden="true" />

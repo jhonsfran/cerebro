@@ -44,9 +44,11 @@ import type {
   BotEventScope,
 } from "../../packages/runtime/src/coordinator-events.ts";
 import {
+  SourceOperations,
   WorkDocuments,
   WorkLedger,
   applyCoordinatorReport,
+  coordinatorOperationKey,
 } from "../../packages/runtime/src/coordinator-ledger.ts";
 import type { CoordinatorWorkRecord } from "../../packages/runtime/src/coordinator-ledger.ts";
 import { createCoordinatorSubscriptions } from "../../packages/runtime/src/coordinator-subscriptions.ts";
@@ -491,9 +493,30 @@ export const setup = async (
     assert.ok(value);
     return value;
   };
+  // Marks a native request as a human coordinator operation, as a web event
+  // delivery would, so tool calls from that turn carry a human cause.
+  const rememberHumanOperation = async (
+    name: string,
+    operationId: string
+  ): Promise<void> => {
+    const key = await coordinatorOperationKey(operationId);
+    const { native } = source(name);
+    await host.pi.commit(async (tx) => {
+      const operation = await tx.doc(
+        SourceOperations,
+        native.id,
+        key,
+        operationId
+      );
+      operation.route ??= { kind: "coordinator", workId: null };
+    }, context);
+  };
   const ledger = async () => {
-    const value = await host.pi.snapshot(WorkLedger, context);
-    assert.ok(value);
+    const value = (await host.pi.snapshot(WorkLedger, context)) ?? {
+      identity: null,
+      active: {},
+      queue: [],
+    };
     const page = await host.storage.scanDocuments(
       {
         scope: { kind: "session" },
@@ -626,7 +649,7 @@ export const setup = async (
         fauxAssistantMessage("The command was handled."),
       ]);
       if (human) {
-        await current.coordinator.rememberHumanOperation(requestId);
+        await rememberHumanOperation(name, requestId);
       }
       const submission = await current.native.submit(
         { type: "input", content: requestId, requestId },
@@ -670,6 +693,7 @@ export const setup = async (
         context
       );
     },
+    rememberHumanOperation,
     reopen: async () => {
       await host.pi.close(context);
       host = await open();

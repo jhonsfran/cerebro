@@ -1,7 +1,4 @@
-import type {
-  ChatControl,
-  ChatSnapshot,
-} from "@cerebro/contracts/session-service";
+import type { ChatControl } from "@cerebro/contracts/session-service";
 import {
   Alert,
   AlertAction,
@@ -219,33 +216,6 @@ const ConversationToolbar = ({
   </div>
 );
 
-const ConversationInput = ({
-  admission,
-  onOpenConversation,
-  children,
-}: {
-  admission: ChatSnapshot["admission"];
-  onOpenConversation?: () => void;
-  children: ReactNode;
-}) =>
-  admission?.kind === "closed" ? (
-    <div className="mx-auto w-full max-w-(--measure-chat) p-4">
-      <Alert role="note">
-        <AlertDescription>
-          This historical conversation accepts no new messages. Existing work
-          and scheduled follow-ups can still finish.
-        </AlertDescription>
-        {onOpenConversation ? (
-          <Button type="button" variant="outline" onClick={onOpenConversation}>
-            Open primary conversation
-          </Button>
-        ) : null}
-      </Alert>
-    </div>
-  ) : (
-    children
-  );
-
 const ConversationSession = ({
   conversationId,
   userId,
@@ -373,7 +343,6 @@ const ConversationSession = ({
         activity={snapshot.activity}
         disabled={controlsDisabled}
         control={control}
-        admission={snapshot.admission}
       />
       {pending ? (
         <div className="mx-auto w-full max-w-(--measure-chat) px-4">
@@ -402,20 +371,15 @@ const ConversationSession = ({
           </Alert>
         </div>
       ) : null}
-      <ConversationInput
-        admission={snapshot.admission}
-        onOpenConversation={onOpenConversation}
-      >
-        <ConversationComposer
-          text={text}
-          setText={setText}
-          sending={delivery.sending}
-          connected={online}
-          pending={pending}
-          reject={setErrorMessage}
-          send={send}
-        />
-      </ConversationInput>
+      <ConversationComposer
+        text={text}
+        setText={setText}
+        sending={delivery.sending}
+        connected={online}
+        pending={pending}
+        reject={setErrorMessage}
+        send={send}
+      />
     </section>
   );
 };

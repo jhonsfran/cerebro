@@ -53,7 +53,6 @@ const checkExpectedWork = (
     snapshot.tools.length > 1 ||
     snapshot.tools.some((tool) => tool.toolName !== input.toolId) ||
     snapshot.approvals.some((approval) => approval.state === "pending") ||
-    (snapshot.activity?.children.length ?? 0) > 0 ||
     (snapshot.activity?.reminders.length ?? 0) > 0
   ) {
     throw new Error(

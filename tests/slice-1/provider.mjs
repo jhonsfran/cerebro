@@ -118,21 +118,10 @@ const promptedTool = (input) => {
     input.messages.findLast((message) => message.role === "user")
   );
   if (
-    input.tools?.some((item) => item.function?.name === "search_conversations")
-  ) {
-    return "search_conversations";
-  }
-  if (
     prompt.includes("Show a verification report") ||
     prompt.includes("UI rendering test")
   ) {
     return "render_ui";
-  }
-  if (prompt.includes("Delegate a verification task")) {
-    return "subagent";
-  }
-  if (prompt.includes("Search earlier verification conversations")) {
-    return "search_history";
   }
   if (prompt.includes("Schedule a verification reminder")) {
     return "schedule";
@@ -269,15 +258,6 @@ const toolArguments = (name, input) => {
     }
     return value;
   }
-  if (name === "subagent") {
-    return { task: "Reply with the child verification result." };
-  }
-  if (name === "search_history") {
-    return { question: "Find the earlier launch decision." };
-  }
-  if (name === "search_conversations") {
-    return { term: "launch decision" };
-  }
   if (name === "schedule") {
     return {
       delaySeconds: 15,
@@ -312,9 +292,6 @@ const requestsTool = (input, purpose, toolName) =>
     "render_ui",
     "fixture_effect",
     "activate_skill",
-    "subagent",
-    "search_history",
-    "search_conversations",
     "schedule",
   ].includes(toolName) &&
   input.tools?.some((item) => item.function?.name === toolName);
@@ -326,7 +303,7 @@ const recordToken = (call, delta) => {
   }
 };
 
-const legacyMessage = (request, input, purpose, operationId) => {
+const defaultMessage = (request, input, purpose, operationId) => {
   const toolName = requestedTool(request, input);
   const tool = requestsTool(input, purpose, toolName);
   let text = "Cerebro slice 1 completed.";
@@ -576,7 +553,7 @@ export const createFixture = async ({
     }
     const message =
       teamMessage(input, operationId, purpose) ??
-      legacyMessage(request, input, purpose, operationId);
+      defaultMessage(request, input, purpose, operationId);
     const tool = Boolean(message.tool_calls?.length);
     const base = {
       created: 1,

@@ -1,12 +1,7 @@
 /* oxlint-disable no-await-in-loop -- A changed profile requires a new authorization before the next occurrence attempt. */
 import { botEventId, BotEventSchema } from "@cerebro/contracts/bot-events";
 import type { BotEvent } from "@cerebro/contracts/bot-events";
-import {
-  Conflict,
-  Denied,
-  InvalidInput,
-  Unavailable,
-} from "@cerebro/contracts/failures";
+import { Conflict, Denied, InvalidInput } from "@cerebro/contracts/failures";
 import type {
   ExecutionContext,
   PrincipalId,
@@ -32,7 +27,6 @@ import type {
   TimerOccurrenceRecord,
 } from "./saved-timer-state.ts";
 import type { SessionHostConfiguration } from "./session-agent.ts";
-import { SourceAdmission, acceptedNativeInputIn } from "./source-admission.ts";
 
 interface TimerProfile {
   readonly runtime: Pick<
@@ -42,8 +36,6 @@ interface TimerProfile {
     readonly configuration: Pick<
       SessionHostConfiguration,
       | "address"
-      | "primaryAddress"
-      | "legacyTimerOrigin"
       | "ownerContext"
       | "contentDependencies"
       | "checkDependencies"
@@ -115,8 +107,9 @@ const prepareOccurrence = async (
     options.occurrence.reminderId,
     piContext()
   );
-  const replyOrigin: FixedReplyOrigin = origin?.record?.reply ??
-    configuration.legacyTimerOrigin ?? { kind: "web" };
+  const replyOrigin: FixedReplyOrigin = origin?.record?.reply ?? {
+    kind: "web",
+  };
   const dependencies = (await configuration.contentDependencies?.()) ?? {
     sourceIds: [],
     toolIds: [],
@@ -178,15 +171,7 @@ const attempt = async (
   const { configuration } = runtime;
   const owner = await Effect.runPromise(configuration.ownerContext());
   await runtime.authorize(owner, "transfer");
-  const state = await options.pi.snapshot(
-    SourceAdmission,
-    options.nativeId,
-    piContext()
-  );
-  const target =
-    state && state.state.kind !== "open"
-      ? state.state.primary
-      : (configuration.primaryAddress ?? configuration.address);
+  const target = configuration.address;
   const source = {
     kind: "savedtimer" as const,
     scheduleId: `saved-timer:${await digestToolArguments([configuration.address, options.occurrence.reminderId])}`,
@@ -200,25 +185,6 @@ const attempt = async (
   );
   let record = savedOccurrence?.record;
   if (!record) {
-    const acceptedLegacy = await options.pi.commit(async (tx) => {
-      await runtime.guardIn(tx);
-      const { reminderId, occurrence, instruction } = options.occurrence;
-      return await acceptedNativeInputIn(
-        tx,
-        options.nativeId,
-        `${reminderId}:${occurrence}`,
-        `Scheduled instruction (${reminderId}, ${new Date(occurrence).toISOString()}):\n${instruction}`
-      );
-    }, piContext());
-    if (acceptedLegacy) {
-      return;
-    }
-    if (state?.state.kind === "paused") {
-      throw new Unavailable({
-        reason: "The source is preparing timer forwarding.",
-        retryAfter: 1,
-      });
-    }
     const prepared = await prepareOccurrence(
       options,
       profile,
@@ -229,23 +195,6 @@ const attempt = async (
     );
     record = await options.pi.commit(async (tx) => {
       await runtime.guardIn(tx);
-      const latest = await tx.doc(SourceAdmission, options.nativeId);
-      if (latest.state.kind === "paused") {
-        throw new Unavailable({
-          reason: "The source is preparing timer forwarding.",
-          retryAfter: 1,
-        });
-      }
-      const primary =
-        latest.state.kind === "open"
-          ? (configuration.primaryAddress ?? configuration.address)
-          : latest.state.primary;
-      if (!sameWorkSource(primary, prepared.event.coordinator)) {
-        throw new Conflict({
-          code: "digest-mismatch",
-          reason: "The timer forwarding target changed.",
-        });
-      }
       const saved = await tx.doc(TimerOccurrences, eventId, null);
       saved.record ??= prepared;
       return copyTimerOccurrence(saved.record);

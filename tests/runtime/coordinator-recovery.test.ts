@@ -115,9 +115,7 @@ test("source route receipts and original dependency snapshots survive completion
     assert.deepEqual(sent.contentDependencies, update.contentDependencies);
     await fixture.report("a", "complete");
     await fixture.reopen();
-    await fixture
-      .source("a")
-      .coordinator.rememberHumanOperation("human-update");
+    await fixture.rememberHumanOperation("a", "human-update");
     const replay = await fixture
       .source("a")
       .coordinator.admissions.commit("human-update", (tx) =>

@@ -117,12 +117,9 @@ test(
       const call = completed.model.at(-1);
       assert.ok(call);
       assert.ok(
-        [
-          ...coordinatorTools,
-          "fixture-read",
-          "fixture_effect",
-          "subagent",
-        ].every((name) => !call.toolNames.includes(name))
+        [...coordinatorTools, "fixture-read", "fixture_effect"].every(
+          (name) => !call.toolNames.includes(name)
+        )
       );
       assert.equal(completed.slack.calls.length, 0);
       const reopened = await createConversation();
@@ -181,9 +178,7 @@ test(
       assert.equal(delivery.wire.report.kind, "completed");
       assert.ok(delivery.wire.report.kind === "completed");
       const { report } = delivery.wire;
-      assert.ok("version" in delivery.wire);
       assert.equal(delivery.wire.version, 2);
-      assert.equal("sourceSlackThread" in delivery.wire, false);
       assert.match(
         report.text,
         /SQLite transactions protect local multi-row edits/u

@@ -59,7 +59,7 @@ Two Teams can run for one person across their agents. Sixteen more can wait in a
 
 In a local installation, the development Inspector opens inside the chat. Select a work item to inspect its lead, workers, saved models, safe tool activity, retry state, reservations, tokens, and result. Details load on demand. Completed work remains available after reload. Inspection checks current read access and admits no new model work. A cold active cell can resume an already accepted request during normal recovery. Repeated reads of a sealed Team add no model requests. Configured zero prices make monetary cost unavailable. Request reservations and provider token usage are separate values.
 
-A published coordinator definition applies at a safe turn boundary in the same chat. Existing Teams retain the role definitions saved at admission. Historical roots and forks show closed ordinary admission and a way to open primary. Their history, accepted operations, and saved timers remain retained.
+A published coordinator definition applies at a safe turn boundary in the same chat. Existing Teams retain the role definitions saved at admission.
 
 If command delivery is uncertain, work can show **Failed** while cancellation is still available. Stop sends a durable cancellation request. Current permissions and the deadline still apply.
 
