@@ -101,21 +101,31 @@ const settled = async (stack: Stack, work: WorkAdmission) =>
   );
 
 const recordedRequest = Schema.Struct({ body: Schema.String });
-const modelRequest = Schema.Struct({
-  model: Schema.String,
-  instructions: Schema.optional(Schema.String),
-});
+const modelRequest = Schema.Struct({ model: Schema.String });
+const strings = (value: unknown): string[] => {
+  if (typeof value === "string") {
+    return [value];
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(strings);
+  }
+  return value && typeof value === "object"
+    ? Object.values(value).flatMap(strings)
+    : [];
+};
 const modelRequests = (result: Awaited<ReturnType<typeof inspect>>) =>
   result.io
     .filter((item) => item.kind === "model")
-    .map((item) => ({
-      role: item.role,
-      ...Schema.decodeUnknownSync(modelRequest)(
-        JSON.parse(
-          Schema.decodeUnknownSync(recordedRequest)(JSON.parse(item.body)).body
-        )
-      ),
-    }));
+    .map((item) => {
+      const body: unknown = JSON.parse(
+        Schema.decodeUnknownSync(recordedRequest)(JSON.parse(item.body)).body
+      );
+      return {
+        role: item.role,
+        model: Schema.decodeUnknownSync(modelRequest)(body).model,
+        text: strings(body),
+      };
+    });
 
 journey(
   "one agent composes a lead and workers that run its model behind their role overlays",
@@ -142,10 +152,10 @@ journey(
           ? LEAD_ROLE_INSTRUCTIONS
           : WORKER_ROLE_INSTRUCTIONS;
       assert.ok(
-        item.instructions?.startsWith(
-          `${overlay}\n\nPublished agent version 3.`
+        item.text.some((value) =>
+          value.includes(`${overlay}\n\nPublished agent version 3.`)
         ),
-        `${item.role} instructions start with its overlay`
+        `${item.role} instructions put its overlay before the agent's text`
       );
     }
     assert.equal(JSON.stringify(result.io).includes("team_write"), false);
