@@ -12,6 +12,10 @@ import type {
   TeamCommand,
   WorkAdmission,
 } from "../../packages/contracts/src/work.ts";
+import {
+  LEAD_ROLE_INSTRUCTIONS,
+  WORKER_ROLE_INSTRUCTIONS,
+} from "../../packages/runtime/src/team-composition.ts";
 import { addressFor, evidence, waitFor } from "./helpers.ts";
 import type { Stack } from "./helpers.ts";
 import { restart, runtimeJourney } from "./runtime-journey.ts";
@@ -20,7 +24,7 @@ const journey = runtimeJourney("teams");
 const admission = (goal: string, timeoutMs = 60_000) => {
   const admittedAt = Date.now();
   return Schema.decodeUnknownSync(WorkAdmissionSchema)({
-    version: 2,
+    version: 3,
     admittedAt,
     deadlineAt: admittedAt + timeoutMs,
     goal,
@@ -29,8 +33,7 @@ const admission = (goal: string, timeoutMs = 60_000) => {
       ownerPrincipalId: "owner-team",
       workId: crypto.randomUUID(),
     },
-    lead: { agentId: "published-lead", agentVersion: 3 },
-    worker: { agentId: "published-worker", agentVersion: 7 },
+    agent: { agentId: "coordinator", agentVersion: 3 },
     limits: { maxTeams: 2, maxWorkers: 2, maxTurns: 8, timeoutMs },
     sourceEventAddress: {
       organizationId: "org-team",
@@ -97,8 +100,25 @@ const settled = async (stack: Stack, work: WorkAdmission) =>
     30_000
   );
 
+const recordedRequest = Schema.Struct({ body: Schema.String });
+const modelRequest = Schema.Struct({
+  model: Schema.String,
+  instructions: Schema.optional(Schema.String),
+});
+const modelRequests = (result: Awaited<ReturnType<typeof inspect>>) =>
+  result.io
+    .filter((item) => item.kind === "model")
+    .map((item) => ({
+      role: item.role,
+      ...Schema.decodeUnknownSync(modelRequest)(
+        JSON.parse(
+          Schema.decodeUnknownSync(recordedRequest)(JSON.parse(item.body)).body
+        )
+      ),
+    }));
+
 journey(
-  "published role models and scope aliases isolate two workers and retain conservative provenance",
+  "one agent composes a lead and workers that run its model behind their role overlays",
   async (stack) => {
     const work = admission("delegate two workers");
     await command(stack, {
@@ -109,19 +129,25 @@ journey(
     const result = await settled(stack, work);
     assert.equal(result.state.phase, "completed");
     assert.equal(result.state.modelCalls, 6);
-    assert.equal(result.io.filter((item) => item.kind === "model").length, 6);
+    const requests = modelRequests(result);
+    assert.equal(requests.length, 6);
     assert.deepEqual(
-      [
-        ...new Set(
-          result.io
-            .filter((item) => item.kind === "model")
-            .map((item) => item.role)
-        ),
-      ].toSorted(),
+      [...new Set(requests.map((item) => item.role))].toSorted(),
       ["lead", "worker-1", "worker-2"]
     );
-    assert.equal(JSON.stringify(result.io).includes("model-lead-v3"), true);
-    assert.equal(JSON.stringify(result.io).includes("model-worker-v7"), true);
+    assert.ok(requests.every((item) => item.model === "model-agent-v3"));
+    for (const item of requests) {
+      const overlay =
+        item.role === "lead"
+          ? LEAD_ROLE_INSTRUCTIONS
+          : WORKER_ROLE_INSTRUCTIONS;
+      assert.ok(
+        item.instructions?.startsWith(
+          `${overlay}\n\nPublished agent version 3.`
+        ),
+        `${item.role} instructions start with its overlay`
+      );
+    }
     assert.equal(JSON.stringify(result.io).includes("team_write"), false);
     assert.equal(result.approvals, 0);
     assert.deepEqual(result.state.report?.contentDependencies, {
@@ -220,7 +246,7 @@ journey(
 );
 
 journey(
-  "receiving worker grants and lead grants both gate private handoffs",
+  "a role is denied exactly when the agent's current grants deny it",
   async (stack) => {
     const narrowWorker = admission("delegate worker-narrow");
     await command(stack, {

@@ -38,7 +38,7 @@ export const inspectionWork = (
 ) => {
   const now = Date.now();
   return Schema.decodeUnknownSync(WorkAdmissionSchema)({
-    version: 2,
+    version: 3,
     admittedAt: now,
     deadlineAt: now + 60_000,
     goal: "Read retained private work.",
@@ -47,8 +47,7 @@ export const inspectionWork = (
       ownerPrincipalId,
       workId: "private-inspection-work",
     },
-    lead: { agentId: "removed-lead", agentVersion: 3 },
-    worker: { agentId: "removed-worker", agentVersion: 2 },
+    agent: { agentId: sourceEventAddress.agentId, agentVersion: 3 },
     limits: { maxTeams: 2, maxWorkers: 1, maxTurns: 8, timeoutMs: 60_000 },
     sourceEventAddress,
     contentDependencies: { sourceIds: [], toolIds: [] },

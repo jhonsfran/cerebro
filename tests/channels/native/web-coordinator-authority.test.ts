@@ -21,7 +21,7 @@ import {
   metadata,
   observed,
   queue,
-  wireModels,
+  teamRoles,
 } from "./team-support.ts";
 import {
   access,
@@ -152,8 +152,8 @@ test(
       const physical = await waitForFixture(
         observed,
         (value) =>
-          completedCalls(value, wireModels.coordinator).length ===
-            completedCalls(completed, wireModels.coordinator).length + 1 &&
+          completedCalls(value, teamRoles.coordinator).length ===
+            completedCalls(completed, teamRoles.coordinator).length + 1 &&
           value.model.some(
             (call) =>
               call.completedAt !== undefined &&

@@ -710,7 +710,6 @@ export const runtimeEvidence = async (
           }),
         })
       ),
-      notifications: Schema.Array(ChatSnapshot),
     })
   )(
     await request(stack, "/runtime/fixture/runtime", {

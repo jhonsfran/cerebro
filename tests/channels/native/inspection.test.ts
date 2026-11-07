@@ -18,9 +18,11 @@ import {
   reportInputDigest,
 } from "./team-queue-support.ts";
 import {
+  agentWireModel,
   compose,
   completedCalls,
   configure,
+  coordinatorDefinition,
   controlQueue,
   drained,
   evidence,
@@ -29,7 +31,7 @@ import {
   metadata,
   observed,
   ready,
-  wireModels,
+  teamRoles,
 } from "./team-support.ts";
 import {
   access,
@@ -89,7 +91,7 @@ test(
   async () => {
     await fixture.controls({
       failFirst: true,
-      models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+      models: { [teamRoles.lead]: { hold: true, delayMs: 0 } },
     });
     await controlQueue("pause");
     const { route, conversation } = await open();
@@ -111,17 +113,17 @@ test(
         (value) =>
           value.held > 0 &&
           value.model.some(
-            (call) => call.model === wireModels.lead && call.status === 503
+            (call) => call.role === teamRoles.lead && call.status === 503
           )
       );
       const failed = physical.model.find(
-        (call) => call.model === wireModels.lead && call.status === 503
+        (call) => call.role === teamRoles.lead && call.status === 503
       );
       assert.ok(failed);
       assert.ok(
         physical.model.some(
           (call) =>
-            call.model === wireModels.lead &&
+            call.role === teamRoles.lead &&
             call.operationId === failed.operationId &&
             call.startedAt > failed.startedAt
         )
@@ -148,29 +150,22 @@ test(
         [0, 1, 2]
       );
       assert.deepEqual(
-        active.team.roles.map((role) => role.definition),
-        [
-          {
-            agentId: installed.lead.agentId,
-            agentVersion: installed.lead.version,
-          },
-          {
-            agentId: installed.worker.agentId,
-            agentVersion: installed.worker.version,
-          },
-          {
-            agentId: installed.worker.agentId,
-            agentVersion: installed.worker.version,
-          },
-        ]
+        active.team.roles.map((role) => role.role),
+        ["lead", "worker", "worker"]
+      );
+      assert.ok(
+        active.team.roles.every(
+          (role) =>
+            role.definition.agentId === installed.coordinator.agentId &&
+            role.definition.agentVersion === installed.coordinator.version
+        )
       );
       assert.equal(
         new Set(active.team.roles.map((role) => role.nativeId)).size,
         3
       );
-      assert.deepEqual(
-        active.team.roles.map((role) => role.modelId),
-        [wireModels.lead, wireModels.worker, wireModels.worker]
+      assert.ok(
+        active.team.roles.every((role) => role.modelId === agentWireModel)
       );
       assert.ok(
         active.team.requestReservations > 0 &&
@@ -298,7 +293,7 @@ test(
     const { route, conversation } = await open();
     await controlQueue("pause");
     await fixture.controls({
-      models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+      models: { [teamRoles.lead]: { hold: true, delayMs: 0 } },
     });
     try {
       const first = await startGoal(
@@ -441,11 +436,11 @@ test(
       const physical = await waitForFixture(
         observed,
         (value) =>
-          completedCalls(value, wireModels.coordinator).length ===
-            completedCalls(beforeRelease, wireModels.coordinator).length + 2 &&
+          completedCalls(value, teamRoles.coordinator).length ===
+            completedCalls(beforeRelease, teamRoles.coordinator).length + 2 &&
           reports.every(
             (report) =>
-              completedCalls(value, wireModels.coordinator).filter(
+              completedCalls(value, teamRoles.coordinator).filter(
                 (call) => call.messageTextDigests.at(-1) === report.inputDigest
               ).length === 1
           ),
@@ -562,7 +557,7 @@ test(
     const { route, conversation } = await open();
     await controlQueue("pause");
     await fixture.controls({
-      models: { [wireModels.worker]: { hold: true, delayMs: 0 } },
+      models: { [teamRoles.worker]: { hold: true, delayMs: 0 } },
     });
     let removed: string | undefined;
     try {
@@ -705,7 +700,7 @@ test(
 );
 
 test(
-  "a genuinely sealed Team keeps its saved result, roles, tasks, and usage after exact role/model configuration loss and cold reopen",
+  "a genuinely sealed Team keeps its saved result, roles, tasks, and usage after its agent is republished with another model and cold reopen",
   { timeout: 240_000 },
   async () => {
     const { route, conversation } = await open();
@@ -739,27 +734,24 @@ test(
       60_000
     );
     assert.ok(sealed.kind === "team" && sealed.team.kind === "available");
-    const savedConversation = await waitForFixture(
+    const settledConversation = await waitForFixture(
       () => read(route),
       (value) => !value.snapshot.busy
     );
-    assert.equal(sealed.team.roles.length, 3);
     assert.deepEqual(
-      sealed.team.roles.map((role) => role.definition),
-      [
-        {
-          agentId: installed.lead.agentId,
-          agentVersion: installed.lead.version,
-        },
-        {
-          agentId: installed.worker.agentId,
-          agentVersion: installed.worker.version,
-        },
-        {
-          agentId: installed.worker.agentId,
-          agentVersion: installed.worker.version,
-        },
-      ]
+      sealed.team.roles.map((role) => role.role),
+      ["lead", "worker", "worker"]
+    );
+    const [pin] = sealed.team.roles.map((role) => role.definition);
+    assert.ok(pin);
+    assert.equal(pin.agentId, installed.coordinator.agentId);
+    assert.ok(
+      sealed.team.roles.every(
+        (role) =>
+          role.definition.agentId === pin.agentId &&
+          role.definition.agentVersion === pin.agentVersion &&
+          role.modelId === agentWireModel
+      )
     );
     assert.ok(sealed.team.roles.every((role) => role.usage.totalTokens > 0));
     const pages = await Promise.all(
@@ -780,125 +772,37 @@ test(
         };
       })
     );
-    const pins = [
-      ...new Map(
-        sealed.team.roles.map((role) => [
-          `${role.definition.agentId}:${role.definition.agentVersion}`,
-          role.definition,
-        ])
-      ).values(),
-    ];
-    assert.equal(pins.length, 2);
-    const predicate = `organization_id=${literal(metadata.agent.organizationId)} AND (${pins.map((pin) => `(agent_id=${literal(pin.agentId)} AND version=${pin.agentVersion})`).join(" OR ")})`;
-    const definitions = await fixture.sql(
-      `SELECT json_agg(t ORDER BY agent_id,version) FROM agent_version t WHERE ${predicate}`
-    );
-    assert.equal(z.array(z.unknown()).parse(JSON.parse(definitions)).length, 2);
-    const coordinator = await fixture.sql(
-      `SELECT json_agg(t ORDER BY version) FROM agent_version t WHERE organization_id=${literal(metadata.agent.organizationId)} AND agent_id=${literal(installed.coordinator.agentId)}`
-    );
     const physical = await observed();
-    const replacements = await Promise.all(
-      ["lead", "worker"].map((role) =>
-        fixture.json(
-          "/api/product/agents",
-          metadata.owner.cookie,
-          publishedSchema,
-          {
-            operationId: crypto.randomUUID(),
-            name: `Inspector replacement ${role}`,
-            model: "fixture/slice-1",
-            instructions: "Handle only future work with the supplied tools.",
-            enabledToolIds: [],
-            grants: [],
-          }
-        )
-      )
+    const republished = await fixture.json(
+      `/api/product/agents/${encodeURIComponent(pin.agentId)}`,
+      metadata.owner.cookie,
+      publishedSchema,
+      {
+        ...coordinatorDefinition(),
+        expectedVersion: pin.agentVersion,
+        operationId: crypto.randomUUID(),
+        model: "fixture/slice-1",
+        instructions: "Handle only future work with the supplied tools.",
+      },
+      "PUT"
     );
-    const [replacementLead, replacementWorker] = replacements;
-    assert.ok(replacementLead && replacementWorker);
-    assert.equal(new Set(replacements.map((pin) => pin.agentId)).size, 2);
-    assert.ok(
-      replacements.every((replacement) =>
-        pins.every((pin) => pin.agentId !== replacement.agentId)
-      )
-    );
-    const replacementPredicate = `organization_id=${literal(metadata.agent.organizationId)} AND (${replacements.map((pin) => `(agent_id=${literal(pin.agentId)} AND version=${pin.version})`).join(" OR ")})`;
-    const replacementDefinitions = await fixture.sql(
-      `SELECT json_agg(t ORDER BY agent_id,version) FROM agent_version t WHERE ${replacementPredicate}`
-    );
-    assert.equal(
-      z.array(z.unknown()).parse(JSON.parse(replacementDefinitions)).length,
-      2
-    );
-    const removed = await fixture.sql(
-      `WITH removed AS (DELETE FROM agent_version WHERE ${predicate} RETURNING 1) SELECT count(*) FROM removed`
-    );
-    assert.equal(removed, "2");
-    const configured = await compose(
-      "run",
-      "--no-deps",
-      "--rm",
-      "test-config",
-      "node",
-      "--input-type=module",
-      "-e",
-      "import {readFile,writeFile} from 'node:fs/promises';const p='/run/cerebro-secrets/runtime.json';const c=JSON.parse(await readFile(p,'utf8'));if(!c.coordination)throw new Error('Coordination must remain configured.');const before={modelIds:c.models.map(m=>m.id),coordination:{...c.coordination}};const removed=JSON.parse(process.argv[1]);const replacements=JSON.parse(process.argv[2]);c.models=c.models.filter(m=>!removed.includes(m.id));c.coordination.leadAgentId=replacements.leadAgentId;c.coordination.workerAgentId=replacements.workerAgentId;await writeFile(p,JSON.stringify(c),{mode:0o600});process.stdout.write(JSON.stringify({before,after:{modelIds:c.models.map(m=>m.id),coordination:c.coordination}}));",
-      JSON.stringify(["fixture/slack-lead", "fixture/slack-worker"]),
-      JSON.stringify({
-        leadAgentId: replacementLead.agentId,
-        workerAgentId: replacementWorker.agentId,
-      })
-    );
-    const configuration = z
-      .object({
-        before: z.object({
-          modelIds: z.array(z.string()),
-          coordination: z.record(z.string(), z.unknown()),
-        }),
-        after: z.object({
-          modelIds: z.array(z.string()),
-          coordination: z.record(z.string(), z.unknown()),
-        }),
-      })
-      .parse(JSON.parse(configured.stdout));
-    assert.deepEqual(
-      configuration.after.modelIds,
-      configuration.before.modelIds.filter(
-        (modelId) =>
-          modelId !== "fixture/slack-lead" && modelId !== "fixture/slack-worker"
-      )
-    );
-    assert.deepEqual(configuration.after.coordination, {
-      ...configuration.before.coordination,
-      leadAgentId: replacementLead.agentId,
-      workerAgentId: replacementWorker.agentId,
-    });
-    await compose("run", "--no-deps", "--rm", "bootstrap");
+    assert.equal(republished.agentId, pin.agentId);
+    assert.equal(republished.version, pin.agentVersion + 1);
     await compose("restart", "celld");
     await ready();
-    assert.equal(
-      await fixture.sql(
-        `SELECT count(*) FROM agent_version WHERE ${predicate}`
-      ),
-      "0"
-    );
-    assert.equal(
-      await fixture.sql(
-        `SELECT json_agg(t ORDER BY version) FROM agent_version t WHERE organization_id=${literal(metadata.agent.organizationId)} AND agent_id=${literal(installed.coordinator.agentId)}`
-      ),
-      coordinator
-    );
+    const sealedView = { work: sealed.work, team: sealed.team };
     const cold = await inspect(route, {
       kind: "team",
       workId: target.key.workId,
     });
-    assert.deepEqual(cold, sealed);
-    assert.deepEqual(
-      await inspect(route, { kind: "team", workId: target.key.workId }),
-      sealed
-    );
-    assert.deepEqual(await read(route), savedConversation);
+    assert.ok(cold.kind === "team");
+    assert.deepEqual({ work: cold.work, team: cold.team }, sealedView);
+    const repeated = await inspect(route, {
+      kind: "team",
+      workId: target.key.workId,
+    });
+    assert.ok(repeated.kind === "team");
+    assert.deepEqual({ work: repeated.work, team: repeated.team }, sealedView);
     for (const page of pages) {
       assert.deepEqual(
         await inspect(route, {
@@ -918,22 +822,18 @@ test(
       );
     }
     assert.equal((await observed()).model.length, physical.model.length);
-    await evidence("native-inspector-sealed-configuration-loss", {
-      fault: "exact role definitions and role models removed after sealing",
+    await evidence("native-inspector-sealed-republish", {
+      fault: "the Team's agent republished with another model after sealing",
       conversation,
       target,
       waiting,
       delivery,
       expectedInput,
       sealed,
+      settledConversation,
       pages,
-      pins,
-      definitions: JSON.parse(definitions),
-      replacements,
-      replacementDefinitions: JSON.parse(replacementDefinitions),
-      configuration,
-      coordinatorUnchanged: true,
-      removed,
+      pin,
+      republished,
       physical,
       cold,
     });

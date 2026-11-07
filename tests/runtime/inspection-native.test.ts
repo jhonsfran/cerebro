@@ -55,7 +55,7 @@ test("private native projection shows actual saved models and safe text without 
     );
     const now = Date.now();
     const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
-      version: 2,
+      version: 3,
       admittedAt: now,
       deadlineAt: now + 60_000,
       goal: "Inspect retained native data.",
@@ -64,8 +64,7 @@ test("private native projection shows actual saved models and safe text without 
         ownerPrincipalId: "owner",
         workId: "inspect-work",
       },
-      lead: { agentId: "removed-lead", agentVersion: 4 },
-      worker: { agentId: "removed-worker", agentVersion: 2 },
+      agent: { agentId: "coordinator", agentVersion: 4 },
       limits: { maxTeams: 2, maxWorkers: 1, maxTurns: 8, timeoutMs: 60_000 },
       sourceEventAddress: {
         organizationId: "org",

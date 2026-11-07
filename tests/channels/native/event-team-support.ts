@@ -17,7 +17,7 @@ import {
   primaryDecision,
   queue,
   send,
-  wireModels,
+  teamRoles,
 } from "./team-support.ts";
 import {
   createConversation,
@@ -63,7 +63,7 @@ export const subscribeLiveWork = async (
   const { route, conversation } = await createConversation(reference.agentId);
   const before = await observed();
   await fixture.controls({
-    models: { [wireModels.worker]: { hold: true, delayMs: 0 } },
+    models: { [teamRoles.worker]: { hold: true, delayMs: 0 } },
   });
   const goal = `PERSISTENT_AGENT_FIXTURE ${reference.key}. Review the task's correctness and implementation constraints.`;
   const started = await sendTurn(route, goal);
@@ -143,8 +143,8 @@ export const queuedTeamEvent = async (
   assert.ok(beforeAdmission.kind === "tasks");
   await fixture.controls({
     models: {
-      [wireModels.lead]: { hold: true, delayMs: 500 },
-      [wireModels.worker]: { hold: true, delayMs: 0 },
+      [teamRoles.lead]: { hold: true, delayMs: 500 },
+      [teamRoles.worker]: { hold: true, delayMs: 0 },
     },
   });
   await controlQueue("resume", "cerebro-team-commands");
@@ -155,8 +155,8 @@ export const queuedTeamEvent = async (
   );
   await fixture.controls({
     models: {
-      [wireModels.lead]: { hold: true, delayMs: 500 },
-      [wireModels.worker]: { hold: false, delayMs: 0 },
+      [teamRoles.lead]: { hold: true, delayMs: 500 },
+      [teamRoles.worker]: { hold: false, delayMs: 0 },
     },
   });
   const held = await waitForFixture(
@@ -164,7 +164,7 @@ export const queuedTeamEvent = async (
     (value) =>
       value.model.some(
         (call) =>
-          call.model === wireModels.lead &&
+          call.role === teamRoles.lead &&
           call.completedAt === undefined &&
           call.messageTextDigests.includes(digest)
       ),

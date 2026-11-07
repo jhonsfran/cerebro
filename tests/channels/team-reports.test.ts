@@ -16,13 +16,12 @@ import { createTestProduct, string } from "./helpers";
 
 const work = (organizationId: string, ownerPrincipalId: string) =>
   Schema.decodeUnknownSync(WorkAdmissionSchema)({
-    version: 2,
+    version: 3,
     admittedAt: 1000,
     deadlineAt: 61_000,
     goal: "Read.",
     key: { organizationId, ownerPrincipalId, workId: "report-work" },
-    lead: { agentId: "lead", agentVersion: 1 },
-    worker: { agentId: "worker", agentVersion: 1 },
+    agent: { agentId: "source", agentVersion: 1 },
     limits: { maxTeams: 2, maxWorkers: 2, maxTurns: 8, timeoutMs: 60_000 },
     sourceEventAddress: {
       organizationId,

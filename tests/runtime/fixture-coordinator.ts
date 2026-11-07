@@ -1,5 +1,5 @@
 import { fauxProvider } from "@earendil-works/pi-ai";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 
 import type { EventAddress } from "../../packages/contracts/src/events.ts";
 import { Denied, InvalidInput } from "../../packages/contracts/src/failures.ts";
@@ -11,7 +11,7 @@ import {
 } from "../../packages/contracts/src/team-events.ts";
 import type { TeamCommandTransport } from "../../packages/contracts/src/team-events.ts";
 import {
-  CoordinationProfileSchema,
+  DEFAULT_TEAM_LIMITS,
   workCellName,
 } from "../../packages/contracts/src/work.ts";
 import { createSourceDependencyStore } from "../../packages/runtime/src/content-dependency-store.ts";
@@ -127,16 +127,12 @@ export class CoordinatorFixture extends SessionAgent {
           },
           coordination: {
             ownerPrincipalId: id.principal(`user:${address.organizationId}`),
-            profile: Schema.decodeUnknownSync(CoordinationProfileSchema)({
-              leadAgentId: "lead",
-              workerAgentId: "worker",
-            }),
+            agent: {
+              agentId: configuration.agent.agentId,
+              agentVersion: configuration.agent.version,
+            },
+            limits: DEFAULT_TEAM_LIMITS,
             contentDependencies: dependencies,
-            resolveRolePins: () =>
-              Promise.resolve({
-                lead: { agentId: id.agent("lead"), agentVersion: 1 },
-                worker: { agentId: id.agent("worker"), agentVersion: 1 },
-              }),
             sendCommand: async (input: TeamCommandTransport) => {
               const { command, wire } = normalizeTeamCommand(input);
               const count = await metadata(() => {
@@ -187,9 +183,6 @@ export class CoordinatorFixture extends SessionAgent {
         receipt: (await this.ctx.storage.get("team-receipt")) ?? null,
         models: this.ctx.storage.sql
           .exec("SELECT * FROM coordinator_fixture_models")
-          .toArray(),
-        notifications: this.ctx.storage.sql
-          .exec("SELECT snapshot FROM fixture_notification")
           .toArray(),
         transport: this.ctx.storage.sql
           .exec("SELECT * FROM coordinator_fixture_transport ORDER BY id")

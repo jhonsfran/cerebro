@@ -256,7 +256,6 @@ export const setupWeb = async (
         waitUntil: (promise) => {
           progress.push(settleProgress(promise));
         },
-        scheduleNotify: () => Promise.resolve(),
       },
       async (registration) => {
         for (const extension of registration.extensions) {

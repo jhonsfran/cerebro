@@ -1,6 +1,6 @@
 # Run a persistent coordinator and private teams
 
-Open one persistent conversation with a cheaper coordinator. A stronger lead runs independent work with cheaper workers. Results return to the same conversation. Web chat works before Slack is configured.
+Open one persistent conversation with an agent. It can start private Teams whose lead and workers act as that same agent. Results return to the same conversation. Web chat works before Slack is configured.
 
 ```mermaid
 flowchart LR
@@ -14,34 +14,22 @@ flowchart LR
 
 The identity cell stores the coordinator and admission records. Each Team has its own cell. Its lead and workers are private Pi conversations inside that cell. Always on means saved state and event-driven wake-up. An idle agent makes no model requests.
 
-## Configure the models and role agents
+## Configure the agent
 
 1. Configure the model endpoint and key, then start Cerebro. See [Start Cerebro](../../README.md#start-cerebro). For a separate local test installation, use the recipe below.
-2. Add both model definitions to the installation's `runtime.json.models`. Both must support tool calls. Keep the existing storage and secret fields. See the [model reference](../reference/runtime-configuration.md#models).
-3. Apply the runtime change with bootstrap and restart celld. Refresh the web app so both models appear in the editor.
-4. Create and save three agents in the web editor:
+2. Create and save one agent in the web editor. Its model must support tool calls. For the first test, use these instructions: "For a request to start a team, call `start_team` with the complete goal. Acknowledge that work is running."
+3. Open the agent's conversation. Team tools are available as soon as the agent is published. No agent IDs, profile, or restart are needed.
 
-   | Agent | Model | Instructions for the first test |
-   | --- | --- | --- |
-   | Coordinator | Cheap | For a request to start a team, call `start_team` with the complete goal. Acknowledge that work is running. |
-   | Lead | Stronger | Split the task into two bounded questions. Call `delegate_worker` once for each, then combine the answers. |
-   | Worker | Cheap | Answer the assigned question. Do not delegate. |
+A Team runs as the agent you selected. Its roles derive from that agent's definition:
 
-5. Record the lead and worker agent IDs. Agent save responses contain `agentId`; use the browser Network tab if the editor does not display it.
-6. Add this property inside the existing runtime JSON object, then apply bootstrap and restart celld again:
+| Role | Model and grants | Instructions |
+| --- | --- | --- |
+| Lead | The agent's model, enabled tools, and grants | A system overlay to split the goal and call `delegate_worker` once per question, followed by the agent's instructions. |
+| Worker | The agent's model, enabled tools, and grants | A system overlay to answer one assigned question without delegating, followed by the agent's instructions. |
 
-   ```json
-   "coordination": {
-     "leadAgentId": "<PUBLISHED_LEAD_AGENT_ID>",
-     "workerAgentId": "<PUBLISHED_WORKER_AGENT_ID>",
-     "maxTeams": 2,
-     "maxWorkers": 2,
-     "maxTurns": 8,
-     "timeoutMs": 600000
-   }
-   ```
+Each worker has a separate private conversation. A role never holds more than the agent. Its tools are limited to read-only tools that need no approval. The first test needs no external tools or company sources. Add explicit grants to the agent before Teams handle company content.
 
-The coordinator is the agent you select for the web conversation. The profile selects the lead and worker definitions. Coordinator and worker definitions can select the same model. Each worker has a separate private conversation. The first test needs no external tools or company sources. Add explicit grants to each role before it handles company content.
+Team limits have bounded defaults. To change them, add an optional `coordination` block to `runtime.json`. It carries limits only. See the [runtime reference](../reference/runtime-configuration.md#coordination).
 
 ## Send and control a team request
 
@@ -59,7 +47,7 @@ Two Teams can run for one person across their agents. Sixteen more can wait in a
 
 In a local installation, the development Inspector opens inside the chat. Select a work item to inspect its lead, workers, saved models, safe tool activity, retry state, reservations, tokens, and result. Details load on demand. Completed work remains available after reload. Inspection checks current read access and admits no new model work. A cold active cell can resume an already accepted request during normal recovery. Repeated reads of a sealed Team add no model requests. Configured zero prices make monetary cost unavailable. Request reservations and provider token usage are separate values.
 
-A published coordinator definition applies at a safe turn boundary in the same chat. Existing Teams retain the role definitions saved at admission.
+A published agent definition applies at a safe turn boundary in the same chat. Existing Teams keep the agent version pinned at admission.
 
 If command delivery is uncertain, work can show **Failed** while cancellation is still available. Stop sends a durable cancellation request. Current permissions and the deadline still apply.
 
@@ -67,7 +55,7 @@ A model can answer directly instead of starting a team. Check the actual `start_
 
 ## Use a separate local configuration
 
-The default local starter generates one model configuration on each start. To maintain multiple models and the coordination profile, use a private host directory and an explicit Compose override. This recipe creates a separate project and data volumes.
+The default local starter generates one model configuration on each start. To maintain custom models or team limits, use a private host directory and an explicit Compose override. This recipe creates a separate project and data volumes.
 
 Run these commands from the repository root after you configure the model key in `.env`:
 
@@ -107,7 +95,7 @@ Read this installation's setup token, then open `http://127.0.0.1:3002`, sign up
 rtk proxy docker compose -p cerebro-teams -f compose.yaml -f "$HOME/.config/cerebro/teams-test/compose.yaml" run --rm --no-deps bootstrap node --input-type=module -e 'import {readFile} from "node:fs/promises";process.stdout.write(await readFile("/run/cerebro-secrets/bootstrap-token","utf8"))'
 ```
 
-Edit `$CEREBRO_TEAM_SECRETS_DIR/runtime.json` to configure the models and profile. For a stronger model on the same provider, copy the generated model object and change its `model` and `id`. Its ID must remain `<provider>/<model>`. Use separate endpoint and credential values if the second model needs them.
+Edit `$CEREBRO_TEAM_SECRETS_DIR/runtime.json` to configure models and optional team limits. To add another model on the same provider, copy the generated model object and change its `model` and `id`. Its ID must remain `<provider>/<model>`. Use separate endpoint and credential values if the second model needs them.
 
 After the first start, add this environment property to `secrets-init` in the override, alongside its volumes:
 

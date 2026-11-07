@@ -106,7 +106,7 @@ export const occurrenceFixture = async (
   );
   const now = Date.now();
   const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
-    version: 2,
+    version: 3,
     admittedAt: now,
     deadlineAt: now + 60_000,
     goal: "Inspect actual private tool occurrences.",
@@ -115,8 +115,7 @@ export const occurrenceFixture = async (
       ownerPrincipalId: "owner",
       workId: "occurrences",
     },
-    lead: { agentId: "lead", agentVersion: 1 },
-    worker: { agentId: "worker", agentVersion: 1 },
+    agent: { agentId: "coordinator", agentVersion: 1 },
     limits: { maxTeams: 2, maxWorkers: 1, maxTurns: 8, timeoutMs: 60_000 },
     sourceEventAddress: {
       organizationId: "org",

@@ -29,6 +29,7 @@ import {
 import { inspectionCursor, nextInspectionCursor } from "./inspection-page.ts";
 import { inspectionResult } from "./inspection-work.ts";
 import { piContext } from "./pi-harness.ts";
+import { teamRoleKind } from "./team-composition.ts";
 import { TeamState } from "./team-state.ts";
 import type { TeamStateValue, TeamWorker } from "./team-state.ts";
 
@@ -64,7 +65,8 @@ const readRole = async (
   return {
     slot,
     nativeId: String(nativeId),
-    definition: slot === 0 ? input.work.lead : input.work.worker,
+    definition: input.work.agent,
+    role: teamRoleKind(input.work, slot),
     modelId: agent?.model?.modelId ?? null,
     ...roleProgress(live, worker),
     usage: inspectUsage(usage?.models),

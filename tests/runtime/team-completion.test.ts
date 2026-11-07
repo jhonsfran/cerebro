@@ -52,7 +52,7 @@ const fixture = async (kind: "sources" | "tools", block = false) => {
   const root = await pi.root(context);
   const admittedAt = Date.now();
   const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
-    version: 2,
+    version: 3,
     admittedAt,
     deadlineAt: admittedAt + 60_000,
     goal: "private-goal-marker",
@@ -61,8 +61,7 @@ const fixture = async (kind: "sources" | "tools", block = false) => {
       ownerPrincipalId: "owner",
       workId: `overflow-${kind}`,
     },
-    lead: { agentId: "lead", agentVersion: 1 },
-    worker: { agentId: "worker", agentVersion: 1 },
+    agent: { agentId: "coordinator", agentVersion: 1 },
     limits: { maxTeams: 2, maxWorkers: 2, maxTurns: 8, timeoutMs: 60_000 },
     sourceEventAddress: {
       organizationId: "org",

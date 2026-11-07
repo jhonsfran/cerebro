@@ -19,7 +19,7 @@ Each organization identity has one IdentityAgent Durable Object, addressed by or
 
 ## Background agent teams
 
-An optional coordination profile gives web and Slack conversations tools to start independent teams. Each conversation keeps its history and work pointer, and all conversations share one identity-wide active-work index. Each work ID selects a private TeamAgent cell with a lead and at most two worker conversations. Published agents select each role's model and grants. Team tools are read-only. Results enter the original conversation after current access checks, then reach web observers and the Slack thread that raised the event.
+Every web and Slack conversation has tools to start independent teams. Each conversation keeps its history and work pointer, and all conversations share one identity-wide active-work index. Each work ID selects a private TeamAgent cell with a lead and at most two worker conversations. Every role runs the conversation agent's pinned model and grants, with a system overlay in front of its instructions. Team tools are read-only. Results enter the original conversation after current access checks, then reach web observers and the Slack thread that raised the event.
 
 Durable queues transport Slack events, team commands, and reports. Web prompts use the existing authenticated conversation API. Pi remains the execution engine in each cell. Public background state and its cancellation control stay separate from foreground generation. See the [cell diagram and code](slack-coordinator.md) for placement, limits, controls, and recovery.
 

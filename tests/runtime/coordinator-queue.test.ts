@@ -63,7 +63,7 @@ test("two starts in one human turn are independent and replay keeps their admiss
     );
     assert.equal(third.status.kind, "queued");
     assert.ok(!ids.includes(third.workId));
-    assert.equal((await f.work("a")).admission.lead.agentVersion, 2);
+    assert.equal((await f.work("a")).admission.agent.agentVersion, 2);
   } finally {
     await f.close();
   }

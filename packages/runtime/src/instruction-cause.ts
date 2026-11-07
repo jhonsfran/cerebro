@@ -132,7 +132,6 @@ export const requireInstructionCauseIn = async (
     readonly ownerPrincipalId: PrincipalId;
     readonly nativeId: ConversationId;
     readonly candidates: readonly InstructionCandidate[];
-    readonly allowLegacyUser?: boolean;
   }
 ): Promise<InstructionCause> => {
   const live = await tx.doc(LiveDoc, options.nativeId);
@@ -162,8 +161,7 @@ export const requireInstructionCauseIn = async (
             candidate.operationId
           );
           return operation.operationId === candidate.operationId &&
-            (operation.route?.kind === "coordinator" ||
-              (options.allowLegacyUser === true && operation.route === null))
+            operation.route?.kind === "coordinator"
             ? { ...candidate, kind: "human", eventId: null }
             : undefined;
         }
@@ -197,7 +195,6 @@ export const prepareInstructionCause = async (options: {
   readonly nativeId: ConversationId;
   readonly address: EventAddress;
   readonly ownerPrincipalId: PrincipalId;
-  readonly allowLegacyUser?: boolean;
 }): Promise<(tx: Tx) => Promise<InstructionCause>> => {
   const candidates = await currentInstructionCandidates(
     options.pi,

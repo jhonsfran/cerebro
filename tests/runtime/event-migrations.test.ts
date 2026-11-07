@@ -65,13 +65,12 @@ test("a v2 event receipt is rejected instead of migrated", async () => {
 });
 
 const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
-  version: 2,
+  version: 3,
   admittedAt: 1_800_000_000_000,
   deadlineAt: 1_800_000_600_000,
   goal: "A queued old work item.",
   key: { organizationId: "org", ownerPrincipalId: "owner", workId: "work" },
-  lead: { agentId: "lead", agentVersion: 1 },
-  worker: { agentId: "worker", agentVersion: 1 },
+  agent: { agentId: "coordinator", agentVersion: 1 },
   limits: { maxTeams: 2, maxTurns: 8, maxWorkers: 1, timeoutMs: 600_000 },
   sourceEventAddress: {
     agentId: "coordinator",

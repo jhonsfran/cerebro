@@ -4,7 +4,7 @@ import { Schema } from "effect";
 import { BotEventAddressSchema } from "./bot-events.ts";
 import type { EventAddress } from "./events.ts";
 import type { ExecutionContext } from "./identity.ts";
-import { RolePinSchema, WorkAdmissionSchema, WorkIdSchema } from "./work.ts";
+import { AgentPinSchema, WorkAdmissionSchema, WorkIdSchema } from "./work.ts";
 
 export const INSPECTION_PAGE_SIZE = 24;
 export const INSPECTION_TEXT_LENGTH = 2000;
@@ -97,7 +97,8 @@ export type InspectionWork = typeof InspectionWork.Type;
 export const InspectionRole = Schema.Struct({
   slot,
   nativeId: identifier,
-  definition: RolePinSchema,
+  definition: AgentPinSchema,
+  role: Schema.Literals(["lead", "worker"]),
   modelId: Schema.NullOr(identifier),
   running: Schema.Boolean,
   ownerTaskId: Schema.NullOr(identifier),

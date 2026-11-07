@@ -100,7 +100,6 @@ export const createCoordinatorReport =
       };
     readonly coordination: ReturnType<typeof createCoordinatorWork>;
     readonly events: CoordinatorEvents;
-    readonly notify: () => Promise<void>;
     readonly persist: () => Promise<void>;
   }) =>
   async (
@@ -228,7 +227,6 @@ export const createCoordinatorReport =
       );
     }
     await options.persist();
-    await options.notify();
     return Schema.decodeUnknownSync(TeamReportReceiptSchema)({
       reportId: report.id,
       key: report.key,

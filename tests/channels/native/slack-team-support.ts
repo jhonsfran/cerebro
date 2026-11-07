@@ -27,7 +27,7 @@ import {
   primaryDecision,
   send,
   slack,
-  wireModels,
+  teamRoles,
 } from "./team-support.ts";
 
 export const slackInputEvidence = async (input: {
@@ -50,7 +50,7 @@ export const slackInputEvidence = async (input: {
   const digest = createHash("sha256").update(wire).digest("hex");
   const requests = physical.model
     .slice(before.model.length)
-    .filter((call) => call.model === wireModels.coordinator);
+    .filter((call) => call.role === teamRoles.coordinator);
   assert.equal(requests.length, input.requestCount);
   assert.ok(
     requests.every(

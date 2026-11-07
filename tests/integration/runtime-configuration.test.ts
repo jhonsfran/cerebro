@@ -65,43 +65,43 @@ const configured = () => ({
 const parse = (value: unknown) =>
   parseRuntimeConfiguration(JSON.stringify(value), "production");
 
-test("coordination is disabled without a profile and loads published role IDs with bounded defaults", () => {
-  assert.equal(parse(configured()).coordination, undefined);
-  const profile = parse({
-    ...configured(),
-    coordination: { leadAgentId: "lead-A", workerAgentId: "worker-A" },
-  }).coordination;
-  assert.deepEqual(profile, {
-    leadAgentId: "lead-A",
+test("coordination defaults to bounded team limits without a block and accepts limits only", () => {
+  const defaults = {
     maxTeams: 2,
     maxTurns: 8,
     maxWorkers: 2,
     timeoutMs: 600_000,
-    workerAgentId: "worker-A",
-  });
+  };
+  assert.deepEqual(parse(configured()).coordination, defaults);
   assert.deepEqual(
-    workerConfiguration(parse({ ...configured(), coordination: profile }))
+    parse({ ...configured(), coordination: {} }).coordination,
+    defaults
+  );
+  assert.deepEqual(
+    parse({ ...configured(), coordination: { maxTurns: 6 } }).coordination,
+    { ...defaults, maxTurns: 6 }
+  );
+  assert.deepEqual(
+    workerConfiguration(parse({ ...configured(), coordination: defaults }))
       .coordination,
-    profile
+    defaults
   );
 });
 
-test("coordination permits smaller limits and rejects model overrides and invalid role profiles", () => {
+test("coordination permits smaller limits and rejects agent IDs and model overrides", () => {
   const coordination = {
-    leadAgentId: "lead-A",
     maxTeams: 1,
     maxTurns: 3,
     maxWorkers: 1,
     timeoutMs: 5000,
-    workerAgentId: "worker-A",
   };
   assert.deepEqual(
     parse({ ...configured(), coordination }).coordination,
     coordination
   );
   for (const changed of [
-    { leadAgentId: "" },
-    { workerAgentId: " worker-A" },
+    { leadAgentId: "lead-A" },
+    { workerAgentId: "worker-A" },
     { maxTeams: 0 },
     { maxTeams: 3 },
     { maxWorkers: 3 },

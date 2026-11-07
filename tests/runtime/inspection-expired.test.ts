@@ -48,7 +48,7 @@ test("an actual expired start remains inspectable without a role or prior proven
   try {
     const now = Date.now();
     const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
-      version: 2,
+      version: 3,
       admittedAt: now - 120_000,
       deadlineAt: now - 60_000,
       goal: "Expired before role configuration.",
@@ -57,8 +57,7 @@ test("an actual expired start remains inspectable without a role or prior proven
         ownerPrincipalId: "owner",
         workId: "expired-work",
       },
-      lead: { agentId: "missing-lead", agentVersion: 1 },
-      worker: { agentId: "missing-worker", agentVersion: 1 },
+      agent: { agentId: "source", agentVersion: 1 },
       limits: { maxTeams: 2, maxWorkers: 1, maxTurns: 8, timeoutMs: 60_000 },
       sourceEventAddress: {
         organizationId: "org",

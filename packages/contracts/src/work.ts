@@ -28,13 +28,13 @@ export const WorkKeySchema = Schema.Struct({
 });
 export type WorkKey = typeof WorkKeySchema.Type;
 
-export const RolePinSchema = Schema.Struct({
+export const AgentPinSchema = Schema.Struct({
   agentId: identifier<"AgentId">(),
   agentVersion: Schema.Int.check(
     Schema.isBetween({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })
   ),
 });
-export type RolePin = typeof RolePinSchema.Type;
+export type AgentPin = typeof AgentPinSchema.Type;
 
 export const SlackThreadSchema = Schema.Struct({
   channelId: identifier<"SlackChannelId">(),
@@ -53,8 +53,7 @@ export const WorkLimitsSchema = Schema.Struct({
 });
 export type WorkLimits = typeof WorkLimitsSchema.Type;
 
-export const CoordinationProfileSchema = Schema.Struct({
-  leadAgentId: RolePinSchema.fields.agentId,
+export const TeamDefaultsSchema = Schema.Struct({
   maxTeams: WorkLimitsSchema.fields.maxTeams.pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(2))
   ),
@@ -67,9 +66,11 @@ export const CoordinationProfileSchema = Schema.Struct({
   timeoutMs: WorkLimitsSchema.fields.timeoutMs.pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(600_000))
   ),
-  workerAgentId: RolePinSchema.fields.agentId,
 });
-export type CoordinationProfile = typeof CoordinationProfileSchema.Type;
+export type TeamDefaults = WorkLimits;
+export const DEFAULT_TEAM_LIMITS: TeamDefaults = Schema.decodeUnknownSync(
+  TeamDefaultsSchema
+)({});
 
 export const BoundedContentDependenciesSchema = Schema.Struct({
   sourceIds: Schema.mutable(
@@ -89,20 +90,20 @@ const sourceEventAddress = Schema.Struct({
   sessionId: identifier<"SessionId">(),
 });
 export const WorkAdmissionSchema = Schema.Struct({
-  version: Schema.Literal(2),
+  version: Schema.Literal(3),
   admittedAt: timestamp,
+  agent: AgentPinSchema,
   contentDependencies: BoundedContentDependenciesSchema,
   deadlineAt: timestamp,
   goal: text,
   key: WorkKeySchema,
-  lead: RolePinSchema,
   limits: WorkLimitsSchema,
   sourceEventAddress,
-  worker: RolePinSchema,
 }).check(
   Schema.makeFilter(
     (work) =>
       work.key.organizationId === work.sourceEventAddress.organizationId &&
+      work.sourceEventAddress.agentId === work.agent.agentId &&
       work.deadlineAt > work.admittedAt &&
       work.deadlineAt - work.admittedAt <= work.limits.timeoutMs
   )

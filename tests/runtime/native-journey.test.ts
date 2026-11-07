@@ -1,6 +1,5 @@
 /* oxlint-disable unicorn/no-await-expression-member -- Each native observation and crash boundary depends on the preceding result. */
 import assert from "node:assert/strict";
-import { setTimeout as delay } from "node:timers/promises";
 
 import { Schema } from "effect";
 
@@ -184,66 +183,39 @@ journey(
 );
 
 journey(
-  "completion and Stop drain wake jobs, notifications, and the platform alarm",
+  "completion and Stop drain wake jobs and the platform alarm",
   async (stack) => {
-    const address = addressFor("company-journey", "notify-lifecycle");
+    const address = addressFor("company-journey", "lifecycle");
     await control(stack, { delayMs: 5000 });
-    await send(
-      stack,
-      address,
-      "notify-complete",
-      "Explain notification delivery."
-    );
+    await send(stack, address, "lifecycle-complete", "Explain delivery.");
     const active = await waitFor(
       () => lifecycle(stack, address),
       (value) => value.jobs.length > 0 && value.pending.length > 0
     );
     assert.notEqual(active.alarmAt, null);
     const busy = await waitFor(
-      () => runtimeEvidence(stack, address),
-      (value) => value.notifications.some((snapshot) => snapshot.busy)
+      () => read(stack, address),
+      (snapshot) => snapshot.busy
     );
-    assert.ok(busy.notifications.some((snapshot) => snapshot.busy));
-    const delivered = await waitFor(
-      () => runtimeEvidence(stack, address),
-      (value) => value.notifications.some(completed)
-    );
-    assert.equal(delivered.notifications.at(-1)?.messages.at(-1)?.text, answer);
+    const delivered = await waitFor(() => read(stack, address), completed);
+    assert.equal(delivered.messages.at(-1)?.text, answer);
     const completedQuiet = await waitForQuiet(stack, address);
-    const completedCount = (await runtimeEvidence(stack, address)).notifications
-      .length;
-    await delay(1500);
-    assert.equal(
-      (await runtimeEvidence(stack, address)).notifications.length,
-      completedCount
-    );
-    await send(stack, address, "notify-stop", "Stop this notification run.");
+    await send(stack, address, "lifecycle-stop", "Stop this run.");
     await waitFor(
-      () => runtimeEvidence(stack, address),
-      (value) => value.notifications.at(-1)?.busy === true
+      () => read(stack, address),
+      (snapshot) => snapshot.busy
     );
     assert.deepEqual(await stop(stack, address), { stopped: true });
     const stopped = await waitFor(
-      () => runtimeEvidence(stack, address),
-      (value) => {
-        const snapshot = value.notifications.at(-1);
-        return (
-          snapshot?.busy === false &&
-          snapshot.messages.some(
-            (message) => message.text === "Stop this notification run."
-          )
-        );
-      }
+      () => read(stack, address),
+      (snapshot) =>
+        !snapshot.busy &&
+        snapshot.messages.some((message) => message.text === "Stop this run.")
     );
     const stoppedQuiet = await waitForQuiet(stack, address);
-    const stoppedCount = stopped.notifications.length;
-    await delay(1500);
-    assert.equal(
-      (await runtimeEvidence(stack, address)).notifications.length,
-      stoppedCount
-    );
     await evidence(stack, "lifecycle-drain", {
       active,
+      busy,
       completedQuiet,
       delivered,
       stopped,

@@ -37,7 +37,7 @@ import {
   ready,
   send,
   snapshot,
-  wireModels,
+  teamRoles,
 } from "./team-support.ts";
 import {
   access,
@@ -108,8 +108,8 @@ test(
         observed,
         (value) =>
           hasReply(value, other.event.ts, "Cerebro slice 1 completed.") &&
-          completedCalls(value, wireModels.coordinator).length ===
-            completedCalls(beforeOther, wireModels.coordinator).length + 2
+          completedCalls(value, teamRoles.coordinator).length ===
+            completedCalls(beforeOther, teamRoles.coordinator).length + 2
       );
       const beforeDrain = await observed();
       const expectedInput = await reportInputDigest(delivery.wire, "pilot");
@@ -121,8 +121,8 @@ test(
       const completed = await waitForFixture(
         observed,
         (value) =>
-          completedCalls(value, wireModels.coordinator).length ===
-            completedCalls(beforeDrain, wireModels.coordinator).length + 1 &&
+          completedCalls(value, teamRoles.coordinator).length ===
+            completedCalls(beforeDrain, teamRoles.coordinator).length + 1 &&
           value.model.some(
             (call) =>
               call.completedAt !== undefined &&
@@ -228,7 +228,7 @@ test(
   async () => {
     await controlQueue("pause");
     await fixture.controls({
-      models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+      models: { [teamRoles.lead]: { hold: true, delayMs: 0 } },
     });
     try {
       const input = event(
@@ -253,7 +253,7 @@ test(
         .slice(before.model.length)
         .find(
           (call) =>
-            call.model === wireModels.lead && call.completedAt === undefined
+            call.role === teamRoles.lead && call.completedAt === undefined
         );
       assert.ok(pending);
       const celld = await fixture.container("celld");
@@ -287,13 +287,13 @@ test(
         (value) =>
           value.model.some(
             (call) =>
-              call.model === wireModels.lead &&
+              call.role === teamRoles.lead &&
               call.operationId === pending.operationId &&
               call.startedAt > killedAt &&
               call.completedAt !== undefined
           ) &&
-          completedCalls(value, wireModels.worker).length ===
-            completedCalls(before, wireModels.worker).length + 2,
+          completedCalls(value, teamRoles.worker).length ===
+            completedCalls(before, teamRoles.worker).length + 2,
         90_000
       );
       const physicalAt = Date.now();
@@ -312,11 +312,11 @@ test(
       const completed = await waitForFixture(
         observed,
         (value) =>
-          completedCalls(value, wireModels.coordinator).length ===
-            completedCalls(before, wireModels.coordinator).length + 3 &&
+          completedCalls(value, teamRoles.coordinator).length ===
+            completedCalls(before, teamRoles.coordinator).length + 3 &&
           value.model.some(
             (call) =>
-              call.model === wireModels.coordinator &&
+              call.role === teamRoles.coordinator &&
               call.startedAt >= queuedAt &&
               call.completedAt !== undefined &&
               call.messageTextDigests.includes(expectedInput)
@@ -646,7 +646,7 @@ test(
   { timeout: 180_000 },
   async () => {
     await fixture.controls({
-      models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+      models: { [teamRoles.lead]: { hold: true, delayMs: 0 } },
     });
     await controlQueue("pause");
     try {

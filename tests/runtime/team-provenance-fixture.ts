@@ -70,13 +70,12 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
   const admittedAt = Date.now();
   const work = Schema.decodeUnknownSync(WorkAdmissionSchema)(
     fixtureOptions?.work ?? {
-      version: 2,
+      version: 3,
       admittedAt,
       deadlineAt: admittedAt + 600_000,
       goal: "Answer a bounded private question.",
       key: { organizationId: "org", ownerPrincipalId: "owner", workId: "work" },
-      lead: { agentId: "lead", agentVersion: 1 },
-      worker: { agentId: "worker", agentVersion: 1 },
+      agent: { agentId: "coordinator", agentVersion: 1 },
       limits: { maxTeams: 2, maxTurns: 8, maxWorkers: 1, timeoutMs: 600_000 },
       sourceEventAddress: {
         organizationId: "org",
@@ -183,7 +182,7 @@ export const teamProvenanceFixture = async (fixtureOptions?: {
       )
     );
     configurations = stores.map((store, index): TeamRoleConfiguration => {
-      const pin = index === 0 ? work.lead : work.worker;
+      const pin = work.agent;
       const faux = fauxProvider({
         provider: `provider:${index}`,
         models: [{ id: `model:${index}` }],

@@ -60,13 +60,13 @@ Ordinary text reaches the coordinator. It does not automatically update whicheve
 
 ## Roles and tools
 
-| Role | Model | Tools |
-| --- | --- | --- |
-| Coordinator | Usually cheaper | Start, inspect, message, stop, and recall work; explicit subscriptions; authorized reminders; UI rendering. |
-| Lead | Usually stronger | Read tools and delegate_worker; return an unrelated subscribed event once. |
-| Worker | Usually cheaper | Permitted read tools; no further delegation or scheduling. |
+| Role | Tools |
+| --- | --- |
+| Coordinator | Start, inspect, message, stop, and recall work; explicit subscriptions; authorized reminders; UI rendering. |
+| Lead | Read tools and delegate_worker; return an unrelated subscribed event once. |
+| Worker | Permitted read tools; no further delegation or scheduling. |
 
-The coordinator does not run task connector tools. Each Team saves its lead and worker definition pins at admission. Current permissions still apply before execution and content transfer.
+Roles derive from the agent's pinned definition. The lead and workers run the agent's model, enabled tools, and grants, with a system overlay in front of the agent's instructions. The coordinator does not run task connector tools. Each Team saves the agent pin at admission. Current permissions still apply before execution and content transfer.
 
 Publishing a coordinator definition stages a complete profile. Existing native work drains first. Provider, instructions, tools, skills, and permission callbacks then change together in the same conversation. New events can wait durably during this boundary.
 

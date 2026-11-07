@@ -8,6 +8,7 @@ import type { WorkAdmission } from "@cerebro/contracts/work";
 import { readRecordedContent } from "@cerebro/runtime/content-dependency-store";
 import { piContext } from "@cerebro/runtime/pi-harness";
 import type { Harness } from "@cerebro/runtime/pi-harness";
+import { teamRoleSlots } from "@cerebro/runtime/team-composition";
 import {
   readTeamRoleImports,
   teamRoleAddress,
@@ -98,7 +99,7 @@ export const authorizeTeamInspection = async (
     ),
   ];
   const roles = await Promise.all(
-    Array.from({ length: work.limits.maxWorkers + 1 }, async (_, index) => {
+    teamRoleSlots(work).map(async ({ index }) => {
       const address = await teamRoleAddress(work, index);
       const raw = await pi.commit(
         () => readRecordedContent(storage, address.sessionId),

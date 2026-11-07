@@ -32,7 +32,7 @@ const setup = async () => {
   assert.ok(databaseUrl);
   const admittedAt = Date.now();
   const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
-    version: 2,
+    version: 3,
     admittedAt,
     deadlineAt: admittedAt + 60_000,
     goal: "Read the source.",
@@ -42,8 +42,7 @@ const setup = async () => {
       ownerPrincipalId,
       workId: "queue-team",
     },
-    lead: { agentId: "lead", agentVersion: 1 },
-    worker: { agentId: "worker", agentVersion: 2 },
+    agent: { agentId: "source", agentVersion: 1 },
     limits: { maxTeams: 2, maxWorkers: 2, maxTurns: 8, timeoutMs: 60_000 },
     sourceEventAddress: {
       organizationId: app.options.organizationId,

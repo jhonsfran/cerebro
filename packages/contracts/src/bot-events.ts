@@ -5,7 +5,7 @@ import type { BrandedId } from "./identity.ts";
 import { digestToolArguments } from "./tools.ts";
 import {
   BoundedContentDependenciesSchema,
-  RolePinSchema,
+  AgentPinSchema,
   SlackThreadSchema,
   WorkKeySchema,
   WorkReportIdSchema,
@@ -21,7 +21,7 @@ const identifier = <Name extends string>() =>
   );
 export const BotEventAddressSchema = Schema.Struct({
   organizationId: WorkKeySchema.fields.organizationId,
-  agentId: RolePinSchema.fields.agentId,
+  agentId: AgentPinSchema.fields.agentId,
   conversationId: identifier<"ConversationId">(),
   sessionId: identifier<"SessionId">(),
 }) satisfies Schema.Codec<EventAddress>;

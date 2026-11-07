@@ -45,7 +45,7 @@ const held = Promise.withResolvers<never>().promise;
 writeFileSync(physical, "");
 const now = Date.now();
 const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
-  version: 2,
+  version: 3,
   admittedAt: now,
   deadlineAt: now + 600_000,
   goal: "Retain terminal state before abort.",
@@ -54,8 +54,7 @@ const work = Schema.decodeUnknownSync(WorkAdmissionSchema)({
     ownerPrincipalId: "owner",
     workId: "terminal-work",
   },
-  lead: { agentId: "lead", agentVersion: 1 },
-  worker: { agentId: "worker", agentVersion: 1 },
+  agent: { agentId: "coordinator", agentVersion: 1 },
   limits: { maxTeams: 2, maxTurns: 8, maxWorkers: 1, timeoutMs: 600_000 },
   sourceEventAddress: {
     agentId: "coordinator",

@@ -503,8 +503,7 @@ test("existing active and queued Team admissions keep their role pins while new 
     const newest = await subject.fixture
       .pi()
       .snapshot(WorkDocuments, current.workId, context);
-    assert.equal(newest?.record?.admission.lead.agentVersion, 9);
-    assert.equal(newest?.record?.admission.worker.agentVersion, 9);
+    assert.equal(newest?.record?.admission.agent.agentVersion, 9);
   } finally {
     await subject.close();
   }
@@ -607,8 +606,8 @@ test("idle native child selections retain their exact profile while unselected p
   }
 });
 
-test("a real retained no-Team human input can schedule and its accepted fingerprint replays", async () => {
-  const subject = await setupWeb(false, true);
+test("a real human web request can schedule and its accepted fingerprint replays", async () => {
+  const subject = await setupWeb(true, true);
   try {
     subject.source.faux.setResponses([
       fauxAssistantMessage(
@@ -620,16 +619,16 @@ test("a real retained no-Team human input can schedule and its accepted fingerpr
       ),
       fauxAssistantMessage("The routine is saved."),
     ]);
-    const input = await subject.source.native.submit(
-      {
-        type: "input",
-        requestId: "retained-human",
-        content: "Save this reminder.",
-      },
-      context
+    const response = await subject.send(
+      "retained-human",
+      "Save this reminder."
     );
-    await input.wait(context);
-    const schedules = await subject.scope.reminders.list();
+    assert.equal(response.status, 200, await response.clone().text());
+    await settle(subject);
+    const schedules = await waitFor(
+      () => subject.scope.reminders.list(),
+      (value) => value.length > 0
+    );
     assert.equal(schedules.length, 1);
     const [saved] = schedules;
     assert.ok(saved);

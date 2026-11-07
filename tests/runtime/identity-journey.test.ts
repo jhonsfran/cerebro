@@ -317,10 +317,10 @@ journey(
 );
 
 journey(
-  "Stop affects one native conversation and retains a sibling's shared wake alarm and notification work",
+  "Stop affects one native conversation and retains a sibling's shared wake alarm",
   async (stack) => {
-    const left = addressFor("identity-stop", "notify-left", "agent-left");
-    const right = addressFor("identity-stop", "notify-right", "agent-right");
+    const left = addressFor("identity-stop", "stop-left", "agent-left");
+    const right = addressFor("identity-stop", "stop-right", "agent-right");
     await control(stack, { delayMs: 5000 });
     await Promise.all([
       send(stack, left, "stop-only-left", "Explain the left policy."),
@@ -394,35 +394,11 @@ journey(
     assert.ok(active.jobs.length > 0);
     await control(stack, { delayMs: 0 });
     const final = await waitFor(() => read(stack, right), completed);
-    const [notificationsA, notificationsB] = await Promise.all([
-      waitFor(
-        () => runtimeEvidence(stack, left),
-        (value) => value.notifications.length > 0
-      ),
-      waitFor(
-        () => runtimeEvidence(stack, right),
-        (value) => value.notifications.some(completed)
-      ),
-    ]);
-    assert.ok(notificationsA.notifications.length > 0);
-    assert.ok(notificationsB.notifications.some(completed));
-    assert.ok(
-      notificationsA.notifications.every(
-        (snapshot) => snapshot.address.sessionId === left.sessionId
-      )
-    );
-    assert.ok(
-      notificationsB.notifications.every(
-        (snapshot) => snapshot.address.sessionId === right.sessionId
-      )
-    );
     await waitForQuiet(stack, right);
     await evidence(stack, "identity-stop-and-shared-alarm", {
       sibling,
       active,
       final,
-      notificationsA,
-      notificationsB,
       relations,
       beforeStop,
       leftStopped,

@@ -112,7 +112,6 @@ const subject = async () => {
         },
       },
       persist: () => Promise.resolve(),
-      notify: () => Promise.resolve(),
     });
   };
   const eventId = await botEventId(source.address, {

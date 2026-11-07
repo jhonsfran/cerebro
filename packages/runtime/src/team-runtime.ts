@@ -26,6 +26,7 @@ import { piContext } from "./pi-harness.ts";
 import type { MetadataTransaction } from "./session-agent.ts";
 import { createTeamAdmission } from "./team-admission.ts";
 import { createTeamCompletion } from "./team-completion.ts";
+import { requireRoleConfigurations, teamRoleKind } from "./team-composition.ts";
 import type { TeamEvents } from "./team-events.ts";
 import { createTeamRole } from "./team-role.ts";
 import type { TeamRoleConfiguration } from "./team-role.ts";
@@ -63,28 +64,7 @@ export const createTeamRuntime = async (options: {
     onExcessProperty: "error",
   })(options.work);
   const now = options.now ?? Date.now;
-  if (options.configurations.length !== 1 + work.limits.maxWorkers) {
-    throw new InvalidInput({
-      reason: "The team role configuration count changed.",
-    });
-  }
-  const roleSessions = new Set<string>();
-  for (const [index, configuration] of options.configurations.entries()) {
-    const pin = index === 0 ? work.lead : work.worker;
-    if (
-      configuration.agent.agentId !== pin.agentId ||
-      configuration.agent.version !== pin.agentVersion ||
-      configuration.agent.organizationId !== work.key.organizationId ||
-      configuration.address.agentId !== pin.agentId ||
-      configuration.address.organizationId !== work.key.organizationId ||
-      roleSessions.has(configuration.address.sessionId)
-    ) {
-      throw new InvalidInput({
-        reason: "The team role configuration differs from its saved pin.",
-      });
-    }
-    roleSessions.add(configuration.address.sessionId);
-  }
+  requireRoleConfigurations(work, options.configurations);
   const roles = options.configurations.map((configuration) =>
     createTeamRole({ ...options, configuration, now })
   );
@@ -107,7 +87,7 @@ export const createTeamRuntime = async (options: {
   };
   const agents = roles.map((role, index) =>
     role.install(
-      index === 0
+      teamRoleKind(work, index) === "lead"
         ? [
             createTeamWorkerTool({ pi, lead, workers, now }),
             ...(options.events ? [options.events.tool(lead.permit)] : []),

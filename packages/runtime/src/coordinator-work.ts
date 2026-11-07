@@ -12,16 +12,17 @@ import type {
   TeamEventCommand,
 } from "@cerebro/contracts/team-events";
 import {
+  DEFAULT_TEAM_LIMITS,
   TeamCommandSchema,
   WorkAdmissionSchema,
   WorkIdSchema,
   transitionWorkStatus,
 } from "@cerebro/contracts/work";
 import type {
+  AgentPin,
   BackgroundWorkSnapshot,
-  CoordinationProfile,
-  RolePin,
   WorkId,
+  WorkLimits,
 } from "@cerebro/contracts/work";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-durable";
@@ -71,11 +72,8 @@ import type { MetadataTransaction } from "./session-agent.ts";
 
 export interface CoordinationServices {
   readonly ownerPrincipalId: PrincipalId;
-  readonly profile: CoordinationProfile;
-  readonly resolveRolePins: () => Promise<{
-    readonly lead: RolePin;
-    readonly worker: RolePin;
-  }>;
+  readonly agent: AgentPin;
+  readonly limits: WorkLimits;
   readonly contentDependencies: () => Promise<ContentDependencies>;
   readonly sendCommand: (command: TeamCommandTransport) => Promise<void>;
 }
@@ -235,7 +233,8 @@ export const createCoordinatorWork = (options: {
         await holdDispatches();
       },
       now,
-      timeoutMs: options.services?.profile.timeoutMs ?? 600_000,
+      timeoutMs:
+        options.services?.limits.timeoutMs ?? DEFAULT_TEAM_LIMITS.timeoutMs,
     });
 
   const start = async (
@@ -285,10 +284,7 @@ export const createCoordinatorWork = (options: {
       return publicWork(prior.record);
     }
     const admittedAt = now();
-    const [pins, contentDependencies] = await Promise.all([
-      services.resolveRolePins(),
-      services.contentDependencies(),
-    ]);
+    const contentDependencies = await services.contentDependencies();
     return await admissions.commit(
       `start:${api.taskId}`,
       async (tx) => {
@@ -309,7 +305,7 @@ export const createCoordinatorWork = (options: {
         const { queue } = ledger;
         const queued =
           queue.length > 0 ||
-          Object.keys(ledger.active).length >= services.profile.maxTeams;
+          Object.keys(ledger.active).length >= services.limits.maxTeams;
         if (queued && queue.length >= MAX_QUEUED_WORK) {
           throw new InvalidInput({
             reason:
@@ -319,24 +315,18 @@ export const createCoordinatorWork = (options: {
         const admission = Schema.decodeUnknownSync(WorkAdmissionSchema, {
           onExcessProperty: "error",
         })({
-          version: 2,
+          version: 3,
           admittedAt,
+          agent: services.agent,
           contentDependencies,
-          deadlineAt: admittedAt + services.profile.timeoutMs,
+          deadlineAt: admittedAt + services.limits.timeoutMs,
           goal,
           key: {
             organizationId: source.address.organizationId,
             ownerPrincipalId: source.ownerPrincipalId,
             workId: candidate,
           },
-          lead: pins.lead,
-          worker: pins.worker,
-          limits: {
-            maxTeams: services.profile.maxTeams,
-            maxWorkers: services.profile.maxWorkers,
-            maxTurns: services.profile.maxTurns,
-            timeoutMs: services.profile.timeoutMs,
-          },
+          limits: services.limits,
           sourceEventAddress: source.address,
         });
         const record: CoordinatorWorkRecord = {

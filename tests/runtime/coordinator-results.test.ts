@@ -29,12 +29,15 @@ const inspection = Schema.Struct({
   transport: Schema.Array(
     Schema.Struct({ at: Schema.Number, command: Schema.String })
   ),
-  notifications: Schema.Array(Schema.Struct({ snapshot: Schema.String })),
+});
+const snapshotFrame = Schema.Struct({
+  status: Schema.Literal("ok"),
+  value: ChatSnapshot,
 });
 journey(
-  "team reports finish through one additional coordinator turn and the existing notifier",
+  "team reports finish through one additional coordinator turn",
   async (stack) => {
-    const address = addressFor("result-company", "notify-report-flow");
+    const address = addressFor("result-company", "report-flow");
     const sentAt = Date.now();
     const sent = await call(stack, "send", {
       address,
@@ -42,17 +45,29 @@ journey(
       text: "Start bounded work.",
     });
     assert.equal(sent.status, 200, await sent.clone().text());
-    const inspected = await waitFor(
+    await waitFor(
       async () => {
-        const response = await call(stack, "inspect", { address });
+        const response = await call(stack, "read", { address });
         assert.equal(response.status, 200, await response.clone().text());
-        return Schema.decodeUnknownSync(inspection)(await response.json());
+        return Schema.decodeUnknownSync(snapshotFrame)(await response.json())
+          .value;
       },
       (value) =>
-        value.notifications.some((notification) =>
-          notification.snapshot.includes("Answer from lead.")
+        value.messages.some(
+          (message) =>
+            message.role === "assistant" &&
+            message.text === "Coordinator result. Answer from lead."
         ),
       30_000
+    );
+    const inspectedResponse = await call(stack, "inspect", { address });
+    assert.equal(
+      inspectedResponse.status,
+      200,
+      await inspectedResponse.clone().text()
+    );
+    const inspected = Schema.decodeUnknownSync(inspection)(
+      await inspectedResponse.json()
     );
     assert.equal(inspected.models.length, 3);
     const started = inspected.transport
@@ -121,7 +136,7 @@ journey(
 journey(
   "status and targeted cancellation work without the model while ordinary input requires coordinator judgement",
   async (stack) => {
-    const address = addressFor("passive-company", "notify-report-flow-held");
+    const address = addressFor("passive-company", "report-flow-held");
     const send = (operationId: string, text: string) =>
       call(stack, "send", { address, operationId, text });
     const started = await send("initial-human", "Start bounded work.");

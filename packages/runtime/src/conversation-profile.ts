@@ -63,8 +63,7 @@ export const createConversationProfile = async (
   services: ConversationScopeServices,
   native: Conversation,
   shared: ProfileState,
-  identity: ProfileIdentity,
-  notify: () => Promise<void>
+  identity: ProfileIdentity
 ) => {
   const runtime = createConversationResources(
     configuration,
@@ -101,7 +100,6 @@ export const createConversationProfile = async (
         nativeId: native.id,
         address: configuration.address,
         ownerPrincipalId: owner.represented?.id ?? owner.actor.id,
-        allowLegacyUser: !configuration.coordination,
       });
     },
     authorize,
@@ -169,7 +167,6 @@ export const createConversationProfile = async (
     native,
     runtime,
     coordination,
-    notify,
   };
   const web = createCoordinatorWeb({
     pi: services.pi,

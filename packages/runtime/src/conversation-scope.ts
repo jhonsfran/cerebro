@@ -1,5 +1,4 @@
 /* oxlint-disable no-await-in-loop -- Profile retries and exact restoration depend on the previous native boundary. */
-import type { EventAddress } from "@cerebro/contracts/events";
 import {
   Denied,
   InvalidInput,
@@ -114,10 +113,6 @@ export interface ConversationScopeServices {
   readonly storage: DurableObjectStorage;
   readonly metadata: MetadataTransaction;
   readonly waitUntil: (promise: Promise<unknown>) => void;
-  readonly scheduleNotify: (
-    address: EventAddress,
-    nativeId: string
-  ) => Promise<void>;
 }
 export interface ConversationRegistration {
   readonly agent: AgentChange;
@@ -348,11 +343,6 @@ export class ConversationScope {
         }
       });
     }
-    if (configuration.notify) {
-      const watch = await native.watch(piContext());
-      watch.start(() => scope.scheduleNotify());
-      await scope.scheduleNotify();
-    }
     return scope;
   }
 
@@ -370,8 +360,7 @@ export class ConversationScope {
       this.services,
       this.native,
       this.shared,
-      identity,
-      () => this.scheduleNotify()
+      identity
     );
     for (const extension of profile.registration.extensions) {
       this.services.install(extension);
@@ -574,13 +563,6 @@ export class ConversationScope {
     await this.coordination.restore();
   }
 
-  private scheduleNotify(): Promise<void> {
-    return this.services.scheduleNotify(
-      this.runtime.configuration.address,
-      String(this.native.id)
-    );
-  }
-
   async eventScope(): Promise<BotEventScope> {
     const { profile } = this;
     return await createConversationEventScope(profile, {
@@ -592,22 +574,6 @@ export class ConversationScope {
     });
   }
 
-  async notify(): Promise<void> {
-    for (;;) {
-      const { profile } = this;
-      const { configuration } = profile.runtime;
-      if (!configuration.notify) {
-        return;
-      }
-      const owner = await run(configuration.ownerContext());
-      const snapshot = await this.read(owner);
-      if (profile !== this.profile) {
-        continue;
-      }
-      await configuration.notify(snapshot);
-      return;
-    }
-  }
   private async control(
     command: ChatControlValue,
     context: ExecutionContext,

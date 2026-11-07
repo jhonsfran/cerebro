@@ -6,6 +6,7 @@ import { z } from "zod";
 import { waitForFixture } from "../../slice-1/application.ts";
 import { matchingWorkReport, reportInputDigest } from "./team-queue-support.ts";
 import {
+  agentWireModel,
   completedCalls,
   controlQueue,
   compose,
@@ -16,15 +17,15 @@ import {
   literal,
   observed,
   ready,
-  wireModels,
+  teamRoles,
 } from "./team-support.ts";
 import {
   coordinatorTools,
   createConversation,
   heldAcceptance,
   noSlack,
+  publishedAgent,
   read,
-  roles,
   sendMessage,
   setupWebTeam,
   startedWork,
@@ -34,7 +35,7 @@ import {
 
 beforeAll(setupWebTeam, { timeout: 180_000 });
 
-const coordinationConfiguration = async (enabled: boolean) => {
+const removeCoordinationBlock = async () => {
   await compose(
     "run",
     "--no-deps",
@@ -43,15 +44,7 @@ const coordinationConfiguration = async (enabled: boolean) => {
     "node",
     "--input-type=module",
     "-e",
-    "import {readFile,writeFile} from 'node:fs/promises'; const p='/run/cerebro-secrets/runtime.json'; const c=JSON.parse(await readFile(p,'utf8')); const v=JSON.parse(process.argv[1]); if(v) c.coordination=v; else delete c.coordination; await writeFile(p,JSON.stringify(c),{mode:0o600});",
-    JSON.stringify(
-      enabled
-        ? {
-            leadAgentId: roles().lead.agentId,
-            workerAgentId: roles().worker.agentId,
-          }
-        : null
-    )
+    "import {readFile,writeFile} from 'node:fs/promises'; const p='/run/cerebro-secrets/runtime.json'; const c=JSON.parse(await readFile(p,'utf8')); delete c.coordination; await writeFile(p,JSON.stringify(c),{mode:0o600});"
   );
   await compose("run", "--no-deps", "--rm", "bootstrap");
   await compose("restart", "celld");
@@ -82,58 +75,55 @@ const mounts = async (containerId: string) => {
 };
 
 test(
-  "a profile-free primary keeps ordinary coordinator chat without foreground or Team execution",
+  "a primary with no coordination block starts a Team whose roles all run the agent's model",
   { timeout: 180_000 },
   async () => {
-    await coordinationConfiguration(false);
-    try {
-      await noSlack();
-      const { conversation, route } = await createConversation();
-      const input = {
-        operationId: crypto.randomUUID(),
-        text: "Give one brief ordinary answer. profile-free.",
-      };
-      const before = await observed();
-      await sendMessage(route, input);
-      const completed = await waitForFixture(
-        observed,
-        (value) =>
-          value.model.length === before.model.length + 1 &&
-          value.model.at(-1)?.completedAt !== undefined
-      );
-      const view = await waitForFixture(
-        () => read(route),
-        (value) =>
-          !value.snapshot.busy &&
-          value.snapshot.messages.some(
-            (entry) =>
-              entry.role === "assistant" &&
-              entry.text === "Cerebro slice 1 completed."
-          )
-      );
-      assert.equal(view.snapshot.activity?.backgroundWork, undefined);
-      assert.deepEqual(view.snapshot.tools, []);
-      assert.deepEqual(view.snapshot.approvals, []);
-      const call = completed.model.at(-1);
-      assert.ok(call);
-      assert.ok(
-        [...coordinatorTools, "fixture-read", "fixture_effect"].every(
-          (name) => !call.toolNames.includes(name)
+    await removeCoordinationBlock();
+    await noSlack();
+    const { conversation, route } = await createConversation();
+    const input = {
+      operationId: crypto.randomUUID(),
+      text: "PERSISTENT_AGENT_FIXTURE storage:no-block. Recommend SQLite with sync or IndexedDB with sync for an offline five-person task tracker.",
+    };
+    const before = await observed();
+    await sendMessage(route, input);
+    const accepted = await waitStartedWork(route, input.text);
+    assert.ok(accepted.work);
+    const finished = await waitForFixture(
+      observed,
+      (value) =>
+        completedCalls(value, teamRoles.lead).length >=
+          completedCalls(before, teamRoles.lead).length + 2 &&
+        completedCalls(value, teamRoles.worker).length >=
+          completedCalls(before, teamRoles.worker).length + 2 &&
+        completedCalls(value, teamRoles.coordinator).length >=
+          completedCalls(before, teamRoles.coordinator).length + 3,
+      90_000
+    );
+    const calls = finished.model.slice(before.model.length);
+    assert.ok(calls.every((call) => call.model === agentWireModel));
+    assert.ok(
+      calls
+        .filter((call) => call.role === teamRoles.coordinator)
+        .every((call) =>
+          coordinatorTools.every((name) => call.toolNames.includes(name))
         )
-      );
-      assert.equal(completed.slack.calls.length, 0);
-      const reopened = await createConversation();
-      assert.deepEqual(reopened.conversation, conversation);
-      await evidence("web-native-profile-free", {
-        conversation,
-        input,
-        before,
-        completed,
-        view,
-      });
-    } finally {
-      await coordinationConfiguration(true);
-    }
+    );
+    const view = await waitForFixture(
+      () => read(route),
+      (value) =>
+        !value.snapshot.busy &&
+        value.snapshot.activity?.backgroundWork?.status.kind === "completed"
+    );
+    assert.equal(finished.slack.calls.length, 0);
+    await evidence("web-native-no-coordination-block", {
+      conversation,
+      input,
+      before,
+      accepted,
+      finished,
+      view,
+    });
   }
 );
 
@@ -164,12 +154,12 @@ test(
       const completedRoles = await waitForFixture(
         observed,
         (value) =>
-          completedCalls(value, wireModels.coordinator).length ===
-            completedCalls(before, wireModels.coordinator).length + 2 &&
-          completedCalls(value, wireModels.lead).length ===
-            completedCalls(before, wireModels.lead).length + 2 &&
-          completedCalls(value, wireModels.worker).length ===
-            completedCalls(before, wireModels.worker).length + 2,
+          completedCalls(value, teamRoles.coordinator).length ===
+            completedCalls(before, teamRoles.coordinator).length + 2 &&
+          completedCalls(value, teamRoles.lead).length ===
+            completedCalls(before, teamRoles.lead).length + 2 &&
+          completedCalls(value, teamRoles.worker).length ===
+            completedCalls(before, teamRoles.worker).length + 2,
         90_000
       );
       const waiting = await waitWorkReport("cerebro-team-reports", target);
@@ -190,11 +180,11 @@ test(
       const completed = await waitForFixture(
         observed,
         (value) =>
-          completedCalls(value, wireModels.coordinator).length ===
-            completedCalls(before, wireModels.coordinator).length + 3 &&
+          completedCalls(value, teamRoles.coordinator).length ===
+            completedCalls(before, teamRoles.coordinator).length + 3 &&
           value.model.some(
             (call) =>
-              call.model === wireModels.coordinator &&
+              call.role === teamRoles.coordinator &&
               call.completedAt !== undefined &&
               call.messageTextDigests.includes(expectedInput)
           ),
@@ -244,14 +234,15 @@ test(
       );
       assert.equal(
         await fixture.sql(
-          `SELECT count(*) FROM channel_conversation WHERE agent_id IN (${literal(roles().lead.agentId)},${literal(roles().worker.agentId)})`
+          `SELECT count(*) FROM channel_conversation WHERE agent_id=${literal(publishedAgent().agentId)} AND conversation_id<>${literal(conversation.conversationId)}`
         ),
         "0"
       );
       assert.equal(completed.slack.calls.length, 0);
       const calls = completedRoles.model.slice(before.model.length);
       for (const call of calls) {
-        if (call.model === wireModels.coordinator) {
+        assert.equal(call.model, agentWireModel);
+        if (call.role === teamRoles.coordinator) {
           assert.ok(
             coordinatorTools.every((name) => call.toolNames.includes(name))
           );
@@ -260,12 +251,8 @@ test(
             coordinatorTools.every((name) => !call.toolNames.includes(name))
           );
           assert.equal(
-            call.toolNames.includes("delegate_worker"),
-            call.model === wireModels.lead
-          );
-          assert.equal(
             call.toolNames.includes("return_event"),
-            call.model === wireModels.lead
+            call.role === teamRoles.lead
           );
         }
       }
@@ -309,7 +296,7 @@ test(
     await noSlack();
     await controlQueue("pause");
     await fixture.controls({
-      models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+      models: { [teamRoles.lead]: { hold: true, delayMs: 0 } },
     });
     try {
       const { conversation, route } = await createConversation();
@@ -330,7 +317,7 @@ test(
         .slice(before.model.length)
         .find(
           (call) =>
-            call.model === wireModels.lead && call.completedAt === undefined
+            call.role === teamRoles.lead && call.completedAt === undefined
         );
       assert.ok(heldLead);
       const celld = await fixture.container("celld");
@@ -347,15 +334,15 @@ test(
         (value) =>
           value.model.some(
             (call) =>
-              call.model === wireModels.lead &&
+              call.role === teamRoles.lead &&
               call.operationId === heldLead.operationId &&
               call.startedAt > killedAt &&
               call.completedAt !== undefined
           ) &&
-          completedCalls(value, wireModels.lead).length >=
-            completedCalls(before, wireModels.lead).length + 2 &&
-          completedCalls(value, wireModels.worker).length ===
-            completedCalls(before, wireModels.worker).length + 2,
+          completedCalls(value, teamRoles.lead).length >=
+            completedCalls(before, teamRoles.lead).length + 2 &&
+          completedCalls(value, teamRoles.worker).length ===
+            completedCalls(before, teamRoles.worker).length + 2,
         90_000
       );
       const physicalAt = Date.now();
@@ -371,11 +358,11 @@ test(
       const completed = await waitForFixture(
         observed,
         (value) =>
-          completedCalls(value, wireModels.coordinator).length ===
-            completedCalls(before, wireModels.coordinator).length + 3 &&
+          completedCalls(value, teamRoles.coordinator).length ===
+            completedCalls(before, teamRoles.coordinator).length + 3 &&
           value.model.some(
             (call) =>
-              call.model === wireModels.coordinator &&
+              call.role === teamRoles.coordinator &&
               call.startedAt > queueObservedAt &&
               call.completedAt !== undefined &&
               call.messageTextDigests.includes(expectedInput)

@@ -64,8 +64,7 @@ test("local Inspector starts closed and opens one overview before loading a sele
   await act(() =>
     view.getByRole("button", { name: "Inspect work work-a" }).click()
   );
-  await waitFor(() => assert.ok(view.getByText("strong-model")));
-  assert.equal(view.getAllByText("cheap-model").length, 2);
+  await waitFor(() => assert.equal(view.getAllByText("agent-model").length, 3));
   assert.equal(view.getByText("8 / 20").textContent, "8 / 20");
   assert.ok(view.getByText("Unavailable", { exact: true }));
   assert.ok(view.getByText("Saved result work-a"));

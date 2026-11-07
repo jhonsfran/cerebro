@@ -47,7 +47,7 @@ import {
   selectSlackAgent,
   send,
   slack,
-  wireModels,
+  teamRoles,
 } from "./team-support.ts";
 import {
   access,
@@ -96,15 +96,15 @@ test(
       const completed = await waitForFixture(observed, (value) =>
         value.model.some(
           (call) =>
-            call.model === wireModels.lead &&
+            call.role === teamRoles.lead &&
             call.completedAt !== undefined &&
             call.messageTextDigests.includes(delivered.digest)
         )
       );
       assert.equal(
-        completed.model.filter((call) => call.model === wireModels.coordinator)
+        completed.model.filter((call) => call.role === teamRoles.coordinator)
           .length,
-        baseline.model.filter((call) => call.model === wireModels.coordinator)
+        baseline.model.filter((call) => call.role === teamRoles.coordinator)
           .length
       );
       const transcript = await inspect(live.route, {
@@ -185,7 +185,7 @@ test(
       const finished = await waitForFixture(observed, (value) =>
         value.model.some(
           (call) =>
-            call.model === wireModels.coordinator &&
+            call.role === teamRoles.coordinator &&
             call.completedAt !== undefined &&
             call.messageTextDigests.includes(expectedInput)
         )
@@ -281,7 +281,7 @@ test(
           value.held > 0 &&
           value.model.filter(
             (call) =>
-              call.model === wireModels.lead &&
+              call.role === teamRoles.lead &&
               call.messageTextDigests.includes(delivered.digest)
           ).length >= 2
       );
@@ -306,11 +306,10 @@ test(
         60_000
       );
       assert.equal(
-        handled.model.filter((call) => call.model === wireModels.coordinator)
+        handled.model.filter((call) => call.role === teamRoles.coordinator)
           .length,
-        beforeReturn.model.filter(
-          (call) => call.model === wireModels.coordinator
-        ).length + 1
+        beforeReturn.model.filter((call) => call.role === teamRoles.coordinator)
+          .length + 1
       );
       assert.equal(
         handled.slack.messages.filter(
@@ -424,10 +423,7 @@ test(
           ],
         }
       );
-      await selectSlackAgent(secondary.agentId, {
-        leadAgentId: installed.lead.agentId,
-        workerAgentId: installed.worker.agentId,
-      });
+      await selectSlackAgent(secondary.agentId);
       currentAgentId = secondary.agentId;
       const two = await admitReference(
         secondary.agentId,
@@ -495,8 +491,8 @@ test(
       denied = true;
       await fixture.controls({
         models: {
-          [wireModels.lead]: { hold: true, delayMs: 500 },
-          [wireModels.worker]: { hold: true, delayMs: 0 },
+          [teamRoles.lead]: { hold: true, delayMs: 500 },
+          [teamRoles.worker]: { hold: true, delayMs: 0 },
         },
       });
       await controlQueue("resume", "cerebro-team-commands");
@@ -518,8 +514,8 @@ test(
       );
       await fixture.controls({
         models: {
-          [wireModels.lead]: { hold: true, delayMs: 500 },
-          [wireModels.worker]: { hold: false, delayMs: 0 },
+          [teamRoles.lead]: { hold: true, delayMs: 500 },
+          [teamRoles.worker]: { hold: false, delayMs: 0 },
         },
       });
       assert.ok(commandB.command.kind === "input");
@@ -535,7 +531,7 @@ test(
         (value) =>
           value.model.some(
             (call) =>
-              call.model === wireModels.lead &&
+              call.role === teamRoles.lead &&
               call.completedAt === undefined &&
               call.messageTextDigests.includes(digestB)
           ),

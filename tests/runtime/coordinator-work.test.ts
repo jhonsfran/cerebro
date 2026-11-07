@@ -455,10 +455,10 @@ test("report admission is atomic and internal runs cannot create teams while new
     );
     const latest = await fixture.work("a");
     assert.notEqual(latest.admission.key.workId, original.admission.key.workId);
-    assert.equal(latest.admission.lead.agentVersion, 2);
+    assert.equal(latest.admission.agent.agentVersion, 2);
     const ledger = await fixture.ledger();
     assert.equal(
-      ledger.works[original.admission.key.workId]?.admission.lead.agentVersion,
+      ledger.works[original.admission.key.workId]?.admission.agent.agentVersion,
       1
     );
     await fixture.waitDispatch();

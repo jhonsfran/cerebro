@@ -17,7 +17,6 @@ import type {
   AgentDefinition,
   ContentDependencies,
 } from "@cerebro/contracts/session";
-import type { ChatSnapshot } from "@cerebro/contracts/session-service";
 import type { ToolExecutor } from "@cerebro/contracts/tool-service";
 import type { SlackThread } from "@cerebro/contracts/work";
 import { createModels } from "@earendil-works/pi-ai/models";
@@ -108,7 +107,6 @@ export interface SessionHostConfiguration {
   // Company skills the model can activate by name; their bodies load on demand.
   readonly skills?: readonly CompanySkill[];
   readonly ownerContext: () => Effect.Effect<ExecutionContext, ContractFailure>;
-  readonly notify?: (snapshot: ChatSnapshot) => Promise<void>;
   readonly prepareInput?: (
     text: string,
     context: ExecutionContext
@@ -132,7 +130,7 @@ interface NativeHost {
   readonly models: MutableModels;
   readonly registry: Registry;
 }
-const notifyPayload = Schema.Struct({ sessionId: Schema.NonEmptyString });
+const jobPayload = Schema.Struct({ sessionId: Schema.NonEmptyString });
 const run = async <A>(
   program: Effect.Effect<A, ContractFailure>
 ): Promise<A> => {
@@ -420,11 +418,6 @@ export class SessionAgent<
         metadata,
         pi: host.pi,
         scanWorkKeys: host.scanWorkKeys,
-        scheduleNotify: (target, nativeId) =>
-          host.pi.commit(
-            () => this.scheduleNotify(target, nativeId),
-            piContext()
-          ),
         storage: this.ctx.storage,
         waitUntil: (promise) => {
           this.lifecycle.trackAlarmWork(promise);
@@ -524,35 +517,16 @@ export class SessionAgent<
     return String(scope.native.id);
   }
 
-  private async scheduleNotify(
-    address: EventAddress,
-    nativeId: string
-  ): Promise<void> {
-    await this.lifecycle.jobs.push({
-      fn: "cerebro-notify",
-      id: `cerebro-notify:${nativeId}`,
-      payload: { sessionId: address.sessionId },
-      recoveryLoop: true,
-      singleflight: true,
-      time: Date.now() + 1000,
-    });
-  }
-
   async onJob({ job }: LifecycleJobContext): Promise<LifecycleJobOutcome> {
     if (
-      ![
-        "cerebro-notify",
-        "cerebro-reminder",
-        "cerebro-compact",
-        "cerebro-coordination",
-      ].includes(job.fn)
+      !["cerebro-reminder", "cerebro-compact", "cerebro-coordination"].includes(
+        job.fn
+      )
     ) {
       return;
     }
     try {
-      const { sessionId } = Schema.decodeUnknownSync(notifyPayload)(
-        job.payload
-      );
+      const { sessionId } = Schema.decodeUnknownSync(jobPayload)(job.payload);
       const pi = await this.harness.pi();
       const bindings = await pi.snapshot(Bindings, piContext());
       const binding = bindings?.conversations[sessionId];
@@ -598,7 +572,6 @@ export class SessionAgent<
           const payload = Schema.decodeUnknownSync(CompactPayload)(job.payload);
           return await scope.compaction.run({ ...payload, kind: "compact" });
         }
-        await scope.notify();
       }
     } catch (error) {
       if (permanentFailure(error)) {

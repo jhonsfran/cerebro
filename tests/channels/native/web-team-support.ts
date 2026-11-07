@@ -18,6 +18,7 @@ import { waitForFixture } from "../../slice-1/application.ts";
 import { matchingWorkReport } from "./team-queue-support.ts";
 import type { WorkTarget } from "./team-queue-support.ts";
 import {
+  agentWireModel,
   boot,
   completedCalls,
   queue,
@@ -25,8 +26,7 @@ import {
   fixture,
   metadata,
   observed,
-  ready,
-  wireModels,
+  teamRoles,
 } from "./team-support.ts";
 
 export const publishedSchema = z.object({
@@ -61,19 +61,13 @@ export const coordinatorTools = [
   "subscribe_work",
   "unsubscribe_work",
 ];
-let publishedRoles:
-  | {
-      coordinator: z.infer<typeof publishedSchema>;
-      lead: z.infer<typeof publishedSchema>;
-      worker: z.infer<typeof publishedSchema>;
-    }
-  | undefined;
-export const roles = () => {
+let published: z.infer<typeof publishedSchema> | undefined;
+export const publishedAgent = () => {
   assert.ok(
-    publishedRoles,
-    "Publish fixture roles before using the web team helper."
+    published,
+    "Publish the fixture agent before using the web team helper."
   );
-  return publishedRoles;
+  return published;
 };
 
 export const noSlack = async () => {
@@ -88,7 +82,7 @@ export const noSlack = async () => {
     "import {readFile} from 'node:fs/promises'; let c={}; try { c=JSON.parse(await readFile('/run/cerebro-secrets/channels.json','utf8')); } catch(e) { if(e.code!=='ENOENT') throw e; } process.stdout.write(JSON.stringify({slackConfigured:Boolean(c.slack)}));"
   );
   const counts = await fixture.sql(
-    "SELECT json_build_object('links',(SELECT count(*) FROM identity_slack_link),'challenges',(SELECT count(*) FROM identity_slack_link_challenge),'slackConversations',(SELECT count(*) FROM channel_conversation WHERE kind='slack'),'slackAccounts',(SELECT count(*) FROM connector_account WHERE id ILIKE '%slack%' OR label ILIKE '%slack%'))"
+    "SELECT json_build_object('links',(SELECT count(*) FROM identity_slack_link),'challenges',(SELECT count(*) FROM identity_slack_link_challenge),'slackAccounts',(SELECT count(*) FROM connector_account WHERE id ILIKE '%slack%' OR label ILIKE '%slack%'))"
   );
   const value = {
     ...z
@@ -98,7 +92,6 @@ export const noSlack = async () => {
       .object({
         links: z.number(),
         challenges: z.number(),
-        slackConversations: z.number(),
         slackAccounts: z.number(),
       })
       .parse(JSON.parse(counts)),
@@ -107,50 +100,25 @@ export const noSlack = async () => {
     slackConfigured: false,
     links: 0,
     challenges: 0,
-    slackConversations: 0,
     slackAccounts: 0,
   });
   return value;
 };
 
 export const setupWebTeam = async () => {
-  const published = await Promise.all(
-    Object.keys(wireModels).map((role) =>
-      fixture.json(
-        "/api/product/agents",
-        metadata.owner.cookie,
-        publishedSchema,
-        {
-          operationId: crypto.randomUUID(),
-          name: `Web ${role}`,
-          model: `fixture/slack-${role}`,
-          instructions: "Use the supplied bounded team tools.",
-          enabledToolIds: [],
-          grants: [],
-        }
-      )
-    )
+  published = await fixture.json(
+    "/api/product/agents",
+    metadata.owner.cookie,
+    publishedSchema,
+    {
+      operationId: crypto.randomUUID(),
+      name: "Web coordinator",
+      model: `fixture/${agentWireModel}`,
+      instructions: "Use the supplied bounded team tools.",
+      enabledToolIds: [],
+      grants: [],
+    }
   );
-  const [coordinator, lead, worker] = published;
-  assert.ok(coordinator && lead && worker);
-  publishedRoles = { coordinator, lead, worker };
-  await compose(
-    "run",
-    "--no-deps",
-    "--rm",
-    "test-config",
-    "node",
-    "--input-type=module",
-    "-e",
-    "import {readFile,writeFile,rename} from 'node:fs/promises'; const p='/run/cerebro-secrets/'; const c=JSON.parse(await readFile(p+'runtime.json','utf8')); c.coordination=JSON.parse(process.argv[1]); await writeFile(p+'runtime.json.next',JSON.stringify(c),{mode:0o600}); await rename(p+'runtime.json.next',p+'runtime.json'); let channels={}; try { channels=JSON.parse(await readFile(p+'channels.json','utf8')); } catch(e) { if(e.code!=='ENOENT') throw e; } process.stdout.write(JSON.stringify({slackConfigured:Boolean(channels.slack)}));",
-    JSON.stringify({
-      leadAgentId: lead.agentId,
-      workerAgentId: worker.agentId,
-    })
-  );
-  await compose("run", "--no-deps", "--rm", "bootstrap");
-  await compose("restart", "celld");
-  await ready();
   await fixture.controls({
     arm: null,
     delayMs: 0,
@@ -162,7 +130,7 @@ export const setupWebTeam = async () => {
 };
 
 export const createConversation = async (
-  agentId = roles().coordinator.agentId
+  agentId = publishedAgent().agentId
 ) => {
   const conversation = await fixture.json(
     "/api/product/conversations",
@@ -285,12 +253,12 @@ export const callsCompleted = (before: Awaited<ReturnType<typeof observed>>) =>
   waitForFixture(
     observed,
     (value) =>
-      completedCalls(value, wireModels.coordinator).length ===
-        completedCalls(before, wireModels.coordinator).length + 2 &&
-      completedCalls(value, wireModels.lead).length ===
-        completedCalls(before, wireModels.lead).length + 2 &&
-      completedCalls(value, wireModels.worker).length ===
-        completedCalls(before, wireModels.worker).length + 2,
+      completedCalls(value, teamRoles.coordinator).length ===
+        completedCalls(before, teamRoles.coordinator).length + 2 &&
+      completedCalls(value, teamRoles.lead).length ===
+        completedCalls(before, teamRoles.lead).length + 2 &&
+      completedCalls(value, teamRoles.worker).length ===
+        completedCalls(before, teamRoles.worker).length + 2,
     90_000
   );
 export const heldAcceptance = (before: Awaited<ReturnType<typeof observed>>) =>
@@ -298,8 +266,8 @@ export const heldAcceptance = (before: Awaited<ReturnType<typeof observed>>) =>
     observed,
     (value) =>
       value.held > 0 &&
-      completedCalls(value, wireModels.coordinator).length ===
-        completedCalls(before, wireModels.coordinator).length + 2,
+      completedCalls(value, teamRoles.coordinator).length ===
+        completedCalls(before, teamRoles.coordinator).length + 2,
     60_000
   );
 export const observe = async (route: string) => {
@@ -340,7 +308,7 @@ export const observe = async (route: string) => {
 export const access = async (
   actions: string[],
   principalId = metadata.agent.principalId,
-  agentId = roles().coordinator.agentId
+  agentId = publishedAgent().agentId
 ) => {
   const response = await fixture.request(
     `/api/product/agents/${encodeURIComponent(agentId)}/access/${encodeURIComponent(principalId)}`,

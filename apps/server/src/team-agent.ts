@@ -18,6 +18,10 @@ import { createAgentRepository } from "@cerebro/db/repositories/agents";
 import type { Harness } from "@cerebro/runtime/pi-harness";
 import type { MetadataTransaction } from "@cerebro/runtime/session-agent";
 import { TeamAgent as TeamHost } from "@cerebro/runtime/team-agent";
+import {
+  teamRoleDefinition,
+  teamRoleSlots,
+} from "@cerebro/runtime/team-composition";
 import type { ReadTeamRoleImports } from "@cerebro/runtime/team-content";
 import { teamRoleAddress } from "@cerebro/runtime/team-content";
 import { teamCommandDependencies } from "@cerebro/runtime/team-state";
@@ -167,12 +171,6 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
     await Effect.runPromise(
       resolveSessionAddress(this.env, resolved.address, identity)
     );
-    if (!config.coordination) {
-      throw new Denied({
-        code: "revoked",
-        reason: "The team source is no longer configured.",
-      });
-    }
     if (event) {
       await this.authorizeEventSource(
         command.work,
@@ -187,36 +185,31 @@ export class TeamAgent extends TeamHost<WorkerEnv> {
     metadata: MetadataTransaction,
     importedDependencies: ReadTeamRoleImports
   ) {
-    const pins = [
-      work.lead,
-      ...Array.from({ length: work.limits.maxWorkers }, () => work.worker),
-    ];
+    const result = await withDatabase(this.env, (database) =>
+      createAgentRepository(database).get(
+        work.key.organizationId,
+        work.agent.agentId,
+        work.agent.agentVersion,
+        { deadlineAt: Date.now() + 10_000 }
+      )
+    );
+    const agent = await Effect.runPromise(fromPortResult(result));
     return await Promise.all(
-      pins.map(async (pin, index) => {
-        const result = await withDatabase(this.env, (database) =>
-          createAgentRepository(database).get(
-            work.key.organizationId,
-            pin.agentId,
-            pin.agentVersion,
-            { deadlineAt: Date.now() + 10_000 }
-          )
-        );
-        const agent = await Effect.runPromise(fromPortResult(result));
-        const address = await teamRoleAddress(work, index);
-        return await Effect.runPromise(
+      teamRoleSlots(work).map(async (slot) =>
+        Effect.runPromise(
           createExecutionComposition(
             this.env,
             this.ctx.storage,
             work.sourceEventAddress,
-            address,
-            agent,
+            await teamRoleAddress(work, slot.index),
+            teamRoleDefinition(agent, slot.role),
             work.key.ownerPrincipalId,
             metadata,
             true,
-            () => importedDependencies(index)
+            () => importedDependencies(slot.index)
           )
-        );
-      })
+        )
+      )
     );
   }
 }

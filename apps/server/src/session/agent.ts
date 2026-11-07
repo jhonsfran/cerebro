@@ -164,13 +164,10 @@ export const createRuntimeComposition = (
       eventReplies: createSlackEventReplies(env, slack),
       coordination: createCoordinatorServices({
         env,
-        address,
         agent,
-        authority: execution.authority,
         conversation,
-        profile: config.coordination,
+        limits: config.coordination,
         contentDependencies: execution.contentDependencies,
-        ownerContext: execution.ownerContext,
       }),
     };
   });

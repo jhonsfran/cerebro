@@ -47,11 +47,9 @@ export const inspectionRole = (slot: InspectionRole["slot"]): InspectionRole =>
   Schema.decodeUnknownSync(InspectionRole)({
     slot,
     nativeId: `native-${slot}`,
-    definition: {
-      agentId: slot === 0 ? "lead-agent" : "worker-agent",
-      agentVersion: 3,
-    },
-    modelId: slot === 0 ? "strong-model" : "cheap-model",
+    definition: { agentId: "team-agent", agentVersion: 3 },
+    role: slot === 0 ? "lead" : "worker",
+    modelId: "agent-model",
     running: false,
     ownerTaskId: slot === 0 ? null : `owner-${slot}`,
     requestId: slot === 0 ? null : `request-${slot}`,

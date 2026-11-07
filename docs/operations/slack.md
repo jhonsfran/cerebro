@@ -65,7 +65,7 @@ The reply task saves an unknown outcome and synchronizes storage before posting.
 
 The same coordinator and team runtime also supports [ordinary web chat](agent-teams.md). Slack adds event intake, account linking, and replies to the original DM thread.
 
-Publish coordinator, lead, and worker agents with the models and grants each role needs. Set `channels.json`'s `agentId` to the coordinator. Add the optional [coordination profile](../reference/runtime-configuration.md#coordination) to `runtime.json`, then run bootstrap again.
+Publish the agent with the model and grants its Teams need. Set `channels.json`'s `agentId` to that agent, then run bootstrap again. Optional [team limits](../reference/runtime-configuration.md#coordination) go in `runtime.json`.
 
 The coordinator gets `start_team`, `get_work`, `message_team`, `stop_work`, `list_work`, `recall_work`, `subscribe_work`, and `unsubscribe_work`. The lead gets `delegate_worker` and `return_event`. Team connector tools are read-only. A report enters the coordinator as an internal event. It grants no new Slack destination. If the work retains an authorized Slack origin, the coordinator's answer can return only to that original thread.
 

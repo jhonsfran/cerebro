@@ -84,11 +84,13 @@ export const ready = () =>
     (status) => status === 200,
     60_000
   );
-export const wireModels = {
-  coordinator: "slack-coordinator",
-  lead: "slack-lead",
-  worker: "slack-worker",
-};
+export const agentWireModel = "slack-coordinator";
+export const teamRoles = {
+  coordinator: "coordinator",
+  lead: "lead",
+  worker: "worker",
+} as const;
+export type TeamRole = (typeof teamRoles)[keyof typeof teamRoles];
 export const slack = {
   appId: "native-team-app",
   apiUrl: "http://fixture:8090/slack",
@@ -168,6 +170,7 @@ export const observed = async () =>
           model: z.string(),
           digest: z.string(),
           operationId: z.string(),
+          role: z.enum(["coordinator", "lead", "worker"]).nullable(),
           startedAt: z.number(),
           completedAt: z.number().optional(),
           toolNames: z.array(z.string()),
@@ -196,9 +199,9 @@ export const observed = async () =>
     })
     .parse(await fixture.observations());
 export type Observation = Awaited<ReturnType<typeof observed>>;
-export const completedCalls = (value: Observation, model: string) =>
+export const completedCalls = (value: Observation, role: TeamRole) =>
   value.model.filter(
-    (call) => call.model === model && call.completedAt !== undefined
+    (call) => call.role === role && call.completedAt !== undefined
   );
 export const hasReply = (value: Observation, thread: string, text: string) =>
   value.slack.messages.some(
@@ -348,10 +351,7 @@ export const controlQueue = (
     (value) => value !== undefined,
     30_000
   );
-export const selectSlackAgent = async (
-  agentId: string,
-  profile: { leadAgentId: string; workerAgentId: string }
-) => {
+export const selectSlackAgent = async (agentId: string) => {
   await compose(
     "run",
     "--no-deps",
@@ -360,12 +360,11 @@ export const selectSlackAgent = async (
     "node",
     "--input-type=module",
     "-e",
-    "import {readFile,writeFile} from 'node:fs/promises'; const p='/run/cerebro-secrets/'; const config=JSON.parse(await readFile(p+'runtime.json','utf8')); config.coordination=JSON.parse(process.argv[2]); await writeFile(p+'runtime.json',JSON.stringify(config),{mode:0o600}); await writeFile(p+'channels.json',process.argv[1],{mode:0o600});",
+    "import {writeFile} from 'node:fs/promises'; await writeFile('/run/cerebro-secrets/channels.json',process.argv[1],{mode:0o600});",
     JSON.stringify({
       organizationId: metadata.agent.organizationId,
       slack: { ...slack, agentId },
-    }),
-    JSON.stringify(profile)
+    })
   );
   await compose("run", "--no-deps", "--rm", "bootstrap");
   await compose("restart", "celld");
@@ -388,43 +387,34 @@ export const selectSlackAgent = async (
     60_000
   );
 };
+export const coordinatorDefinition = () => ({
+  name: "Slack coordinator",
+  model: `fixture/${agentWireModel}`,
+  instructions: "Use the supplied sources and bounded team tools.",
+  enabledToolIds: ["fixture-read"],
+  grants: [
+    ["read", "memory", "pilot-source"],
+    ["read", "tool", "fixture-read"],
+    ["execute", "tool", "fixture-read"],
+    ["execute", "tool", "fixture-connector"],
+  ].map(([action, kind, id]) => ({
+    action,
+    resource: {
+      id,
+      kind,
+      organizationId: metadata.agent.organizationId,
+    },
+  })),
+});
 export const configure = async (options: { link?: boolean } = {}) => {
   await fixture.container("fixture");
-  const published = await Promise.all(
-    Object.keys(wireModels).map((role) =>
-      fixture.json(
-        "/api/product/agents",
-        metadata.owner.cookie,
-        z.object({ agentId: z.string(), version: z.number() }),
-        {
-          operationId: crypto.randomUUID(),
-          name: `Slack ${role}`,
-          model: `fixture/slack-${role}`,
-          instructions: "Use the supplied sources and bounded team tools.",
-          enabledToolIds: ["fixture-read"],
-          grants: [
-            ["read", "memory", "pilot-source"],
-            ["read", "tool", "fixture-read"],
-            ["execute", "tool", "fixture-read"],
-            ["execute", "tool", "fixture-connector"],
-          ].map(([action, kind, id]) => ({
-            action,
-            resource: {
-              id,
-              kind,
-              organizationId: metadata.agent.organizationId,
-            },
-          })),
-        }
-      )
-    )
+  const coordinator = await fixture.json(
+    "/api/product/agents",
+    metadata.owner.cookie,
+    z.object({ agentId: z.string(), version: z.number() }),
+    { operationId: crypto.randomUUID(), ...coordinatorDefinition() }
   );
-  const [coordinator, lead, worker] = published;
-  assert.ok(coordinator && lead && worker);
-  await selectSlackAgent(coordinator.agentId, {
-    leadAgentId: lead.agentId,
-    workerAgentId: worker.agentId,
-  });
+  await selectSlackAgent(coordinator.agentId);
   const linkedPrincipal = await fixture.sql(
     `SELECT principal_id FROM identity_slack_link WHERE workspace_id=${literal(slack.workspaceId)} AND slack_user_id='native-team-user'`
   );
@@ -457,5 +447,5 @@ export const configure = async (options: { link?: boolean } = {}) => {
     release: true,
     models: {},
   });
-  return { coordinator, lead, worker };
+  return { coordinator };
 };

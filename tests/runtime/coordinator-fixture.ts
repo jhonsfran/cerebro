@@ -13,7 +13,7 @@ import { id } from "../../packages/contracts/src/identity.ts";
 import { normalizeTeamCommand } from "../../packages/contracts/src/team-events.ts";
 import type { TeamCommandTransport } from "../../packages/contracts/src/team-events.ts";
 import {
-  CoordinationProfileSchema,
+  TeamDefaultsSchema,
   SlackThreadSchema,
   WorkReportSchema,
 } from "../../packages/contracts/src/work.ts";
@@ -139,11 +139,7 @@ export const setup = async (
   ]);
   const revokedContent = new Set<string>();
   const ownerPrincipalId = id.principal("owner-A");
-  const profile = Schema.decodeUnknownSync(CoordinationProfileSchema)({
-    leadAgentId: "lead-A",
-    timeoutMs,
-    workerAgentId: "worker-A",
-  });
+  const limits = Schema.decodeUnknownSync(TeamDefaultsSchema)({ timeoutMs });
   const sourceBindings = ["a", "b", "c"].map((name, index) => ({
     name,
     address: {
@@ -393,18 +389,13 @@ export const setup = async (
               };
             },
             ownerPrincipalId,
-            profile,
-            resolveRolePins: () =>
-              Promise.resolve({
-                lead: {
-                  agentId: profile.leadAgentId,
-                  agentVersion: pinVersion,
-                },
-                worker: {
-                  agentId: profile.workerAgentId,
-                  agentVersion: pinVersion,
-                },
-              }),
+            get agent() {
+              return {
+                agentId: source.address.agentId,
+                agentVersion: pinVersion,
+              };
+            },
+            limits,
             sendCommand: async (command) => {
               const normalized = normalizeTeamCommand(command);
               calls.push(structuredClone(normalized.command));

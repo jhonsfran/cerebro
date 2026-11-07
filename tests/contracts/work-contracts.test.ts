@@ -5,8 +5,10 @@ import { test } from "node:test";
 import { Schema } from "effect";
 
 import {
+  DEFAULT_TEAM_LIMITS,
   TeamCommandReceiptSchema,
   TeamCommandSchema,
+  TeamDefaultsSchema,
   TeamReportDeliverySchema,
   WorkAdmissionSchema,
   WorkReportSchema,
@@ -17,8 +19,9 @@ import {
 } from "../../packages/contracts/src/work.ts";
 
 const admission = () => ({
-  version: 2,
+  version: 3,
   admittedAt: 1_800_000_000_000,
+  agent: { agentId: "coordinator-A", agentVersion: 4 },
   contentDependencies: { sourceIds: [], toolIds: [] },
   deadlineAt: 1_800_000_600_000,
   goal: "Compare the two deployment reports.",
@@ -27,7 +30,6 @@ const admission = () => ({
     ownerPrincipalId: "owner-A",
     workId: "work-A",
   },
-  lead: { agentId: "lead-A", agentVersion: 4 },
   limits: { maxTeams: 2, maxTurns: 8, maxWorkers: 2, timeoutMs: 600_000 },
   sourceEventAddress: {
     agentId: "coordinator-A",
@@ -35,7 +37,6 @@ const admission = () => ({
     organizationId: "org-A",
     sessionId: "session-A",
   },
-  worker: { agentId: "worker-A", agentVersion: 7 },
 });
 const threadMetadata = {
   channelId: "D123",
@@ -43,7 +44,7 @@ const threadMetadata = {
   workspaceId: "T123",
 };
 
-test("version 2 work and reports use an exact canonical source without Slack", () => {
+test("version 3 work and version 2 reports use an exact canonical source without Slack", () => {
   const work = admission();
   const decode = Schema.decodeUnknownSync(WorkAdmissionSchema, {
     onExcessProperty: "error",
@@ -66,7 +67,7 @@ test("version 2 work and reports use an exact canonical source without Slack", (
   });
   assert.deepEqual(decodeReport(delivery), delivery);
   for (const changed of [
-    { ...work, version: 3 },
+    { ...work, version: 2 },
     { ...work, version: undefined },
     { ...work, threadMetadata },
     { ...work, unexpected: true },
@@ -94,7 +95,7 @@ test("command JSON and stringify digests retain their field order", () => {
     {
       command: { id: "start-A", kind: "start", work },
       digest:
-        "09a56a063655aaf8eae566319dce0742ca995a0b3e5874562913fc98c9615067",
+        "8b38ced4a8b9945d72121d7ce5f2f67b63da515a2a5552f646952034f0e9e085",
     },
     {
       command: {
@@ -105,12 +106,12 @@ test("command JSON and stringify digests retain their field order", () => {
         work,
       },
       digest:
-        "9c0e6ed33ae4a0688fe22bd533fb0e5697f10d61a5418987498c487e6e7d0dba",
+        "510f4c771240c9c9cd15b47ac297a831ecb1267f05a08469d0aafb2087309d7c",
     },
     {
       command: { id: "cancel-A", kind: "cancel", work },
       digest:
-        "455a4f541ed80559b594c23c366aaa8ec347e9eb394f7c0accfe083867235068",
+        "3bee40cdde424fab2a12fc4dbee034549c3179397fab35d15b1a14da04b0e1f9",
     },
   ];
   for (const { command, digest } of cases) {
@@ -126,7 +127,7 @@ test("command JSON and stringify digests retain their field order", () => {
   }
 });
 
-test("work admission preserves public source identity and published role pins", () => {
+test("work admission preserves public source identity and the agent pin", () => {
   const value = admission();
   const serialized = JSON.stringify(value);
   assert.deepEqual(
@@ -137,8 +138,9 @@ test("work admission preserves public source identity and published role pins", 
     { key: { ...value.key, organizationId: "org-B" } },
     { key: { ...value.key, ownerPrincipalId: " owner-A" } },
     { key: { ...value.key, workId: "" } },
-    { lead: { ...value.lead, agentVersion: 0 } },
-    { worker: { ...value.worker, agentVersion: 1.5 } },
+    { agent: { ...value.agent, agentVersion: 0 } },
+    { agent: { ...value.agent, agentVersion: 1.5 } },
+    { agent: { ...value.agent, agentId: "other-A" } },
     { sourceEventAddress: { ...value.sourceEventAddress, sessionId: "" } },
     { admittedAt: Number.POSITIVE_INFINITY },
     { deadlineAt: value.admittedAt },
@@ -336,4 +338,26 @@ test("command receipts distinguish saved admission from terminal rejection", () 
       kind: "rejected",
     })
   );
+});
+
+test("team defaults decode an absent block to the bounded limits", () => {
+  const decode = Schema.decodeUnknownSync(TeamDefaultsSchema, {
+    onExcessProperty: "error",
+  });
+  assert.deepEqual(decode({}), {
+    maxTeams: 2,
+    maxTurns: 8,
+    maxWorkers: 2,
+    timeoutMs: 600_000,
+  });
+  assert.deepEqual(DEFAULT_TEAM_LIMITS, decode({}));
+  assert.deepEqual(decode({ maxTurns: 3 }), { ...decode({}), maxTurns: 3 });
+  for (const changed of [
+    { leadAgentId: "lead-A" },
+    { workerAgentId: "worker-A" },
+    { maxTeams: 3 },
+    { timeoutMs: 999 },
+  ]) {
+    assert.throws(() => decode(changed));
+  }
 });

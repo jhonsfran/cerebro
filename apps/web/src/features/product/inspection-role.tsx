@@ -30,10 +30,8 @@ import {
 } from "./inspection-fields";
 import type { InspectionLoad, InspectionRoleSelection } from "./use-inspection";
 
-const roleLabels = { 0: "Lead", 1: "Worker 1", 2: "Worker 2" } satisfies Record<
-  InspectionRole["slot"],
-  string
->;
+const roleLabel = (role: Pick<InspectionRole, "role" | "slot">): string =>
+  role.role === "lead" ? "Lead" : `Worker ${role.slot}`;
 const TokenUsage = ({ usage }: { usage: InspectionTokens }) => (
   <InspectionFacts
     rows={[
@@ -56,11 +54,11 @@ const RoleSummary = ({
   selected: InspectionRoleSelection | null;
 }) => (
   <article
-    aria-label={`${roleLabels[role.slot]} conversation`}
+    aria-label={`${roleLabel(role)} conversation`}
     className="flex flex-col gap-2 border p-3"
   >
     <h4 className="flex flex-wrap items-center gap-2 font-medium">
-      {roleLabels[role.slot]} conversation
+      {roleLabel(role)} conversation
       <Badge variant={role.running ? "secondary" : "outline"}>
         {role.running ? "Running" : "Idle"}
       </Badge>
@@ -69,7 +67,7 @@ const RoleSummary = ({
       rows={[
         ["Native conversation", role.nativeId],
         ["Saved model", role.modelId ?? "Not recorded"],
-        ["Role definition", role.definition.agentId],
+        ["Agent", role.definition.agentId],
         ["Definition version", role.definition.agentVersion],
         ["Owner task", role.ownerTaskId],
         ["Request", role.requestId],
@@ -77,7 +75,7 @@ const RoleSummary = ({
         ["Retry", inspectionTime(role.retryAt)],
       ]}
     />
-    <Disclosure summary={`${roleLabels[role.slot]} token usage`}>
+    <Disclosure summary={`${roleLabel(role)} token usage`}>
       <h5 className="font-medium">Model usage</h5>
       <TokenUsage usage={role.usage} />
       <h5 className="font-medium">Tool usage</h5>
@@ -95,7 +93,7 @@ const RoleSummary = ({
           }
           onClick={() => select({ role: role.slot, section })}
         >
-          {roleLabels[role.slot]}{" "}
+          {roleLabel(role)}{" "}
           {section === "tasks" ? "tasks and retries" : section}
         </Button>
       ))}
@@ -251,48 +249,53 @@ export const InspectionRoles = ({
   selected: InspectionRoleSelection | null;
   page: InspectionLoad<InspectionRolePage>;
   select: (value: InspectionRoleSelection) => void;
-}) => (
-  <section aria-label="Team conversations" className="flex flex-col gap-3">
-    {team.roles.length === 0 ? (
-      <p className="text-muted-foreground">
-        No role conversations have started.
-      </p>
-    ) : (
-      team.roles.map((role) => (
-        <RoleSummary
-          key={role.slot}
-          role={role}
-          selected={selected}
-          select={select}
-        />
-      ))
-    )}
-    {selected ? (
-      <section
-        aria-label={`${roleLabels[selected.role]} details`}
-        className="flex min-h-0 flex-col gap-2"
-      >
-        <h4 className="font-medium">
-          {roleLabels[selected.role]} ·{" "}
-          {selected.section === "tasks"
-            ? "Tasks and retries"
-            : selected.section}
-        </h4>
-        <InspectionNotice state={page} />
-        {page.kind === "ready" ? (
-          <>
-            <RolePage frame={page.value} section={selected.section} />
-            <InspectionPagination
-              next={page.value.next}
-              label="role entries"
-              latest={() =>
-                select({ role: selected.role, section: selected.section })
-              }
-              older={(cursor) => select({ ...selected, cursor })}
-            />
-          </>
-        ) : null}
-      </section>
-    ) : null}
-  </section>
-);
+}) => {
+  const selectedRole = selected
+    ? team.roles.find((role) => role.slot === selected.role)
+    : undefined;
+  return (
+    <section aria-label="Team conversations" className="flex flex-col gap-3">
+      {team.roles.length === 0 ? (
+        <p className="text-muted-foreground">
+          No role conversations have started.
+        </p>
+      ) : (
+        team.roles.map((role) => (
+          <RoleSummary
+            key={role.slot}
+            role={role}
+            selected={selected}
+            select={select}
+          />
+        ))
+      )}
+      {selected && selectedRole ? (
+        <section
+          aria-label={`${roleLabel(selectedRole)} details`}
+          className="flex min-h-0 flex-col gap-2"
+        >
+          <h4 className="font-medium">
+            {roleLabel(selectedRole)} ·{" "}
+            {selected.section === "tasks"
+              ? "Tasks and retries"
+              : selected.section}
+          </h4>
+          <InspectionNotice state={page} />
+          {page.kind === "ready" ? (
+            <>
+              <RolePage frame={page.value} section={selected.section} />
+              <InspectionPagination
+                next={page.value.next}
+                label="role entries"
+                latest={() =>
+                  select({ role: selected.role, section: selected.section })
+                }
+                older={(cursor) => select({ ...selected, cursor })}
+              />
+            </>
+          ) : null}
+        </section>
+      ) : null}
+    </section>
+  );
+};

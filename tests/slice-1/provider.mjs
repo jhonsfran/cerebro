@@ -280,6 +280,20 @@ const turnIdentity = (input) =>
     )
   ).slice(0, 48)}`;
 
+// Every Team role runs the agent's own wire model, so tests tell roles apart
+// by the tools each role is offered.
+const teamRole = (input, purpose) => {
+  if (purpose !== "turn") {
+    return null;
+  }
+  const offered = new Set(
+    (input.tools ?? []).map((item) => item.function?.name)
+  );
+  if (offered.has("start_team")) {
+    return "coordinator";
+  }
+  return offered.has("delegate_worker") ? "lead" : "worker";
+};
 const requestsTool = (input, purpose, toolName) =>
   purpose === "turn" &&
   !input.messages
@@ -450,10 +464,12 @@ export const createFixture = async ({
   await save();
   const held = new Set();
   const modelHolds = new Map();
-  const modelDelay = (model) =>
-    state.controls.models[model]?.delayMs ?? state.controls.delayMs;
-  const holdModel = async (model, response) => {
-    if (!state.controls.models[model]?.hold) {
+  const controlFor = (call) =>
+    state.controls.models[call.model] || !call.role ? call.model : call.role;
+  const modelDelay = (control) =>
+    state.controls.models[control]?.delayMs ?? state.controls.delayMs;
+  const holdModel = async (control, response) => {
+    if (!state.controls.models[control]?.hold) {
       return;
     }
     const { promise, resolve } = Promise.withResolvers();
@@ -463,7 +479,7 @@ export const createFixture = async ({
       resolve();
     };
     held.add(release);
-    modelHolds.set(release, model);
+    modelHolds.set(release, control);
     response.once("close", release);
     await promise;
   };
@@ -529,9 +545,11 @@ export const createFixture = async ({
       model: input.model,
       operationId,
       purpose,
+      role: teamRole(input, purpose),
       startedAt: Date.now(),
       toolNames: (input.tools ?? []).map((item) => item.function?.name),
     };
+    const control = controlFor(call);
     state.model.push(call);
     await save();
     if (
@@ -547,7 +565,7 @@ export const createFixture = async ({
       });
       return;
     }
-    await holdModel(input.model, response);
+    await holdModel(control, response);
     if (response.destroyed) {
       return;
     }
@@ -586,7 +604,7 @@ export const createFixture = async ({
         if (response.destroyed) {
           return;
         }
-        await delay(modelDelay(input.model));
+        await delay(modelDelay(control));
         recordToken(call, delta);
         response.write(
           `data: ${JSON.stringify({ ...base, choices: [{ delta, finish_reason: null, index: 0 }], object: "chat.completion.chunk" })}\n\n`
@@ -599,7 +617,7 @@ export const createFixture = async ({
         `data: ${JSON.stringify({ ...base, choices: [{ delta: {}, finish_reason: tool ? "tool_calls" : "stop", index: 0 }], object: "chat.completion.chunk", usage })}\n\ndata: [DONE]\n\n`
       );
     } else {
-      await delay(modelDelay(input.model));
+      await delay(modelDelay(control));
       call.firstTokenAt = Date.now();
       call.completedAt = Date.now();
       call.status = 200;

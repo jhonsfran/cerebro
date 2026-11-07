@@ -22,7 +22,6 @@ import {
   isExecutionContextActiveAt,
 } from "../../packages/contracts/src/identity.ts";
 import type { ExecutionContext } from "../../packages/contracts/src/identity.ts";
-import type { ChatSnapshot } from "../../packages/contracts/src/session-service.ts";
 import { createApprovalStore } from "../../packages/runtime/src/approval-store.ts";
 import { sendToAuditSink } from "../../packages/runtime/src/audit-sink.ts";
 import { piContext } from "../../packages/runtime/src/pi-harness.ts";
@@ -261,9 +260,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
         "CREATE TABLE IF NOT EXISTS fixture_commit_witness (session_id TEXT NOT NULL, operation_id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(session_id, operation_id))"
       );
       this.ctx.storage.sql.exec(
-        "CREATE TABLE IF NOT EXISTS fixture_notification (session_id TEXT NOT NULL, snapshot TEXT NOT NULL)"
-      );
-      this.ctx.storage.sql.exec(
         "CREATE TABLE IF NOT EXISTS fixture_model_request (session_id TEXT NOT NULL, operation_id TEXT NOT NULL, body TEXT NOT NULL)"
       );
       this.ctx.storage.sql.exec(
@@ -455,20 +451,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
                   )
           ),
         executor,
-        ...(address.conversationId.startsWith("notify-")
-          ? {
-              notify: async (snapshot: ChatSnapshot) => {
-                await metadata(() => {
-                  this.ctx.storage.sql.exec(
-                    "INSERT INTO fixture_notification VALUES (?, ?)",
-                    address.sessionId,
-                    JSON.stringify(snapshot)
-                  );
-                });
-                await this.ctx.storage.sync();
-              },
-            }
-          : {}),
         ownerContext: () => Effect.succeed(context),
         provider: {
           deadlineMs: address.agentId.includes("short-deadline")
@@ -806,13 +788,6 @@ export class SessionAgent extends NativeSessionAgent<TestEnvironment> {
                 operationId: row.operationId,
                 body: JSON.parse(row.body),
               })),
-            notifications: this.ctx.storage.sql
-              .exec<{ snapshot: string }>(
-                "SELECT snapshot FROM fixture_notification WHERE session_id=? ORDER BY rowid",
-                address.sessionId
-              )
-              .toArray()
-              .map((row) => JSON.parse(row.snapshot)),
           },
         });
       }

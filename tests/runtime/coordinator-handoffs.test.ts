@@ -40,8 +40,6 @@ const subject = async () => {
   let importFails = false;
   let eventFails = false;
   let importedAllowed = true;
-  let notifyFails = false;
-  let notifications = 0;
   const runtime = {
     authorize: () => {
       if (!allowed) {
@@ -68,19 +66,11 @@ const subject = async () => {
       },
     },
   };
-  const notify = () => {
-    notifications += 1;
-    if (notifyFails) {
-      throw new Error("Notification scheduling failed.");
-    }
-    return Promise.resolve();
-  };
   const ports = {
     pi: fixture.pi(),
     native: source.native,
     runtime,
     coordination: source.coordinator,
-    notify,
   };
   const receive = createCoordinatorReport({
     ...ports,
@@ -134,15 +124,11 @@ const subject = async () => {
     receive,
     messages,
     settleReports,
-    notifications: () => notifications,
     importFails: (value: boolean) => {
       importFails = value;
     },
     eventFails: (value: boolean) => {
       eventFails = value;
-    },
-    notifyFails: (value: boolean) => {
-      notifyFails = value;
     },
     revokeImports: () => {
       importedAllowed = false;
@@ -206,17 +192,10 @@ test("reports atomically import provenance and event intent, and retries produce
       { sourceIds: ["source-B"], toolIds: ["tool-B"] }
     );
     f.importFails(false);
-    f.notifyFails(true);
-    await assert.rejects(
-      f.receive(f.delivery, actor),
-      /Notification scheduling/u
-    );
-    const completed = await f.fixture.work("a");
-    assert.equal(completed.status.kind, "completed");
-    f.notifyFails(false);
     const replay = await f.receive(f.delivery, actor);
     assert.equal(replay.accepted, true);
-    assert.equal(f.notifications(), 2);
+    const completed = await f.fixture.work("a");
+    assert.equal(completed.status.kind, "completed");
     await f.settleReports();
     assert.equal(f.source.faux.state.callCount, calls + 1);
     const after = await f.messages();

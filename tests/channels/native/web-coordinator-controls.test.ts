@@ -18,7 +18,7 @@ import {
   literal,
   metadata,
   observed,
-  wireModels,
+  teamRoles,
 } from "./team-support.ts";
 import {
   access,
@@ -72,7 +72,7 @@ test(
   { timeout: 180_000 },
   async () => {
     await fixture.controls({
-      models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+      models: { [teamRoles.lead]: { hold: true, delayMs: 0 } },
     });
     await controlQueue("pause");
     const { route, conversation } = await createConversation();
@@ -98,8 +98,8 @@ test(
       assert.deepEqual(ordinary.tools, []);
       const afterOrdinary = await observed();
       assert.equal(
-        completedCalls(afterOrdinary, wireModels.coordinator).length,
-        completedCalls(held, wireModels.coordinator).length + 1
+        completedCalls(afterOrdinary, teamRoles.coordinator).length,
+        completedCalls(held, teamRoles.coordinator).length + 1
       );
       assert.equal(afterOrdinary.held, 2);
       const beforeControls = await observed();
@@ -170,7 +170,7 @@ test(
     const { route, conversation } = await createConversation();
     await controlQueue("pause");
     await fixture.controls({
-      models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+      models: { [teamRoles.lead]: { hold: true, delayMs: 0 } },
     });
     try {
       const before = await observed();
@@ -195,7 +195,7 @@ test(
       await cancelAndSettle(route, [first]);
       await controlQueue("pause");
       await fixture.controls({
-        models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+        models: { [teamRoles.lead]: { hold: true, delayMs: 0 } },
       });
       const second = await startGoal(
         route,
@@ -294,7 +294,7 @@ test(
   async () => {
     const { route, conversation } = await createConversation();
     await fixture.controls({
-      models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+      models: { [teamRoles.lead]: { hold: true, delayMs: 0 } },
     });
     await controlQueue("pause");
     try {
@@ -305,8 +305,8 @@ test(
       await waitForFixture(observed, (value) => value.held > 0);
       await fixture.controls({
         models: {
-          [wireModels.lead]: { hold: true, delayMs: 0 },
-          [wireModels.coordinator]: { hold: true, delayMs: 0 },
+          [teamRoles.lead]: { hold: true, delayMs: 0 },
+          [teamRoles.coordinator]: { hold: true, delayMs: 0 },
         },
       });
       const before = await observed();
@@ -392,7 +392,7 @@ test(
   async () => {
     const { route, conversation } = await createConversation();
     await fixture.controls({
-      models: { [wireModels.lead]: { hold: true, delayMs: 0 } },
+      models: { [teamRoles.lead]: { hold: true, delayMs: 0 } },
     });
     await controlQueue("pause");
     try {
@@ -425,7 +425,7 @@ test(
       );
       const beforeInspection = await observed();
       const leadBaseline = beforeInspection.model.filter(
-        (call) => call.model === wireModels.lead
+        (call) => call.role === teamRoles.lead
       ).length;
       const queued = await inspect(route, {
         kind: "team",
@@ -443,7 +443,7 @@ test(
       assert.deepEqual(after, before);
       const afterInspection = await observed();
       assert.equal(
-        afterInspection.model.filter((call) => call.model === wireModels.lead)
+        afterInspection.model.filter((call) => call.role === teamRoles.lead)
           .length,
         leadBaseline
       );
