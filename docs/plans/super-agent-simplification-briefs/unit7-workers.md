@@ -1,6 +1,8 @@
 # Unit 7: workers as Pi child tasks, limits as budgets on the agent
 
-Repository: /Users/jhonsfran/repos/cerebro, branch codex/persistent-super-agent. Units 1 to 6 have landed on the base commit you start from: Team roles derive from the agent's pinned definition (one `agent` pin in `WorkAdmission`, `teamRoleDefinition` projection, `TeamDefaultsSchema` for installation defaults), and coordinator events flow through Pi's inbox as triggers. Do not commit; the lead reviews and commits.
+Repository: /Users/jhonsfran/repos/cerebro, branch codex/persistent-super-agent. Units 1 to 3 have landed on the base commit you start from: Team roles derive from the agent's pinned definition (one `agent` pin in `WorkAdmission`, `teamRoleDefinition` and `teamRoleSlots` in `packages/runtime/src/team-composition.ts`, `TeamDefaultsSchema` for installation defaults). Do not commit; the lead reviews and commits.
+
+A parallel delegate is rewriting the coordinator event pipeline (Units 5 and 6) on an earlier base: it replaces `coordinator-events.ts`, `coordinator-event-*.ts`, `conversation-event-scope.ts`, `coordinator-replies.ts`, `bot-events.ts`, `bot-routing.ts`, `saved-timer-*.ts`, `instruction-cause.ts`, `coordinator-subscriptions.ts`, `coordinator-web.ts`, `coordinator-report.ts`, `coordinator-event-content.ts`, and the event wiring in `session-agent.ts` and `conversation-scope.ts`. Do not edit those files beyond what a type error forces. In `coordinator-work.ts` keep your change to how the admission's `limits` are computed. The lead rebases the trigger branch onto yours afterwards.
 
 ## Why
 

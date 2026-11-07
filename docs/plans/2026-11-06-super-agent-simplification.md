@@ -7,23 +7,25 @@ Five architectural changes move `codex/persistent-super-agent` closer to the two
 - [x] Read Poteto Mode and its Principles section.
 - [x] Phase A: Frame.
 - [x] Phase B: Design the workflow.
-- [ ] Phase C: Run the loop.
-- [x] Unit 1: Delete the fork feature.
-- [x] Unit 2: Delete legacy input, legacy Slack, legacy timer, and the source cutover state machine. Landed as fe6d4db; channel suite green; the runtime and integration suites had not finished when the run paused.
-- [ ] Unit 3: Derive Team lead and worker roles from the coordinator agent's own published definition. In progress in worktree branch `worktree-agent-a707f34a5d111aa22` off fe6d4db.
+- [x] Phase C: Run the loop.
+- [x] Unit 1: Delete the fork feature. Commits `f94aeac`, `5e37d06`.
+- [x] Unit 2: Delete legacy input, legacy Slack, legacy timer, and the source cutover state machine. Commit `fe6d4db`, followed by `7c26c82`, which drops the conversation tool journeys the deleted profile used to run.
+- [x] Unit 3: Derive Team lead and worker roles from the coordinator agent's own published definition. Commit `b5e7e0c`, with the journey assertion fix `fcdf2ec`.
 - [x] Unit 4: Prototype Pi `followUpMode: "all"` answer attribution before the inbox rewrite. Answered by reading Pi: every input placed in one run settles with one answer entry.
-- [ ] Unit 5: Admit coordinator events straight into Pi's inbox, batch bursts, and reply through a tool. Merged with Unit 6; in progress in worktree branch `worktree-agent-ae1c3bb6c5b5b94da` off fe6d4db.
-- [ ] Unit 6: Generic trigger contract with a per-source policy and a generic thread key. Merged into Unit 5.
-- [ ] Unit 7: Run Team workers as Pi child tasks and replace schema caps with per-agent budgets. Brief written; not started.
-
-## Resume
-
-1. Check the delegate worktrees under `.claude/worktrees/` for uncommitted changes on the two branches above. Review each diff, commit on its branch, rebase the trigger branch onto the Unit 3 commit, and fast-forward `codex/persistent-super-agent`.
-2. Run `pnpm check-types`, `pnpm test:contracts`, `pnpm test:channels`, `pnpm test:runtime`, and `pnpm test:integration` after each landing. Baselines before this run: runtime 374 pass, channels 196 pass, integration 83 pass.
-3. The briefs and the two design arenas live in `super-agent-simplification-briefs/`. Unit 7 starts from `unit7-workers.md` once Units 3 and 5 have landed.
-
-- [ ] Phase D: Keep the audit trail throughout the run.
+- [x] Unit 5: Admit coordinator events straight into Pi's inbox, batch bursts, and reply through a tool. Merged with Unit 6 as `12ea4de`, with the liveness fix `7d5a3b5`.
+- [x] Unit 6: Generic trigger contract with a per-source policy and a generic thread key. Merged into Unit 5.
+- [x] Unit 7: Run Team workers as Pi child tasks and replace schema caps with per-agent budgets. Commit `cf7bfd2`.
+- [x] Phase D: Keep the audit trail throughout the run.
 - [ ] Phase E: Verify and hand back.
+
+## Found during the run
+
+- After the persistent primary cutover, nothing in the product runs a connector tool that writes. The coordinator advertises no connector tools and Teams filter to read-only tools, so the approval machinery has no production caller. The proposed next unit lets Teams run the agent's full tool set and routes approvals to the coordinator conversation.
+- The trigger drain places input with `Conversation.submit`, which skips the harness's own wake job. `7d5a3b5` keeps the coordination alarm armed while Pi holds unsettled input.
+- Batching depends on model latency: triggers merge only when they arrive while a turn runs.
+- A run that ends on a provider error leaves queued follow-ups in Pi's inbox until the next input arrives. The deleted delivery task had the same exposure.
+- One inconsistent backlog entry stops the drain for its conversation until Stop clears the backlog.
+- A celld restart can be followed by a Pi storage-error reset of an identity. The cause is unknown and predates this run.
 
 ## Done
 
