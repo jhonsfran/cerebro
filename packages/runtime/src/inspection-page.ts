@@ -7,7 +7,13 @@ import {
 } from "@cerebro/contracts/inspection";
 import type { InspectionQuery } from "@cerebro/contracts/inspection";
 import { canonicalToolArguments } from "@cerebro/contracts/tools";
-import type { Cursor, Harness, Storage } from "@earendil-works/pi-durable";
+import type {
+  Cursor,
+  DocDefinition,
+  Harness,
+  JsonObject,
+  Storage,
+} from "@earendil-works/pi-durable";
 import { Schema } from "effect";
 
 import { piContext } from "./pi-harness.ts";
@@ -23,18 +29,27 @@ const continuation = Schema.fromJsonString(
 export const scanInspectionKeys = async (
   pi: Harness,
   storage: Storage,
-  kind: string,
+  definition: Pick<DocDefinition<JsonObject>, "kind" | "version">,
   cursor?: Cursor
 ) =>
   await pi.commit(async () => {
     const page = await storage.scanDocuments(
-      { scope: { kind: "session" }, at: "current", kind },
+      { scope: { kind: "session" }, at: "current", kind: definition.kind },
       32,
       cursor,
       piContext()
     );
+    const keys = await Promise.all(
+      page.items.map(async (entry) => {
+        const saved = await storage.document(entry.id, "current", piContext());
+        // Retired formats remain stored, but the current Inspector cannot decode them.
+        return saved && saved.version >= definition.version
+          ? entry.key
+          : undefined;
+      })
+    );
     return {
-      keys: page.items.flatMap((entry) => (entry.key ? [entry.key] : [])),
+      keys: keys.filter((key): key is string => key !== undefined),
       ...(page.next ? { next: page.next } : {}),
     };
   }, piContext());

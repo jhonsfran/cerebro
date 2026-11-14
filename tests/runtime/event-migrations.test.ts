@@ -141,7 +141,7 @@ const open = async (file: string) =>
     context
   );
 
-test("v3 work documents and v2 work indexes are rejected instead of migrated", async () => {
+test("v3 work documents are rejected while compatible v2 indexes survive restart", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "event-work-migration-"));
   const filename = path.join(directory, "state.sqlite");
   let pi = await open(filename);
@@ -181,10 +181,11 @@ test("v3 work documents and v2 work indexes are rejected instead of migrated", a
       pi.snapshot(WorkDocuments, work.key.workId, context),
       /Unsupported coordinator work version/u
     );
-    await assert.rejects(
-      pi.snapshot(WorkLedger, context),
-      /Unsupported coordinator index version/u
-    );
+    assert.deepEqual(await pi.snapshot(WorkLedger, context), {
+      identity: null,
+      active: {},
+      queue: [],
+    });
   } finally {
     await pi.close(context);
     await rm(directory, { recursive: true });

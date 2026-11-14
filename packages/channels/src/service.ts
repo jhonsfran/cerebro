@@ -32,6 +32,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { Schema } from "effect";
 
 import { createConversationService } from "./conversations";
+import { listPrimaryConversationIds } from "./primary-conversations";
 import {
   authorize,
   contextByPrincipal,
@@ -410,12 +411,18 @@ export const createChannelService = (
   const listAgents = async (userId: string) => {
     const context = await current(userId);
     const rows = await listAgentMetadata(database, options.organizationId);
+    const primaryIds = await listPrimaryConversationIds(
+      database,
+      options.organizationId,
+      context.actor.id
+    );
     const visible: {
       agentId: string;
       name: string;
       version: number;
       model: string;
       canManage: boolean;
+      primaryConversationId?: string;
     }[] = [];
     for (const row of rows) {
       try {
@@ -463,6 +470,7 @@ export const createChannelService = (
         canManage,
         model: definition.model,
         name: row.name,
+        primaryConversationId: primaryIds.get(row.agentId),
         version: row.currentVersion,
       });
     }

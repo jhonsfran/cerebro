@@ -348,7 +348,8 @@ export class ConversationScope {
 
   private async prepare(
     configuration: SessionHostConfiguration,
-    identity: ProfileIdentity
+    identity: ProfileIdentity,
+    registrationKey = profileKey(identity)
   ): Promise<ConversationProfile> {
     if (configuration.agent.version !== identity.agentVersion) {
       throw new Unavailable({
@@ -360,13 +361,14 @@ export class ConversationScope {
       this.services,
       this.native,
       this.shared,
-      identity
+      identity,
+      registrationKey
     );
     for (const extension of profile.registration.extensions) {
       this.services.install(extension);
     }
     this.services.publication?.setProvider(profile.registration.provider);
-    this.profiles.set(profileKey(identity), profile);
+    this.profiles.set(registrationKey, profile);
     return profile;
   }
 
@@ -413,7 +415,7 @@ export class ConversationScope {
       }
       const parts = provider
         .slice(prefix.length)
-        .match(/^:v(?<version>[1-9][0-9]*)$/u);
+        .match(/^:v(?<version>[1-9][0-9]*)(?::p1)?$/u);
       if (!parts) {
         throw new Unavailable({
           reason: "A native profile selection is invalid.",
@@ -422,12 +424,14 @@ export class ConversationScope {
       const identity: ProfileIdentity = {
         agentVersion: Number(parts.groups?.version),
       };
-      if (this.profiles.has(profileKey(identity))) {
+      const registrationKey = parts[0].slice(1);
+      if (this.profiles.has(registrationKey)) {
         continue;
       }
       await this.prepare(
         await publication.resolve(identity.agentVersion),
-        identity
+        identity,
+        registrationKey
       );
     }
   }

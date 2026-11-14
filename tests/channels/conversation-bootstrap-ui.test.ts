@@ -70,6 +70,47 @@ test("Open conversation reads the returned binding once and attaches observation
   );
 });
 
+test("sidebar selection resumes a saved conversation and leaves a new agent ready to open one", async () => {
+  const server = fixture({ canManage: true, savedConversation: "chat-a" });
+  const view = server.mount();
+  await waitFor(() =>
+    assert.ok(view.getByRole("button", { name: /Agent A/u }))
+  );
+  await act(() =>
+    fireEvent.click(view.getByRole("button", { name: /Agent A/u }))
+  );
+  await waitFor(() => assert.ok(view.getByText("chat-a")));
+  const composer = view.getByRole("textbox", { name: "Message" });
+  await act(() => {
+    fireEvent.change(composer, { target: { value: "Unsent sidebar draft" } });
+    fireEvent.click(view.getByRole("button", { name: /Agent A/u }));
+  });
+  assert.equal(view.getByDisplayValue("Unsent sidebar draft"), composer);
+  assert.equal(server.reads("chat-a").length, 1);
+  await act(() =>
+    fireEvent.click(
+      view.getByRole("tab", { name: "Configuration", exact: true })
+    )
+  );
+  assert.equal(view.queryByText("chat-a"), null);
+  await act(() =>
+    fireEvent.click(view.getByRole("button", { name: /Agent A/u }))
+  );
+  await waitFor(() => assert.ok(view.getByText("chat-a")));
+  await act(() =>
+    fireEvent.click(view.getByRole("button", { name: /Agent B/u }))
+  );
+  assert.ok(view.getByRole("heading", { name: "Agent B", exact: true }));
+  assert.equal(view.queryByText("chat-a"), null);
+  assert.ok(
+    view.getByRole("button", { name: "Open conversation", exact: true })
+  );
+  assert.equal(
+    server.calls.some(({ method }) => method === "POST"),
+    false
+  );
+});
+
 test("opening the live primary conversation preserves its draft, stream and newer snapshot", async () => {
   const server = fixture();
   const view = server.mount("chat-a");
@@ -253,6 +294,22 @@ for (const tab of ["Configuration", "Access"]) {
       );
       assert.equal(view.queryByText("Prior tab answer"), null);
       assert.ok(server.observations.every(({ signal }) => signal?.aborted));
+      if (tab === "Access") {
+        await waitFor(() => {
+          assert.equal(
+            view
+              .getByRole("checkbox", { name: "read access for Team Member" })
+              .getAttribute("aria-checked"),
+            "true"
+          );
+          assert.equal(
+            view
+              .getByRole("checkbox", { name: "execute access for Team Member" })
+              .getAttribute("aria-checked"),
+            "false"
+          );
+        });
+      }
       await act(() =>
         fireEvent.click(
           view.getByRole("tab", { name: "Conversation", exact: true })

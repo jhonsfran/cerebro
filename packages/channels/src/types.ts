@@ -30,8 +30,10 @@ export interface ChannelCatalog {
   }[];
   readonly connectorChoices: readonly {
     readonly connectorId?: string;
+    readonly description?: string;
     readonly id: string;
     readonly label: string;
+    readonly requiresApproval?: boolean;
   }[];
 }
 export interface SourceView {
@@ -45,10 +47,12 @@ export interface ConnectorView {
   readonly source: "admin" | "runtime.json";
   readonly toolCount: number;
   readonly url: string | null;
-  // MCP tools by the name the server lists them under.
   readonly tools: readonly {
-    readonly name: string;
+    readonly description: string;
     readonly effect: "read" | "write";
+    readonly id: string;
+    readonly name: string;
+    readonly requiresApproval: boolean;
   }[];
 }
 export interface ConnectorInput {

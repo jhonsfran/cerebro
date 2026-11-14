@@ -27,6 +27,7 @@ import { Textarea } from "@cerebro/ui/components/textarea";
 import { TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { AgentToolPicker } from "./agent-tool-picker";
 import { encoded, mutate, productPath, request } from "./api";
 import {
   agentEditorValues,
@@ -120,12 +121,16 @@ const TeamBudgetFields = ({
   budgets: TeamBudgets;
   change: (key: keyof TeamBudgets, value: string) => void;
 }) => (
-  <Disclosure summary="Teams">
-    <FieldSet>
-      <FieldLegend className="sr-only">Team budgets</FieldLegend>
+  <FieldSet className="gap-3">
+    <FieldLegend>Background Teams</FieldLegend>
+    <FieldDescription>
+      The agent can delegate a task to a Team that runs in the background and
+      sends its result back to the conversation.
+    </FieldDescription>
+    <Disclosure summary="Team limits">
       <FieldDescription>
-        Budgets for the background teams this agent starts. Leave a field empty
-        to use the installation default.
+        These limits apply to each new Team. Leave a field empty to use the
+        workspace default.
       </FieldDescription>
       <FieldGroup className="gap-3">
         {TEAM_BUDGET_FIELDS.map((field) => (
@@ -147,8 +152,8 @@ const TeamBudgetFields = ({
           </Field>
         ))}
       </FieldGroup>
-    </FieldSet>
-  </Disclosure>
+    </Disclosure>
+  </FieldSet>
 );
 
 export const AgentEditor = ({
@@ -351,11 +356,7 @@ export const AgentEditor = ({
             </Field>
           </FieldGroup>
           <FieldGroup>
-            <ChoiceGroup
-              id="agent-tool"
-              legend="Tools"
-              help="Select tools this agent can execute."
-              empty="No tools are available. An administrator adds them under Connectors."
+            <AgentToolPicker
               choices={choices}
               selected={selectedToolIds}
               toggle={(id, checked) =>

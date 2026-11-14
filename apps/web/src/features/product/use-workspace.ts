@@ -325,6 +325,13 @@ export const useWorkspace = ({
           if (!sameConversation) {
             setOpenedConversation(value);
           }
+          setAgents((current) =>
+            current.map((entry) =>
+              entry.agentId === value.agentId
+                ? { ...entry, primaryConversationId: value.conversationId }
+                : entry
+            )
+          );
           onConversation(value.conversationId);
           conversationIntent.current = null;
           setView({ kind: "agent", tab: "conversation" });
@@ -353,11 +360,25 @@ export const useWorkspace = ({
       selectedConversationId === conversationId ? reference : null
     );
   const selectAgent = (agentId: string) => {
-    changeView({ kind: "agent", tab: "configuration" });
-    setConversationSelection({ kind: "pending", conversationId: undefined });
-    setOpenedConversation(null);
-    onConversation();
+    const nextConversationId =
+      reference?.agentId === agentId &&
+      reference.conversationId === conversationId
+        ? conversationId
+        : agents.find((entry) => entry.agentId === agentId)
+            ?.primaryConversationId;
+    if (
+      nextConversationId === conversationId &&
+      (nextConversationId || agentId === activeAgentId) &&
+      view.kind === "agent" &&
+      view.tab === "conversation"
+    ) {
+      return;
+    }
+    changeView({ kind: "agent", tab: "conversation" });
     setSelectedId(agentId);
+    if (nextConversationId !== conversationId) {
+      onConversation(nextConversationId);
+    }
   };
   const agentSaved = async (agentId: string) => {
     const generation = currentAccessGeneration();

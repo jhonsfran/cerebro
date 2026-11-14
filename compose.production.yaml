@@ -25,6 +25,7 @@ services:
     volumes: !override
       - ${CEREBRO_PRODUCTION_SECRETS_DIR:?Set the production secret directory}:/run/cerebro-secrets:ro
   celld:
+    restart: "no"
     environment:
       DEPLOY_MODE: production
     volumes: !override

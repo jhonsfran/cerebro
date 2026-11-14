@@ -83,8 +83,10 @@ export const bootstrapFixture = ({
     return Response.json(payload);
   },
   canManage = false,
+  savedConversation,
 }: {
   canManage?: boolean;
+  savedConversation?: string;
   read?: (
     conversationId: string,
     call: BootstrapRequest
@@ -156,6 +158,9 @@ export const bootstrapFixture = ({
             model: "cheap",
             version: 1,
             canManage,
+            ...(savedConversation === `chat-${suffix}`
+              ? { primaryConversationId: savedConversation }
+              : {}),
           })),
         });
       }
@@ -164,7 +169,16 @@ export const bootstrapFixture = ({
         return Response.json({
           agentId,
           name: agentId,
-          access: [],
+          access: canManage
+            ? [
+                {
+                  actions: ["read"],
+                  email: null,
+                  name: "Team Member",
+                  principalId: "member",
+                },
+              ]
+            : [],
           connectorChoices: [],
           modelChoices: [],
           sourceChoices: [],

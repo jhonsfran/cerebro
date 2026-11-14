@@ -3,7 +3,7 @@ import {
   channelConversation,
   channelConversationOperation,
 } from "@cerebro/db/schema/agents";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, like, sql } from "drizzle-orm";
 
 import { digest } from "./security";
 import { ChannelError } from "./types";
@@ -57,6 +57,34 @@ export const isPrimaryConversation = async (
   return (
     conversation.bindingKey === bindingKey &&
     conversation.conversationId === `conversation:${await digest(bindingKey)}`
+  );
+};
+
+export const listPrimaryConversationIds = async (
+  database: Database,
+  organizationId: string,
+  ownerPrincipalId: string
+): Promise<ReadonlyMap<string, string>> => {
+  const rows = await database
+    .select()
+    .from(channelConversation)
+    .where(
+      and(
+        eq(channelConversation.organizationId, organizationId),
+        eq(channelConversation.ownerPrincipalId, ownerPrincipalId),
+        like(channelConversation.bindingKey, "primary:%")
+      )
+    );
+  const pairs = await Promise.all(
+    rows.map(async (row) => ({
+      row,
+      primary: await isPrimaryConversation(row),
+    }))
+  );
+  return new Map(
+    pairs
+      .filter(({ primary }) => primary)
+      .map(({ row }) => [row.agentId, row.conversationId])
   );
 };
 

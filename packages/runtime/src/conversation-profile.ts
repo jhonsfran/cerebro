@@ -69,7 +69,8 @@ export const createConversationProfile = async (
   services: ConversationScopeServices,
   native: Conversation,
   shared: ProfileState,
-  identity: ProfileIdentity
+  identity: ProfileIdentity,
+  registrationKey = profileKey(identity)
 ) => {
   const runtime = createConversationResources(
     configuration,
@@ -219,7 +220,7 @@ export const createConversationProfile = async (
     admissions: coordination.admissions,
     dispatch: coordination.dispatch,
   };
-  const suffix = `:${profileKey(identity)}`;
+  const suffix = `:${registrationKey}`;
   const tools: Extension = {
     name: `cerebro-tools:${configuration.address.sessionId}${suffix}`,
     hooks: [
@@ -254,7 +255,7 @@ export const createConversationProfile = async (
     configuration.address.sessionId,
     configuration.provider.model,
     runtime.provider,
-    profileKey(identity)
+    registrationKey
   );
   const registration = {
     extensions,

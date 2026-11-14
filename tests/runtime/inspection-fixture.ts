@@ -86,16 +86,11 @@ export const inspectionFixture = async () => {
   let scanner: Parameters<
     typeof readConversationInspection
   >[0]["scanWorkKeys"] = (cursor) =>
-    scanInspectionKeys(
-      pi,
-      fixture.storage(),
-      WorkDocuments.definition.kind,
-      cursor
-    );
+    scanInspectionKeys(pi, fixture.storage(), WorkDocuments.definition, cursor);
   let eventScanner: Parameters<
     typeof readConversationInspection
   >[0]["scanEventKeys"] = (cursor) =>
-    scanInspectionKeys(pi, fixture.storage(), Receipts.definition.kind, cursor);
+    scanInspectionKeys(pi, fixture.storage(), Receipts.definition, cursor);
   return {
     fixture,
     source,

@@ -354,10 +354,20 @@ test("an administrator's read list decides which tools skip approval and survive
         headers: {},
         readTools: [],
       });
-      assert.deepEqual(await tools(), [
-        { effect: "write", name: "archive" },
-        { effect: "write", name: "lookup" },
-      ]);
+      const archive = {
+        description: "archive",
+        effect: "write",
+        id: "crm_archive",
+        name: "archive",
+        requiresApproval: true,
+      };
+      const lookup = {
+        ...archive,
+        description: "lookup",
+        id: "crm_lookup",
+        name: "lookup",
+      };
+      assert.deepEqual(await tools(), [archive, lookup]);
       await admin.setReadTools(
         database,
         f.organizationId,
@@ -366,8 +376,8 @@ test("an administrator's read list decides which tools skip approval and survive
         ["lookup"]
       );
       const confirmed = [
-        { effect: "write", name: "archive" },
-        { effect: "read", name: "lookup" },
+        archive,
+        { ...lookup, effect: "read", requiresApproval: false },
       ];
       assert.deepEqual(await tools(), confirmed);
       await admin.refresh(database, f.organizationId, f.principal.id, "crm");

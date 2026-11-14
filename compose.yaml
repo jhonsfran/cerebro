@@ -93,6 +93,7 @@ services:
         condition: service_healthy
   celld:
     <<: *app
+    restart: on-failure
     command: [node, deploy/entrypoint.mjs, celld]
     environment:
       CEREBRO_SECRETS_DIR: /run/cerebro-secrets

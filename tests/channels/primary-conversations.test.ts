@@ -8,7 +8,7 @@ import {
   channelConversation,
   channelConversationOperation,
 } from "../../packages/db/src/schema/agents";
-import { createTestProduct, object, string } from "./helpers";
+import { array, createTestProduct, object, string } from "./helpers";
 
 const prepare = async () => {
   const app = await createTestProduct();
@@ -178,6 +178,23 @@ test("primary identity and operation receipts isolate organizations and people",
   );
   assert.notEqual(organization.conversationId, owner.conversationId);
   assert.notEqual(organization.sessionId, owner.sessionId);
+  const owners = [
+    ["test-owner", owner],
+    ["test-other", other],
+  ] as const;
+  await Promise.all(
+    owners.map(async ([userId, primary]) => {
+      const response = await app.request(
+        "/api/product/agents",
+        "GET",
+        undefined,
+        userId
+      );
+      assert.equal(response.status, 200);
+      const [agent] = array(object(await response.json()).agents);
+      assert.equal(object(agent).primaryConversationId, primary.conversationId);
+    })
+  );
   const rows = await app.options.withDatabase(async (db) => ({
     operations: await db.select().from(channelConversationOperation),
     conversations: await db.select().from(channelConversation),

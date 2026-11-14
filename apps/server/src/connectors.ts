@@ -170,11 +170,15 @@ export const createConnectorAdmin = (
       ]);
       return connectors.map((connector) => ({
         ...connector,
-        tools: tools.flatMap((tool) =>
-          tool.connectorId === connector.id && tool.target.kind === "mcp"
-            ? [{ effect: tool.effect, name: tool.target.method }]
-            : []
-        ),
+        tools: tools
+          .filter((tool) => tool.connectorId === connector.id)
+          .map((tool) => ({
+            description: tool.description,
+            effect: tool.effect,
+            id: tool.id,
+            name: tool.target.kind === "mcp" ? tool.target.method : tool.id,
+            requiresApproval: tool.requiresApproval,
+          })),
       }));
     },
     refresh: (database, organizationId, principalId, connectorId) =>

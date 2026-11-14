@@ -65,7 +65,10 @@ export const AccessPanel = ({
   return (
     <PageBody>
       <PageIntro id="access-title" title={`Who can use ${agent.name}?`}>
-        Changes apply to the next action in web and linked Slack conversations.
+        Read lets a person see the agent and their own conversation. Execute
+        lets them send messages. Approve lets them decide requests for tool
+        approval. Changes apply to the next action in web and linked Slack
+        conversations.
       </PageIntro>
       {errorMessage ? <ErrorAlert>{errorMessage}</ErrorAlert> : null}
       <div className="bg-card border">

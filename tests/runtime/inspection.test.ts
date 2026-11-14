@@ -15,6 +15,7 @@ import {
   triggerId,
 } from "../../packages/contracts/src/triggers.ts";
 import { WorkIdSchema } from "../../packages/contracts/src/work.ts";
+import { defineDocFamily } from "../../packages/runtime/node_modules/@earendil-works/pi-durable/dist/index.js";
 import {
   Bindings,
   ProfileChanged,
@@ -29,6 +30,67 @@ import { Replies } from "../../packages/runtime/src/replies.ts";
 import { Receipts } from "../../packages/runtime/src/triggers.ts";
 import { context } from "./coordinator-fixture.ts";
 import { inspectionFixture } from "./inspection-fixture.ts";
+
+test("old event formats in the identity do not prevent inspection of current conversation events", async () => {
+  const subject = await inspectionFixture();
+  const { fixture } = subject;
+  try {
+    const retired = defineDocFamily({
+      kind: Receipts.definition.kind,
+      scope: "session",
+      family: true,
+      version: 2,
+      initial: (_seed: null) => ({
+        receipt: {
+          nativeId: fixture.source("b").native.id,
+          input: { text: "retained-private-event" },
+        },
+      }),
+    });
+    await fixture.pi().commit(async (tx) => {
+      for (let index = 0; index < 32; index += 1) {
+        await tx.doc(retired, `old-event-${index}`, null);
+      }
+    }, context);
+    await fixture.invoke("a", "list_work", {}, "current-event");
+    const first = await subject.read({ kind: "events" });
+    assert.ok(first.kind === "events" && first.next);
+    assert.deepEqual(first.events, []);
+    const frame = await subject.read({ kind: "events", cursor: first.next });
+    assert.ok(frame.kind === "events");
+    assert.equal(frame.events.length, 1);
+    assert.equal(frame.events[0]?.channel, "web");
+    assert.equal(
+      JSON.stringify(frame).includes("retained-private-event"),
+      false
+    );
+    assert.ok(await fixture.pi().snapshot(retired, "old-event-0", context));
+  } finally {
+    await subject.close();
+  }
+});
+
+test("Inspector reports newer event formats instead of silently omitting them", async () => {
+  const subject = await inspectionFixture();
+  try {
+    const future = defineDocFamily({
+      kind: Receipts.definition.kind,
+      scope: "session",
+      family: true,
+      version: 5,
+      initial: (_seed: null) => ({ receipt: null }),
+    });
+    await subject.fixture
+      .pi()
+      .commit((tx) => tx.doc(future, "future-event", null), context);
+    await assert.rejects(
+      subject.read({ kind: "events" }),
+      /newer version 5 than 4/u
+    );
+  } finally {
+    await subject.close();
+  }
+});
 
 test("Inspector keeps owned recent work, queued work, and held reservations separate without opening Teams", async () => {
   const subject = await inspectionFixture();

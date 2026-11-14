@@ -15,7 +15,12 @@ import { consumeTeamReports } from "./team-reports";
 export { AuditSink } from "./audit-sink";
 export { IdentityAgent } from "./session/agent";
 export { TeamAgent } from "./team-agent";
-export { SessionAgent } from "./session/retired-agent";
+export {
+  SessionAgent,
+  SessionAgent as ChannelDispatcher,
+  SessionAgent as GatewayJournal,
+  SessionAgent as SessionFixture,
+} from "./session/retired-agent";
 
 const app = new Hono<{ Bindings: WorkerEnv }>();
 

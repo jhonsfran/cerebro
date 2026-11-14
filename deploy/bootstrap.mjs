@@ -298,12 +298,16 @@ const config = {
     bindings: [
       { class_name: "IdentityAgent", name: "SESSION" },
       { class_name: "TeamAgent", name: "TEAM" },
+      { class_name: "SessionAgent", name: "RETIRED_SESSION" },
+      { class_name: "SessionFixture", name: "RETIRED_FIXTURE" },
+      { class_name: "ChannelDispatcher", name: "RETIRED_CHANNEL_DISPATCHER" },
+      { class_name: "GatewayJournal", name: "RETIRED_GATEWAY_JOURNAL" },
     ],
   },
   main: "apps/server/src/index.ts",
   // Applied migration tags are history. celld cannot delete classes, so the
-  // retired SessionFixture, ChannelDispatcher, and GatewayJournal stay named
-  // here but unexported. SessionAgent remains exported with inert handlers.
+  // celld registers classes from bindings, including retired classes whose
+  // inert handlers must run once to clear saved alarms.
   migrations: [
     { new_sqlite_classes: ["SessionFixture"], tag: "v1" },
     { new_sqlite_classes: ["ChannelDispatcher"], tag: "v2" },

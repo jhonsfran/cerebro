@@ -7,6 +7,7 @@ import type { TeamCommandTransport } from "@cerebro/contracts/team-events";
 import {
   WorkCommandIdSchema,
   WorkAdmissionSchema,
+  EventAddressSchema,
   transitionWorkStatus,
 } from "@cerebro/contracts/work";
 import type {
@@ -103,8 +104,34 @@ export const WorkLedger = defineDoc({
   kind: "cerebro.coordinator-index",
   scope: "session",
   version: 3,
-  migrate: (): WorkLedgerState => {
-    throw new Error("Unsupported coordinator index version.");
+  migrate: (value, fromVersion): WorkLedgerState => {
+    if (fromVersion !== 2) {
+      throw new Error("Unsupported coordinator index version.");
+    }
+    return Schema.decodeUnknownSync(
+      Schema.Struct({
+        identity: Schema.NullOr(
+          Schema.Struct({
+            organizationId: Schema.String,
+            ownerPrincipalId: Schema.String,
+          })
+        ),
+        active: Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            source: EventAddressSchema,
+            deadlineAt: Schema.Number,
+          })
+        ),
+        queue: Schema.Array(
+          Schema.Struct({
+            workId: Schema.String,
+            source: EventAddressSchema,
+            deadlineAt: Schema.Number,
+          })
+        ).pipe(Schema.mutable),
+      })
+    )(value);
   },
   initial: (): WorkLedgerState => ({ identity: null, active: {}, queue: [] }),
 });

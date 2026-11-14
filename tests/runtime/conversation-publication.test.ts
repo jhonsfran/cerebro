@@ -35,6 +35,45 @@ const settle = async (subject: Awaited<ReturnType<typeof setupWeb>>) => {
   await subject.source.native.waitForIdle(context);
 };
 
+test("a saved coordinator policy profile can answer using its original registration names", async () => {
+  const subject = await setupWeb(false, true);
+  try {
+    await subject.scope.restoreProfiles([
+      "cerebro:source-a:v1:p1",
+      "cerebro-tools:source-a:v1:p1",
+    ]);
+    await subject.fixture.pi().commit(async (tx) => {
+      const agent = await tx.doc(AgentDoc, subject.source.native.id);
+      agent.model = { modelId: "test", provider: "cerebro:source-a:v1:p1" };
+      agent.extensions = ["cerebro-tools:source-a:v1:p1"];
+    }, context);
+    subject.source.faux.setResponses([
+      fauxAssistantMessage("Recovered conversation answer."),
+    ]);
+    const response = await subject.send(
+      "recovered-profile",
+      "Continue this conversation."
+    );
+    assert.equal(response.status, 200);
+    await settle(subject);
+    const entries = await subject.source.native.entries(
+      {},
+      64,
+      undefined,
+      context
+    );
+    assert.ok(
+      JSON.stringify(entries).includes("Recovered conversation answer.")
+    );
+    assert.equal(subject.recoveries.length, 0);
+    await assert.rejects(
+      subject.scope.restoreProfiles(["cerebro:source-a:v1:p0"])
+    );
+  } finally {
+    await subject.close();
+  }
+});
+
 test("an unchanged definition keeps its conversation state and native selection across a send", async () => {
   const subject = await setupWeb(false, true);
   try {

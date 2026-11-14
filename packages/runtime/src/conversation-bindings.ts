@@ -1,11 +1,13 @@
 import type { EventAddress } from "@cerebro/contracts/events";
 import { Unavailable } from "@cerebro/contracts/failures";
+import { EventAddressSchema } from "@cerebro/contracts/work";
 import { defineDoc } from "@earendil-works/pi-durable";
 import type {
   ConversationId,
   JsonObject,
   Tx,
 } from "@earendil-works/pi-durable";
+import { Schema } from "effect";
 
 export interface ProfileIdentity extends JsonObject {
   agentVersion: number;
@@ -29,6 +31,30 @@ export interface ConversationBinding extends JsonObject, ProfileIdentity {
   nativeId: ConversationId;
   refresh: ProfileIdentity | null;
 }
+const profileIdentity = Schema.Struct({
+  agentVersion: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+const bindingFields = {
+  address: EventAddressSchema,
+  agentVersion: profileIdentity.fields.agentVersion,
+  nativeId: Schema.declare<ConversationId>(
+    (value): value is ConversationId =>
+      typeof value === "number" && Number.isSafeInteger(value) && value > 0
+  ),
+  refresh: Schema.NullOr(profileIdentity),
+};
+const previousBindings = Schema.Struct({
+  conversations: Schema.Record(Schema.String, Schema.Struct(bindingFields)),
+});
+const policyBindings = Schema.Struct({
+  conversations: Schema.Record(
+    Schema.String,
+    Schema.Struct({
+      ...bindingFields,
+      policyVersion: Schema.Literals([0, 1]),
+    })
+  ),
+});
 export const Bindings = defineDoc({
   initial: (): { conversations: Record<string, ConversationBinding> } => ({
     conversations: {},
@@ -36,8 +62,27 @@ export const Bindings = defineDoc({
   kind: "cerebro.conversation-bindings",
   scope: "session",
   version: 5,
-  migrate: (): { conversations: Record<string, ConversationBinding> } => {
-    throw new Error("Unsupported conversation bindings version.");
+  migrate: (
+    value,
+    fromVersion
+  ): { conversations: Record<string, ConversationBinding> } => {
+    if (fromVersion === 4) {
+      return Schema.decodeUnknownSync(previousBindings)(value);
+    }
+    if (fromVersion !== 2 && fromVersion !== 3) {
+      throw new Error("Unsupported conversation bindings version.");
+    }
+    const previous = Schema.decodeUnknownSync(policyBindings)(value);
+    return {
+      conversations: Object.fromEntries(
+        Object.entries(previous.conversations)
+          .filter(([, binding]) => binding.policyVersion === 1)
+          .map(([key, { address, agentVersion, nativeId, refresh }]) => [
+            key,
+            { address, agentVersion, nativeId, refresh },
+          ])
+      ),
+    };
   },
 });
 export const requireProfileIn = async (

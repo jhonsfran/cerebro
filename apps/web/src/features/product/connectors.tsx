@@ -40,6 +40,7 @@ import { toast } from "sonner";
 
 import { encoded, mutate, productPath, request } from "./api";
 import { ConfirmRemoval } from "./confirm-removal";
+import { Disclosure } from "./disclosure";
 import { ErrorAlert, PageBody, PageIntro } from "./feedback";
 import {
   connectorChangeSchema,
@@ -64,7 +65,7 @@ const listConnectors = async (signal?: AbortSignal) => {
   return value.connectors;
 };
 
-const ReadTools = ({
+const ConnectorTools = ({
   busy,
   connector,
   onChange,
@@ -73,36 +74,75 @@ const ReadTools = ({
   connector: ConnectorView;
   onChange: (readTools: string[]) => void;
 }) => {
+  const editable = connector.source === "admin";
   const reads = connector.tools
     .filter((tool) => tool.effect === "read")
     .map((tool) => tool.name);
   return (
     <FieldSet className="basis-full">
-      <FieldLegend variant="label">Read-only (no approval)</FieldLegend>
-      <FieldDescription>
-        Unchecked tools ask the person for approval before each call.
-      </FieldDescription>
+      <FieldLegend variant="label">
+        {editable ? "Read-only (no approval)" : "Tools"}
+      </FieldLegend>
+      {editable ? (
+        <FieldDescription>
+          Unchecked tools ask for approval before each call.
+        </FieldDescription>
+      ) : null}
       <FieldGroup data-slot="checkbox-group" className="gap-2">
         {connector.tools.map((tool) => {
           const checkboxId = `read-tool-${connector.id}-${tool.name}`;
           return (
-            <Field orientation="horizontal" key={tool.name}>
-              <Checkbox
-                id={checkboxId}
-                checked={tool.effect === "read"}
-                disabled={busy}
-                onCheckedChange={(checked) =>
-                  onChange(
-                    checked
-                      ? [...reads, tool.name]
-                      : reads.filter((name) => name !== tool.name)
-                  )
-                }
-              />
-              <FieldLabel htmlFor={checkboxId} className="font-mono break-all">
-                {tool.name}
-              </FieldLabel>
-            </Field>
+            <div key={tool.id ?? tool.name}>
+              <Field orientation="horizontal">
+                {editable ? (
+                  <>
+                    <Checkbox
+                      id={checkboxId}
+                      checked={tool.effect === "read"}
+                      disabled={busy}
+                      onCheckedChange={(checked) =>
+                        onChange(
+                          checked
+                            ? [...reads, tool.name]
+                            : reads.filter((name) => name !== tool.name)
+                        )
+                      }
+                    />
+                    <FieldLabel
+                      htmlFor={checkboxId}
+                      className="font-mono break-all"
+                    >
+                      {tool.name}
+                    </FieldLabel>
+                  </>
+                ) : (
+                  <>
+                    <span className="min-w-0 flex-1 font-mono text-xs break-all">
+                      {tool.name}
+                    </span>
+                    <span className="text-muted-foreground shrink-0 text-xs">
+                      {(tool.requiresApproval ?? tool.effect === "write")
+                        ? "Approval required"
+                        : "No approval"}
+                    </span>
+                  </>
+                )}
+              </Field>
+              {tool.description && tool.description !== tool.name ? (
+                <Disclosure
+                  summary={
+                    <>
+                      Details<span className="sr-only"> for {tool.name}</span>
+                    </>
+                  }
+                  className={editable ? "mt-1.5 ml-6" : "mt-1.5"}
+                >
+                  <p className="text-muted-foreground wrap-anywhere whitespace-pre-wrap">
+                    {tool.description}
+                  </p>
+                </Disclosure>
+              ) : null}
+            </div>
           );
         })}
       </FieldGroup>
@@ -202,8 +242,8 @@ export const ConnectorsPanel = () => {
   return (
     <PageBody>
       <PageIntro id="connectors-title" title="MCP servers your agents can use">
-        Tools you mark read-only run without approval. Every other tool asks for
-        approval before it runs. Enable tools in the agent configuration.
+        Connectors provide tools. Choose which tools can run without approval
+        here, then enable the tools each agent can use in its Configuration tab.
       </PageIntro>
       {errorMessage ? <ErrorAlert>{errorMessage}</ErrorAlert> : null}
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -278,9 +318,8 @@ export const ConnectorsPanel = () => {
                       </Button>
                     </ItemActions>
                   ) : null}
-                  {connector.source === "admin" &&
-                  connector.tools.length > 0 ? (
-                    <ReadTools
+                  {connector.tools.length > 0 ? (
+                    <ConnectorTools
                       busy={busy}
                       connector={connector}
                       onChange={(readTools) =>

@@ -58,8 +58,10 @@ export const createChannelOptions = (env: WorkerEnv) => {
         value: {
           connectorChoices: tools.map((tool) => ({
             connectorId: tool.connectorId,
+            description: tool.description,
             id: tool.id,
-            label: tool.description,
+            label: tool.target.kind === "mcp" ? tool.target.method : tool.id,
+            requiresApproval: tool.requiresApproval,
           })),
           modelChoices: config.models.map((model) => ({
             id: model.id,

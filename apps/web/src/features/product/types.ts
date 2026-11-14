@@ -11,8 +11,10 @@ export const catalogSchema = z.object({
   connectorChoices: z.array(
     z.object({
       connectorId: z.string().optional(),
+      description: z.string().optional(),
       id: z.string(),
       label: z.string(),
+      requiresApproval: z.boolean().optional(),
     })
   ),
   modelChoices: z.array(z.object({ id: z.string(), label: z.string() })),
@@ -35,6 +37,7 @@ export const agentSummarySchema = z.object({
   canManage: z.boolean(),
   model: z.string(),
   name: z.string(),
+  primaryConversationId: z.string().optional(),
   version: z.number(),
 });
 export const agentListSchema = z.object({
@@ -48,7 +51,7 @@ const grantSchema = z.object({
     organizationId: z.string(),
   }),
 });
-export const agentDetailSchema = z.object({
+export const agentDetailSchema = catalogSchema.extend({
   access: z.array(
     z.object({
       actions: z.array(actionSchema),
@@ -58,13 +61,6 @@ export const agentDetailSchema = z.object({
     })
   ),
   agentId: z.string(),
-  connectorChoices: z.array(
-    z.object({
-      connectorId: z.string().optional(),
-      id: z.string(),
-      label: z.string(),
-    })
-  ),
   definition: z.object({
     agentId: z.string(),
     enabledToolIds: z.array(z.string()),
@@ -85,11 +81,7 @@ export const agentDetailSchema = z.object({
       .optional(),
     version: z.number(),
   }),
-  modelChoices: z.array(z.object({ id: z.string(), label: z.string() })),
   name: z.string(),
-  sourceChoices: z
-    .array(z.object({ id: z.string(), label: z.string() }))
-    .default([]),
 });
 const chatSnapshotSchema = z
   .unknown()
@@ -136,6 +128,9 @@ export const slackLinkSchema = z.object({
 export const accessMutationSchema = z.unknown();
 export type AccessAction = z.infer<typeof actionSchema>;
 export type Setup = z.infer<typeof setupSchema>;
+export type ToolChoice = z.infer<
+  typeof catalogSchema
+>["connectorChoices"][number];
 export type AgentSummary = z.infer<typeof agentSummarySchema>;
 export type Grant = z.infer<typeof grantSchema>;
 export type AgentDetail = z.infer<typeof agentDetailSchema>;
@@ -157,7 +152,13 @@ export const connectorListSchema = z.object({
       source: z.enum(["admin", "runtime.json"]),
       toolCount: z.number(),
       tools: z.array(
-        z.object({ effect: z.enum(["read", "write"]), name: z.string() })
+        z.object({
+          description: z.string().optional(),
+          effect: z.enum(["read", "write"]),
+          id: z.string().optional(),
+          name: z.string(),
+          requiresApproval: z.boolean().optional(),
+        })
       ),
       url: z.string().nullable(),
     })

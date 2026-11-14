@@ -187,7 +187,7 @@ export class SessionAgent<
         context
       );
       const scanWorkKeys: ScanWorkKeys = (cursor) =>
-        scanInspectionKeys(pi, storage, WorkDocuments.definition.kind, cursor);
+        scanInspectionKeys(pi, storage, WorkDocuments.definition, cursor);
       const waitUntil = (promise: Promise<unknown>) => {
         this.lifecycle.trackAlarmWork(promise);
         this.ctx.waitUntil(promise);
@@ -223,7 +223,7 @@ export class SessionAgent<
             return await scope.triggerScope();
           },
           scan: (cursor) =>
-            scanInspectionKeys(pi, storage, Receipts.definition.kind, cursor),
+            scanInspectionKeys(pi, storage, Receipts.definition, cursor),
           waitUntil,
         }),
       };
@@ -632,7 +632,7 @@ export class SessionAgent<
               scanInspectionKeys(
                 host.pi,
                 host.store,
-                Receipts.definition.kind,
+                Receipts.definition,
                 cursor
               ),
           })
